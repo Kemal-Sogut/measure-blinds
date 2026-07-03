@@ -6,3 +6,7 @@ dist/
 .wrangler/
 .dev.vars
 *.log
+memory-bank/
+knowledge/
+AI_GUIDELINES.md
+implementation_plan.md
