@@ -1,0 +1,23 @@
+{
+  "name": "blinds-nisa",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Blinds Nisa Field Estimator — A field-facing web app for custom blinds consultants",
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./apps/*\" dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api dev",
+    "build": "pnpm --filter web build",
+    "lint": "pnpm --parallel --filter \"./apps/*\" lint",
+    "check": "pnpm --parallel --filter \"./apps/*\" check",
+    "test": "pnpm --filter web test"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "sharp", "workerd"]
+  }
+}

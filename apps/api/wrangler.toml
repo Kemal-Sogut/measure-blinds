@@ -1,0 +1,17 @@
+name = "blinds-nisa-api"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+# nodejs_compat: @react-pdf/renderer needs Node Buffer/stream shims
+compatibility_flags = ["nodejs_compat"]
+
+[triggers]
+crons = ["0 6 * * *"]  # 6:00 AM UTC daily — auto-expire stale estimates
+
+[vars]
+ENVIRONMENT = "development"
+
+# Secrets (set via `wrangler secret put`):
+# SUPABASE_URL
+# SUPABASE_SERVICE_ROLE_KEY
+# RESEND_API_KEY
+# APP_URL
