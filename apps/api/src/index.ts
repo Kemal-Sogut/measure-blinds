@@ -47,7 +47,7 @@ app.use(
       if (
         origin.includes('localhost') ||
         origin.includes('127.0.0.1') ||
-        origin.includes('.pages.dev')
+        origin === 'https://measure-blinds.blindsnisa.workers.dev'
       ) {
         return origin;
       }
