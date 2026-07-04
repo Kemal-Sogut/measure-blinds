@@ -1,4 +1,4 @@
-name = "blinds-nisa-web"
+name = 'measure-blinds'
 compatibility_date = "2025-06-01"
 
 [assets]
