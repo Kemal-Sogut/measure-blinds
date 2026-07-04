@@ -15,3 +15,5 @@ ENVIRONMENT = "development"
 # SUPABASE_SERVICE_ROLE_KEY
 # RESEND_API_KEY
 # APP_URL
+# RESEND_FROM       (e.g. "Blinds Nisa <estimates@blindsnisa.com>")
+# RESEND_REPLY_TO   (e.g. "info@blindsnisa.com")

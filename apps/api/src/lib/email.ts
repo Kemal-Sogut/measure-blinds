@@ -41,17 +41,22 @@ export interface EmailRequest {
   subject: string;
   html: string;
   attachments?: EmailAttachment[];
+  /** Overrides env.RESEND_REPLY_TO for this send, if set. */
+  replyTo?: string;
 }
 
 /**
  * Sends an email through the Resend API.
  *
  * @param env - Needs RESEND_API_KEY; RESEND_FROM optionally overrides
- *              the sender (must be on a Resend-verified domain)
+ *              the sender (must be on a Resend-verified domain);
+ *              RESEND_REPLY_TO optionally sets where customer replies
+ *              land (e.g. a shared inbox distinct from the send-from
+ *              address)
  * @throws Error with Resend's message when the API responds non-2xx
  */
 export async function sendEmail(
-  env: { RESEND_API_KEY: string; RESEND_FROM?: string },
+  env: { RESEND_API_KEY: string; RESEND_FROM?: string; RESEND_REPLY_TO?: string },
   req: EmailRequest
 ): Promise<void> {
   const response = await fetch('https://api.resend.com/emails', {
@@ -62,6 +67,7 @@ export async function sendEmail(
     },
     body: JSON.stringify({
       from: env.RESEND_FROM || 'Blinds Nisa <blindsnisa@gmail.com>',
+      reply_to: req.replyTo || env.RESEND_REPLY_TO || undefined,
       to: [req.to],
       subject: req.subject,
       html: req.html,

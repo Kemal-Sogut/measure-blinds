@@ -28,6 +28,8 @@ export interface Env {
   RESEND_API_KEY: string;
   /** Optional verified sender, e.g. "Blinds Nisa <estimates@domain.com>" */
   RESEND_FROM?: string;
+  /** Optional reply-to address for customer-facing emails, e.g. "info@domain.com" */
+  RESEND_REPLY_TO?: string;
   APP_URL: string;
   ENVIRONMENT: string;
 }
