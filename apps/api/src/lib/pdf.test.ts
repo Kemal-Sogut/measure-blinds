@@ -2,27 +2,31 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Unit test for PDF generation — renders a representative estimate
- * (blind + preset items, discount, HST number, terms) through the
- * real @react-pdf/renderer pipeline and asserts we get a non-trivial,
- * well-formed PDF byte stream. This catches layout-tree mistakes
- * (invalid nesting, bad style props) without any visual inspection.
+ * Unit test for PDF generation — renders a representative order
+ * document (blind + preset items, discount, HST number, terms) through
+ * the real pdf-lib pipeline and asserts we get a non-trivial,
+ * well-formed PDF byte stream, for both the Estimate and Invoice
+ * variants. This catches layout mistakes without visual inspection.
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildEstimatePdf, type PdfEstimateData } from './pdf';
+import { buildDocumentPdf, type PdfDocumentData } from './pdf';
 
-const SAMPLE: PdfEstimateData = {
-  estimate: {
+const SAMPLE: PdfDocumentData = {
+  docType: 'estimate',
+  order: {
     order_number: 'T0408-126',
-    estimate_date: '2026-08-04',
+    order_date: '2026-08-04',
     expiry_date: '2026-08-18',
     subtotal: 465,
     discount_amount: 46.5,
     taxable_amount: 418.5,
     tax_amount: 54.41,
     total: 472.91,
+    amount_paid: 0,
+    balance: 472.91,
   },
+  payments: [],
   line_items: [
     {
       item_type: 'blind',
@@ -82,9 +86,9 @@ const SAMPLE: PdfEstimateData = {
   logo: null,
 };
 
-describe('buildEstimatePdf', () => {
-  it('renders a well-formed PDF byte stream', async () => {
-    const bytes = await buildEstimatePdf(SAMPLE);
+describe('buildDocumentPdf', () => {
+  it('renders a well-formed estimate PDF byte stream', async () => {
+    const bytes = await buildDocumentPdf(SAMPLE);
     // %PDF- magic header and EOF marker
     const head = new TextDecoder().decode(bytes.slice(0, 5));
     const tail = new TextDecoder().decode(bytes.slice(-32));
@@ -94,15 +98,29 @@ describe('buildEstimatePdf', () => {
     expect(bytes.length).toBeGreaterThan(2000);
   });
 
-  it('renders without optional content (no discount, no terms, no items)', async () => {
-    const minimal: PdfEstimateData = {
+  it('renders an invoice variant with payments + balance', async () => {
+    const invoice: PdfDocumentData = {
       ...SAMPLE,
-      estimate: { ...SAMPLE.estimate, discount_amount: 0 },
+      docType: 'invoice',
+      order: { ...SAMPLE.order, amount_paid: 200, balance: 272.91 },
+      payments: [
+        { amount: 200, paid_on: '2026-08-05', note: 'e-Transfer deposit' },
+      ],
+    };
+    const bytes = await buildDocumentPdf(invoice);
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
+    expect(bytes.length).toBeGreaterThan(2000);
+  });
+
+  it('renders without optional content (no discount, no terms, no items)', async () => {
+    const minimal: PdfDocumentData = {
+      ...SAMPLE,
+      order: { ...SAMPLE.order, discount_amount: 0 },
       line_items: [],
       terms: '',
       company: { ...SAMPLE.company, hst_number: '' },
     };
-    const bytes = await buildEstimatePdf(minimal);
+    const bytes = await buildDocumentPdf(minimal);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
   });
 });

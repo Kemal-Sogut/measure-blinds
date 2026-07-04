@@ -17,7 +17,7 @@ import { cors } from 'hono/cors';
 import { requireAuth, type AuthVariables } from './middleware/auth';
 import settingsRoutes from './routes/settings';
 import customersRoutes from './routes/customers';
-import estimatesRoutes from './routes/estimates';
+import ordersRoutes from './routes/orders';
 import publicRoutes from './routes/public';
 import { createSupabaseAdmin } from './lib/supabase';
 
@@ -98,8 +98,8 @@ app.route('/api/settings', settingsRoutes);
 /** Customers module — CRUD with search and soft delete (Phase 5). */
 app.route('/api/customers', customersRoutes);
 
-/** Estimates module — server-priced CRUD with order numbers (Phase 7). */
-app.route('/api/estimates', estimatesRoutes);
+/** Orders module — server-priced CRUD, estimates/invoices, payments. */
+app.route('/api/orders', ordersRoutes);
 
 /** Public customer view + confirm — token-gated, rate-limited (Phase 9). */
 app.route('/public', publicRoutes);
@@ -113,9 +113,9 @@ export default {
 
   /**
    * Scheduled handler for Cloudflare Cron Triggers.
-   * Runs daily at 6:00 AM UTC and expires every 'sent' estimate whose
-   * expiry_date has passed. The defensive per-read check in the
-   * estimate routes covers the window between cron runs.
+   * Runs daily at 6:00 AM UTC and expires every 'sent' order whose
+   * estimate validity date has passed. The defensive per-read check in
+   * the order routes covers the window between cron runs.
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
@@ -123,13 +123,13 @@ export default {
         const sb = createSupabaseAdmin(env);
         const today = new Date().toISOString().slice(0, 10);
         const { data, error } = await sb
-          .from('estimates')
+          .from('orders')
           .update({ status: 'expired' })
           .eq('status', 'sent')
           .lt('expiry_date', today)
           .select('id');
         if (error) console.error('Auto-expiry failed:', error.message);
-        else console.log(`Auto-expiry: ${data?.length ?? 0} estimate(s) expired (${event.cron})`);
+        else console.log(`Auto-expiry: ${data?.length ?? 0} order(s) expired (${event.cron})`);
       })()
     );
   },

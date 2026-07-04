@@ -5,11 +5,11 @@
  * Server-side order number generation (IMPLEMENTATION.md §4).
  *
  * Format: {DayInitial}{DD}{MM}-{N}{YY}, e.g. "T0408-126" = Tuesday
- * Aug 4, 1st estimate of that day, 2026. N is the 1-based count of
- * estimates sharing the same estimate_date.
+ * Aug 4, 1st order of that day, 2026. N is the 1-based count of
+ * orders sharing the same order_date.
  *
  * Generation counts existing rows and can therefore race under
- * concurrent creates — the `estimates_order_number_key` UNIQUE index
+ * concurrent creates — the `orders_order_number_key` UNIQUE index
  * is the hard guarantee, and the POST route retries with an
  * incremented N when the insert hits a duplicate (Postgres 23505).
  */

@@ -62,7 +62,7 @@ const EMPTY: FormState = {
 };
 
 const INPUT_CLS =
-  'h-11 w-full rounded-lg border border-border bg-surface px-3 text-base text-text-primary';
+  'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
 
 /** Labeled text input bound to one FormState key. */
 function Field({
@@ -79,14 +79,14 @@ function Field({
   inputMode?: 'email' | 'tel' | 'text';
 }) {
   return (
-    <label className="text-sm font-medium text-text-secondary">
-      {label}
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-medium text-text-secondary">{label}</span>
       <input
         type={type}
         inputMode={inputMode}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className={`mt-1 ${INPUT_CLS}`}
+        className={INPUT_CLS}
       />
     </label>
   );
@@ -147,7 +147,7 @@ export default function CustomerForm() {
   /** Confirms then soft-deletes the customer. */
   function handleDelete() {
     if (!id) return;
-    if (!window.confirm('Delete this customer? Their existing estimates are kept.')) return;
+    if (!window.confirm('Delete this customer? Their existing orders are kept.')) return;
     remove.mutate(id, {
       onSuccess: () => {
         toast.success('Customer deleted.');
@@ -177,13 +177,13 @@ export default function CustomerForm() {
   const pending = create.isPending || update.isPending;
 
   return (
-    <div className="min-h-screen bg-surface-muted pb-24">
+    <div className="min-h-screen bg-surface-muted pb-28">
       <PageHeader title={isEdit ? 'Edit Customer' : 'New Customer'} backTo="/customers" />
-      <div className="mx-auto flex max-w-lg flex-col gap-4 p-4">
+      <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:p-8">
         {/* Contact */}
-        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface-elevated p-4">
-          <h2 className="text-sm font-semibold text-text-secondary">Contact</h2>
-          <div className="grid grid-cols-2 gap-3">
+        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text-primary">Contact</h2>
+          <div className="grid grid-cols-2 gap-3.5">
             <Field label="First Name" value={form.first_name} onChange={(v) => set('first_name', v)} />
             <Field label="Last Name" value={form.last_name} onChange={(v) => set('last_name', v)} />
           </div>
@@ -192,11 +192,11 @@ export default function CustomerForm() {
         </section>
 
         {/* Shipping address */}
-        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface-elevated p-4">
-          <h2 className="text-sm font-semibold text-text-secondary">Shipping Address</h2>
+        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
+          <h2 className="text-sm font-semibold text-text-primary">Shipping Address</h2>
           <Field label="Address Line 1" value={form.shipping_address_line1} onChange={(v) => set('shipping_address_line1', v)} />
           <Field label="Address Line 2" value={form.shipping_address_line2} onChange={(v) => set('shipping_address_line2', v)} />
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3.5">
             <Field label="City" value={form.shipping_city} onChange={(v) => set('shipping_city', v)} />
             <Field label="Province" value={form.shipping_province} onChange={(v) => set('shipping_province', v)} />
           </div>
@@ -204,21 +204,21 @@ export default function CustomerForm() {
         </section>
 
         {/* Billing address */}
-        <section className="flex flex-col gap-3 rounded-xl border border-border bg-surface-elevated p-4">
+        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
           <label className="flex min-h-11 items-center gap-3">
             <input
               type="checkbox"
               checked={form.billing_same_as_shipping}
               onChange={(e) => set('billing_same_as_shipping', e.target.checked)}
-              className="h-5 w-5 accent-brand-600"
+              className="h-5 w-5 rounded-sm accent-brand-600"
             />
-            <span className="font-medium text-text-primary">Billing same as shipping</span>
+            <span className="text-sm font-medium text-text-primary">Billing same as shipping</span>
           </label>
           {!form.billing_same_as_shipping && (
             <>
               <Field label="Address Line 1" value={form.billing_address_line1} onChange={(v) => set('billing_address_line1', v)} />
               <Field label="Address Line 2" value={form.billing_address_line2} onChange={(v) => set('billing_address_line2', v)} />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-3.5">
                 <Field label="City" value={form.billing_city} onChange={(v) => set('billing_city', v)} />
                 <Field label="Province" value={form.billing_province} onChange={(v) => set('billing_province', v)} />
               </div>
@@ -231,7 +231,7 @@ export default function CustomerForm() {
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
-            className="h-12 rounded-xl border border-border font-medium text-danger hover:bg-red-50 disabled:opacity-50"
+            className="h-11 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
           >
             {remove.isPending ? 'Deleting…' : 'Delete Customer'}
           </button>
@@ -239,11 +239,11 @@ export default function CustomerForm() {
       </div>
 
       {/* Sticky save bar */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3">
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
         <button
           onClick={handleSave}
           disabled={pending}
-          className="mx-auto flex h-12 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          className="mx-auto flex h-12 w-full max-w-lg items-center justify-center rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
         >
           {pending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer'}
         </button>

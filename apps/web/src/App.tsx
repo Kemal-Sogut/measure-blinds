@@ -25,8 +25,8 @@ const Login = lazy(() => import('./pages/Login'));
 const Main = lazy(() => import('./pages/Main'));
 const CustomerList = lazy(() => import('./pages/customers/CustomerList'));
 const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
-const EstimateList = lazy(() => import('./pages/estimates/EstimateList'));
-const EstimateDetail = lazy(() => import('./pages/estimates/EstimateDetail'));
+const OrderList = lazy(() => import('./pages/orders/OrderList'));
+const OrderDetail = lazy(() => import('./pages/orders/OrderDetail'));
 const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
 const CompanyInfo = lazy(() => import('./pages/settings/CompanyInfo'));
 const Fabrics = lazy(() => import('./pages/settings/Fabrics'));
@@ -78,22 +78,27 @@ export default function App() {
 
             {/* Customers */}
             <Route path="/customers" element={guard(<Layout><CustomerList /></Layout>)} />
-            <Route path="/customers/new" element={guard(<CustomerForm />)} />
-            <Route path="/customers/:id" element={guard(<CustomerForm />)} />
+            <Route path="/customers/new" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
+            <Route path="/customers/:id" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
 
-            {/* Estimates */}
-            <Route path="/estimates" element={guard(<Layout><EstimateList /></Layout>)} />
-            <Route path="/estimates/new" element={guard(<EstimateDetail />)} />
-            <Route path="/estimates/:id" element={guard(<EstimateDetail />)} />
+            {/* Orders */}
+            <Route path="/orders" element={guard(<Layout><OrderList /></Layout>)} />
+            <Route path="/orders/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
+            <Route path="/orders/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
+
+            {/* Legacy /estimates paths redirect to /orders */}
+            <Route path="/estimates" element={guard(<Layout><OrderList /></Layout>)} />
+            <Route path="/estimates/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
+            <Route path="/estimates/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
 
             {/* Settings */}
             <Route path="/settings" element={guard(<Layout><SettingsIndex /></Layout>)} />
-            <Route path="/settings/company" element={guard(<CompanyInfo />)} />
-            <Route path="/settings/fabrics" element={guard(<Fabrics />)} />
-            <Route path="/settings/cassette" element={guard(<CassetteOptions />)} />
-            <Route path="/settings/controls" element={guard(<ControlOptions />)} />
-            <Route path="/settings/presets" element={guard(<PresetLineItems />)} />
-            <Route path="/settings/terms" element={guard(<TermsAndConditions />)} />
+            <Route path="/settings/company" element={guard(<Layout nav={false}><CompanyInfo /></Layout>)} />
+            <Route path="/settings/fabrics" element={guard(<Layout nav={false}><Fabrics /></Layout>)} />
+            <Route path="/settings/cassette" element={guard(<Layout nav={false}><CassetteOptions /></Layout>)} />
+            <Route path="/settings/controls" element={guard(<Layout nav={false}><ControlOptions /></Layout>)} />
+            <Route path="/settings/presets" element={guard(<Layout nav={false}><PresetLineItems /></Layout>)} />
+            <Route path="/settings/terms" element={guard(<Layout nav={false}><TermsAndConditions /></Layout>)} />
 
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />

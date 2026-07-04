@@ -2,23 +2,36 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Shared layout for section-level pages (Main, Customers, Estimates,
- * Settings hub). Renders the page content with enough bottom padding
- * to clear the fixed BottomNav, then the nav itself.
+ * Responsive shell for authenticated pages (redesign screens 02/07):
+ *   - lg+  → fixed 220px Sidebar; content shifts right, no bottom nav
+ *   - <lg  → BottomNav for section-level pages (`nav` prop, default
+ *            true); form/detail pages pass nav={false} because their
+ *            own sticky action bars occupy the same screen region.
  *
- * Detail and form pages are NOT wrapped in this layout — they use
- * their own sticky action bars in the same screen region, and nesting
- * both would stack two fixed bars.
+ * Every authenticated route wraps in Layout so desktop always shows
+ * the sidebar; `nav` only controls the mobile bottom bar.
  */
 
 import type { ReactNode } from 'react';
 import BottomNav from './BottomNav';
+import Sidebar from './Sidebar';
 
-export default function Layout({ children }: { children: ReactNode }) {
+export default function Layout({
+  children,
+  nav = true,
+}: {
+  children: ReactNode;
+  nav?: boolean;
+}) {
   return (
-    <div className="min-h-screen bg-surface-muted pb-20">
-      {children}
-      <BottomNav />
+    <div className="min-h-screen bg-surface-muted">
+      <Sidebar />
+      <div className={`lg:pl-[220px] ${nav ? 'pb-20 lg:pb-0' : ''}`}>{children}</div>
+      {nav && (
+        <div className="lg:hidden">
+          <BottomNav />
+        </div>
+      )}
     </div>
   );
 }

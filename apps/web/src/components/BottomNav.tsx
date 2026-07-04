@@ -32,8 +32,8 @@ const TABS: Tab[] = [
     d: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M15 3.13A4 4 0 0118 7a4 4 0 01-3 3.87',
   },
   {
-    to: '/estimates',
-    label: 'Estimates',
+    to: '/orders',
+    label: 'Orders',
     d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6',
   },
   {
@@ -56,8 +56,8 @@ export default function BottomNav() {
               to={tab.to}
               end={tab.end}
               className={({ isActive }) =>
-                `flex min-h-14 flex-col items-center justify-center gap-0.5 text-xs font-medium ${
-                  isActive ? 'text-brand-700' : 'text-text-muted'
+                `flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium ${
+                  isActive ? 'font-semibold text-brand-600' : 'text-text-muted'
                 }`
               }
             >

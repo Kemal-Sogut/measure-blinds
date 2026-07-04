@@ -10,3 +10,6 @@ memory-bank/
 knowledge/
 AI_GUIDELINES.md
 implementation_plan.md
+design/
+SESSION_HANDOFF.md
+supabase/

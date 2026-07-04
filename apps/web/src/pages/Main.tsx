@@ -2,104 +2,124 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Main dashboard — the consultant's landing screen.
+ * Dashboard (redesign screen 02): date line + time-of-day greeting,
+ * two live stat cards (active = draft+sent, awaiting payment), the
+ * three most recent orders with status chips, and the primary "New
+ * Order" action. Stats and the recent list come from the same orders
+ * queries the list page uses.
  *
- * Three large tap-friendly section buttons (Customers, Estimates,
- * Tools) with a gear icon in the top-right for Settings, per the plan.
- * Tools has no functionality yet (no phase defines it), so it renders
- * as a visibly disabled "coming soon" card rather than a dead link.
- * Also offers sign-out, since the shell has no other place for it.
+ * Sign-out lives on the Settings page per the design; the mobile
+ * gear lives in the bottom nav and the desktop sidebar.
  */
 
-import { Link } from 'react-router-dom';
-import { useAuth, useCompanySettings } from '../hooks';
+import { Link, useNavigate } from 'react-router-dom';
+import { format } from 'date-fns';
+import { useCompanySettings } from '../hooks';
+import { useOrderList } from '../hooks/useOrders';
+import StatusBadge from '../components/StatusBadge';
+import { Skeleton } from '../components/Skeleton';
 
-/** Reusable big navigation card used for the three main actions. */
-function BigButton({
-  to,
-  title,
-  hint,
-  disabled,
-}: {
-  to: string;
-  title: string;
-  hint: string;
-  disabled?: boolean;
-}) {
-  const cls =
-    'block rounded-2xl border border-border bg-surface-elevated p-6 shadow-sm transition-colors';
-  if (disabled) {
-    return (
-      <div className={`${cls} opacity-50`} aria-disabled="true">
-        <span className="block text-xl font-semibold text-text-primary">{title}</span>
-        <span className="block text-sm text-text-muted">{hint}</span>
-      </div>
-    );
-  }
-  return (
-    <Link to={to} className={`${cls} hover:bg-surface active:bg-surface-muted`}>
-      <span className="block text-xl font-semibold text-text-primary">{title}</span>
-      <span className="block text-sm text-text-muted">{hint}</span>
-    </Link>
-  );
+/** Time-of-day greeting: morning / afternoon / evening. */
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
 }
 
 export default function Main() {
   const { data: company } = useCompanySettings();
-  const signOut = useAuth((s) => s.signOut);
+  const activeQ = useOrderList('active', '');
+  const awaitingQ = useOrderList('awaiting_payment', '');
+  const navigate = useNavigate();
+
+  const activeCount = activeQ.data?.length;
+  const awaitingCount = awaitingQ.data?.length;
+
+  // Three most recent orders across both lists (created_at desc).
+  const recent = [...(activeQ.data ?? []), ...(awaitingQ.data ?? [])]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, 3);
 
   return (
-    <div className="mx-auto max-w-lg">
-      {/* Header with company identity + settings gear */}
-      <header className="flex items-center justify-between px-4 pb-2 pt-6">
-        <div className="flex items-center gap-3">
-          {company?.logo_url && (
-            <img
-              src={company.logo_url}
-              alt=""
-              className="h-10 w-10 rounded-lg border border-border-light object-contain"
-            />
-          )}
-          <h1 className="text-2xl font-bold text-text-primary">
-            {company?.company_name || 'Blinds Nisa'}
-          </h1>
-        </div>
-        <Link
-          to="/settings"
-          aria-label="Settings"
-          className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-surface-elevated"
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M12 15a3 3 0 100-6 3 3 0 000 6z"
-              stroke="currentColor"
-              strokeWidth="1.8"
-            />
-            <path
-              d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33 1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82 1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </Link>
-      </header>
+    <div className="mx-auto flex min-h-screen max-w-lg flex-col px-5 pt-6 lg:max-w-3xl lg:px-8 lg:pt-8">
+      <p className="mb-0.5 text-[13px] text-text-muted">{format(new Date(), 'EEEE, MMMM d')}</p>
+      <h1 className="mb-5 text-[22px] font-semibold text-text-primary">
+        {greeting()}
+        {company?.company_name ? `, ${company.company_name}` : ''}
+      </h1>
 
-      {/* Section buttons */}
-      <div className="flex flex-col gap-3 p-4">
-        <BigButton to="/customers" title="Customers" hint="Search, add, and edit customers" />
-        <BigButton to="/estimates" title="Estimates" hint="Create and track estimates" />
-        <BigButton to="/tools" title="Tools" hint="Coming soon" disabled />
+      {/* Stat cards */}
+      <div className="mb-6 flex gap-2.5">
+        <div className="flex-1 rounded-sm border border-border bg-surface p-3.5">
+          {activeCount === undefined ? (
+            <Skeleton className="mb-1 h-7 w-10" />
+          ) : (
+            <p className="mb-1 font-mono text-[22px] font-semibold leading-7 text-text-primary">
+              {activeCount}
+            </p>
+          )}
+          <p className="text-xs text-text-muted">Active (draft / sent)</p>
+        </div>
+        <div className="flex-1 rounded-sm border border-border bg-surface p-3.5">
+          {awaitingCount === undefined ? (
+            <Skeleton className="mb-1 h-7 w-10" />
+          ) : (
+            <p className="mb-1 font-mono text-[22px] font-semibold leading-7 text-warning">
+              {awaitingCount}
+            </p>
+          )}
+          <p className="text-xs text-text-muted">Awaiting payment</p>
+        </div>
       </div>
 
-      <div className="px-4 pt-4">
-        <button
-          onClick={() => void signOut()}
-          className="h-11 w-full rounded-xl text-sm font-medium text-text-muted hover:bg-surface-elevated"
+      {/* Recent orders */}
+      <div className="mb-2.5 flex items-center justify-between">
+        <p className="text-[13px] font-semibold text-text-primary">Recent orders</p>
+        <Link to="/orders" className="flex min-h-11 items-center text-[13px] font-medium text-brand-600">
+          View all
+        </Link>
+      </div>
+      <div className="flex flex-col gap-2">
+        {activeQ.isLoading && <Skeleton className="h-24 w-full" />}
+        {recent.length === 0 && !activeQ.isLoading && (
+          <p className="rounded-sm border border-border bg-surface p-4 text-sm text-text-muted">
+            No orders yet — create the first one below.
+          </p>
+        )}
+        {recent.map((order) => (
+          <button
+            key={order.id}
+            onClick={() => navigate(`/orders/${order.id}`)}
+            className="rounded-sm border border-border bg-surface px-3.5 py-3 text-left hover:bg-surface-muted"
+          >
+            <span className="mb-0.5 flex items-center justify-between">
+              <span className="font-mono text-[13px] font-semibold text-text-primary">
+                {order.order_number}
+              </span>
+              <StatusBadge status={order.status} />
+            </span>
+            <span className="block text-[13px] text-text-secondary">
+              {order.customer ? `${order.customer.first_name} ${order.customer.last_name}` : '—'}
+            </span>
+            <span className="mt-0.5 block font-mono text-[13px] font-semibold text-text-primary">
+              ${Number(order.total).toFixed(2)}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Primary action */}
+      <div className="mt-6 pb-6">
+        <Link
+          to="/orders/new"
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 lg:max-w-xs"
         >
-          Sign out
-        </button>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          New Order
+        </Link>
       </div>
     </div>
   );

@@ -2,19 +2,20 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Login page — email/password authentication via Supabase Auth.
- *
- * Mobile-optimized single-card form with ≥44px tap targets, inline
- * error display, and a pending state that disables double submits.
+ * Login page (redesign screen 01) — centered form on the page
+ * background: brand square with the blinds mark, email/password
+ * fields with the design focus ring, and the "provisioned by your
+ * admin" note (public self-registration is disabled project-side).
  * On success the auth store flips to 'authenticated' and the router
- * redirects to the page the user originally requested (or the
- * dashboard). Public self-registration is disabled project-side, so
- * this page intentionally has no sign-up link.
+ * returns to the originally requested page.
  */
 
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks';
+
+const INPUT_CLS =
+  'block h-[46px] w-full rounded-sm border border-border-input bg-surface px-3 text-[15px] text-text-primary';
 
 export default function Login() {
   const { status, signIn } = useAuth();
@@ -46,17 +47,19 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-surface-elevated p-8 shadow-lg">
-        <h1 className="mb-1 text-center text-2xl font-semibold text-text-primary">
-          Blinds Nisa
-        </h1>
-        <p className="mb-8 text-center text-sm text-text-muted">
-          Sign in to your estimator account
-        </p>
+    <div className="flex min-h-screen items-center justify-center bg-surface-muted px-6">
+      <div className="w-full max-w-[320px]">
+        <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-sm bg-brand-600">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="1" stroke="#fff" strokeWidth="1.75" />
+            <path d="M3 9h18M8 4v5M16 4v5" stroke="#fff" strokeWidth="1.75" strokeLinecap="round" />
+          </svg>
+        </div>
+        <h1 className="mb-1 text-center text-[22px] font-semibold text-text-primary">Blinds Nisa</h1>
+        <p className="mb-7 text-center text-sm text-text-muted">Sign in to your estimator account</p>
 
         <form onSubmit={handleSubmit} noValidate>
-          <label className="mb-1 block text-sm font-medium text-text-secondary" htmlFor="email">
+          <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="email">
             Email
           </label>
           <input
@@ -67,10 +70,10 @@ export default function Login() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mb-4 block h-12 w-full rounded-lg border border-border bg-surface px-3 text-base text-text-primary outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+            className={`${INPUT_CLS} mb-3.5`}
           />
 
-          <label className="mb-1 block text-sm font-medium text-text-secondary" htmlFor="password">
+          <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="password">
             Password
           </label>
           <input
@@ -80,11 +83,11 @@ export default function Login() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mb-6 block h-12 w-full rounded-lg border border-border bg-surface px-3 text-base text-text-primary outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-200"
+            className={`${INPUT_CLS} mb-[22px]`}
           />
 
           {error && (
-            <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-danger">
+            <p role="alert" className="mb-4 rounded-sm bg-danger-tint px-3 py-2 text-sm text-danger">
               {error}
             </p>
           )}
@@ -92,11 +95,15 @@ export default function Login() {
           <button
             type="submit"
             disabled={pending || !email || !password}
-            className="h-12 w-full rounded-lg bg-brand-600 text-base font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="h-[46px] w-full rounded-sm bg-brand-600 text-[15px] font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {pending ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
+
+        <p className="mt-4 text-center text-xs text-text-muted">
+          Field access is provisioned by your admin — no self sign-up.
+        </p>
       </div>
     </div>
   );

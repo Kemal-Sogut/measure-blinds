@@ -6,20 +6,21 @@
  * scripted fake Supabase client. Pins:
  *   - unknown/malformed tokens → 404 before any DB access pattern leak
  *   - defensive expiry (sent + past expiry reads as expired, 410 on confirm)
- *   - confirm succeeds exactly once (second attempt → 409)
+ *   - confirm succeeds exactly once (second attempt → 409), moving the
+ *     order sent → awaiting_payment
  *   - the in-memory rate limiter returns 429 after the budget is spent
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 interface FakeDb {
-  estimate: Record<string, unknown> | null;
+  order: Record<string, unknown> | null;
   updated: boolean;
   calls: string[];
 }
-const db: FakeDb = { estimate: null, updated: false, calls: [] };
+const db: FakeDb = { order: null, updated: false, calls: [] };
 
-/** Fake supabase: estimates reads return db.estimate; updates flip status. */
+/** Fake supabase: orders reads return db.order; updates flip status. */
 function makeBuilder(table: string) {
   const state = { table, op: 'select', filteredBySentStatus: false };
   const builder: Record<string, unknown> = {};
@@ -37,19 +38,19 @@ function makeBuilder(table: string) {
     if (state.table === 'company_settings') {
       return { data: { company_name: 'Blinds Nisa', logo_url: null, email: 'biz@example.com', phone: '', address: '', hst_number: 'HST1' } };
     }
-    if (state.table !== 'estimates') return { data: null };
+    if (state.table !== 'orders') return { data: null };
     if (state.op === 'update') {
       // Mimic the status='sent' guard: only update when still sent.
-      if (state.filteredBySentStatus && (db.estimate as { status?: string })?.status !== 'sent') {
+      if (state.filteredBySentStatus && (db.order as { status?: string })?.status !== 'sent') {
         return { data: null };
       }
-      if (db.estimate) {
-        db.estimate = { ...db.estimate, status: 'confirmed' };
+      if (db.order) {
+        db.order = { ...db.order, status: 'awaiting_payment' };
         db.updated = true;
       }
-      return { data: db.estimate };
+      return { data: db.order };
     }
-    return { data: db.estimate };
+    return { data: db.order };
   };
   builder.single = async () => ({ ...resolve(), error: null });
   builder.maybeSingle = builder.single;
@@ -84,13 +85,13 @@ function req(path: string, method = 'GET', ip?: string) {
   );
 }
 
-/** A future-dated sent estimate with customer + items. */
-function sentEstimate(): Record<string, unknown> {
+/** A future-dated sent order with customer + items. */
+function sentOrder(): Record<string, unknown> {
   return {
     id: 'e1',
     status: 'sent',
     order_number: 'F0307-126',
-    estimate_date: '2026-07-03',
+    order_date: '2026-07-03',
     expiry_date: '2099-01-01',
     subtotal: 100, discount_amount: 0, taxable_amount: 100,
     tax_rate: 0.13, tax_amount: 13, total: 113,
@@ -103,7 +104,7 @@ function sentEstimate(): Record<string, unknown> {
 }
 
 beforeEach(() => {
-  db.estimate = sentEstimate();
+  db.order = sentOrder();
   db.updated = false;
   db.calls = [];
 });
@@ -126,40 +127,78 @@ describe('GET /public/estimate/:token', () => {
   });
 
   it('404 for unknown token', async () => {
-    db.estimate = null;
+    db.order = null;
     const res = await req(`/estimate/${TOKEN}`);
     expect(res.status).toBe(404);
   });
 
-  it('defensively expires a stale sent estimate on read', async () => {
-    db.estimate = { ...sentEstimate(), expiry_date: '2020-01-01' };
+  it('defensively expires a stale sent order on read', async () => {
+    db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
     const res = await req(`/estimate/${TOKEN}`);
     const body = (await res.json()) as { data: { status: string } };
     expect(body.data.status).toBe('expired');
-    expect(db.calls).toContain('estimates.update');
+    expect(db.calls).toContain('orders.update');
   });
 });
 
 describe('POST /public/estimate/:token/confirm', () => {
-  it('confirms a sent estimate exactly once, then 409', async () => {
+  it('confirms a sent order exactly once → awaiting_payment, then 409', async () => {
     const first = await req(`/estimate/${TOKEN}/confirm`, 'POST');
     expect(first.status).toBe(200);
-    expect((db.estimate as { status: string }).status).toBe('confirmed');
+    expect((db.order as { status: string }).status).toBe('awaiting_payment');
 
     const second = await req(`/estimate/${TOKEN}/confirm`, 'POST');
     expect(second.status).toBe(409);
   });
 
-  it('410 for an expired estimate', async () => {
-    db.estimate = { ...sentEstimate(), expiry_date: '2020-01-01' };
+  it('410 for an expired order', async () => {
+    db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
     const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
     expect(res.status).toBe(410);
   });
 
-  it('400 for a draft estimate (no token should exist, but belt & braces)', async () => {
-    db.estimate = { ...sentEstimate(), status: 'draft' };
+  it('409 for a draft order (no token should exist, but belt & braces)', async () => {
+    db.order = { ...sentOrder(), status: 'draft' };
     const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /public/estimate/:token/install/confirm', () => {
+  it('confirms a proposed installation time', async () => {
+    db.order = {
+      ...sentOrder(),
+      status: 'ready',
+      install_status: 'proposed',
+      install_date: '2026-08-07',
+      install_time: '09:00:00',
+    };
+    const res = await req(`/estimate/${TOKEN}/install/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { install_status: string } };
+    expect(body.data.install_status).toBe('confirmed');
+  });
+
+  it('409 when there is no active proposal', async () => {
+    db.order = { ...sentOrder(), status: 'ready', install_status: 'unscheduled' };
+    const res = await req(`/estimate/${TOKEN}/install/confirm`, 'POST');
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /public/estimate/:token/install/request', () => {
+  it('records a change request with the customer note', async () => {
+    db.order = {
+      ...sentOrder(),
+      status: 'ready',
+      install_status: 'proposed',
+      install_date: '2026-08-07',
+      install_time: '09:00:00',
+    };
+    const res = await req(`/estimate/${TOKEN}/install/request`, 'POST');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { install_status: string } };
+    expect(body.data.install_status).toBe('change_requested');
   });
 });
 

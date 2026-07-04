@@ -44,7 +44,7 @@ interface PublicLineItem {
 interface PublicEstimate {
   status: string;
   order_number: string;
-  estimate_date: string;
+  order_date: string;
   expiry_date: string;
   subtotal: number;
   discount_amount: number;
@@ -52,6 +52,9 @@ interface PublicEstimate {
   tax_amount: number;
   total: number;
   terms: string;
+  install_status: 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
+  install_date: string | null;
+  install_time: string | null;
   customer: {
     first_name: string;
     last_name: string;
@@ -90,6 +93,31 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
   return { title: li.description || 'Item', attrs: [] };
 }
 
+/** Formats "HH:MM[:SS]" (24h) as a 12-hour clock string, e.g. "2:00 PM". */
+function to12Hour(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const period = h < 12 ? 'AM' : 'PM';
+  const hour12 = ((h + 11) % 12) + 1;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
+/**
+ * Human phrase for the proposed installation window, e.g.
+ * "between 2:00 PM and 3:00 PM on Friday, August 7, 2026".
+ */
+function installWindow(dateIso: string, time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const end = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  const [y, mo, d] = dateIso.split('-').map(Number);
+  const dateText = new Date(y, mo - 1, d).toLocaleDateString(undefined, {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  return `between ${to12Hour(time)} and ${to12Hour(end)} on ${dateText}`;
+}
+
 /** Centered message card used by the terminal states. */
 function Message({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
@@ -110,6 +138,12 @@ export default function CustomerView() {
   const [confirming, setConfirming] = useState(false);
   const [justConfirmed, setJustConfirmed] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+
+  // Installation-time proposal response state.
+  const [installBusy, setInstallBusy] = useState(false);
+  const [installError, setInstallError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const [requestNote, setRequestNote] = useState('');
 
   // Load the public estimate once on mount.
   useEffect(() => {
@@ -139,9 +173,9 @@ export default function CustomerView() {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       if (res.ok) {
         setJustConfirmed(true);
-        setEstimate((e) => (e ? { ...e, status: 'confirmed' } : e));
+        setEstimate((e) => (e ? { ...e, status: 'awaiting_payment' } : e));
       } else if (res.status === 409) {
-        setEstimate((e) => (e ? { ...e, status: 'confirmed' } : e));
+        setEstimate((e) => (e ? { ...e, status: 'awaiting_payment' } : e));
       } else {
         setConfirmError(body?.error ?? 'Confirmation failed. Please try again.');
       }
@@ -149,6 +183,44 @@ export default function CustomerView() {
       setConfirmError('Network problem — please try again.');
     } finally {
       setConfirming(false);
+    }
+  }
+
+  /** Customer confirms the proposed installation window. */
+  async function handleInstallConfirm() {
+    setInstallBusy(true);
+    setInstallError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/install/confirm`, {
+        method: 'POST',
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (res.ok) setEstimate((e) => (e ? { ...e, install_status: 'confirmed' } : e));
+      else setInstallError(body?.error ?? 'Could not confirm. Please try again.');
+    } catch {
+      setInstallError('Network problem — please try again.');
+    } finally {
+      setInstallBusy(false);
+    }
+  }
+
+  /** Customer requests a different installation time (optional note). */
+  async function handleInstallRequest() {
+    setInstallBusy(true);
+    setInstallError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/install/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: requestNote }),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (res.ok) setEstimate((e) => (e ? { ...e, install_status: 'change_requested' } : e));
+      else setInstallError(body?.error ?? 'Could not send your request. Please try again.');
+    } catch {
+      setInstallError('Network problem — please try again.');
+    } finally {
+      setInstallBusy(false);
     }
   }
 
@@ -190,7 +262,106 @@ export default function CustomerView() {
     );
   }
 
-  if (estimate.status === 'confirmed') {
+  // Installation-time proposal flow (order is ready and a time was
+  // proposed). Takes precedence over the generic "already confirmed"
+  // screen since the order is no longer in 'sent'.
+  if (estimate.install_status !== 'unscheduled') {
+    const windowText =
+      estimate.install_date && estimate.install_time
+        ? installWindow(estimate.install_date, estimate.install_time)
+        : null;
+
+    if (estimate.install_status === 'confirmed') {
+      return (
+        <Message
+          icon="🗓️"
+          title="Installation time confirmed"
+          body={
+            windowText
+              ? `Thanks! We'll see you ${windowText}.`
+              : "Thanks! Your installation time is confirmed."
+          }
+        />
+      );
+    }
+    if (estimate.install_status === 'change_requested') {
+      return (
+        <Message
+          icon="🕑"
+          title="Request received"
+          body="Thanks — we've received your request for a different time and will be in touch to arrange it."
+        />
+      );
+    }
+
+    // install_status === 'proposed' → let the customer confirm or ask for another time.
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
+        <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
+          <div className="mb-3 text-4xl">🗓️</div>
+          <h1 className="mb-2 text-xl font-semibold text-text-primary">Installation Time</h1>
+          <p className="mb-6 text-text-secondary">
+            {windowText
+              ? `We will be there ${windowText} if that works for you.`
+              : 'We have a proposed installation time for you.'}
+          </p>
+
+          {installError && <p className="mb-3 text-sm text-danger">{installError}</p>}
+
+          {!requesting ? (
+            <div className="flex flex-col gap-2.5">
+              <button
+                onClick={handleInstallConfirm}
+                disabled={installBusy}
+                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {installBusy ? 'Confirming…' : 'Confirm this time'}
+              </button>
+              <button
+                onClick={() => setRequesting(true)}
+                disabled={installBusy}
+                className="h-11 w-full rounded-xl border border-border bg-surface text-sm font-medium text-text-secondary disabled:opacity-50"
+              >
+                Request another time
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5 text-left">
+              <label className="text-sm font-medium text-text-secondary" htmlFor="note">
+                What time would suit you better?
+              </label>
+              <textarea
+                id="note"
+                value={requestNote}
+                onChange={(e) => setRequestNote(e.target.value)}
+                rows={3}
+                placeholder="e.g. Any weekday morning, or after 3pm on Fridays"
+                className="w-full rounded-xl border border-border bg-surface p-3 text-sm"
+              />
+              <button
+                onClick={handleInstallRequest}
+                disabled={installBusy}
+                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {installBusy ? 'Sending…' : 'Send request'}
+              </button>
+              <button
+                onClick={() => setRequesting(false)}
+                disabled={installBusy}
+                className="h-10 w-full text-sm font-medium text-text-muted disabled:opacity-50"
+              >
+                Back
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Anything past 'sent' (awaiting_payment / in_progress / ready / installed)
+  // with no active installation proposal has already been confirmed.
+  if (estimate.status !== 'sent') {
     return (
       <Message
         icon="✅"
@@ -222,8 +393,10 @@ export default function CustomerView() {
         {/* Estimate meta */}
         <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-sm">
           <div className="flex justify-between">
-            <span className="font-semibold text-text-primary">Estimate {estimate.order_number}</span>
-            <span className="text-text-muted">{estimate.estimate_date}</span>
+            <span className="font-semibold text-text-primary">
+              Estimate <span className="font-mono">{estimate.order_number}</span>
+            </span>
+            <span className="text-text-muted">{estimate.order_date}</span>
           </div>
           <p className="mt-1 text-text-secondary">
             For {cust.first_name} {cust.last_name}
@@ -242,7 +415,7 @@ export default function CustomerView() {
                 <div className="flex items-baseline justify-between gap-2 text-sm">
                   <span className="font-medium text-text-primary">{title}</span>
                   <span className="whitespace-nowrap text-text-muted">× {li.quantity}</span>
-                  <span className="w-20 text-right font-medium text-text-primary">
+                  <span className="w-20 text-right font-mono font-medium text-text-primary">
                     ${Number(li.line_total).toFixed(2)}
                   </span>
                 </div>
@@ -285,7 +458,7 @@ export default function CustomerView() {
           </div>
           <div className="mt-2 flex justify-between border-t border-border-light pt-2 text-base font-semibold text-text-primary">
             <span>Total</span>
-            <span>${Number(estimate.total).toFixed(2)}</span>
+            <span className="font-mono">${Number(estimate.total).toFixed(2)}</span>
           </div>
         </section>
 

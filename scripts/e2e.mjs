@@ -41,7 +41,7 @@ const API = webEnv.VITE_API_URL || 'http://localhost:8787';
 const EMAIL = `e2e-${Date.now()}@example.test`;
 const PASS = 'E2e-Temp-Passw0rd!';
 let failures = 0;
-const created = { userId: null, customerId: null, estimateIds: [] };
+const created = { userId: null, customerId: null, orderIds: [] };
 
 function check(cond, name, extra = '') {
   console.log(`${cond ? '  PASS' : '✗ FAIL'}  ${name}${cond ? '' : ` — ${extra}`}`);
@@ -127,7 +127,7 @@ async function main() {
   const tax = Math.round(taxable * 13) / 100;
   const total = Math.round((taxable + tax) * 100) / 100;
 
-  const est = await api('/api/estimates', {
+  const est = await api('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
       customer_id: created.customerId,
@@ -145,14 +145,14 @@ async function main() {
   });
   check(est.status === 201, 'create estimate', JSON.stringify(est.body));
   const e = est.body.data;
-  created.estimateIds.push(e.id);
+  created.orderIds.push(e.id);
   check(Number(e.subtotal) === sub, `server subtotal ${sub}`, e.subtotal);
   check(Number(e.total) === total, `server total ${total} (discount before 13% HST)`, e.total);
   check(/^[SMTWF]\d{4}-\d+\d{2}$/.test(e.order_number), 'order number format', e.order_number);
   check(e.line_items?.[0]?.fabric_name === fabric.name, 'option snapshots stored');
 
   // ── Tamper rejection ─────────────────────────────────────────
-  const tamper = await api('/api/estimates', {
+  const tamper = await api('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
       customer_id: created.customerId,
@@ -166,16 +166,16 @@ async function main() {
   check(tamper.status === 400, 'client-supplied price rejected with 400', tamper.status);
 
   // ── PDF ──────────────────────────────────────────────────────
-  const pdf = await api(`/api/estimates/${e.id}/pdf`);
+  const pdf = await api(`/api/orders/${e.id}/pdf`);
   const magic = new TextDecoder().decode(new Uint8Array(pdf.body).slice(0, 5));
   check(pdf.status === 200 && magic === '%PDF-', 'PDF endpoint returns a real PDF');
 
   // ── Send failure leaves the estimate untouched ───────────────
-  const send = await api(`/api/estimates/${e.id}/send`, { method: 'POST' });
+  const send = await api(`/api/orders/${e.id}/send`, { method: 'POST' });
   const resendConfigured = send.status === 200;
   if (!resendConfigured) {
     check(send.status === 502, 'send fails cleanly without a Resend key', send.status);
-    const after = await api(`/api/estimates/${e.id}`);
+    const after = await api(`/api/orders/${e.id}`);
     check(
       after.body.data.status === 'draft' && after.body.data.public_token === null,
       'failed send leaves status/token untouched'
@@ -186,7 +186,7 @@ async function main() {
 
   // ── Public flow (simulate sent state directly in the DB) ─────
   const token = crypto.randomUUID();
-  await admin(`/rest/v1/estimates?id=eq.${e.id}`, {
+  await admin(`/rest/v1/orders?id=eq.${e.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ status: 'sent', public_token: token, terms_snapshot: 'E2E terms' }),
   });
@@ -203,18 +203,18 @@ async function main() {
   check(confirm2.status === 409, 'double confirm rejected with 409', confirm2.status);
 
   // ── Defensive expiry ─────────────────────────────────────────
-  const est2 = await api('/api/estimates', {
+  const est2 = await api('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
       customer_id: created.customerId,
-      estimate_date: '2026-01-01',
+      order_date: '2026-01-01',
       expiry_date: '2026-01-02',
       line_items: [{ item_type: 'custom', description: 'old', quantity: 1, unit_price: 10 }],
     }),
   });
-  created.estimateIds.push(est2.body.data.id);
+  created.orderIds.push(est2.body.data.id);
   const token2 = crypto.randomUUID();
-  await admin(`/rest/v1/estimates?id=eq.${est2.body.data.id}`, {
+  await admin(`/rest/v1/orders?id=eq.${est2.body.data.id}`, {
     method: 'PATCH',
     body: JSON.stringify({ status: 'sent', public_token: token2 }),
   });
@@ -234,8 +234,8 @@ async function main() {
 
 /** Deletes everything the test created, even after failures. */
 async function cleanup() {
-  for (const id of created.estimateIds) {
-    await admin(`/rest/v1/estimates?id=eq.${id}`, { method: 'DELETE' });
+  for (const id of created.orderIds) {
+    await admin(`/rest/v1/orders?id=eq.${id}`, { method: 'DELETE' });
   }
   if (created.customerId) {
     await admin(`/rest/v1/customers?id=eq.${created.customerId}`, { method: 'DELETE' });

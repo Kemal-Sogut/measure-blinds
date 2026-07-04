@@ -61,7 +61,7 @@ export async function sendEmail(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: env.RESEND_FROM || 'Blinds Nisa <onboarding@resend.dev>',
+      from: env.RESEND_FROM || 'Blinds Nisa <blindsnisa@gmail.com>',
       to: [req.to],
       subject: req.subject,
       html: req.html,
@@ -115,6 +115,89 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
       </p>
       <p style="margin:0;color:#868e96;font-size:12px">If the button doesn't work, copy this link: ${url}</p>
     </div>
+  </div>
+</body></html>`;
+}
+
+/** Inputs for the customer-facing installation-time proposal email. */
+export interface InstallationProposalInputs {
+  companyName: string;
+  customerFirstName: string;
+  orderNumber: string;
+  /** e.g. "Friday, August 7, 2026" */
+  dateText: string;
+  /** Window start, e.g. "2:00 PM" */
+  startText: string;
+  /** Window end (start + 1h), e.g. "3:00 PM" */
+  endText: string;
+  /** Public page where the customer confirms or requests another time */
+  viewUrl: string;
+}
+
+/**
+ * Builds the branded installation-time proposal email. Presents the
+ * one-hour arrival window exactly as requested ("We will be there
+ * between {start} and {end} on {date} if that works for you.") with a
+ * CTA to the public page to confirm or request another time. All
+ * dynamic strings are HTML-escaped.
+ */
+export function buildInstallationProposalHtml(i: InstallationProposalInputs): string {
+  const company = escapeHtml(i.companyName);
+  const name = escapeHtml(i.customerFirstName);
+  const order = escapeHtml(i.orderNumber);
+  const dateText = escapeHtml(i.dateText);
+  const startText = escapeHtml(i.startText);
+  const endText = escapeHtml(i.endText);
+  const url = escapeHtml(i.viewUrl);
+  return `<!doctype html>
+<html><body style="margin:0;background:#f1f3f5;font-family:Arial,Helvetica,sans-serif;color:#212529">
+  <div style="max-width:560px;margin:0 auto;padding:24px">
+    <div style="background:#4c6ef5;border-radius:12px 12px 0 0;padding:20px 24px">
+      <h1 style="margin:0;color:#ffffff;font-size:20px">${company}</h1>
+    </div>
+    <div style="background:#ffffff;border-radius:0 0 12px 12px;padding:24px">
+      <p style="margin:0 0 16px">Hi ${name},</p>
+      <p style="margin:0 0 16px">Your order <strong>${order}</strong> is ready for installation. We&apos;d like to propose a time to come by.</p>
+      <p style="margin:0 0 20px;font-size:16px">We will be there between <strong>${startText}</strong> and <strong>${endText}</strong> on <strong>${dateText}</strong> if that works for you.</p>
+      <p style="text-align:center;margin:0 0 20px">
+        <a href="${url}" style="display:inline-block;background:#4c6ef5;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:bold">Confirm or request another time</a>
+      </p>
+      <p style="margin:0;color:#868e96;font-size:12px">If the button doesn't work, copy this link: ${url}</p>
+    </div>
+  </div>
+</body></html>`;
+}
+
+/** Inputs for the internal "installation response" notification. */
+export interface InstallationNoticeInputs {
+  orderNumber: string;
+  customerName: string;
+  /** true = confirmed the proposed time; false = requested another */
+  confirmed: boolean;
+  /** the customer's requested-change note (when confirmed = false) */
+  note?: string;
+}
+
+/**
+ * Builds the short internal notification sent to the business when a
+ * customer responds to an installation-time proposal. Escaped.
+ */
+export function buildInstallationNoticeHtml(i: InstallationNoticeInputs): string {
+  const order = escapeHtml(i.orderNumber);
+  const name = escapeHtml(i.customerName);
+  const note = escapeHtml(i.note ?? '');
+  const headline = i.confirmed
+    ? `✅ Installation time confirmed`
+    : `🕑 New installation time requested`;
+  const body = i.confirmed
+    ? `<strong>${name}</strong> confirmed the proposed installation time for order <strong>${order}</strong>.`
+    : `<strong>${name}</strong> requested a different installation time for order <strong>${order}</strong>.` +
+      (note ? `<br>Note: <em>${note}</em>` : '');
+  return `<!doctype html>
+<html><body style="margin:0;font-family:Arial,Helvetica,sans-serif;color:#212529">
+  <div style="max-width:560px;margin:0 auto;padding:24px">
+    <h2 style="margin:0 0 12px">${headline}</h2>
+    <p style="margin:0 0 8px">${body}</p>
   </div>
 </body></html>`;
 }

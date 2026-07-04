@@ -45,23 +45,63 @@ export interface Customer {
   updated_at: string;
 }
 
-/** Estimate status lifecycle: draft → sent → confirmed | expired. */
-export type EstimateStatus = 'draft' | 'sent' | 'confirmed' | 'expired';
+/**
+ * Order lifecycle:
+ *   draft → sent → awaiting_payment → in_progress → ready → installed
+ * plus `expired` for a sent estimate whose validity date lapsed.
+ *
+ * Transitions: send estimate (→sent), customer/user confirm
+ * (→awaiting_payment), first payment (→in_progress), user marks the
+ * goods ready (→ready), user marks the job done (→installed). A
+ * confirmation is reversible by the user only (awaiting_payment → sent)
+ * until a payment is recorded.
+ */
+export type OrderStatus =
+  | 'draft'
+  | 'sent'
+  | 'awaiting_payment'
+  | 'in_progress'
+  | 'ready'
+  | 'installed'
+  | 'expired';
+
+/**
+ * Installation scheduling sub-state, independent of `OrderStatus`.
+ * `unscheduled` → user proposes → `proposed` → customer either
+ * `confirmed` the time or `change_requested` a different one.
+ */
+export type InstallStatus = 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
 
 /** Discount entry mode: fixed dollar amount or percentage of subtotal. */
 export type DiscountType = 'fixed' | 'percent';
 
 /**
- * Estimate record with full pricing breakdown and status tracking.
- * All money fields are authoritative server-computed values
- * (discount applied before 13% HST). Mirrors the `estimates` table.
+ * A single payment recorded against an order (immutable ledger row).
+ * The order's outstanding balance is derived as `total − Σ amount`,
+ * never stored. Mirrors the `payments` table.
  */
-export interface Estimate {
+export interface Payment {
+  id: string;
+  order_id: string;
+  amount: number;
+  paid_on: string;
+  note: string;
+  created_at: string;
+}
+
+/**
+ * Order record with full pricing breakdown, lifecycle status, and
+ * payment ledger. An "estimate"/"invoice" is just the PDF/email we
+ * generate about this order. All money fields are authoritative
+ * server-computed values (discount applied before 13% HST). Mirrors
+ * the `orders` table.
+ */
+export interface Order {
   id: string;
   order_number: string;
   customer_id: string;
-  status: EstimateStatus;
-  estimate_date: string;
+  status: OrderStatus;
+  order_date: string;
   expiry_date: string;
   subtotal: number;
   discount_type: DiscountType;
@@ -75,10 +115,20 @@ export interface Estimate {
   public_token: string | null;
   sent_at: string | null;
   confirmed_at: string | null;
+  /** Installation scheduling (set once the order is `ready`). */
+  install_status: InstallStatus;
+  install_date: string | null;
+  install_time: string | null;
+  install_confirmed_at: string | null;
+  install_response_note: string;
   created_at: string;
   updated_at: string;
-  /** Joined data — populated when fetching a single estimate */
+  /** Server-derived sum of `payments` (present on detail/list reads). */
+  amount_paid?: number;
+  /** Joined data — populated when fetching a single order */
   line_items?: LineItem[];
+  /** Joined data — the order's payment ledger, oldest-first */
+  payments?: Payment[];
   /** Joined data — populated when fetching with customer info */
   customer?: Customer;
 }
@@ -87,14 +137,14 @@ export interface Estimate {
 export type LineItemType = 'blind' | 'custom' | 'preset';
 
 /**
- * Line item within an estimate. Mirrors the `line_items` table:
+ * Line item within an order. Mirrors the `line_items` table:
  * blind items use panels/height + snapshotted option names & prices
  * (frozen at save time so later catalog edits never change history);
  * preset/custom items use description + unit_price.
  */
 export interface LineItem {
   id: string;
-  estimate_id: string;
+  order_id: string;
   item_type: LineItemType;
   position: number;
   room_name: string;
