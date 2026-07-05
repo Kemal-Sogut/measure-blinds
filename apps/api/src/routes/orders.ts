@@ -956,6 +956,34 @@ app.delete('/:id/payments/:paymentId', async (c) => {
   return c.json({ data });
 });
 
+/**
+ * Moves an awaiting-payment order into in_progress WITHOUT a payment.
+ * (Recording the first payment also does this automatically; this is the
+ * manual path when work starts before any money is collected.)
+ */
+app.post('/:id/in-progress', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, status')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (existing.status !== 'awaiting_payment') {
+    return c.json(
+      { error: `Only an awaiting-payment order can be started (this one is ${existing.status}).` },
+      409
+    );
+  }
+  const { error } = await sb.from('orders').update({ status: 'in_progress' }).eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
 /** Marks an in-progress order as ready (goods ready to install). */
 app.post('/:id/ready', async (c) => {
   const sb = createSupabaseAdmin(c.env);

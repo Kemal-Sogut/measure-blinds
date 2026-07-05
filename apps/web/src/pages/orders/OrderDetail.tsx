@@ -39,6 +39,7 @@ import {
   useSendInvoice,
   useConfirmOrder,
   useUnconfirmOrder,
+  useMarkInProgress,
   useMarkReady,
   useMarkInstalled,
   useProposeInstallation,
@@ -244,6 +245,7 @@ export default function OrderDetail() {
   const sendInvoiceMut = useSendInvoice();
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
+  const inProgressMut = useMarkInProgress();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
   const proposeMut = useProposeInstallation();
@@ -723,7 +725,7 @@ export default function OrderDetail() {
   const ADVANCE_TARGETS: Record<string, OrderStatus[]> = {
     draft: ['sent', 'awaiting_payment'],
     sent: ['awaiting_payment'],
-    awaiting_payment: ['ready', 'installed'],
+    awaiting_payment: ['in_progress', 'ready', 'installed'],
     in_progress: ['ready', 'installed'],
     ready: ['installed'],
   };
@@ -744,6 +746,8 @@ export default function OrderDetail() {
         await sendMut.mutateAsync({ id });
       } else if (target === 'awaiting_payment') {
         await confirmMut.mutateAsync(id);
+      } else if (target === 'in_progress') {
+        await inProgressMut.mutateAsync(id);
       } else if (target === 'ready') {
         await readyMut.mutateAsync(id);
       } else if (target === 'installed') {
@@ -1039,13 +1043,12 @@ export default function OrderDetail() {
                     !canAdvanceTo(stage.key) ||
                     status === 'expired' ||
                     sendMut.isPending || confirmMut.isPending ||
+                    inProgressMut.isPending ||
                     readyMut.isPending || installedMut.isPending
                   }
                   title={
                     !canAdvanceTo(stage.key)
-                      ? stage.key === 'in_progress'
-                        ? 'Reached by recording a payment'
-                        : 'Confirm the order first'
+                      ? 'Confirm the order first'
                       : `Advance to ${stage.label}`
                   }
                   aria-label={`Advance to ${stage.label}`}

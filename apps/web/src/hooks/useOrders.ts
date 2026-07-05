@@ -201,6 +201,11 @@ export function useUnconfirmOrder() {
   return useLifecycleMutation((id) => `/api/orders/${id}/unconfirm`);
 }
 
+/** Move an awaiting-payment order to in-progress without a payment. */
+export function useMarkInProgress() {
+  return useLifecycleMutation((id) => `/api/orders/${id}/in-progress`);
+}
+
 /** Mark an in-progress order ready (goods ready to install). */
 export function useMarkReady() {
   return useLifecycleMutation((id) => `/api/orders/${id}/ready`);
