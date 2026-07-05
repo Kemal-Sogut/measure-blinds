@@ -23,7 +23,7 @@
  * lib/totals; the Worker recomputes authoritatively on save.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
@@ -146,6 +146,86 @@ function installWindowText(time: string): string {
   const end = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   return `${to12Hour(`${h}:${m}`)} – ${to12Hour(end)}`;
 }
+
+/** 16px action-button icon; paths inherit the button's text colour. */
+function ActionIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      {children}
+    </svg>
+  );
+}
+
+/** Named icons, one per action, reused across the action panel. */
+const ICONS = {
+  save: (
+    <ActionIcon>
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </ActionIcon>
+  ),
+  send: (
+    <ActionIcon>
+      <path d="m22 2-7 20-4-9-9-4Z" />
+      <path d="M22 2 11 13" />
+    </ActionIcon>
+  ),
+  confirm: (
+    <ActionIcon>
+      <path d="M20 6 9 17l-5-5" />
+    </ActionIcon>
+  ),
+  payment: (
+    <ActionIcon>
+      <line x1="12" x2="12" y1="2" y2="22" />
+      <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+    </ActionIcon>
+  ),
+  ready: (
+    <ActionIcon>
+      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
+      <path d="m3.3 7 8.7 5 8.7-5" />
+      <path d="M12 22V12" />
+    </ActionIcon>
+  ),
+  install: (
+    <ActionIcon>
+      <rect width="18" height="18" x="3" y="4" rx="2" />
+      <path d="M3 10h18M8 2v4M16 2v4" />
+    </ActionIcon>
+  ),
+  installed: (
+    <ActionIcon>
+      <path d="M21.8 10A10 10 0 1 1 17 3.3" />
+      <path d="m9 11 3 3L22 4" />
+    </ActionIcon>
+  ),
+  reverse: (
+    <ActionIcon>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </ActionIcon>
+  ),
+  download: (
+    <ActionIcon>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M12 15V3" />
+    </ActionIcon>
+  ),
+};
 
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
@@ -985,11 +1065,21 @@ export default function OrderDetail() {
     </section>
   );
 
-  /** Status-aware action buttons (mobile bar + desktop rail). */
+  /**
+   * Status-aware action buttons (mobile bar + desktop rail).
+   *
+   * Layout: one primary button that is the key action for the current
+   * stage, any stage-specific secondary actions, then a final 50/50 row
+   * of Send + Download (Send is omitted in a saved Draft, where sending
+   * the estimate is already the primary action). Every button carries an
+   * icon reflecting its action.
+   */
   const actions = (vertical: boolean) => {
-    const box = vertical ? 'flex flex-col gap-2.5' : 'flex flex-wrap gap-2';
-    const primary = `${vertical ? 'h-[46px]' : 'h-12 min-w-[140px] flex-[2]'} rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40`;
-    const secondary = `${vertical ? 'h-10' : 'h-12 min-w-[120px] flex-1'} rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40`;
+    const box = vertical ? 'flex flex-col gap-2.5' : 'flex flex-col gap-2';
+    const shared = 'w-full inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
+    const primary = `${vertical ? 'h-[46px]' : 'h-12'} ${shared} bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700`;
+    const secondary = `${vertical ? 'h-10' : 'h-11'} ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
+    const half = `${vertical ? 'h-10' : 'h-11'} inline-flex flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40`;
 
     const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
     const sendLabel = isInvoice
@@ -997,123 +1087,155 @@ export default function OrderDetail() {
       : status === 'sent'
         ? 'Resend Estimate'
         : 'Send Estimate';
-    // Send + Download are always present and mode-labelled. Estimate mode
-    // additionally needs a customer + at least one line item to send.
-    const sendDisabled =
-      sendBusy || saving || !customer || (!isInvoice && items.length === 0);
+    const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
+
     const sendBtn = (cls: string) => (
       <button onClick={openSend} disabled={sendDisabled} className={cls}>
+        {ICONS.send}
         {sendBusy ? 'Sending…' : sendLabel}
       </button>
     );
-    const pdfBtn = (
-      <button onClick={handlePdf} disabled={(!id && !customer) || saving} className={secondary}>
+    const downloadBtn = (cls: string) => (
+      <button onClick={handlePdf} disabled={(!id && !customer) || saving} className={cls}>
+        {ICONS.download}
         Download {docLabel}
       </button>
     );
-    const paymentBtn = (
-      <button onClick={openPayment} disabled={paymentMut.isPending} className={secondary}>
+    const paymentBtn = (cls: string) => (
+      <button onClick={openPayment} disabled={paymentMut.isPending} className={cls}>
+        {ICONS.payment}
         Record Payment
       </button>
     );
+    const saveBtn = (
+      <button onClick={handleSaveDraft} disabled={!canAct} className={secondary}>
+        {ICONS.save}
+        {saving ? 'Saving…' : 'Save as Draft'}
+      </button>
+    );
 
-    // Draft / Sent — the estimate editor action set.
-    if (!postConfirm && status !== 'expired') {
+    // Final row — Send + Download at 50% each. Send is dropped in a saved
+    // Draft (there it is the primary action), leaving Download full width.
+    const isDraftSaved = Boolean(id) && status === 'draft';
+    const trailingRow = (
+      <div className="flex gap-2.5">
+        {!isDraftSaved && sendBtn(half)}
+        {downloadBtn(half)}
+      </div>
+    );
+
+    // Before Draft (unsaved) — save first.
+    if (!id) {
+      return (
+        <div className={box}>
+          <button onClick={handleSaveDraft} disabled={!canAct} className={primary}>
+            {ICONS.save}
+            {saving ? 'Saving…' : 'Save as Draft'}
+          </button>
+          {trailingRow}
+        </div>
+      );
+    }
+
+    // Draft — send the estimate.
+    if (status === 'draft') {
       return (
         <div className={box}>
           {sendBtn(primary)}
-          <button onClick={handleSaveDraft} disabled={!canAct} className={secondary}>
-            {saving ? 'Saving…' : 'Save as Draft'}
-          </button>
+          {saveBtn}
           <button
             onClick={handleConfirm}
             disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
             className={`${secondary} text-success`}
           >
+            {ICONS.confirm}
             Confirm
           </button>
-          {pdfBtn}
+          {trailingRow}
         </div>
       );
     }
 
-    // Awaiting payment — record payment + reverse (user only).
+    // Sent — confirm the order.
+    if (status === 'sent') {
+      return (
+        <div className={box}>
+          <button
+            onClick={handleConfirm}
+            disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
+            className={`${primary}`}
+          >
+            {ICONS.confirm}
+            Confirm
+          </button>
+          {saveBtn}
+          {trailingRow}
+        </div>
+      );
+    }
+
+    // Awaiting payment — record the payment.
     if (status === 'awaiting_payment') {
       return (
         <div className={box}>
-          <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
-            Record Payment
-          </button>
-          {sendBtn(secondary)}
+          {paymentBtn(primary)}
           <button onClick={handleReverse} disabled={unconfirmMut.isPending} className={secondary}>
+            {ICONS.reverse}
             {unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation'}
           </button>
-          {pdfBtn}
+          {trailingRow}
         </div>
       );
     }
 
-    // In progress — record more payments + mark ready.
+    // In progress — mark the order ready.
     if (status === 'in_progress') {
       return (
         <div className={box}>
-          <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
-            Record Payment
-          </button>
-          {sendBtn(secondary)}
-          <button
-            onClick={handleMarkReady}
-            disabled={readyMut.isPending}
-            className={`${secondary} text-success`}
-          >
+          <button onClick={handleMarkReady} disabled={readyMut.isPending} className={primary}>
+            {ICONS.ready}
             {readyMut.isPending ? 'Saving…' : 'Mark Ready'}
           </button>
-          {pdfBtn}
+          {paymentBtn(secondary)}
+          {trailingRow}
         </div>
       );
     }
 
-    // Ready — schedule the installation + mark installed (+ payment).
+    // Ready — propose the installation time.
     if (status === 'ready') {
       return (
         <div className={box}>
           <button onClick={openInstallSheet} disabled={proposeMut.isPending} className={primary}>
+            {ICONS.install}
             {existing?.install_status === 'unscheduled' ? 'Propose Installation' : 'Re-propose Time'}
           </button>
-          {sendBtn(secondary)}
           <button
             onClick={handleMarkInstalled}
             disabled={installedMut.isPending}
             className={`${secondary} text-success`}
           >
+            {ICONS.installed}
             {installedMut.isPending ? 'Saving…' : 'Mark Installed'}
           </button>
-          {paymentBtn}
-          {pdfBtn}
+          {paymentBtn(secondary)}
+          {trailingRow}
         </div>
       );
     }
 
-    // Installed — payments can still be applied; plus send/download.
+    // Installed — payments can still be applied.
     if (status === 'installed') {
       return (
         <div className={box}>
-          <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
-            Record Payment
-          </button>
-          {sendBtn(secondary)}
-          {pdfBtn}
+          {paymentBtn(primary)}
+          {trailingRow}
         </div>
       );
     }
 
-    // Expired — send (estimate) + document download.
-    return (
-      <div className={box}>
-        {sendBtn(secondary)}
-        {pdfBtn}
-      </div>
-    );
+    // Expired — send (after updating expiry) + document download.
+    return <div className={box}>{trailingRow}</div>;
   };
 
   return (
