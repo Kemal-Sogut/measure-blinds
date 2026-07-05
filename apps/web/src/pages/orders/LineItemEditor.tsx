@@ -16,7 +16,7 @@
  */
 
 import { calculateBlindUnitPrice } from '../../lib/pricing';
-import type { Fabric, CassetteOption, ControlOption } from '../../types';
+import type { Fabric, CassetteOption, ControlOption, BlindType } from '../../types';
 
 /* ------------------------------------------------------------------ */
 /* Draft models                                                        */
@@ -33,6 +33,7 @@ export interface BlindDraft {
   fabric_id: string;
   cassette_id: string;
   control_id: string;
+  note: string;
   quantity: string;
 }
 
@@ -52,6 +53,7 @@ export interface Catalogs {
   fabrics: Fabric[];
   cassettes: CassetteOption[];
   controls: ControlOption[];
+  blindTypes: BlindType[];
 }
 
 /** Parses a positive number from a draft string; null when invalid. */
@@ -164,90 +166,107 @@ export function BlindEditForm({
     onChange({ ...draft, panels });
   }
 
+  function setQuantity(next: number) {
+    onChange({ ...draft, quantity: String(Math.max(1, next)) });
+  }
+
+  const qty = parsePositive(draft.quantity) ?? 1;
+  const stepBtn =
+    'flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-border-input bg-surface text-lg font-semibold text-text-secondary hover:bg-surface-sunken';
+
+  // Blind types the dropdown offers: active ones, plus the current
+  // value if it is inactive or a legacy free-text entry not in the list.
+  const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
+
   return (
     <div className="flex flex-col gap-3.5">
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-        <label>
-          <span className={LABEL}>Room</span>
-          <input
-            placeholder="Living Room"
-            value={draft.room_name}
-            onChange={(e) => onChange({ ...draft, room_name: e.target.value })}
-            className={INPUT}
-          />
-        </label>
-        <label>
-          <span className={LABEL}>Blind type</span>
-          <input
-            placeholder="Roller Blind"
-            value={draft.blinds_type}
-            onChange={(e) => onChange({ ...draft, blinds_type: e.target.value })}
-            className={INPUT}
-          />
-        </label>
-      </div>
+      {/* Blind type (dropdown) */}
+      <label>
+        <span className={LABEL}>Blind type</span>
+        <select
+          value={draft.blinds_type}
+          onChange={(e) => onChange({ ...draft, blinds_type: e.target.value })}
+          className={INPUT}
+        >
+          <option value="">Select…</option>
+          {draft.blinds_type && !typeInList && (
+            <option value={draft.blinds_type}>{draft.blinds_type}</option>
+          )}
+          {catalogs.blindTypes
+            .filter((t) => t.active || t.name === draft.blinds_type)
+            .map((t) => (
+              <option key={t.id} value={t.name}>
+                {t.name}
+              </option>
+            ))}
+        </select>
+      </label>
 
-      {/* Panel widths */}
+      {/* Room name */}
+      <label>
+        <span className={LABEL}>Room</span>
+        <input
+          placeholder="Living Room"
+          value={draft.room_name}
+          onChange={(e) => onChange({ ...draft, room_name: e.target.value })}
+          className={INPUT}
+        />
+      </label>
+
+      {/* Width (panels 85%) + Panel button (15%) */}
       <div>
         <span className={LABEL}>
-          Panel widths (cm) — total:{' '}
+          Width (cm) — panels total:{' '}
           <span className="font-mono">{panelSum > 0 ? panelSum : '—'}</span>
         </span>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          {draft.panels.map((p, i) => (
-            <span key={i} className="flex items-center gap-1">
-              <input
-                inputMode="decimal"
-                value={p}
-                onChange={(e) => setPanel(i, e.target.value)}
-                className="h-11 w-20 rounded-sm border border-border-input bg-surface px-2 font-mono text-sm"
-                aria-label={`Panel ${i + 1} width`}
-              />
-              {draft.panels.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onChange({ ...draft, panels: draft.panels.filter((_, j) => j !== i) })
-                  }
-                  aria-label={`Remove panel ${i + 1}`}
-                  className="flex h-11 w-8 items-center justify-center text-text-muted hover:text-danger"
-                >
-                  ✕
-                </button>
-              )}
-            </span>
-          ))}
+        <div className="mt-1 flex items-stretch gap-2">
+          <div className="flex min-w-0 flex-1 gap-2">
+            {draft.panels.map((p, i) => (
+              <div key={i} className="relative min-w-0 flex-1">
+                <input
+                  inputMode="decimal"
+                  value={p}
+                  onChange={(e) => setPanel(i, e.target.value)}
+                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-2 text-center font-mono text-sm"
+                  aria-label={`Panel ${i + 1} width`}
+                />
+                {draft.panels.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onChange({ ...draft, panels: draft.panels.filter((_, j) => j !== i) })
+                    }
+                    aria-label={`Remove panel ${i + 1}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border-input bg-surface text-[10px] text-text-muted hover:text-danger"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
           <button
             type="button"
             onClick={() => onChange({ ...draft, panels: [...draft.panels, ''] })}
-            className="h-11 rounded-sm border border-dashed border-border-input px-3 text-[13px] font-medium text-brand-600"
+            className="h-11 w-[15%] shrink-0 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-brand-600"
           >
             + Panel
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3.5">
-        <label className="min-w-0">
-          <span className={LABEL}>Height (cm)</span>
-          <input
-            inputMode="decimal"
-            value={draft.height_cm}
-            onChange={(e) => onChange({ ...draft, height_cm: e.target.value })}
-            className={`${INPUT} font-mono`}
-          />
-        </label>
-        <label className="min-w-0">
-          <span className={LABEL}>Quantity</span>
-          <input
-            inputMode="numeric"
-            value={draft.quantity}
-            onChange={(e) => onChange({ ...draft, quantity: e.target.value })}
-            className={`${INPUT} font-mono`}
-          />
-        </label>
-      </div>
+      {/* Height */}
+      <label>
+        <span className={LABEL}>Height (cm)</span>
+        <input
+          inputMode="decimal"
+          value={draft.height_cm}
+          onChange={(e) => onChange({ ...draft, height_cm: e.target.value })}
+          className={`${INPUT} font-mono`}
+        />
+      </label>
 
+      {/* Fabric / Cassette / Control */}
       <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
         <OptionSelect
           label="Fabric"
@@ -267,6 +286,49 @@ export function BlindEditForm({
           onChange={(id) => onChange({ ...draft, control_id: id })}
           options={catalogs.controls}
         />
+      </div>
+
+      {/* Note (shown to the customer under the item) */}
+      <label>
+        <span className={LABEL}>Note</span>
+        <textarea
+          value={draft.note}
+          onChange={(e) => onChange({ ...draft, note: e.target.value })}
+          maxLength={1000}
+          rows={2}
+          placeholder="e.g. Inside mount, motor on the left"
+          className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm text-text-primary"
+        />
+      </label>
+
+      {/* Quantity stepper */}
+      <div>
+        <span className={LABEL}>Quantity</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setQuantity(Math.floor(qty) - 1)}
+            aria-label="Decrease quantity"
+            className={stepBtn}
+          >
+            −
+          </button>
+          <input
+            inputMode="numeric"
+            value={draft.quantity}
+            onChange={(e) => onChange({ ...draft, quantity: e.target.value })}
+            aria-label="Quantity"
+            className="h-11 w-16 rounded-sm border border-border-input bg-surface px-2 text-center font-mono text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => setQuantity(Math.floor(qty) + 1)}
+            aria-label="Increase quantity"
+            className={stepBtn}
+          >
+            +
+          </button>
+        </div>
       </div>
 
       <div className="flex justify-between border-t border-border pt-3 text-[13px]">

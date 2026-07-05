@@ -176,6 +176,13 @@ const catalogs: CatalogConfig[] = [
     schema: z.object({ name, description: z.string().max(1000), unit_price: price, active }),
     orderBy: [{ column: 'name', ascending: true }],
   },
+  {
+    // Priceless catalog — only labels the blind (name + active + order).
+    path: 'blind-types',
+    table: 'blind_types',
+    schema: z.object({ name, active, sort_order: sortOrder }),
+    orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+  },
 ];
 
 /**

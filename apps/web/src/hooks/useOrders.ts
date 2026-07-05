@@ -49,6 +49,7 @@ export interface BlindItemInput {
   fabric_id: string;
   cassette_id: string;
   control_id: string;
+  note: string;
   quantity: number;
 }
 

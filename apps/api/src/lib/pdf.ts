@@ -62,6 +62,7 @@ export interface PdfDocumentData {
     cassette_name: string | null;
     control_name: string | null;
     description: string | null;
+    note?: string | null;
     quantity: number;
     unit_price: number;
     line_total: number;
@@ -140,6 +141,7 @@ function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.fabric_name ? `Fabric: ${li.fabric_name}` : null,
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
+      li.note?.trim() ? `Note: ${li.note.trim()}` : null,
     ].filter((x): x is string => Boolean(x));
     return { title, attrs };
   }

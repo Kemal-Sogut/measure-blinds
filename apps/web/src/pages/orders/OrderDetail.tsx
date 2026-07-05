@@ -67,7 +67,7 @@ import {
   type Catalogs,
   type BulkEditState,
 } from './LineItemEditor';
-import type { Customer, Order, OrderStatus, Fabric, CassetteOption, ControlOption, PresetLineItem, DiscountType } from '../../types';
+import type { Customer, Order, OrderStatus, Fabric, CassetteOption, ControlOption, BlindType, PresetLineItem, DiscountType } from '../../types';
 
 /** Formats a Date as the API's YYYY-MM-DD. */
 function toIso(d: Date): string {
@@ -100,6 +100,7 @@ function toDrafts(order: Order): ItemDraft[] {
         fabric_id: li.fabric_id ?? '',
         cassette_id: li.cassette_id ?? '',
         control_id: li.control_id ?? '',
+        note: li.note ?? '',
         quantity: String(li.quantity),
       } satisfies BlindDraft;
     }
@@ -236,6 +237,7 @@ export default function OrderDetail() {
   const fabricsQ = useCatalogList<Fabric>('fabrics');
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
   const controlsQ = useCatalogList<ControlOption>('control-options');
+  const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
   const { data: company } = useCompanySettings();
 
@@ -319,8 +321,9 @@ export default function OrderDetail() {
       fabrics: fabricsQ.data ?? [],
       cassettes: cassettesQ.data ?? [],
       controls: controlsQ.data ?? [],
+      blindTypes: blindTypesQ.data ?? [],
     }),
-    [fabricsQ.data, cassettesQ.data, controlsQ.data]
+    [fabricsQ.data, cassettesQ.data, controlsQ.data, blindTypesQ.data]
   );
 
   // ── Live totals (client preview; server recomputes on save) ────
@@ -374,6 +377,7 @@ export default function OrderDetail() {
       fabric_id: '',
       cassette_id: '',
       control_id: '',
+      note: '',
       quantity: '1',
     };
     setItems((list) => [...list, draft]);
@@ -512,6 +516,7 @@ export default function OrderDetail() {
           fabric_id: it.fabric_id,
           cassette_id: it.cassette_id,
           control_id: it.control_id,
+          note: it.note.trim(),
           quantity: Math.round(qty),
         });
       } else {

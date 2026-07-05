@@ -37,7 +37,12 @@ export interface CatalogRow {
 }
 
 /** URL segments for the four catalog entities under /api/settings. */
-export type CatalogPath = 'fabrics' | 'cassette-options' | 'control-options' | 'presets';
+export type CatalogPath =
+  | 'fabrics'
+  | 'cassette-options'
+  | 'control-options'
+  | 'presets'
+  | 'blind-types';
 
 /* ------------------------------------------------------------------ */
 /* Company settings                                                    */

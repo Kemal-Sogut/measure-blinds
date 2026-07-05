@@ -31,10 +31,11 @@ import {
 export interface CatalogEditorConfig {
   /** API path segment under /api/settings */
   path: CatalogPath;
-  /** Column that stores the price (e.g. 'price_per_sqm') */
-  priceKey: string;
+  /** Column that stores the price (e.g. 'price_per_sqm'); omit for a
+   *  price-less catalog such as blind types. */
+  priceKey?: string;
   /** Label shown for the price input (e.g. 'Price / m²') */
-  priceLabel: string;
+  priceLabel?: string;
   /** Noun for empty state and add button (e.g. 'fabric') */
   noun: string;
   /** Whether the entity has a description field (presets only) */
@@ -60,6 +61,7 @@ function parsePrice(value: string): number | null {
 }
 
 export default function CatalogEditor({ config }: { config: CatalogEditorConfig }) {
+  const hasPrice = Boolean(config.priceKey);
   const { data: rows, isLoading, error } = useCatalogList<Row>(config.path);
   const create = useCreateCatalogItem<Row>(config.path);
   const update = useUpdateCatalogItem<Row>(config.path);
@@ -71,13 +73,16 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
 
   /** Validates and submits the "add new" form. */
   function handleAdd() {
-    const price = parsePrice(draft.price);
     if (!draft.name.trim()) return toast.error('Enter a name.');
-    if (price === null) return toast.error('Enter a valid price.');
+    let price: number | null = null;
+    if (hasPrice) {
+      price = parsePrice(draft.price);
+      if (price === null) return toast.error('Enter a valid price.');
+    }
     create.mutate(
       {
         name: draft.name.trim(),
-        [config.priceKey]: price,
+        ...(hasPrice ? { [config.priceKey as string]: price } : {}),
         ...(config.hasDescription ? { description: draft.description.trim() } : {}),
       } as Partial<Row>,
       {
@@ -92,22 +97,25 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
     setEditingId(row.id);
     setEditDraft({
       name: row.name,
-      price: String(row[config.priceKey] ?? ''),
+      price: hasPrice ? String(row[config.priceKey as string] ?? '') : '',
       description: String(row.description ?? ''),
     });
   }
 
   /** Validates and saves the inline edit form. */
   function handleSaveEdit(id: string) {
-    const price = parsePrice(editDraft.price);
     if (!editDraft.name.trim()) return toast.error('Enter a name.');
-    if (price === null) return toast.error('Enter a valid price.');
+    let price: number | null = null;
+    if (hasPrice) {
+      price = parsePrice(editDraft.price);
+      if (price === null) return toast.error('Enter a valid price.');
+    }
     update.mutate(
       {
         id,
         patch: {
           name: editDraft.name.trim(),
-          [config.priceKey]: price,
+          ...(hasPrice ? { [config.priceKey as string]: price } : {}),
           ...(config.hasDescription ? { description: editDraft.description.trim() } : {}),
         } as Partial<Row>,
       },
@@ -150,17 +158,21 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
             />
           )}
           <div className="flex gap-2">
-            <input
-              placeholder={config.priceLabel}
-              inputMode="decimal"
-              value={draft.price}
-              onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-              className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
-            />
+            {hasPrice && (
+              <input
+                placeholder={config.priceLabel}
+                inputMode="decimal"
+                value={draft.price}
+                onChange={(e) => setDraft({ ...draft, price: e.target.value })}
+                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+              />
+            )}
             <button
               onClick={handleAdd}
               disabled={create.isPending}
-              className="h-11 rounded-lg bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              className={`h-11 rounded-lg bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50 ${
+                hasPrice ? '' : 'flex-1'
+              }`}
             >
               Add
             </button>
@@ -193,15 +205,19 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                   />
                 )}
                 <div className="flex gap-2">
-                  <input
-                    inputMode="decimal"
-                    value={editDraft.price}
-                    onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
-                    className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
-                  />
+                  {hasPrice && (
+                    <input
+                      inputMode="decimal"
+                      value={editDraft.price}
+                      onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
+                      className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                    />
+                  )}
                   <button
                     onClick={() => handleSaveEdit(row.id)}
-                    className="h-11 rounded-lg bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
+                    className={`h-11 rounded-lg bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700 ${
+                      hasPrice ? '' : 'flex-1'
+                    }`}
                   >
                     Save
                   </button>
@@ -222,10 +238,12 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                       {String(row.description)}
                     </span>
                   ) : null}
-                  <span className="text-sm text-text-secondary">
-                    ${Number(row[config.priceKey]).toFixed(2)}{' '}
-                    <span className="text-text-muted">{config.priceLabel}</span>
-                  </span>
+                  {hasPrice && (
+                    <span className="text-sm text-text-secondary">
+                      ${Number(row[config.priceKey as string]).toFixed(2)}{' '}
+                      <span className="text-text-muted">{config.priceLabel}</span>
+                    </span>
+                  )}
                 </button>
                 <button
                   aria-label={row.active ? 'Deactivate' : 'Activate'}

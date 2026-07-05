@@ -83,6 +83,7 @@ const blindItemSchema = z
     fabric_id: z.string().uuid(),
     cassette_id: z.string().uuid(),
     control_id: z.string().uuid(),
+    note: z.string().max(1000).default(''),
     quantity: z.number().int().min(1).max(999),
   })
   .strict();
@@ -257,6 +258,7 @@ async function resolveLineItems(
         control_name: null,
         control_price_per_item: null,
         description: it.description,
+        note: '',
         quantity: it.quantity,
         unit_price: unit,
         line_total: Math.round(unit * it.quantity * 100) / 100,
@@ -293,6 +295,7 @@ async function resolveLineItems(
       control_name: control.name,
       control_price_per_item: control.price,
       description: '',
+      note: it.note,
       quantity: it.quantity,
       unit_price,
       line_total: Math.round(unit_price * it.quantity * 100) / 100,

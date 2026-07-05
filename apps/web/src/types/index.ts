@@ -161,6 +161,7 @@ export interface LineItem {
   control_name: string | null;
   control_price_per_item: number | null;
   description: string;
+  note: string;
   quantity: number;
   unit_price: number;
   line_total: number;
@@ -191,6 +192,14 @@ export interface ControlOption {
   id: string;
   name: string;
   price_per_item: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/** Blind type option from settings — a label only, no price. */
+export interface BlindType {
+  id: string;
+  name: string;
   active: boolean;
   sort_order: number;
 }
