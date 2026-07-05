@@ -162,8 +162,33 @@ function useLifecycleMutation(path: (id: string) => string): UseMutationResult<O
 }
 
 /** Emails the estimate to the customer (status → sent on success). */
-export function useSendOrder() {
-  return useLifecycleMutation((id) => `/api/orders/${id}/send`);
+export function useSendOrder(): UseMutationResult<Order, Error, { id: string; message?: string }> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, message }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/send`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        })
+      ).data,
+    onSuccess: cache,
+  });
+}
+
+/** Emails the invoice for a confirmed order — no stage change. */
+export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; message?: string }> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, message }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/send-invoice`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        })
+      ).data,
+    onSuccess: cache,
+  });
 }
 
 /** User confirm (status → awaiting_payment). */

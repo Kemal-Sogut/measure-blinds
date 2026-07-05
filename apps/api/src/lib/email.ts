@@ -80,6 +80,15 @@ export async function sendEmail(
   }
 }
 
+/** A highlighted note block for an optional consultant message. */
+function messageBlockHtml(message: string | undefined): string {
+  return message?.trim()
+    ? `<p style="margin:0 0 20px;padding:12px 16px;background:#f1f3f5;border-radius:8px;white-space:pre-wrap">${escapeHtml(
+        message.trim()
+      )}</p>`
+    : '';
+}
+
 /** Inputs for the customer-facing estimate email template. */
 export interface EstimateEmailInputs {
   companyName: string;
@@ -88,6 +97,8 @@ export interface EstimateEmailInputs {
   total: number;
   expiryDate: string;
   viewUrl: string;
+  /** Optional personal note from the consultant, shown above the CTA. */
+  message?: string;
 }
 
 /**
@@ -101,6 +112,7 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
   const order = escapeHtml(i.orderNumber);
   const expiry = escapeHtml(i.expiryDate);
   const url = escapeHtml(i.viewUrl);
+  const messageBlock = messageBlockHtml(i.message);
   return `<!doctype html>
 <html><body style="margin:0;background:#f1f3f5;font-family:Arial,Helvetica,sans-serif;color:#212529">
   <div style="max-width:560px;margin:0 auto;padding:24px">
@@ -115,9 +127,57 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
         <tr><td style="padding:6px 0;color:#868e96">Total (incl. HST)</td><td style="padding:6px 0;text-align:right;font-weight:bold">$${i.total.toFixed(2)}</td></tr>
         <tr><td style="padding:6px 0;color:#868e96">Valid until</td><td style="padding:6px 0;text-align:right">${expiry}</td></tr>
       </table>
+      ${messageBlock}
       <p style="margin:0 0 20px">The full estimate is attached as a PDF. To review and confirm online, use the button below before the expiry date.</p>
       <p style="text-align:center;margin:0 0 20px">
         <a href="${url}" style="display:inline-block;background:#4c6ef5;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:bold">View &amp; Confirm Estimate</a>
+      </p>
+      <p style="margin:0;color:#868e96;font-size:12px">If the button doesn't work, copy this link: ${url}</p>
+    </div>
+  </div>
+</body></html>`;
+}
+
+/** Inputs for the customer-facing invoice email template. */
+export interface InvoiceEmailInputs {
+  companyName: string;
+  customerFirstName: string;
+  orderNumber: string;
+  total: number;
+  viewUrl: string;
+  /** Optional personal note from the consultant, shown above the CTA. */
+  message?: string;
+}
+
+/**
+ * Builds the branded invoice email sent for a confirmed order: greeting,
+ * invoice summary, optional note, and a CTA linking to the public view
+ * page (no "confirm" step — the order is already confirmed). All dynamic
+ * strings are HTML-escaped.
+ */
+export function buildInvoiceEmailHtml(i: InvoiceEmailInputs): string {
+  const company = escapeHtml(i.companyName);
+  const name = escapeHtml(i.customerFirstName);
+  const order = escapeHtml(i.orderNumber);
+  const url = escapeHtml(i.viewUrl);
+  const messageBlock = messageBlockHtml(i.message);
+  return `<!doctype html>
+<html><body style="margin:0;background:#f1f3f5;font-family:Arial,Helvetica,sans-serif;color:#212529">
+  <div style="max-width:560px;margin:0 auto;padding:24px">
+    <div style="background:#4c6ef5;border-radius:12px 12px 0 0;padding:20px 24px">
+      <h1 style="margin:0;color:#ffffff;font-size:20px">${company}</h1>
+    </div>
+    <div style="background:#ffffff;border-radius:0 0 12px 12px;padding:24px">
+      <p style="margin:0 0 16px">Hi ${name},</p>
+      <p style="margin:0 0 16px">Please find your invoice from ${company} attached:</p>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 16px">
+        <tr><td style="padding:6px 0;color:#868e96">Invoice #</td><td style="padding:6px 0;text-align:right;font-weight:bold">${order}</td></tr>
+        <tr><td style="padding:6px 0;color:#868e96">Total (incl. HST)</td><td style="padding:6px 0;text-align:right;font-weight:bold">$${i.total.toFixed(2)}</td></tr>
+      </table>
+      ${messageBlock}
+      <p style="margin:0 0 20px">The full invoice is attached as a PDF. You can also view your order online using the button below.</p>
+      <p style="text-align:center;margin:0 0 20px">
+        <a href="${url}" style="display:inline-block;background:#4c6ef5;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:bold">View Order</a>
       </p>
       <p style="margin:0;color:#868e96;font-size:12px">If the button doesn't work, copy this link: ${url}</p>
     </div>

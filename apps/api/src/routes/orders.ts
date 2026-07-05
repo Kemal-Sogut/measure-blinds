@@ -50,7 +50,12 @@ import { calculateBlindUnitPrice } from '../lib/pricing';
 import { calculateTotals } from '../lib/totals';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
-import { sendEmail, buildEstimateEmailHtml, buildInstallationProposalHtml } from '../lib/email';
+import {
+  sendEmail,
+  buildEstimateEmailHtml,
+  buildInvoiceEmailHtml,
+  buildInstallationProposalHtml,
+} from '../lib/email';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -127,8 +132,19 @@ const installProposeSchema = z
   })
   .strict();
 
+/** Optional consultant note accepted when emailing an estimate/invoice. */
+const sendMessageSchema = z
+  .object({ message: z.string().max(1000).optional() })
+  .strict();
+
 /** Statuses that accept edits and estimate sends. */
 const EDITABLE = ['draft', 'sent'] as const;
+
+/** Confirmed statuses — the order is now an Invoice, not an Estimate. */
+const CONFIRMED = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
+function isConfirmed(status: string): boolean {
+  return (CONFIRMED as readonly string[]).includes(status);
+}
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTHS = [
@@ -561,7 +577,9 @@ async function toPdfData(
 ): Promise<PdfDocumentData> {
   const amount_paid = sumPayments(order.payments);
   const total = Number(order.total);
-  const docType: 'estimate' | 'invoice' = (order.payments ?? []).length > 0 ? 'invoice' : 'estimate';
+  // Estimate until the order is confirmed; Invoice for every confirmed
+  // stage (awaiting_payment onward), regardless of payments recorded.
+  const docType: 'estimate' | 'invoice' = isConfirmed(order.status) ? 'invoice' : 'estimate';
   return {
     docType,
     order: {
@@ -647,6 +665,9 @@ app.get('/:id/pdf', async (c) => {
  * existing public_token so previously emailed links keep working.
  */
 app.post('/:id/send', async (c) => {
+  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const message = parsed.data.message;
   const sb = createSupabaseAdmin(c.env);
   const id = c.req.param('id');
   const bundle = await loadOrderBundle(sb, id);
@@ -684,6 +705,7 @@ app.post('/:id/send', async (c) => {
         customerFirstName: order.customer.first_name,
         orderNumber: order.order_number,
         total: Number(order.total),
+        message,
         expiryDate: order.expiry_date,
         viewUrl,
       }),
@@ -709,6 +731,82 @@ app.post('/:id/send', async (c) => {
     })
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  const { data: updated } = await readDetail(sb, id);
+  if (updated) updated.amount_paid = sumPayments(updated.payments);
+  return c.json({ data: updated });
+});
+
+/**
+ * Emails the customer their invoice (confirmed orders only) with the
+ * Invoice PDF attached and an optional consultant note. This is a
+ * document re-send: the order's lifecycle stage is NOT changed. The
+ * public token is reused (minted if the order was never emailed) so the
+ * online view link keeps working.
+ */
+app.post('/:id/send-invoice', async (c) => {
+  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const message = parsed.data.message;
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const bundle = await loadOrderBundle(sb, id);
+  if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const { order, company } = bundle;
+
+  if (!isConfirmed(order.status)) {
+    return c.json(
+      { error: `An invoice can only be sent for a confirmed order (this one is ${order.status}).` },
+      409
+    );
+  }
+  const email = order.customer?.email;
+  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
+
+  const publicToken: string = order.public_token ?? crypto.randomUUID();
+  const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
+  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+
+  let pdf: Uint8Array;
+  try {
+    // toPdfData renders an Invoice because the order is confirmed.
+    pdf = await buildDocumentPdf(await toPdfData(order, company, terms));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
+  }
+
+  try {
+    await sendEmail(c.env, {
+      to: email,
+      subject: `Your invoice ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
+      html: buildInvoiceEmailHtml({
+        companyName: company.company_name || 'Blinds Nisa',
+        customerFirstName: order.customer.first_name,
+        orderNumber: order.order_number,
+        total: Number(order.total),
+        viewUrl,
+        message,
+      }),
+      attachments: [
+        {
+          filename: `${order.order_number}-invoice.pdf`,
+          content: toBase64(pdf),
+        },
+      ],
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+  }
+
+  // Persist the token (and terms snapshot) if this order had never been
+  // emailed; the lifecycle status is deliberately left unchanged.
+  if (!order.public_token) {
+    const { error } = await sb
+      .from('orders')
+      .update({ public_token: publicToken, terms_snapshot: terms })
+      .eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+  }
 
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
@@ -868,9 +966,11 @@ app.post('/:id/ready', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
-  if (existing.status !== 'in_progress') {
+  // Forward jump allowed from any confirmed stage before Ready
+  // (awaiting_payment or in_progress) — intermediate steps may be skipped.
+  if (existing.status !== 'awaiting_payment' && existing.status !== 'in_progress') {
     return c.json(
-      { error: `Only an in-progress order can be marked ready (this one is ${existing.status}).` },
+      { error: `A confirmed order is needed to mark it ready (this one is ${existing.status}).` },
       409
     );
   }
@@ -892,9 +992,11 @@ app.post('/:id/installed', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
-  if (existing.status !== 'ready') {
+  // Forward jump allowed from any confirmed stage before Installed —
+  // intermediate steps (in_progress / ready) may be skipped.
+  if (!isConfirmed(existing.status) || existing.status === 'installed') {
     return c.json(
-      { error: `Only a ready order can be marked installed (this one is ${existing.status}).` },
+      { error: `A confirmed order is needed to mark it installed (this one is ${existing.status}).` },
       409
     );
   }

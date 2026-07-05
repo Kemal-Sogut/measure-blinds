@@ -36,6 +36,7 @@ import {
   useCreateOrder,
   useUpdateOrder,
   useSendOrder,
+  useSendInvoice,
   useConfirmOrder,
   useUnconfirmOrder,
   useMarkReady,
@@ -160,6 +161,7 @@ export default function OrderDetail() {
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
   const sendMut = useSendOrder();
+  const sendInvoiceMut = useSendInvoice();
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
   const readyMut = useMarkReady();
@@ -180,7 +182,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'install' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'install' | 'send' | 'editItem' | 'bulkEdit'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -202,6 +204,9 @@ export default function OrderDetail() {
   const [installDate, setInstallDate] = useState<Date>(new Date());
   const [installTime, setInstallTime] = useState('09:00');
   const [installMessage, setInstallMessage] = useState('');
+
+  // Send estimate/invoice sheet — optional note included in the email.
+  const [sendMessage, setSendMessage] = useState('');
 
   // Hydrate once from a loaded order.
   useEffect(() => {
@@ -262,11 +267,15 @@ export default function OrderDetail() {
   const saving = createMut.isPending || updateMut.isPending;
   const canAct = !readOnly && !saving;
 
+  // Estimate until confirmed; Invoice once confirmed. Drives the Send /
+  // Download button labels and which email is sent.
+  const isInvoice = postConfirm;
+  const docLabel = isInvoice ? 'Invoice' : 'Estimate';
+
   // Authoritative money for confirmed orders comes from the server row.
   const orderTotal = Number(existing?.total ?? totals.total);
   const amountPaid = Number(existing?.amount_paid ?? 0);
   const balance = Math.round((orderTotal - amountPaid) * 100) / 100;
-  const hasPayments = (existing?.payments?.length ?? 0) > 0;
 
   // ── Draft list operations ───────────────────────────────────────
   function removeItem(key: string) {
@@ -470,13 +479,43 @@ export default function OrderDetail() {
     if (await save()) toast.success('Order saved.');
   }
 
-  async function handleSend() {
+  /** Opens the send sheet (message box) for the current mode. */
+  function openSend() {
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    setSendMessage('');
+    setSheet('send');
+  }
+
+  /** Submits the send sheet — estimate or invoice depending on mode. */
+  async function submitSend() {
+    const message = sendMessage.trim() || undefined;
+    if (isInvoice) {
+      await handleSendInvoice(message);
+    } else {
+      await handleSendEstimate(message);
+    }
+  }
+
+  async function handleSendEstimate(message?: string) {
     if (!customer?.email) return toast.error('This customer has no email address.');
     const savedId = await save();
     if (!savedId) return;
     try {
-      await sendMut.mutateAsync(savedId);
+      await sendMut.mutateAsync({ id: savedId, message });
       toast.success(`Estimate sent to ${customer.email}.`);
+      setSheet('none');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Send failed.');
+    }
+  }
+
+  async function handleSendInvoice(message?: string) {
+    if (!id) return;
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    try {
+      await sendInvoiceMut.mutateAsync({ id, message });
+      toast.success(`Invoice sent to ${customer.email}.`);
+      setSheet('none');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Send failed.');
     }
@@ -596,8 +635,25 @@ export default function OrderDetail() {
   }
 
   /**
-   * Advances the order forward to the given target stage.
-   * Only the immediate next stage is ever offered (enforced in the UI).
+   * Which forward stages the current status may jump to directly.
+   * Intermediate steps can be skipped (e.g. Awaiting Payment → Ready).
+   * 'in_progress' is never a manual target — it is reached by recording
+   * the first payment.
+   */
+  const ADVANCE_TARGETS: Record<string, OrderStatus[]> = {
+    draft: ['sent', 'awaiting_payment'],
+    sent: ['awaiting_payment'],
+    awaiting_payment: ['ready', 'installed'],
+    in_progress: ['ready', 'installed'],
+    ready: ['installed'],
+  };
+  const canAdvanceTo = (target: OrderStatus): boolean =>
+    (ADVANCE_TARGETS[status] ?? []).includes(target);
+
+  /**
+   * Advances the order forward to the given target stage. Any later
+   * stage the backend supports may be chosen; skipped stages are simply
+   * marked done.
    */
   async function handleAdvance(target: OrderStatus) {
     if (!id) return;
@@ -605,7 +661,7 @@ export default function OrderDetail() {
     if (!window.confirm(`Advance this order to "${label}"?`)) return;
     try {
       if (target === 'sent') {
-        await sendMut.mutateAsync(id);
+        await sendMut.mutateAsync({ id });
       } else if (target === 'awaiting_payment') {
         await confirmMut.mutateAsync(id);
       } else if (target === 'ready') {
@@ -651,7 +707,7 @@ export default function OrderDetail() {
     if (!savedId) return;
     try {
       await downloadOrderPdf(savedId, existing?.order_number ?? 'order');
-      toast.success(hasPayments ? 'Invoice downloaded.' : 'Estimate downloaded.');
+      toast.success(`${docLabel} downloaded.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'PDF failed.');
     }
@@ -900,18 +956,17 @@ export default function OrderDetail() {
                   type="button"
                   onClick={() => handleAdvance(stage.key)}
                   disabled={
-                    i !== curIdx + 1 ||
-                    stage.key === 'in_progress' ||
+                    !canAdvanceTo(stage.key) ||
                     status === 'expired' ||
                     sendMut.isPending || confirmMut.isPending ||
                     readyMut.isPending || installedMut.isPending
                   }
                   title={
-                    i !== curIdx + 1
-                      ? `Complete earlier stages first`
-                      : stage.key === 'in_progress'
-                        ? 'Record a payment to advance'
-                        : `Advance to ${stage.label}`
+                    !canAdvanceTo(stage.key)
+                      ? stage.key === 'in_progress'
+                        ? 'Reached by recording a payment'
+                        : 'Confirm the order first'
+                      : `Advance to ${stage.label}`
                   }
                   aria-label={`Advance to ${stage.label}`}
                   className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-success disabled:opacity-40"
@@ -935,9 +990,25 @@ export default function OrderDetail() {
     const box = vertical ? 'flex flex-col gap-2.5' : 'flex flex-wrap gap-2';
     const primary = `${vertical ? 'h-[46px]' : 'h-12 min-w-[140px] flex-[2]'} rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40`;
     const secondary = `${vertical ? 'h-10' : 'h-12 min-w-[120px] flex-1'} rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40`;
+
+    const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
+    const sendLabel = isInvoice
+      ? 'Send Invoice'
+      : status === 'sent'
+        ? 'Resend Estimate'
+        : 'Send Estimate';
+    // Send + Download are always present and mode-labelled. Estimate mode
+    // additionally needs a customer + at least one line item to send.
+    const sendDisabled =
+      sendBusy || saving || !customer || (!isInvoice && items.length === 0);
+    const sendBtn = (cls: string) => (
+      <button onClick={openSend} disabled={sendDisabled} className={cls}>
+        {sendBusy ? 'Sending…' : sendLabel}
+      </button>
+    );
     const pdfBtn = (
       <button onClick={handlePdf} disabled={(!id && !customer) || saving} className={secondary}>
-        {hasPayments ? 'Download Invoice' : 'Download Estimate'}
+        Download {docLabel}
       </button>
     );
     const paymentBtn = (
@@ -950,13 +1021,7 @@ export default function OrderDetail() {
     if (!postConfirm && status !== 'expired') {
       return (
         <div className={box}>
-          <button
-            onClick={handleSend}
-            disabled={!canAct || !customer || items.length === 0 || sendMut.isPending}
-            className={primary}
-          >
-            {sendMut.isPending ? 'Sending…' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
-          </button>
+          {sendBtn(primary)}
           <button onClick={handleSaveDraft} disabled={!canAct} className={secondary}>
             {saving ? 'Saving…' : 'Save as Draft'}
           </button>
@@ -972,13 +1037,14 @@ export default function OrderDetail() {
       );
     }
 
-    // Awaiting payment — reverse (user only) + record payment.
+    // Awaiting payment — record payment + reverse (user only).
     if (status === 'awaiting_payment') {
       return (
         <div className={box}>
           <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
             Record Payment
           </button>
+          {sendBtn(secondary)}
           <button onClick={handleReverse} disabled={unconfirmMut.isPending} className={secondary}>
             {unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation'}
           </button>
@@ -994,6 +1060,7 @@ export default function OrderDetail() {
           <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
             Record Payment
           </button>
+          {sendBtn(secondary)}
           <button
             onClick={handleMarkReady}
             disabled={readyMut.isPending}
@@ -1013,6 +1080,7 @@ export default function OrderDetail() {
           <button onClick={openInstallSheet} disabled={proposeMut.isPending} className={primary}>
             {existing?.install_status === 'unscheduled' ? 'Propose Installation' : 'Re-propose Time'}
           </button>
+          {sendBtn(secondary)}
           <button
             onClick={handleMarkInstalled}
             disabled={installedMut.isPending}
@@ -1026,18 +1094,26 @@ export default function OrderDetail() {
       );
     }
 
-    // Installed — payments can still be applied; plus the document.
+    // Installed — payments can still be applied; plus send/download.
     if (status === 'installed') {
       return (
         <div className={box}>
-          {paymentBtn}
+          <button onClick={openPayment} disabled={paymentMut.isPending} className={primary}>
+            Record Payment
+          </button>
+          {sendBtn(secondary)}
           {pdfBtn}
         </div>
       );
     }
 
-    // Expired — just the document download.
-    return <div className={box}>{pdfBtn}</div>;
+    // Expired — send (estimate) + document download.
+    return (
+      <div className={box}>
+        {sendBtn(secondary)}
+        {pdfBtn}
+      </div>
+    );
   };
 
   return (
@@ -1484,6 +1560,57 @@ export default function OrderDetail() {
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   {paymentMut.isPending ? 'Saving…' : 'Record Payment'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send estimate/invoice bottom sheet (with optional message) */}
+      {sheet === 'send' && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+          <div
+            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">
+              Send {docLabel.toLowerCase()}
+            </h2>
+            <p className="mb-3 text-[13px] text-text-muted">
+              We&apos;ll email {customer?.email ?? 'the customer'} the {docLabel.toLowerCase()} PDF
+              {isInvoice ? ' and a link to view the order online.' : ' and a link to review and confirm online.'}
+            </p>
+            <div className="flex flex-col gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Message to include (optional)
+                </span>
+                <textarea
+                  autoFocus
+                  value={sendMessage}
+                  onChange={(e) => setSendMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="e.g. Thanks for your time today — let me know if you have any questions."
+                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitSend}
+                  disabled={sendMut.isPending || sendInvoiceMut.isPending}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {sendMut.isPending || sendInvoiceMut.isPending
+                    ? 'Sending…'
+                    : `Send ${docLabel}`}
                 </button>
               </div>
             </div>
