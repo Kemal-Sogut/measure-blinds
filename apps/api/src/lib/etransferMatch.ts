@@ -83,14 +83,22 @@ export async function resolveOrder(
     .limit(50);
 
   const senderLower = sender.toLowerCase();
+  const senderTokens = new Set(tokens.map((t) => t.toLowerCase()));
   const matchedIds = (customers ?? [])
-    .filter(
-      (cu) =>
-        cu.first_name &&
-        cu.last_name &&
-        senderLower.includes(String(cu.first_name).toLowerCase()) &&
-        senderLower.includes(String(cu.last_name).toLowerCase())
-    )
+    .filter((cu) => {
+      const first = String(cu.first_name ?? '').toLowerCase();
+      const last = String(cu.last_name ?? '').toLowerCase();
+      const full = `${first} ${last}`.trim();
+      // Full name present in the sender, OR a sender token equals the
+      // customer's first or last name. The latter enables first-name-only
+      // transfers (e.g. "Kemal") to match — the amount + single-candidate
+      // checks below keep that safe.
+      return (
+        (!!first && !!last && senderLower.includes(full)) ||
+        (!!first && senderTokens.has(first)) ||
+        (!!last && senderTokens.has(last))
+      );
+    })
     .map((cu) => cu.id);
   if (matchedIds.length === 0) return null;
 
