@@ -48,9 +48,12 @@ import {
   useDeleteOrder,
   useRecordPayment,
   useDeletePayment,
+  useUnmatchedEtransfers,
+  useDismissEtransfer,
   downloadOrderPdf,
   type OrderInput,
   type LineItemInput,
+  type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
 import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
@@ -256,6 +259,8 @@ export default function OrderDetail() {
   const deleteMut = useDeleteOrder();
   const paymentMut = useRecordPayment();
   const deletePaymentMut = useDeletePayment();
+  const pendingEtransfersQ = useUnmatchedEtransfers();
+  const dismissEtransferMut = useDismissEtransfer();
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -283,6 +288,8 @@ export default function OrderDetail() {
   const [payAmount, setPayAmount] = useState('');
   const [payDate, setPayDate] = useState<Date>(new Date());
   const [payNote, setPayNote] = useState('');
+  // The pending e-Transfer being applied by this payment, if any.
+  const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
 
   // Installation proposal form state (Propose Installation sheet).
   const [installDate, setInstallDate] = useState<Date>(new Date());
@@ -769,7 +776,20 @@ export default function OrderDetail() {
     setPayAmount('');
     setPayDate(new Date());
     setPayNote('');
+    setPayEtransferId(null);
     setSheet('payment');
+  }
+
+  /** Autofills the payment form from a pending e-Transfer (one tap). */
+  function applyEtransfer(t: PendingEtransfer) {
+    setPayAmount(t.amount.toFixed(2));
+    setPayDate(t.received_at ? new Date(t.received_at) : new Date());
+    setPayNote(
+      `e-Transfer${t.sender ? ` from ${t.sender}` : ''}${
+        t.reference_message ? ` — ${t.reference_message}` : ''
+      }`.slice(0, 200)
+    );
+    setPayEtransferId(t.id);
   }
 
   async function submitPayment() {
@@ -779,13 +799,19 @@ export default function OrderDetail() {
     try {
       await paymentMut.mutateAsync({
         id,
-        input: { amount, paid_on: toIso(payDate), note: payNote.trim() },
+        input: {
+          amount,
+          paid_on: toIso(payDate),
+          note: payNote.trim(),
+          etransfer_id: payEtransferId ?? undefined,
+        },
       });
       toast.success('Payment recorded.');
       setSheet('none');
       setPayAmount('');
       setPayNote('');
       setPayDate(new Date());
+      setPayEtransferId(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not record payment.');
     }
@@ -1653,6 +1679,66 @@ export default function OrderDetail() {
             <p className="mb-3 text-[13px] text-text-muted">
               Balance due <span className="font-mono">${balance.toFixed(2)}</span>
             </p>
+
+            {/* Unmatched e-Transfers — tap one to autofill the form below */}
+            {(pendingEtransfersQ.data?.length ?? 0) > 0 && (
+              <div className="mb-3 rounded-sm border border-border bg-surface-muted p-2.5">
+                <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                  Received e-Transfers ({pendingEtransfersQ.data!.length})
+                </p>
+                <ul className="flex flex-col gap-1.5">
+                  {pendingEtransfersQ.data!.map((t) => {
+                    const selected = payEtransferId === t.id;
+                    return (
+                      <li
+                        key={t.id}
+                        className={`flex items-center gap-2 rounded-sm border bg-surface px-2.5 py-2 ${
+                          selected ? 'border-brand-600' : 'border-border-input'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => applyEtransfer(t)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="flex items-baseline justify-between gap-2">
+                            <span className="font-mono text-[13px] font-semibold text-text-primary">
+                              ${t.amount.toFixed(2)}
+                            </span>
+                            <span className="truncate text-[12px] text-text-secondary">
+                              {t.sender || 'Unknown sender'}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] text-text-muted">
+                            {new Date(t.received_at).toLocaleDateString()}
+                            {t.reference_message ? ` · ${t.reference_message}` : ''}
+                          </span>
+                        </button>
+                        {selected && (
+                          <span className="shrink-0 rounded-sm bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
+                            Selected
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => dismissEtransferMut.mutate(t.id)}
+                          disabled={dismissEtransferMut.isPending}
+                          aria-label={`Dismiss e-Transfer of $${t.amount.toFixed(2)}`}
+                          title="Dismiss"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-danger disabled:opacity-40"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-2 px-1 text-[11px] text-text-muted">
+                  Tap one to fill this form, then Record payment.
+                </p>
+              </div>
+            )}
+
             <div className="flex flex-col gap-3">
               <label className="block">
                 <span className="mb-1.5 block text-xs font-medium text-text-secondary">Amount</span>

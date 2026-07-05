@@ -17,3 +17,4 @@ ENVIRONMENT = "development"
 # APP_URL
 # RESEND_FROM       (e.g. "Blinds Nisa <estimates@blindsnisa.com>")
 # RESEND_REPLY_TO   (e.g. "info@blindsnisa.com")
+# ETRANSFER_WEBHOOK_SECRET  (shared with the Gmail Apps Script)

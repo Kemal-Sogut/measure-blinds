@@ -18,7 +18,9 @@ import { requireAuth, type AuthVariables } from './middleware/auth';
 import settingsRoutes from './routes/settings';
 import customersRoutes from './routes/customers';
 import ordersRoutes from './routes/orders';
+import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
+import webhookRoutes from './routes/webhook';
 import { createSupabaseAdmin } from './lib/supabase';
 
 /** Environment bindings provided by Cloudflare Workers runtime. */
@@ -32,6 +34,8 @@ export interface Env {
   RESEND_REPLY_TO?: string;
   APP_URL: string;
   ENVIRONMENT: string;
+  /** Shared secret the e-Transfer Apps Script sends as a Bearer token. */
+  ETRANSFER_WEBHOOK_SECRET?: string;
 }
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -79,6 +83,13 @@ app.get('/api/health', (c) => {
 });
 
 /**
+ * e-Transfer webhook — intentionally OUTSIDE /api/* so it skips JWT
+ * auth; it authenticates with a shared bearer secret instead. Posted to
+ * by the Gmail Apps Script.
+ */
+app.route('/webhooks', webhookRoutes);
+
+/**
  * JWT verification on every /api/* route registered below this point.
  * /api/health stays public (registered above); /public/* routes are
  * intentionally outside this prefix and use rate limiting instead.
@@ -102,6 +113,9 @@ app.route('/api/customers', customersRoutes);
 
 /** Orders module — server-priced CRUD, estimates/invoices, payments. */
 app.route('/api/orders', ordersRoutes);
+
+/** Payment reconciliation — the unmatched e-Transfer inbox. */
+app.route('/api/payments', paymentsRoutes);
 
 /** Public customer view + confirm — token-gated, rate-limited (Phase 9). */
 app.route('/public', publicRoutes);

@@ -48,6 +48,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { calculateBlindUnitPrice } from '../lib/pricing';
 import { calculateTotals } from '../lib/totals';
+import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
 import {
@@ -118,6 +119,8 @@ const paymentSchema = z
     amount: z.number().positive().max(10_000_000),
     paid_on: isoDate.optional(),
     note: z.string().max(500).default(''),
+    /** When set, links & marks this pending e-Transfer as applied. */
+    etransfer_id: z.string().uuid().optional(),
   })
   .strict();
 
@@ -900,14 +903,19 @@ app.post('/:id/payments', async (c) => {
   }
 
   const paid_on = input.paid_on ?? new Date().toISOString().slice(0, 10);
-  const { error: payError } = await sb
-    .from('payments')
-    .insert({ order_id: id, amount: input.amount, paid_on, note: input.note });
-  if (payError) return c.json({ error: payError.message }, 500);
+  const result = await recordOrderPayment(sb, id, existing.status, {
+    amount: input.amount,
+    paid_on,
+    note: input.note,
+  });
+  if ('errorMessage' in result) return c.json({ error: result.errorMessage }, 500);
 
-  // First payment advances the lifecycle.
-  if (existing.status === 'awaiting_payment') {
-    await sb.from('orders').update({ status: 'in_progress' }).eq('id', id);
+  // When applying an unmatched e-Transfer, mark it resolved + linked.
+  if (input.etransfer_id) {
+    await sb
+      .from('etransfers')
+      .update({ status: 'applied', order_id: id, payment_id: result.paymentId })
+      .eq('id', input.etransfer_id);
   }
 
   const { data } = await readDetail(sb, id);

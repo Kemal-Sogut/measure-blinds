@@ -78,6 +78,18 @@ export interface PaymentInput {
   amount: number;
   paid_on?: string;
   note?: string;
+  /** When applying a pending e-Transfer, its id (marks it resolved). */
+  etransfer_id?: string;
+}
+
+/** An unmatched e-Transfer awaiting manual assignment to an order. */
+export interface PendingEtransfer {
+  id: string;
+  amount: number;
+  sender: string;
+  reference_message: string;
+  received_at: string;
+  raw_snippet: string;
 }
 
 /** Payload for POST /api/orders/:id/install/propose. */
@@ -89,6 +101,7 @@ export interface InstallProposeInput {
 }
 
 const LIST_KEY = ['orders', 'list'] as const;
+const ETRANSFERS_KEY = ['payments', 'pending'] as const;
 
 /** Order list filtered by status tab + debounced search term. */
 export function useOrderList(tab: OrderTab, term: string): UseQueryResult<Order[]> {
@@ -280,6 +293,7 @@ export function useRecordPayment(): UseMutationResult<
   { id: string; input: PaymentInput }
 > {
   const cache = useCacheOrder();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, input }) =>
       (
@@ -288,7 +302,34 @@ export function useRecordPayment(): UseMutationResult<
           body: JSON.stringify(input),
         })
       ).data,
-    onSuccess: cache,
+    onSuccess: (data) => {
+      cache(data);
+      // An applied e-Transfer leaves the pending inbox.
+      void qc.invalidateQueries({ queryKey: ETRANSFERS_KEY });
+    },
+  });
+}
+
+/** Lists unmatched e-Transfers awaiting manual assignment. */
+export function useUnmatchedEtransfers(): UseQueryResult<PendingEtransfer[]> {
+  return useQuery({
+    queryKey: ETRANSFERS_KEY,
+    queryFn: async () =>
+      (await apiFetch<Envelope<PendingEtransfer[]>>('/api/payments/pending')).data,
+  });
+}
+
+/** Dismisses a pending e-Transfer (duplicate / refund / not ours). */
+export function useDismissEtransfer(): UseMutationResult<{ id: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (
+        await apiFetch<Envelope<{ id: string }>>(`/api/payments/${id}/dismiss`, {
+          method: 'POST',
+        })
+      ).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ETRANSFERS_KEY }),
   });
 }
 
