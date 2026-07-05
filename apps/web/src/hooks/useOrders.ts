@@ -83,6 +83,8 @@ export interface PaymentInput {
 export interface InstallProposeInput {
   install_date: string;
   install_time: string;
+  /** Optional personal note included in the customer email. */
+  message?: string;
 }
 
 const LIST_KEY = ['orders', 'list'] as const;

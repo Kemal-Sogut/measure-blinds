@@ -138,6 +138,8 @@ export interface InstallationProposalInputs {
   endText: string;
   /** Public page where the customer confirms or requests another time */
   viewUrl: string;
+  /** Optional personal note from the consultant, shown above the CTA. */
+  message?: string;
 }
 
 /**
@@ -155,6 +157,11 @@ export function buildInstallationProposalHtml(i: InstallationProposalInputs): st
   const startText = escapeHtml(i.startText);
   const endText = escapeHtml(i.endText);
   const url = escapeHtml(i.viewUrl);
+  const messageBlock = i.message?.trim()
+    ? `<p style="margin:0 0 20px;padding:12px 16px;background:#f1f3f5;border-radius:8px;white-space:pre-wrap">${escapeHtml(
+        i.message.trim()
+      )}</p>`
+    : '';
   return `<!doctype html>
 <html><body style="margin:0;background:#f1f3f5;font-family:Arial,Helvetica,sans-serif;color:#212529">
   <div style="max-width:560px;margin:0 auto;padding:24px">
@@ -165,6 +172,7 @@ export function buildInstallationProposalHtml(i: InstallationProposalInputs): st
       <p style="margin:0 0 16px">Hi ${name},</p>
       <p style="margin:0 0 16px">Your order <strong>${order}</strong> is ready for installation. We&apos;d like to propose a time to come by.</p>
       <p style="margin:0 0 20px;font-size:16px">We will be there between <strong>${startText}</strong> and <strong>${endText}</strong> on <strong>${dateText}</strong> if that works for you.</p>
+      ${messageBlock}
       <p style="text-align:center;margin:0 0 20px">
         <a href="${url}" style="display:inline-block;background:#4c6ef5;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:bold">Confirm or request another time</a>
       </p>

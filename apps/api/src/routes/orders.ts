@@ -123,6 +123,7 @@ const installProposeSchema = z
   .object({
     install_date: isoDate,
     install_time: clockTime,
+    message: z.string().max(1000).optional(),
   })
   .strict();
 
@@ -950,6 +951,7 @@ app.post('/:id/install/propose', async (c) => {
         startText: win.startText,
         endText: win.endText,
         viewUrl,
+        message: input.message,
       }),
     });
   } catch (e) {

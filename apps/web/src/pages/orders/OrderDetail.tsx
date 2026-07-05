@@ -186,6 +186,9 @@ export default function OrderDetail() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ItemDraft | null>(null);
+  // Key of a just-added item whose editor is open for the first time;
+  // canceling that editor discards the still-blank item.
+  const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
   const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
@@ -198,6 +201,7 @@ export default function OrderDetail() {
   // Installation proposal form state (Propose Installation sheet).
   const [installDate, setInstallDate] = useState<Date>(new Date());
   const [installTime, setInstallTime] = useState('09:00');
+  const [installMessage, setInstallMessage] = useState('');
 
   // Hydrate once from a loaded order.
   useEffect(() => {
@@ -269,21 +273,20 @@ export default function OrderDetail() {
     setItems((list) => list.filter((it) => it.key !== key));
   }
   function addBlind() {
-    setItems((list) => [
-      ...list,
-      {
-        key: nextKey(),
-        item_type: 'blind',
-        room_name: '',
-        blinds_type: '',
-        panels: [''],
-        height_cm: '',
-        fabric_id: '',
-        cassette_id: '',
-        control_id: '',
-        quantity: '1',
-      },
-    ]);
+    const draft: BlindDraft = {
+      key: nextKey(),
+      item_type: 'blind',
+      room_name: '',
+      blinds_type: '',
+      panels: [''],
+      height_cm: '',
+      fabric_id: '',
+      cassette_id: '',
+      control_id: '',
+      quantity: '1',
+    };
+    setItems((list) => [...list, draft]);
+    openNewItemEdit(draft);
   }
   function addPreset(preset: PresetLineItem) {
     setItems((list) => [
@@ -299,10 +302,23 @@ export default function OrderDetail() {
     setSheet('none');
   }
   function addCustom() {
-    setItems((list) => [
-      ...list,
-      { key: nextKey(), item_type: 'custom', description: '', quantity: '1', unit_price: '' },
-    ]);
+    const draft: FlatDraft = {
+      key: nextKey(),
+      item_type: 'custom',
+      description: '',
+      quantity: '1',
+      unit_price: '',
+    };
+    setItems((list) => [...list, draft]);
+    openNewItemEdit(draft);
+  }
+
+  /** Opens the edit popup for a freshly-added item (discarded on cancel). */
+  function openNewItemEdit(draft: ItemDraft) {
+    setEditDraft({ ...draft } as ItemDraft);
+    setEditingKey(draft.key);
+    setPendingNewKey(draft.key);
+    setSheet('editItem');
   }
 
   // ── Selection helpers ─────────────────────────────────────────────
@@ -343,12 +359,16 @@ export default function OrderDetail() {
     setItems((list) => list.map((it) => (it.key === editingKey ? editDraft : it)));
     setEditDraft(null);
     setEditingKey(null);
+    setPendingNewKey(null);
     setSheet('none');
   }
 
   function cancelEdit() {
+    // A brand-new item that was never saved is removed on cancel.
+    if (pendingNewKey) removeItem(pendingNewKey);
     setEditDraft(null);
     setEditingKey(null);
+    setPendingNewKey(null);
     setSheet('none');
   }
 
@@ -507,6 +527,7 @@ export default function OrderDetail() {
   function openInstallSheet() {
     if (existing?.install_date) setInstallDate(fromIso(existing.install_date));
     if (existing?.install_time) setInstallTime(existing.install_time.slice(0, 5));
+    setInstallMessage('');
     setSheet('install');
   }
 
@@ -515,7 +536,11 @@ export default function OrderDetail() {
     try {
       await proposeMut.mutateAsync({
         id,
-        input: { install_date: toIso(installDate), install_time: installTime },
+        input: {
+          install_date: toIso(installDate),
+          install_time: installTime,
+          message: installMessage.trim() || undefined,
+        },
       });
       toast.success(`Installation time emailed to ${customer?.email ?? 'the customer'}.`);
       setSheet('none');
@@ -1499,6 +1524,19 @@ export default function OrderDetail() {
                 Customer will see: <span className="font-medium">between {installWindowText(installTime)}</span> on{' '}
                 {format(installDate, 'EEEE, MMMM d, yyyy')}.
               </p>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Message to include (optional)
+                </span>
+                <textarea
+                  value={installMessage}
+                  onChange={(e) => setInstallMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={3}
+                  placeholder="e.g. Please clear the window areas before we arrive. Call if the time doesn't work."
+                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
