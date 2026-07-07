@@ -17,7 +17,7 @@ const STYLES: Record<OrderStatus, string> = {
   awaiting_payment: 'bg-warning-tint text-warning',
   in_progress: 'bg-brand-100 text-brand-600',
   ready: 'bg-success-tint text-success',
-  installed: 'bg-success-tint text-success',
+  installed: 'bg-success-strong-tint text-success-strong',
   expired: 'bg-danger-tint text-danger',
 };
 

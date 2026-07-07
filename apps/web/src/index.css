@@ -40,6 +40,8 @@
   /* ── Status Colors (with tint backgrounds for badges) ── */
   --color-success: #1f8a5b;
   --color-success-tint: #e8f5ee;
+  --color-success-strong: #0f5132;       /* darker green — Installed badge only */
+  --color-success-strong-tint: #d9f0e3;
   --color-warning: #b4600a;
   --color-warning-tint: #f9efe2;
   --color-danger: #c4342a;
