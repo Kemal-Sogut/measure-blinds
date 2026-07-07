@@ -32,6 +32,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
 import { sendEmail, buildConfirmationNoticeHtml, buildInstallationNoticeHtml } from '../lib/email';
+import { todayBusiness } from '../lib/dates';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -58,7 +59,7 @@ async function effectiveStatus(
   sb: SupabaseClient,
   order: { id: string; status: string; expiry_date: string }
 ): Promise<string> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBusiness();
   if (order.status === 'sent' && order.expiry_date < today) {
     await sb.from('orders').update({ status: 'expired' }).eq('id', order.id);
     return 'expired';

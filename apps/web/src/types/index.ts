@@ -138,6 +138,8 @@ export interface OrderLog {
   id: string;
   order_id: string;
   message: string;
+  /** Email of the consultant who performed the action ('' for system events). */
+  actor_email: string;
   created_at: string;
 }
 

@@ -147,6 +147,9 @@ export default function CustomerView() {
   const [requesting, setRequesting] = useState(false);
   const [requestNote, setRequestNote] = useState('');
 
+  // Terms & Conditions expandable section — collapsed by default.
+  const [termsOpen, setTermsOpen] = useState(false);
+
   // Load the public estimate once on mount.
   useEffect(() => {
     let cancelled = false;
@@ -464,11 +467,36 @@ export default function CustomerView() {
           </div>
         </section>
 
-        {/* Terms */}
+        {/* Terms — expandable, collapsed by default */}
         {estimate.terms && (
           <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
-            <h2 className="mb-1 text-xs font-semibold text-text-muted">TERMS & CONDITIONS</h2>
-            <p className="whitespace-pre-wrap text-xs text-text-secondary">{estimate.terms}</p>
+            <button
+              type="button"
+              onClick={() => setTermsOpen((o) => !o)}
+              aria-expanded={termsOpen}
+              className="flex w-full items-center justify-between text-left"
+            >
+              <h2 className="text-xs font-semibold text-text-muted">TERMS & CONDITIONS</h2>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+                className={`shrink-0 text-text-muted transition-transform ${termsOpen ? 'rotate-180' : ''}`}
+              >
+                <path
+                  d="M6 9l6 6 6-6"
+                  stroke="currentColor"
+                  strokeWidth="1.9"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            {termsOpen && (
+              <p className="mt-2 whitespace-pre-wrap text-xs text-text-secondary">{estimate.terms}</p>
+            )}
           </section>
         )}
 

@@ -22,6 +22,7 @@ import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
 import { createSupabaseAdmin } from './lib/supabase';
+import { todayBusiness } from './lib/dates';
 
 /** Environment bindings provided by Cloudflare Workers runtime. */
 export interface Env {
@@ -50,9 +51,13 @@ app.use(
   cors({
     origin: (origin) => {
       if (!origin) return '';
+      // Exact-prefix checks only: a bare `includes('localhost')` would
+      // also match hostile origins like https://evil-localhost.example.com.
       if (
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
+        origin.startsWith('http://localhost:') ||
+        origin === 'http://localhost' ||
+        origin.startsWith('http://127.0.0.1:') ||
+        origin === 'http://127.0.0.1' ||
         origin === 'https://measure-blinds.blindsnisa.workers.dev'
       ) {
         return origin;
@@ -137,7 +142,9 @@ export default {
     ctx.waitUntil(
       (async () => {
         const sb = createSupabaseAdmin(env);
-        const today = new Date().toISOString().slice(0, 10);
+        // Business-timezone "today": the 6:00 UTC run is 1–2 AM Toronto,
+        // so a UTC date here would expire estimates a day early.
+        const today = todayBusiness();
         const { data, error } = await sb
           .from('orders')
           .update({ status: 'expired' })

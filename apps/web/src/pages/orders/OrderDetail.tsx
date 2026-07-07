@@ -295,6 +295,9 @@ export default function OrderDetail() {
   const [payNote, setPayNote] = useState('');
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
+  // Idempotency key: one UUID per opened payment sheet, so a double
+  // submit (double-click / network retry) records the payment once.
+  const [payClientKey, setPayClientKey] = useState('');
 
   // Installation proposal form state (Propose Installation sheet).
   const [installDate, setInstallDate] = useState<Date>(new Date());
@@ -778,12 +781,13 @@ export default function OrderDetail() {
     }
   }
 
-  /** Opens the payment sheet with an empty amount. */
+  /** Opens the payment sheet with an empty amount and a fresh idempotency key. */
   function openPayment() {
     setPayAmount('');
     setPayDate(new Date());
     setPayNote('');
     setPayEtransferId(null);
+    setPayClientKey(crypto.randomUUID());
     setSheet('payment');
   }
 
@@ -803,6 +807,16 @@ export default function OrderDetail() {
     if (!id) return;
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a payment amount.');
+    // Overpay pop-up: recording this amount would push the paid total
+    // past the order total — proceed only with explicit consent (the
+    // Worker independently enforces this via the allow_overpay flag).
+    const exceeds = amountPaid + amount > orderTotal + 0.005;
+    if (
+      exceeds &&
+      !window.confirm('This amount will exceed total balance. Record it anyway?')
+    ) {
+      return;
+    }
     try {
       await paymentMut.mutateAsync({
         id,
@@ -811,6 +825,8 @@ export default function OrderDetail() {
           paid_on: toIso(payDate),
           note: payNote.trim(),
           etransfer_id: payEtransferId ?? undefined,
+          client_key: payClientKey || undefined,
+          allow_overpay: exceeds,
         },
       });
       toast.success('Payment recorded.');
@@ -819,6 +835,7 @@ export default function OrderDetail() {
       setPayNote('');
       setPayDate(new Date());
       setPayEtransferId(null);
+      setPayClientKey('');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not record payment.');
     }
@@ -1528,8 +1545,11 @@ export default function OrderDetail() {
           {/* Installation schedule panel (ready/installed orders) */}
           {installPanel}
 
-          {/* Delete order (outside the disabled fieldset) */}
-          {id && (
+          {/* Delete order (outside the disabled fieldset). Only draft and
+              expired orders can be deleted — anything the customer has
+              seen or paid against is accounting history (the Worker
+              enforces this with a 409; the button simply hides). */}
+          {id && (status === 'draft' || status === 'expired') && (
             <button
               onClick={handleDeleteOrder}
               disabled={deleteMut.isPending}
@@ -1550,7 +1570,12 @@ export default function OrderDetail() {
                 <ul className="flex flex-col gap-2.5">
                   {logs.map((log) => (
                     <li key={log.id} className="flex justify-between gap-3 text-[13px]">
-                      <span className="text-text-secondary">{log.message}</span>
+                      <span className="text-text-secondary">
+                        {log.message}
+                        {log.actor_email && (
+                          <span className="ml-1.5 text-xs text-text-muted">— {log.actor_email}</span>
+                        )}
+                      </span>
                       <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
                         {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
                       </span>

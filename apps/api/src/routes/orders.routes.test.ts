@@ -407,12 +407,74 @@ describe('GET /api/orders/calendar', () => {
   });
 });
 
+describe('POST /api/orders/:id/payments', () => {
+  const confirmedOrder = {
+    id: 'o1',
+    status: 'awaiting_payment',
+    total: 100,
+    payments: [{ amount: 60 }],
+    line_items: [],
+    customer: null,
+  };
+
+  it('409 OVERPAY when the amount exceeds the balance without consent', async () => {
+    db.responses['orders.select'] = [confirmedOrder];
+    const res = await ordersApp.request('/o1/payments', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 50 }), // 60 paid + 50 > 100 total
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code?: string };
+    expect(body.code).toBe('OVERPAY');
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('records an overpayment when allow_overpay is true', async () => {
+    db.responses['orders.select'] = [confirmedOrder];
+    db.responses['payments.insert'] = [{ id: 'p1' }];
+    const res = await ordersApp.request('/o1/payments', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 50, allow_overpay: true }),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('payments.insert');
+  });
+
+  it('records a within-balance payment without the flag', async () => {
+    db.responses['orders.select'] = [confirmedOrder];
+    db.responses['payments.insert'] = [{ id: 'p2' }];
+    const res = await ordersApp.request('/o1/payments', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 40 }), // 60 + 40 = exactly the total
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('payments.insert');
+  });
+});
+
 describe('DELETE /api/orders/:id', () => {
-  it('deletes an existing order', async () => {
-    db.responses['orders.select'] = [{ id: 'e1' }];
+  it('deletes a draft order', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'draft' }];
     const res = await ordersApp.request('/e1', { method: 'DELETE' }, ENV);
     expect(res.status).toBe(200);
     expect(db.calls).toContain('orders.delete');
+  });
+
+  it('deletes an expired order', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'expired' }];
+    const res = await ordersApp.request('/e1', { method: 'DELETE' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('orders.delete');
+  });
+
+  it('409 for a confirmed order (accounting history is preserved)', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress' }];
+    const res = await ordersApp.request('/e1', { method: 'DELETE' }, ENV);
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.delete');
   });
 
   it('404 for a missing order', async () => {

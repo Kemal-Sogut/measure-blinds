@@ -56,6 +56,7 @@ import { calculateBlindUnitPrice } from '../lib/pricing';
 import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
+import { todayBusiness } from '../lib/dates';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
 import {
   sendEmail,
@@ -135,6 +136,19 @@ const paymentSchema = z
     note: z.string().max(500).default(''),
     /** When set, links & marks this pending e-Transfer as applied. */
     etransfer_id: z.string().uuid().optional(),
+    /**
+     * Client-generated idempotency key (UUID). Stored UNIQUE on the
+     * payments row, so a retried/double-submitted request records the
+     * payment exactly once — the duplicate returns the current order
+     * instead of inserting a second ledger entry.
+     */
+    client_key: z.string().uuid().optional(),
+    /**
+     * Explicit overpayment consent. When false (default) a payment that
+     * would push the paid total past the order total is refused with
+     * 409 code=OVERPAY; the UI asks the user and retries with true.
+     */
+    allow_overpay: z.boolean().default(false),
   })
   .strict();
 
@@ -330,13 +344,20 @@ function sumPayments(payments: Array<{ amount: number | string }> | null | undef
 }
 
 /**
- * Appends one row to the order's activity trail. Best-effort: a logging
- * failure must never fail the request it is describing, so errors are
- * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
+ * Appends one row to the order's activity trail, attributing it to the
+ * acting user's email when known (empty for system/cron events).
+ * Best-effort: a logging failure must never fail the request it is
+ * describing, so errors are swallowed (mirrors the "best-effort
+ * cleanup" pattern used elsewhere).
  */
-async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string,
+  actorEmail = ''
+): Promise<void> {
   try {
-    await sb.from('order_logs').insert({ order_id: orderId, message });
+    await sb.from('order_logs').insert({ order_id: orderId, message, actor_email: actorEmail });
   } catch {
     // Logging is diagnostic only — never block the caller's mutation.
   }
@@ -352,7 +373,7 @@ export async function applyDefensiveExpiry(
   sb: SupabaseClient,
   order: { id: string; status: string; expiry_date: string }
 ): Promise<string> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBusiness();
   if (order.status === 'sent' && order.expiry_date < today) {
     await sb.from('orders').update({ status: 'expired' }).eq('id', order.id);
     return 'expired';
@@ -473,7 +494,7 @@ app.post('/', async (c) => {
   const sb = createSupabaseAdmin(c.env);
 
   // Resolve dates: default order_date = today, expiry = +default_expiry_days.
-  const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
+  const order_date = input.order_date ?? todayBusiness();
   let expiry_date = input.expiry_date;
   if (!expiry_date) {
     const { data: company } = await sb
@@ -543,7 +564,7 @@ app.post('/', async (c) => {
     }
   }
 
-  await logOrderEvent(sb, order.id as string, 'Order created.');
+  await logOrderEvent(sb, order.id as string, 'Order created.', c.get('user')?.email ?? '');
 
   const { data: full } = await readDetail(sb, order.id as string);
   return c.json({ data: full ?? order }, 201);
@@ -570,12 +591,15 @@ app.put('/:id', async (c) => {
 
   const { data: existing } = await sb
     .from('orders')
-    .select('id, status, expiry_date')
+    .select('id, status, order_date, expiry_date')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
 
-  const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
+  // Fall back to the STORED dates, never "today": an edit payload that
+  // omits order_date must not silently move the order to the current
+  // date (the order number encodes the original date).
+  const order_date = input.order_date ?? existing.order_date;
   const expiry_date = input.expiry_date ?? existing.expiry_date;
   if (expiry_date < order_date) {
     return c.json({ error: 'Expiry date cannot be before the order date.' }, 400);
@@ -593,31 +617,26 @@ app.put('/:id', async (c) => {
     input.discount_value
   );
 
-  const { error: upError } = await sb
-    .from('orders')
-    .update({
+  // Atomic update: order fields + wholesale line-item replacement run
+  // inside ONE Postgres transaction (update_order_with_items RPC,
+  // migration 18). The previous update → delete → insert sequence could
+  // strand an order with updated totals and NO items if the insert
+  // failed mid-way; the RPC rolls everything back together.
+  const { error: upError } = await sb.rpc('update_order_with_items', {
+    p_order_id: id,
+    p_fields: {
       customer_id: input.customer_id,
       order_date,
       expiry_date,
       discount_type: input.discount_type,
       discount_value: input.discount_value,
       ...totals,
-    })
-    .eq('id', id);
+    },
+    p_items: rows,
+  });
   if (upError) return c.json({ error: upError.message }, 500);
 
-  // Replace line items wholesale — simplest correct model for a
-  // single-editor tool; row counts are tiny at this scale.
-  const { error: delError } = await sb.from('line_items').delete().eq('order_id', id);
-  if (delError) return c.json({ error: delError.message }, 500);
-  if (rows.length) {
-    const { error: insError } = await sb
-      .from('line_items')
-      .insert(rows.map((r) => ({ ...r, order_id: id })));
-    if (insError) return c.json({ error: insError.message }, 500);
-  }
-
-  await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+  await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`, c.get('user')?.email ?? '');
 
   const { data: full, error: readError } = await readDetail(sb, id);
   if (readError) return c.json({ error: readError.message }, 500);
@@ -630,7 +649,7 @@ app.get('/:id/logs', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, error } = await sb
     .from('order_logs')
-    .select('id, order_id, message, created_at')
+    .select('id, order_id, message, actor_email, created_at')
     .eq('order_id', c.req.param('id'))
     .order('created_at', { ascending: false })
     .limit(200);
@@ -768,7 +787,7 @@ app.post('/:id/send', async (c) => {
   if (!EDITABLE.includes(order.status)) {
     return c.json({ error: `A ${order.status} order's estimate cannot be re-sent.` }, 409);
   }
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBusiness();
   if (order.expiry_date < today) {
     return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
   }
@@ -823,7 +842,7 @@ app.post('/:id/send', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
+  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`, c.get('user')?.email ?? '');
 
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
@@ -901,7 +920,7 @@ app.post('/:id/send-invoice', async (c) => {
     if (error) return c.json({ error: error.message }, 500);
   }
 
-  await logOrderEvent(sb, id, `Invoice emailed to ${email}.`);
+  await logOrderEvent(sb, id, `Invoice emailed to ${email}.`, c.get('user')?.email ?? '');
 
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
@@ -927,7 +946,7 @@ app.post('/:id/confirm', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Order confirmed.');
+  await logOrderEvent(sb, id, 'Order confirmed.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -960,7 +979,7 @@ app.post('/:id/unconfirm', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Confirmation reversed.');
+  await logOrderEvent(sb, id, 'Confirmation reversed.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -983,7 +1002,7 @@ app.post('/:id/payments', async (c) => {
 
   const { data: existing } = await sb
     .from('orders')
-    .select('id, status')
+    .select('id, status, total, payments(amount)')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
@@ -995,13 +1014,31 @@ app.post('/:id/payments', async (c) => {
     );
   }
 
-  const paid_on = input.paid_on ?? new Date().toISOString().slice(0, 10);
+  // Overpayment guard: refuse a payment that pushes the ledger past the
+  // order total unless the caller explicitly consented (allow_overpay).
+  // The UI turns the OVERPAY code into a confirmation pop-up and retries.
+  const alreadyPaid = sumPayments(existing.payments);
+  const wouldBePaid = Math.round((alreadyPaid + input.amount) * 100) / 100;
+  if (!input.allow_overpay && wouldBePaid > Number(existing.total) + 0.005) {
+    return c.json({ error: 'This amount will exceed total balance.', code: 'OVERPAY' }, 409);
+  }
+
+  const paid_on = input.paid_on ?? todayBusiness();
   const result = await recordOrderPayment(sb, id, existing.status, {
     amount: input.amount,
     paid_on,
     note: input.note,
+    client_key: input.client_key,
   });
   if ('errorMessage' in result) return c.json({ error: result.errorMessage }, 500);
+
+  // Idempotent replay: this client_key was already recorded — return
+  // the current order without inserting a second ledger entry.
+  if ('duplicate' in result) {
+    const { data } = await readDetail(sb, id);
+    if (data) data.amount_paid = sumPayments(data.payments);
+    return c.json({ data }, 200);
+  }
 
   // When applying an unmatched e-Transfer, mark it resolved + linked.
   if (input.etransfer_id) {
@@ -1011,7 +1048,7 @@ app.post('/:id/payments', async (c) => {
       .eq('id', input.etransfer_id);
   }
 
-  await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);
+  await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`, c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1057,7 +1094,7 @@ app.delete('/:id/payments/:paymentId', async (c) => {
     }
   }
 
-  await logOrderEvent(sb, id, `Payment of $${Number(payment.amount).toFixed(2)} deleted.`);
+  await logOrderEvent(sb, id, `Payment of $${Number(payment.amount).toFixed(2)} deleted.`, c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1087,7 +1124,7 @@ app.post('/:id/in-progress', async (c) => {
   const { error } = await sb.from('orders').update({ status: 'in_progress' }).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Order moved to In Progress.');
+  await logOrderEvent(sb, id, 'Order moved to In Progress.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1115,7 +1152,7 @@ app.post('/:id/ready', async (c) => {
   const { error } = await sb.from('orders').update({ status: 'ready' }).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Order marked Ready.');
+  await logOrderEvent(sb, id, 'Order marked Ready.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1143,7 +1180,7 @@ app.post('/:id/installed', async (c) => {
   const { error } = await sb.from('orders').update({ status: 'installed' }).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Order marked Installed.');
+  await logOrderEvent(sb, id, 'Order marked Installed.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1215,7 +1252,7 @@ app.post('/:id/install/propose', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, `Installation proposed for ${input.install_date} at ${input.install_time}.`);
+  await logOrderEvent(sb, id, `Installation proposed for ${input.install_date} at ${input.install_time}.`, c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1276,7 +1313,7 @@ app.post('/:id/revert', async (c) => {
   const { error } = await sb.from('orders').update(update).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
+  await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`, c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1308,23 +1345,37 @@ app.post('/:id/install/cancel', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await logOrderEvent(sb, id, 'Installation time cleared.');
+  await logOrderEvent(sb, id, 'Installation time cleared.', c.get('user')?.email ?? '');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
 });
 
-/** Deletes an order and its line items + payments (ON DELETE CASCADE). */
+/** Statuses whose orders may be hard-deleted (nothing sent/paid yet, or lapsed). */
+const DELETABLE = ['draft', 'expired'] as const;
+
+/**
+ * Deletes an order and its line items + payments (ON DELETE CASCADE).
+ * Only `draft` and `expired` orders may be deleted — anything the
+ * customer has seen or paid against is accounting history; use
+ * `/:id/revert` to walk a confirmed order backward instead.
+ */
 app.delete('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const id = c.req.param('id');
   const { data: existing } = await sb
     .from('orders')
-    .select('id')
+    .select('id, status')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (!(DELETABLE as readonly string[]).includes(existing.status)) {
+    return c.json(
+      { error: `Only a draft or expired order can be deleted (this one is ${existing.status}).` },
+      409
+    );
+  }
   const { error } = await sb.from('orders').delete().eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ data: { id } });

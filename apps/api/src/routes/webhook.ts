@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { recordOrderPayment } from '../lib/payments';
 import { resolveOrder } from '../lib/etransferMatch';
+import { businessDateOf } from '../lib/dates';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -55,7 +56,9 @@ app.post('/etransfer', async (c) => {
   const received_at = Number.isNaN(receivedAt.getTime())
     ? new Date().toISOString()
     : receivedAt.toISOString();
-  const paid_on = received_at.slice(0, 10);
+  // paid_on is a business-timezone calendar date — a late-evening
+  // Toronto e-Transfer must not be dated "tomorrow" via UTC.
+  const paid_on = businessDateOf(new Date(received_at));
 
   // Idempotency: skip an email we've already ingested.
   if (p.message_id) {

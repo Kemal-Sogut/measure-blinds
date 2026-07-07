@@ -81,6 +81,16 @@ export interface PaymentInput {
   note?: string;
   /** When applying a pending e-Transfer, its id (marks it resolved). */
   etransfer_id?: string;
+  /**
+   * Idempotency key minted when the payment sheet opens; a retried or
+   * double-submitted request with the same key records exactly once.
+   */
+  client_key?: string;
+  /**
+   * Explicit consent to record a payment that pushes the paid total
+   * past the order total (set after the overpay confirmation pop-up).
+   */
+  allow_overpay?: boolean;
 }
 
 /** An unmatched e-Transfer awaiting manual assignment to an order. */
