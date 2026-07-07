@@ -5,11 +5,13 @@
  * Bottom navigation bar for top-level sections (mobile-first, per
  * IMPLEMENTATION.md §14: bottom nav preferred over hamburger menus).
  *
- * Four fixed tabs — Home, Customers, Estimates, Settings — each with
- * an icon + label and a ≥44px tap area. The active tab is derived
- * from the current location prefix. Rendered only by `Layout`, which
- * wraps section-level pages; detail/form pages omit it to maximize
- * space for their sticky action bars.
+ * Five fixed tabs — Home, Customers, Orders, Calendar, Settings — each
+ * with an icon + label and a ≥44px tap area (`flex-1` keeps each tab
+ * ~20% of a 380px viewport wide, comfortably above the 44px minimum).
+ * The active tab is derived from the current location prefix.
+ * Rendered only by `Layout`, which wraps section-level pages;
+ * detail/form pages omit it to maximize space for their sticky action
+ * bars.
  */
 
 import { NavLink } from 'react-router-dom';
@@ -35,6 +37,11 @@ const TABS: Tab[] = [
     to: '/orders',
     label: 'Orders',
     d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6',
+  },
+  {
+    to: '/calendar',
+    label: 'Calendar',
+    d: 'M3 10h18M8 2v4M16 2v4M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
   },
   {
     to: '/settings',

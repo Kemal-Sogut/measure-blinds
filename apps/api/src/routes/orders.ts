@@ -17,6 +17,11 @@
  *   POST   /              create — server generates the order number
  *                         (retrying on the UNIQUE index) and computes
  *                         ALL pricing from catalog prices it fetches
+ *   GET    /calendar      lightweight events for the Calendar view —
+ *                         `?from=&to=` (inclusive ISO dates), filtered
+ *                         to active installation statuses. MUST be
+ *                         registered before GET /:id or Hono matches
+ *                         "calendar" as the :id param.
  *   GET    /:id           order + ordered line items + customer +
  *                         payments, with a defensive expiry check
  *   PUT    /:id           replace fields + line items, full recalc;
@@ -67,6 +72,14 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 /* ------------------------------------------------------------------ */
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+
+/** Query params for GET /calendar — an inclusive date-only range. */
+const calendarRangeSchema = z
+  .object({
+    from: isoDate,
+    to: isoDate,
+  })
+  .strict();
 
 /**
  * Blind line item: measurements + catalog option ids — deliberately
@@ -392,6 +405,48 @@ app.get('/', async (c) => {
     amount_paid: sumPayments(o.payments),
   }));
   return c.json({ data: rows });
+});
+
+/**
+ * Installation sub-statuses that still have an active, customer-facing
+ * schedule and therefore belong on the Calendar (an `unscheduled` order
+ * has no date to plot).
+ */
+const CALENDAR_INSTALL_STATUSES = ['proposed', 'confirmed', 'change_requested'];
+
+/**
+ * Lightweight calendar events for the Calendar tab's monthly grid.
+ *
+ * IMPORTANT: this route MUST be registered before `GET /:id` below —
+ * Hono resolves routes in registration order, so if `/:id` came first
+ * a request for `/calendar` would match it with `id="calendar"` and
+ * 404 (no order literally named "calendar" exists). This ordering is a
+ * locked requirement, not a style choice.
+ *
+ * Mirrors the list route's lightweight `.select()` shape: only the
+ * columns the month grid needs (no line items, no payments) to avoid
+ * over-fetching. Filters `install_date` to the inclusive `[from, to]`
+ * range and restricts to the three active install statuses — a plain
+ * `unscheduled` order never appears on the calendar.
+ */
+app.get('/calendar', async (c) => {
+  const parsed = calendarRangeSchema.safeParse({
+    from: c.req.query('from'),
+    to: c.req.query('to'),
+  });
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const { from, to } = parsed.data;
+
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('orders')
+    .select('id, order_number, install_date, install_time, install_status, status, customer:customers(first_name, last_name)')
+    .gte('install_date', from)
+    .lte('install_date', to)
+    .in('install_status', CALENDAR_INSTALL_STATUSES)
+    .order('install_date', { ascending: true });
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: data ?? [] });
 });
 
 /** Creates an order with server-generated order number + pricing. */

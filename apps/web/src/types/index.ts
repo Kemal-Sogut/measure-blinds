@@ -133,6 +133,26 @@ export interface Order {
   customer?: Customer;
 }
 
+/**
+ * Lightweight order projection returned by `GET /api/orders/calendar`
+ * for the Calendar tab's monthly grid. A strict subset of `Order` —
+ * only the fields the grid/chips need (no line items, no payments) so
+ * a month's worth of installations stays a cheap fetch. Only orders
+ * with an active `install_status` (`proposed` / `confirmed` /
+ * `change_requested`) are ever returned; `unscheduled` orders have no
+ * `install_date` to plot and are excluded server-side.
+ */
+export interface CalendarEvent {
+  id: string;
+  order_number: string;
+  install_date: string;
+  install_time: string;
+  install_status: InstallStatus;
+  status: OrderStatus;
+  /** Joined customer name only — no address/contact fields needed here. */
+  customer: Pick<Customer, 'first_name' | 'last_name'>;
+}
+
 /** Line item type discriminator for different pricing models. */
 export type LineItemType = 'blind' | 'custom' | 'preset';
 

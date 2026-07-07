@@ -43,7 +43,7 @@ function makeBuilder(table: string) {
       }
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'lt', 'or', 'ilike', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
@@ -343,6 +343,67 @@ describe('POST /api/orders/:id/revert', () => {
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(409);
+  });
+});
+
+describe('GET /api/orders/calendar', () => {
+  const CAL_EVENTS = [
+    {
+      id: 'c1',
+      order_number: 'F0307-200',
+      install_date: '2026-08-10',
+      install_time: '09:00',
+      install_status: 'proposed',
+      status: 'ready',
+      customer: { first_name: 'Ann', last_name: 'Lee' },
+    },
+    {
+      id: 'c2',
+      order_number: 'F0307-201',
+      install_date: '2026-08-15',
+      install_time: '13:30',
+      install_status: 'confirmed',
+      status: 'ready',
+      customer: { first_name: 'Bo', last_name: 'Kim' },
+    },
+  ];
+
+  it('is NOT swallowed by the /:id route (route-ordering regression)', async () => {
+    // A request for /calendar must hit the dedicated handler, not
+    // /:id with id="calendar" (which would 404 since no such order
+    // exists and orders.select is empty by default in beforeEach).
+    db.responses['orders.select'] = CAL_EVENTS;
+    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data.length).toBe(2);
+  });
+
+  it('returns events within the requested range', async () => {
+    db.responses['orders.select'] = CAL_EVENTS;
+    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ order_number: string }> };
+    expect(body.data.map((e) => e.order_number)).toEqual(['F0307-200', 'F0307-201']);
+  });
+
+  it('filters to active install statuses only (fake DB has no filtering, but the query call is asserted)', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown[] };
+    expect(body.data).toEqual([]);
+    expect(db.calls).toContain('orders.select');
+  });
+
+  it('400s on a malformed date param', async () => {
+    const res = await ordersApp.request('/calendar?from=not-a-date&to=2026-08-31', { method: 'GET' }, ENV);
+    expect(res.status).toBe(400);
+  });
+
+  it('400s when a required param is missing', async () => {
+    const res = await ordersApp.request('/calendar?from=2026-08-01', { method: 'GET' }, ENV);
+    expect(res.status).toBe(400);
   });
 });
 
