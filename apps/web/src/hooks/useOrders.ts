@@ -23,7 +23,7 @@ import {
 } from '@tanstack/react-query';
 import { apiFetch, apiDownload } from '../lib/api';
 import { useDebouncedValue } from './useDebouncedValue';
-import type { Order, OrderStatus, DiscountType } from '../types';
+import type { Order, OrderLog, OrderStatus, DiscountType } from '../types';
 
 /** API envelope: every orders endpoint returns `{ data: T }`. */
 interface Envelope<T> {
@@ -32,6 +32,7 @@ interface Envelope<T> {
 
 /** Status tabs shown on the orders list page. */
 export type OrderTab =
+  | 'all'
   | 'active'
   | 'awaiting_payment'
   | 'in_progress'
@@ -126,12 +127,22 @@ export function useOrder(id: string | undefined): UseQueryResult<Order> {
   });
 }
 
+/** An order's activity trail, newest first (disabled until id). */
+export function useOrderLogs(id: string | undefined): UseQueryResult<OrderLog[]> {
+  return useQuery({
+    queryKey: ['orders', 'logs', id],
+    queryFn: async () => (await apiFetch<Envelope<OrderLog[]>>(`/api/orders/${id}/logs`)).data,
+    enabled: Boolean(id),
+  });
+}
+
 /** Shared onSuccess: cache the server's authoritative order. */
 function useCacheOrder() {
   const qc = useQueryClient();
   return (data: Order) => {
     qc.setQueryData(['orders', 'detail', data.id], data);
     void qc.invalidateQueries({ queryKey: LIST_KEY });
+    void qc.invalidateQueries({ queryKey: ['orders', 'logs', data.id] });
   };
 }
 
