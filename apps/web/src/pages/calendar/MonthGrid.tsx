@@ -54,12 +54,12 @@ export default function MonthGrid({
   const gridEnd = endOfWeek(endOfMonth(month));
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
 
-  // Group events by install_date for O(1) lookup per cell.
+  // Group events by date for O(1) lookup per cell.
   const byDate = new Map<string, CalendarEvent[]>();
   for (const ev of events) {
-    const list = byDate.get(ev.install_date) ?? [];
+    const list = byDate.get(ev.date) ?? [];
     list.push(ev);
-    byDate.set(ev.install_date, list);
+    byDate.set(ev.date, list);
   }
 
   return (
@@ -109,7 +109,7 @@ export default function MonthGrid({
               </span>
               <div className="flex flex-col gap-0.5">
                 {dayEvents.slice(0, MAX_CHIPS_PER_DAY).map((ev) => (
-                  <EventChip key={ev.id} event={ev} />
+                  <EventChip key={`${ev.kind}-${ev.id}`} event={ev} />
                 ))}
                 {dayEvents.length > MAX_CHIPS_PER_DAY && (
                   <span className="px-1 text-[10px] font-medium text-text-muted">

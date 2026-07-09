@@ -14,6 +14,9 @@
  * Endpoints:
  *   GET  /estimate/:token          customer-facing estimate view data
  *   POST /estimate/:token/confirm  one-shot confirm (rate-limited)
+ *   GET  /appointment/:token       visit proposal (estimate or install)
+ *   POST /appointment/:token/confirm  confirm the proposed window
+ *   POST /appointment/:token/request  ask for a different time (+note)
  *
  * The confirm endpoint validates status='sent' (409 once it has moved
  * on), stamps confirmed_at, and fires an internal notification email —
@@ -102,14 +105,6 @@ app.get('/estimate/:token', async (c) => {
       total: order.total,
       terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,
-      // Installation scheduling (the customer confirms/requests here too).
-      install_status: order.install_status ?? 'unscheduled',
-      install_date: order.install_date,
-      install_time: order.install_time,
-      // Estimate-appointment scheduling (same confirm/request pattern).
-      appointment_status: order.appointment_status ?? 'unscheduled',
-      appointment_date: order.appointment_date,
-      appointment_time: order.appointment_time,
       customer: {
         first_name: order.customer?.first_name ?? '',
         last_name: order.customer?.last_name ?? '',
@@ -199,97 +194,27 @@ app.post('/estimate/:token/confirm', async (c) => {
   return c.json({ data: { status: 'awaiting_payment', total: Number(updated.total) } });
 });
 
-/** Best-effort internal notice when a customer responds to a proposal. */
-async function notifyInstallResponse(
-  c: { env: Env },
-  order: Record<string, any>,
-  confirmed: boolean,
-  note?: string
-): Promise<void> {
-  try {
-    const sb = createSupabaseAdmin(c.env);
-    const { data: company } = await sb
-      .from('company_settings')
-      .select('email, company_name')
-      .eq('id', 1)
-      .single();
-    if (company?.email) {
-      await sendEmail(c.env, {
-        to: company.email,
-        subject: confirmed
-          ? `✅ Installation time confirmed — ${order.order_number}`
-          : `🕑 Installation time change requested — ${order.order_number}`,
-        html: buildInstallationNoticeHtml({
-          orderNumber: order.order_number,
-          customerName: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
-          confirmed,
-          note,
-        }),
-      });
-    }
-  } catch (e) {
-    console.error('Installation notification failed:', e);
-  }
+/* ------------------------------------------------------------------ */
+/* Appointment pages (both kinds; token belongs to the appointment)    */
+/* ------------------------------------------------------------------ */
+
+/** Loads an appointment (+customer +order number) by public token. */
+async function loadAppointmentByToken(sb: SupabaseClient, token: string) {
+  const { data } = await sb
+    .from('appointments')
+    .select(
+      'id, kind, appointment_date, appointment_time, status, ' +
+        'customer:customers(first_name, last_name), order:orders(order_number)'
+    )
+    .eq('public_token', token)
+    .maybeSingle();
+  return data as Record<string, any> | null;
 }
 
-/**
- * Customer confirms the proposed installation time.
- * 404 unknown token · 409 when there is no proposal to confirm.
- */
-app.post('/estimate/:token/install/confirm', async (c) => {
-  const token = c.req.param('token');
-  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
-
-  const sb = createSupabaseAdmin(c.env);
-  const order = await loadByToken(sb, token);
-  if (!order) return c.json({ error: 'Order not found' }, 404);
-  if (order.install_status !== 'proposed') {
-    return c.json({ error: 'There is no installation time to confirm right now.' }, 409);
-  }
-
-  const { error } = await sb
-    .from('orders')
-    .update({ install_status: 'confirmed', install_confirmed_at: new Date().toISOString() })
-    .eq('id', order.id)
-    .eq('install_status', 'proposed');
-  if (error) return c.json({ error: error.message }, 500);
-
-  await notifyInstallResponse(c, order, true);
-  return c.json({ data: { install_status: 'confirmed' } });
-});
-
-/**
- * Customer requests a different installation time (optional note).
- * 404 unknown token · 409 when there is no active proposal.
- */
-app.post('/estimate/:token/install/request', async (c) => {
-  const token = c.req.param('token');
-  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
-
-  const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
-  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : '';
-
-  const sb = createSupabaseAdmin(c.env);
-  const order = await loadByToken(sb, token);
-  if (!order) return c.json({ error: 'Order not found' }, 404);
-  if (!['proposed', 'confirmed'].includes(order.install_status)) {
-    return c.json({ error: 'There is no installation time to change right now.' }, 409);
-  }
-
-  const { error } = await sb
-    .from('orders')
-    .update({ install_status: 'change_requested', install_response_note: note })
-    .eq('id', order.id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await notifyInstallResponse(c, order, false, note);
-  return c.json({ data: { install_status: 'change_requested' } });
-});
-
-/** Best-effort internal notice when a customer responds to an appointment. */
+/** Best-effort internal notice when a customer responds to a visit. */
 async function notifyAppointmentResponse(
   c: { env: Env },
-  order: Record<string, any>,
+  appt: Record<string, any>,
   confirmed: boolean,
   note?: string
 ): Promise<void> {
@@ -300,80 +225,113 @@ async function notifyAppointmentResponse(
       .select('email, company_name')
       .eq('id', 1)
       .single();
-    if (company?.email) {
-      await sendEmail(c.env, {
-        to: company.email,
-        subject: confirmed
-          ? `✅ Estimate appointment confirmed — ${order.order_number}`
-          : `🕑 Appointment time change requested — ${order.order_number}`,
-        html: buildAppointmentNoticeHtml({
-          orderNumber: order.order_number,
-          customerName: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
-          confirmed,
-          note,
-        }),
-      });
-    }
+    if (!company?.email) return;
+    const customerName =
+      `${appt.customer?.first_name ?? ''} ${appt.customer?.last_name ?? ''}`.trim();
+    const isInstall = appt.kind === 'installation';
+    const label = isInstall
+      ? `order ${appt.order?.order_number ?? ''}`.trim()
+      : customerName || 'a customer';
+    const build = isInstall ? buildInstallationNoticeHtml : buildAppointmentNoticeHtml;
+    await sendEmail(c.env, {
+      to: company.email,
+      subject: confirmed
+        ? `✅ ${isInstall ? 'Installation' : 'Estimate appointment'} confirmed — ${label}`
+        : `🕑 ${isInstall ? 'Installation' : 'Appointment'} time change requested — ${label}`,
+      html: build({
+        orderNumber: appt.order?.order_number ?? customerName,
+        customerName,
+        confirmed,
+        note,
+      }),
+    });
   } catch (e) {
     console.error('Appointment notification failed:', e);
   }
 }
 
-/**
- * Customer confirms the proposed estimate-appointment time.
- * 404 unknown token · 409 when there is no proposal to confirm.
- */
-app.post('/estimate/:token/appointment/confirm', async (c) => {
+/** Public appointment view — everything the AppointmentView page needs. */
+app.get('/appointment/:token', async (c) => {
   const token = c.req.param('token');
-  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Appointment not found' }, 404);
 
   const sb = createSupabaseAdmin(c.env);
-  const order = await loadByToken(sb, token);
-  if (!order) return c.json({ error: 'Order not found' }, 404);
-  if (order.appointment_status !== 'proposed') {
+  const appt = await loadAppointmentByToken(sb, token);
+  if (!appt) return c.json({ error: 'Appointment not found' }, 404);
+
+  const { data: company } = await sb
+    .from('company_settings')
+    .select('company_name, logo_url, email, phone')
+    .eq('id', 1)
+    .single();
+
+  // Sanitized payload: only what the appointment page needs.
+  return c.json({
+    data: {
+      kind: appt.kind,
+      status: appt.status,
+      appointment_date: appt.appointment_date,
+      appointment_time: appt.appointment_time,
+      // Present for installations only — estimates carry no order.
+      order_number: appt.order?.order_number ?? null,
+      customer_first_name: appt.customer?.first_name ?? '',
+      company,
+    },
+  });
+});
+
+/**
+ * Customer confirms the proposed visit window (either kind).
+ * 404 unknown token · 409 when there is no proposal to confirm.
+ */
+app.post('/appointment/:token/confirm', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Appointment not found' }, 404);
+
+  const sb = createSupabaseAdmin(c.env);
+  const appt = await loadAppointmentByToken(sb, token);
+  if (!appt) return c.json({ error: 'Appointment not found' }, 404);
+  if (appt.status !== 'proposed') {
     return c.json({ error: 'There is no appointment time to confirm right now.' }, 409);
   }
 
   const { error } = await sb
-    .from('orders')
-    .update({
-      appointment_status: 'confirmed',
-      appointment_confirmed_at: new Date().toISOString(),
-    })
-    .eq('id', order.id)
-    .eq('appointment_status', 'proposed');
+    .from('appointments')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('id', appt.id)
+    .eq('status', 'proposed');
   if (error) return c.json({ error: error.message }, 500);
 
-  await notifyAppointmentResponse(c, order, true);
-  return c.json({ data: { appointment_status: 'confirmed' } });
+  await notifyAppointmentResponse(c, appt, true);
+  return c.json({ data: { status: 'confirmed' } });
 });
 
 /**
- * Customer requests a different estimate-appointment time (optional
- * note). 404 unknown token · 409 when there is no active proposal.
+ * Customer requests a different visit time (optional note, both kinds).
+ * 404 unknown token · 409 when there is no active proposal.
  */
-app.post('/estimate/:token/appointment/request', async (c) => {
+app.post('/appointment/:token/request', async (c) => {
   const token = c.req.param('token');
-  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Appointment not found' }, 404);
 
   const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.slice(0, 500) : '';
 
   const sb = createSupabaseAdmin(c.env);
-  const order = await loadByToken(sb, token);
-  if (!order) return c.json({ error: 'Order not found' }, 404);
-  if (!['proposed', 'confirmed'].includes(order.appointment_status)) {
+  const appt = await loadAppointmentByToken(sb, token);
+  if (!appt) return c.json({ error: 'Appointment not found' }, 404);
+  if (!['proposed', 'confirmed'].includes(appt.status)) {
     return c.json({ error: 'There is no appointment time to change right now.' }, 409);
   }
 
   const { error } = await sb
-    .from('orders')
-    .update({ appointment_status: 'change_requested', appointment_response_note: note })
-    .eq('id', order.id);
+    .from('appointments')
+    .update({ status: 'change_requested', response_note: note })
+    .eq('id', appt.id);
   if (error) return c.json({ error: error.message }, 500);
 
-  await notifyAppointmentResponse(c, order, false, note);
-  return c.json({ data: { appointment_status: 'change_requested' } });
+  await notifyAppointmentResponse(c, appt, false, note);
+  return c.json({ data: { status: 'change_requested' } });
 });
 
 export default app;

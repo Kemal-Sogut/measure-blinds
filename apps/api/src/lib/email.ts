@@ -428,9 +428,13 @@ export function buildInstallationProposalHtml(i: InstallationProposalInputs): st
 export interface AppointmentEmailInputs {
   company: CompanyBrand;
   customerFirstName: string;
-  /** Full customer name shown on the "Order" row of the summary card. */
+  /** Full customer name shown on the first row of the summary card. */
   customerFullName: string;
-  orderNumber: string;
+  /**
+   * Set for INSTALLATION visits only — estimate appointments are not
+   * attached to an order and never reference a number.
+   */
+  orderNumber?: string;
   /** e.g. "Thursday, July 16, 2026" */
   dateText: string;
   /** Window start, e.g. "2:00 PM" */
@@ -444,10 +448,12 @@ export interface AppointmentEmailInputs {
 /** Rows shared by the appointment summary cards (pre-escaped values). */
 function appointmentRows(i: AppointmentEmailInputs): Array<[string, string]> {
   const rows: Array<[string, string]> = [
-    [
-      'Order',
-      `${escapeHtml(i.customerFullName)} &middot; <span style="font-family:${MONO};">${escapeHtml(i.orderNumber)}</span>`,
-    ],
+    i.orderNumber
+      ? [
+          'Order',
+          `${escapeHtml(i.customerFullName)} &middot; <span style="font-family:${MONO};">${escapeHtml(i.orderNumber)}</span>`,
+        ]
+      : ['Customer', escapeHtml(i.customerFullName)],
   ];
   if (i.locationText?.trim()) rows.push(['Location', escapeHtml(i.locationText.trim())]);
   return rows;

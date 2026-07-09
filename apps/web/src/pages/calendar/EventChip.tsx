@@ -2,18 +2,21 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * EventChip — a single installation marker rendered inside a
- * `MonthGrid` day cell.
+ * EventChip — a single schedule marker rendered inside a `MonthGrid`
+ * day cell, covering both event kinds.
  *
  * Visual language (plan §6, no new Tailwind tokens):
- *   - `proposed` / `change_requested` → pending look, the `warning`
- *     tint/ink pair also used by the `awaiting_payment` StatusBadge.
- *   - `confirmed` → solid brand look (`brand-600`), matching the
- *     app's primary-action color.
+ *   - Installations: `confirmed` → solid brand (`brand-600`);
+ *     `proposed` / `change_requested` → the `warning` tint/ink pair.
+ *   - Estimate appointments: `confirmed` → solid `success`;
+ *     `proposed` / `change_requested` → the `success` tint/ink pair,
+ *     so the two schedules are distinguishable at a glance.
  *
- * Tapping a chip navigates to the order detail page rather than
- * opening the wizard — the wizard is only for creating NEW proposals
- * from an empty/day-tap gesture on the grid itself.
+ * Tapping an INSTALLATION chip navigates to the appointment's order.
+ * Estimate appointments have no order (and no presence on the orders
+ * page by design) — they are managed in the "Estimate appointments"
+ * section under the calendar — so estimate chips are non-navigating
+ * markers.
  */
 
 import { useNavigate } from 'react-router-dom';
@@ -29,22 +32,32 @@ function shortTime(time: string): string {
 
 export default function EventChip({ event }: { event: CalendarEvent }) {
   const navigate = useNavigate();
-  const isConfirmed = event.install_status === 'confirmed';
+  const isConfirmed = event.schedule_status === 'confirmed';
+  const isEstimate = event.kind === 'estimate';
   const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+  const kindLabel = isEstimate ? 'estimate' : 'installation';
+
+  const cls = isEstimate
+    ? isConfirmed
+      ? 'bg-success text-white'
+      : 'border border-success bg-success-tint text-success'
+    : isConfirmed
+      ? 'bg-brand-600 text-white'
+      : 'border border-warning bg-warning-tint text-warning';
 
   return (
     <button
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        navigate(`/orders/${event.id}`);
+        if (!isEstimate && event.order_id) navigate(`/orders/${event.order_id}`);
       }}
-      title={`${event.order_number} — ${customerName || 'Customer'} (${event.install_status})`}
-      className={`block w-full truncate rounded-sm px-1 py-0.5 text-left text-[10px] font-medium leading-tight ${
-        isConfirmed ? 'bg-brand-600 text-white' : 'border border-warning bg-warning-tint text-warning'
+      title={`${event.order_number || customerName || 'Customer'} — ${customerName || 'Customer'} (${kindLabel}, ${event.schedule_status})`}
+      className={`block w-full truncate rounded-sm px-1 py-0.5 text-left text-[10px] font-medium leading-tight ${cls} ${
+        isEstimate ? 'cursor-default' : ''
       }`}
     >
-      {shortTime(event.install_time)} {customerName || event.order_number}
+      {shortTime(event.time)} {customerName || event.order_number}
     </button>
   );
 }

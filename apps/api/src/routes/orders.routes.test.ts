@@ -269,60 +269,6 @@ describe('POST /api/orders/:id/send', () => {
   });
 });
 
-describe('POST /api/orders/:id/install/propose', () => {
-  const readyOrder = {
-    id: 'r1',
-    status: 'ready',
-    order_number: 'F0307-127',
-    public_token: '11111111-2222-4333-8444-555555555555',
-    line_items: [],
-    payments: [],
-    customer: { first_name: 'A', last_name: 'B', email: 'a@example.com' },
-  };
-  const COMPANY = [{ company_name: 'Blinds Nisa', terms_and_conditions: '' }];
-
-  it('rejects a malformed time (400) before touching the DB', async () => {
-    const res = await ordersApp.request('/r1/install/propose', {
-      method: 'POST',
-      body: JSON.stringify({ install_date: '2026-08-07', install_time: '9am' }),
-      headers: { 'Content-Type': 'application/json' },
-    }, ENV);
-    expect(res.status).toBe(400);
-  });
-
-  it('409 when the order is not ready', async () => {
-    db.responses['orders.select'] = [{ ...readyOrder, status: 'in_progress' }];
-    db.responses['company_settings.select'] = COMPANY;
-    const res = await ordersApp.request('/r1/install/propose', {
-      method: 'POST',
-      body: JSON.stringify({ install_date: '2026-08-07', install_time: '09:00' }),
-      headers: { 'Content-Type': 'application/json' },
-    }, ENV);
-    expect(res.status).toBe(409);
-  });
-
-  it('emails the customer then stores the proposal on a ready order', async () => {
-    db.responses['orders.select'] = [readyOrder];
-    db.responses['company_settings.select'] = COMPANY;
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (String(url).includes('api.resend.com')) return new Response('{}', { status: 200 });
-      return realFetch(url as never, init as never);
-    }) as typeof fetch;
-    try {
-      const res = await ordersApp.request('/r1/install/propose', {
-        method: 'POST',
-        body: JSON.stringify({ install_date: '2026-08-07', install_time: '09:00' }),
-        headers: { 'Content-Type': 'application/json' },
-      }, ENV);
-      expect(res.status).toBe(200);
-      expect(db.calls).toContain('orders.update');
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-  });
-});
-
 describe('POST /api/orders/:id/revert', () => {
   it('reverts to an earlier stage and writes the update', async () => {
     db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress' }];
@@ -343,67 +289,6 @@ describe('POST /api/orders/:id/revert', () => {
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(409);
-  });
-});
-
-describe('GET /api/orders/calendar', () => {
-  const CAL_EVENTS = [
-    {
-      id: 'c1',
-      order_number: 'F0307-200',
-      install_date: '2026-08-10',
-      install_time: '09:00',
-      install_status: 'proposed',
-      status: 'ready',
-      customer: { first_name: 'Ann', last_name: 'Lee' },
-    },
-    {
-      id: 'c2',
-      order_number: 'F0307-201',
-      install_date: '2026-08-15',
-      install_time: '13:30',
-      install_status: 'confirmed',
-      status: 'ready',
-      customer: { first_name: 'Bo', last_name: 'Kim' },
-    },
-  ];
-
-  it('is NOT swallowed by the /:id route (route-ordering regression)', async () => {
-    // A request for /calendar must hit the dedicated handler, not
-    // /:id with id="calendar" (which would 404 since no such order
-    // exists and orders.select is empty by default in beforeEach).
-    db.responses['orders.select'] = CAL_EVENTS;
-    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: unknown[] };
-    expect(body.data.length).toBe(2);
-  });
-
-  it('returns events within the requested range', async () => {
-    db.responses['orders.select'] = CAL_EVENTS;
-    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: Array<{ order_number: string }> };
-    expect(body.data.map((e) => e.order_number)).toEqual(['F0307-200', 'F0307-201']);
-  });
-
-  it('filters to active install statuses only (fake DB has no filtering, but the query call is asserted)', async () => {
-    db.responses['orders.select'] = [];
-    const res = await ordersApp.request('/calendar?from=2026-08-01&to=2026-08-31', { method: 'GET' }, ENV);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: unknown[] };
-    expect(body.data).toEqual([]);
-    expect(db.calls).toContain('orders.select');
-  });
-
-  it('400s on a malformed date param', async () => {
-    const res = await ordersApp.request('/calendar?from=not-a-date&to=2026-08-31', { method: 'GET' }, ENV);
-    expect(res.status).toBe(400);
-  });
-
-  it('400s when a required param is missing', async () => {
-    const res = await ordersApp.request('/calendar?from=2026-08-01', { method: 'GET' }, ENV);
-    expect(res.status).toBe(400);
   });
 });
 

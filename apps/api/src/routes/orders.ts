@@ -17,11 +17,6 @@
  *   POST   /              create — server generates the order number
  *                         (retrying on the UNIQUE index) and computes
  *                         ALL pricing from catalog prices it fetches
- *   GET    /calendar      lightweight events for the Calendar view —
- *                         `?from=&to=` (inclusive ISO dates), filtered
- *                         to active installation statuses. MUST be
- *                         registered before GET /:id or Hono matches
- *                         "calendar" as the :id param.
  *   GET    /:id           order + ordered line items + customer +
  *                         payments, with a defensive expiry check
  *   PUT    /:id           replace fields + line items, full recalc;
@@ -35,13 +30,11 @@
  *                         on the first one); balance derived from ledger
  *   POST   /:id/ready     goods ready to install (in_progress → ready)
  *   POST   /:id/installed terminal state (ready → installed)
- *   POST   /:id/install/propose  email the customer a 1-hour arrival
- *                         window + link to confirm or request another
- *   POST   /:id/install/cancel   clear a set installation time
- *   POST   /:id/appointment/propose  email the customer a 1-hour
- *                         estimate-visit window (draft/sent orders)
- *   POST   /:id/appointment/cancel   clear a set appointment time
  *   POST   /:id/revert    move an order back to an earlier stage
+ *
+ * Scheduling (estimate visits + installations) lives in the standalone
+ * `appointments` table and is served by routes/appointments.ts — this
+ * module no longer carries any calendar or visit-proposal endpoints.
  *   DELETE /:id           delete an order (+ line items + payments)
  *
  * AUTHORITATIVE PRICING: clients send measurements and option IDs only.
@@ -65,10 +58,7 @@ import {
   brandFromSettings,
   buildEstimateEmailHtml,
   buildInvoiceEmailHtml,
-  buildInstallationProposalHtml,
-  buildAppointmentProposalHtml,
 } from '../lib/email';
-import { scheduleWindow, customerLocation } from '../lib/timeText';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -79,14 +69,6 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 /* ------------------------------------------------------------------ */
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
-
-/** Query params for GET /calendar — an inclusive date-only range. */
-const calendarRangeSchema = z
-  .object({
-    from: isoDate,
-    to: isoDate,
-  })
-  .strict();
 
 /**
  * Blind line item: measurements + catalog option ids — deliberately
@@ -141,27 +123,6 @@ const paymentSchema = z
     note: z.string().max(500).default(''),
     /** When set, links & marks this pending e-Transfer as applied. */
     etransfer_id: z.string().uuid().optional(),
-  })
-  .strict();
-
-/** 24-hour clock time, HH:MM. */
-const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM');
-
-/** Payload for POST /:id/install/propose — a proposed start time. */
-const installProposeSchema = z
-  .object({
-    install_date: isoDate,
-    install_time: clockTime,
-    message: z.string().max(1000).optional(),
-  })
-  .strict();
-
-/** Payload for POST /:id/appointment/propose — a proposed visit time. */
-const appointmentProposeSchema = z
-  .object({
-    appointment_date: isoDate,
-    appointment_time: clockTime,
-    message: z.string().max(1000).optional(),
   })
   .strict();
 
@@ -404,48 +365,6 @@ app.get('/', async (c) => {
     amount_paid: sumPayments(o.payments),
   }));
   return c.json({ data: rows });
-});
-
-/**
- * Installation sub-statuses that still have an active, customer-facing
- * schedule and therefore belong on the Calendar (an `unscheduled` order
- * has no date to plot).
- */
-const CALENDAR_INSTALL_STATUSES = ['proposed', 'confirmed', 'change_requested'];
-
-/**
- * Lightweight calendar events for the Calendar tab's monthly grid.
- *
- * IMPORTANT: this route MUST be registered before `GET /:id` below —
- * Hono resolves routes in registration order, so if `/:id` came first
- * a request for `/calendar` would match it with `id="calendar"` and
- * 404 (no order literally named "calendar" exists). This ordering is a
- * locked requirement, not a style choice.
- *
- * Mirrors the list route's lightweight `.select()` shape: only the
- * columns the month grid needs (no line items, no payments) to avoid
- * over-fetching. Filters `install_date` to the inclusive `[from, to]`
- * range and restricts to the three active install statuses — a plain
- * `unscheduled` order never appears on the calendar.
- */
-app.get('/calendar', async (c) => {
-  const parsed = calendarRangeSchema.safeParse({
-    from: c.req.query('from'),
-    to: c.req.query('to'),
-  });
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const { from, to } = parsed.data;
-
-  const sb = createSupabaseAdmin(c.env);
-  const { data, error } = await sb
-    .from('orders')
-    .select('id, order_number, install_date, install_time, install_status, status, customer:customers(first_name, last_name)')
-    .gte('install_date', from)
-    .lte('install_date', to)
-    .in('install_status', CALENDAR_INSTALL_STATUSES)
-    .order('install_date', { ascending: true });
-  if (error) return c.json({ error: error.message }, 500);
-  return c.json({ data: data ?? [] });
 });
 
 /** Creates an order with server-generated order number + pricing. */
@@ -1137,79 +1056,6 @@ app.post('/:id/installed', async (c) => {
   return c.json({ data });
 });
 
-/**
- * Proposes an installation time to the customer (ready orders only).
- *
- * Ordering mirrors the estimate send: email FIRST, then persist —
- * a failed send leaves the schedule untouched. Reuses the order's
- * existing public_token (minting one if the order was never emailed) so
- * the customer confirms/requests on the same token'd public page. The
- * emailed window is [install_time, install_time + 1 hour] on
- * install_date.
- */
-app.post('/:id/install/propose', async (c) => {
-  const parsed = installProposeSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const input = parsed.data;
-  const id = c.req.param('id');
-  const sb = createSupabaseAdmin(c.env);
-
-  const bundle = await loadOrderBundle(sb, id);
-  if (!bundle) return c.json({ error: 'Order not found' }, 404);
-  const { order, company } = bundle;
-  if (order.status !== 'ready') {
-    return c.json(
-      { error: `Installation can only be proposed on a ready order (this one is ${order.status}).` },
-      409
-    );
-  }
-  const email = order.customer?.email;
-  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
-
-  const publicToken: string = order.public_token ?? crypto.randomUUID();
-  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
-  const win = scheduleWindow(input.install_date, input.install_time);
-
-  try {
-    await sendEmail(c.env, {
-      to: email,
-      subject: `Installation time for order ${order.order_number}`,
-      html: buildInstallationProposalHtml({
-        company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
-        orderNumber: order.order_number,
-        dateText: win.dateText,
-        startText: win.startText,
-        endText: win.endText,
-        viewUrl,
-        message: input.message,
-      }),
-    });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
-  }
-
-  const { error } = await sb
-    .from('orders')
-    .update({
-      install_date: input.install_date,
-      install_time: input.install_time,
-      install_status: 'proposed',
-      install_confirmed_at: null,
-      install_response_note: '',
-      install_reminder_sent_at: null,
-      public_token: publicToken,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await logOrderEvent(sb, id, `Installation proposed for ${input.install_date} at ${input.install_time}.`);
-
-  const { data } = await readDetail(sb, id);
-  if (data) data.amount_paid = sumPayments(data.payments);
-  return c.json({ data });
-});
-
 /** Linear lifecycle order used to validate backward `revert` moves. */
 const STAGE_ORDER = ['draft', 'sent', 'awaiting_payment', 'in_progress', 'ready', 'installed'];
 
@@ -1253,14 +1099,6 @@ app.post('/:id/revert', async (c) => {
   const update: Record<string, unknown> = { status: to };
   if (toIdx < STAGE_ORDER.indexOf('awaiting_payment')) update.confirmed_at = null;
   if (toIdx < STAGE_ORDER.indexOf('sent')) update.sent_at = null;
-  if (toIdx < STAGE_ORDER.indexOf('ready')) {
-    update.install_status = 'unscheduled';
-    update.install_date = null;
-    update.install_time = null;
-    update.install_confirmed_at = null;
-    update.install_response_note = '';
-    update.install_reminder_sent_at = null;
-  }
   // Leaving `installed` un-marks the installation moment. The review
   // request stamp is deliberately kept: a customer who already got the
   // review email should not receive it again after a re-install.
@@ -1269,146 +1107,13 @@ app.post('/:id/revert', async (c) => {
   const { error } = await sb.from('orders').update(update).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
+  // Below `ready` the goods are no longer installable — drop the order's
+  // installation appointment so no stale visit stays on the calendar.
+  if (toIdx < STAGE_ORDER.indexOf('ready')) {
+    await sb.from('appointments').delete().eq('order_id', id);
+  }
+
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
-
-  const { data } = await readDetail(sb, id);
-  if (data) data.amount_paid = sumPayments(data.payments);
-  return c.json({ data });
-});
-
-/**
- * Proposes an estimate-appointment time to the customer (draft/sent
- * orders — the in-home visit happens before the estimate is decided).
- *
- * Ordering mirrors the other sends: email FIRST, then persist — a
- * failed send leaves the schedule untouched. Reuses the order's
- * public_token (minting one if the order was never emailed) so the
- * customer confirms/requests on the same token'd public page. The
- * emailed window is [appointment_time, appointment_time + 1 hour].
- */
-app.post('/:id/appointment/propose', async (c) => {
-  const parsed = appointmentProposeSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const input = parsed.data;
-  const id = c.req.param('id');
-  const sb = createSupabaseAdmin(c.env);
-
-  const bundle = await loadOrderBundle(sb, id);
-  if (!bundle) return c.json({ error: 'Order not found' }, 404);
-  const { order, company } = bundle;
-  if (!EDITABLE.includes(order.status)) {
-    return c.json(
-      {
-        error: `An estimate appointment can only be proposed on a draft or sent order (this one is ${order.status}).`,
-      },
-      409
-    );
-  }
-  const email = order.customer?.email;
-  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
-
-  const publicToken: string = order.public_token ?? crypto.randomUUID();
-  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
-  const win = scheduleWindow(input.appointment_date, input.appointment_time);
-
-  try {
-    await sendEmail(c.env, {
-      to: email,
-      subject: `Your estimate appointment — ${order.order_number}`,
-      html: buildAppointmentProposalHtml({
-        company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
-        customerFullName:
-          `${order.customer.first_name ?? ''} ${order.customer.last_name ?? ''}`.trim(),
-        orderNumber: order.order_number,
-        dateText: win.dateText,
-        startText: win.startText,
-        endText: win.endText,
-        locationText: customerLocation(order.customer),
-        viewUrl,
-        message: input.message,
-      }),
-    });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
-  }
-
-  const { error } = await sb
-    .from('orders')
-    .update({
-      appointment_date: input.appointment_date,
-      appointment_time: input.appointment_time,
-      appointment_status: 'proposed',
-      appointment_confirmed_at: null,
-      appointment_response_note: '',
-      appointment_reminder_sent_at: null,
-      public_token: publicToken,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  const { data } = await readDetail(sb, id);
-  if (data) data.amount_paid = sumPayments(data.payments);
-  return c.json({ data });
-});
-
-/** Clears a proposed/confirmed estimate appointment (back to unscheduled). */
-app.post('/:id/appointment/cancel', async (c) => {
-  const sb = createSupabaseAdmin(c.env);
-  const id = c.req.param('id');
-  const { data: existing } = await sb
-    .from('orders')
-    .select('id, appointment_status')
-    .eq('id', id)
-    .maybeSingle();
-  if (!existing) return c.json({ error: 'Order not found' }, 404);
-  if (existing.appointment_status === 'unscheduled') {
-    return c.json({ error: 'No appointment time is set.' }, 409);
-  }
-  const { error } = await sb
-    .from('orders')
-    .update({
-      appointment_status: 'unscheduled',
-      appointment_date: null,
-      appointment_time: null,
-      appointment_confirmed_at: null,
-      appointment_response_note: '',
-      appointment_reminder_sent_at: null,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  const { data } = await readDetail(sb, id);
-  if (data) data.amount_paid = sumPayments(data.payments);
-  return c.json({ data });
-});
-
-/** Clears a proposed/confirmed installation time (back to unscheduled). */
-app.post('/:id/install/cancel', async (c) => {
-  const sb = createSupabaseAdmin(c.env);
-  const id = c.req.param('id');
-  const { data: existing } = await sb
-    .from('orders')
-    .select('id, install_status')
-    .eq('id', id)
-    .maybeSingle();
-  if (!existing) return c.json({ error: 'Order not found' }, 404);
-  if (existing.install_status === 'unscheduled') {
-    return c.json({ error: 'No installation time is set.' }, 409);
-  }
-  const { error } = await sb
-    .from('orders')
-    .update({
-      install_status: 'unscheduled',
-      install_date: null,
-      install_time: null,
-      install_confirmed_at: null,
-      install_response_note: '',
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await logOrderEvent(sb, id, 'Installation time cleared.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);

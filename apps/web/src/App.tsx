@@ -37,6 +37,7 @@ const ControlOptions = lazy(() => import('./pages/settings/ControlOptions'));
 const PresetLineItems = lazy(() => import('./pages/settings/PresetLineItems'));
 const TermsAndConditions = lazy(() => import('./pages/settings/TermsAndConditions'));
 const CustomerView = lazy(() => import('./pages/customer-view/CustomerView'));
+const AppointmentView = lazy(() => import('./pages/customer-view/AppointmentView'));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -108,6 +109,7 @@ export default function App() {
 
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />
+            <Route path="/appointment/:token" element={<AppointmentView />} />
           </Routes>
         </Suspense>
         <Toaster

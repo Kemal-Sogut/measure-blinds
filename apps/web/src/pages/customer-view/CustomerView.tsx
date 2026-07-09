@@ -53,12 +53,6 @@ interface PublicEstimate {
   tax_amount: number;
   total: number;
   terms: string;
-  install_status: 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
-  install_date: string | null;
-  install_time: string | null;
-  appointment_status: 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
-  appointment_date: string | null;
-  appointment_time: string | null;
   customer: {
     first_name: string;
     last_name: string;
@@ -98,31 +92,6 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
   return { title: li.description || 'Item', attrs: [] };
 }
 
-/** Formats "HH:MM[:SS]" (24h) as a 12-hour clock string, e.g. "2:00 PM". */
-function to12Hour(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const period = h < 12 ? 'AM' : 'PM';
-  const hour12 = ((h + 11) % 12) + 1;
-  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-/**
- * Human phrase for the proposed installation window, e.g.
- * "between 2:00 PM and 3:00 PM on Friday, August 7, 2026".
- */
-function installWindow(dateIso: string, time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const end = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  const [y, mo, d] = dateIso.split('-').map(Number);
-  const dateText = new Date(y, mo - 1, d).toLocaleDateString(undefined, {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  });
-  return `between ${to12Hour(time)} and ${to12Hour(end)} on ${dateText}`;
-}
-
 /** Centered message card used by the terminal states. */
 function Message({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
@@ -143,18 +112,6 @@ export default function CustomerView() {
   const [confirming, setConfirming] = useState(false);
   const [justConfirmed, setJustConfirmed] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-
-  // Installation-time proposal response state.
-  const [installBusy, setInstallBusy] = useState(false);
-  const [installError, setInstallError] = useState<string | null>(null);
-  const [requesting, setRequesting] = useState(false);
-  const [requestNote, setRequestNote] = useState('');
-
-  // Estimate-appointment proposal response state.
-  const [apptBusy, setApptBusy] = useState(false);
-  const [apptError, setApptError] = useState<string | null>(null);
-  const [apptRequesting, setApptRequesting] = useState(false);
-  const [apptNote, setApptNote] = useState('');
 
   // Load the public estimate once on mount.
   useEffect(() => {
@@ -197,82 +154,6 @@ export default function CustomerView() {
     }
   }
 
-  /** Customer confirms the proposed installation window. */
-  async function handleInstallConfirm() {
-    setInstallBusy(true);
-    setInstallError(null);
-    try {
-      const res = await fetch(`${API_URL}/public/estimate/${token}/install/confirm`, {
-        method: 'POST',
-      });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setEstimate((e) => (e ? { ...e, install_status: 'confirmed' } : e));
-      else setInstallError(body?.error ?? 'Could not confirm. Please try again.');
-    } catch {
-      setInstallError('Network problem — please try again.');
-    } finally {
-      setInstallBusy(false);
-    }
-  }
-
-  /** Customer requests a different installation time (optional note). */
-  async function handleInstallRequest() {
-    setInstallBusy(true);
-    setInstallError(null);
-    try {
-      const res = await fetch(`${API_URL}/public/estimate/${token}/install/request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: requestNote }),
-      });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setEstimate((e) => (e ? { ...e, install_status: 'change_requested' } : e));
-      else setInstallError(body?.error ?? 'Could not send your request. Please try again.');
-    } catch {
-      setInstallError('Network problem — please try again.');
-    } finally {
-      setInstallBusy(false);
-    }
-  }
-
-  /** Customer confirms the proposed estimate-appointment window. */
-  async function handleApptConfirm() {
-    setApptBusy(true);
-    setApptError(null);
-    try {
-      const res = await fetch(`${API_URL}/public/estimate/${token}/appointment/confirm`, {
-        method: 'POST',
-      });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setEstimate((e) => (e ? { ...e, appointment_status: 'confirmed' } : e));
-      else setApptError(body?.error ?? 'Could not confirm. Please try again.');
-    } catch {
-      setApptError('Network problem — please try again.');
-    } finally {
-      setApptBusy(false);
-    }
-  }
-
-  /** Customer requests a different appointment time (optional note). */
-  async function handleApptRequest() {
-    setApptBusy(true);
-    setApptError(null);
-    try {
-      const res = await fetch(`${API_URL}/public/estimate/${token}/appointment/request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: apptNote }),
-      });
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setEstimate((e) => (e ? { ...e, appointment_status: 'change_requested' } : e));
-      else setApptError(body?.error ?? 'Could not send your request. Please try again.');
-    } catch {
-      setApptError('Network problem — please try again.');
-    } finally {
-      setApptBusy(false);
-    }
-  }
-
   if (loadError) return <Message icon="🔍" title="Estimate not found" body={loadError} />;
   if (!estimate) {
     return (
@@ -311,218 +192,9 @@ export default function CustomerView() {
     );
   }
 
-  // Estimate-appointment proposal flow (proposed before the estimate is
-  // decided). A pending proposal takes precedence; once the customer
-  // responds, the page falls through to the estimate (if sent) or a
-  // short status message (if still draft).
-  if (estimate.appointment_status === 'proposed') {
-    const apptWindow =
-      estimate.appointment_date && estimate.appointment_time
-        ? installWindow(estimate.appointment_date, estimate.appointment_time)
-        : null;
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
-        <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
-          <div className="mb-3 text-4xl">🗓️</div>
-          <h1 className="mb-2 text-xl font-semibold text-text-primary">
-            Your Estimate Appointment
-          </h1>
-          <p className="mb-6 text-text-secondary">
-            {apptWindow
-              ? `We will visit ${apptWindow} for your free in-home estimate, if that works for you.`
-              : 'We have a proposed appointment time for you.'}
-          </p>
-
-          {apptError && <p className="mb-3 text-sm text-danger">{apptError}</p>}
-
-          {!apptRequesting ? (
-            <div className="flex flex-col gap-2.5">
-              <button
-                onClick={handleApptConfirm}
-                disabled={apptBusy}
-                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {apptBusy ? 'Confirming…' : 'Confirm this time'}
-              </button>
-              <button
-                onClick={() => setApptRequesting(true)}
-                disabled={apptBusy}
-                className="h-11 w-full rounded-xl border border-border bg-surface text-sm font-medium text-text-secondary disabled:opacity-50"
-              >
-                Request another time
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 text-left">
-              <label className="text-sm font-medium text-text-secondary" htmlFor="appt-note">
-                What time would suit you better?
-              </label>
-              <textarea
-                id="appt-note"
-                value={apptNote}
-                onChange={(e) => setApptNote(e.target.value)}
-                rows={3}
-                placeholder="e.g. Any weekday morning, or after 3pm on Fridays"
-                className="w-full rounded-xl border border-border bg-surface p-3 text-sm"
-              />
-              <button
-                onClick={handleApptRequest}
-                disabled={apptBusy}
-                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {apptBusy ? 'Sending…' : 'Send request'}
-              </button>
-              <button
-                onClick={() => setApptRequesting(false)}
-                disabled={apptBusy}
-                className="h-10 w-full text-sm font-medium text-text-muted disabled:opacity-50"
-              >
-                Back
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // A draft order the customer can only reach via an appointment email —
-  // show the appointment outcome instead of the (unsent) estimate.
-  if (estimate.status === 'draft') {
-    if (estimate.appointment_status === 'confirmed') {
-      const apptWindow =
-        estimate.appointment_date && estimate.appointment_time
-          ? installWindow(estimate.appointment_date, estimate.appointment_time)
-          : null;
-      return (
-        <Message
-          icon="🗓️"
-          title="Appointment confirmed"
-          body={
-            apptWindow
-              ? `Thanks! We'll see you ${apptWindow}.`
-              : 'Thanks! Your appointment time is confirmed.'
-          }
-        />
-      );
-    }
-    if (estimate.appointment_status === 'change_requested') {
-      return (
-        <Message
-          icon="🕑"
-          title="Request received"
-          body="Thanks — we've received your request for a different time and will be in touch to arrange it."
-        />
-      );
-    }
-    return (
-      <Message
-        icon="📋"
-        title="Your estimate is on its way"
-        body="We're still preparing your written estimate — you'll receive an email as soon as it's ready."
-      />
-    );
-  }
-
-  // Installation-time proposal flow (order is ready and a time was
-  // proposed). Takes precedence over the generic "already confirmed"
-  // screen since the order is no longer in 'sent'.
-  if (estimate.install_status !== 'unscheduled') {
-    const windowText =
-      estimate.install_date && estimate.install_time
-        ? installWindow(estimate.install_date, estimate.install_time)
-        : null;
-
-    if (estimate.install_status === 'confirmed') {
-      return (
-        <Message
-          icon="🗓️"
-          title="Installation time confirmed"
-          body={
-            windowText
-              ? `Thanks! We'll see you ${windowText}.`
-              : "Thanks! Your installation time is confirmed."
-          }
-        />
-      );
-    }
-    if (estimate.install_status === 'change_requested') {
-      return (
-        <Message
-          icon="🕑"
-          title="Request received"
-          body="Thanks — we've received your request for a different time and will be in touch to arrange it."
-        />
-      );
-    }
-
-    // install_status === 'proposed' → let the customer confirm or ask for another time.
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
-        <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
-          <div className="mb-3 text-4xl">🗓️</div>
-          <h1 className="mb-2 text-xl font-semibold text-text-primary">Installation Time</h1>
-          <p className="mb-6 text-text-secondary">
-            {windowText
-              ? `We will be there ${windowText} if that works for you.`
-              : 'We have a proposed installation time for you.'}
-          </p>
-
-          {installError && <p className="mb-3 text-sm text-danger">{installError}</p>}
-
-          {!requesting ? (
-            <div className="flex flex-col gap-2.5">
-              <button
-                onClick={handleInstallConfirm}
-                disabled={installBusy}
-                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {installBusy ? 'Confirming…' : 'Confirm this time'}
-              </button>
-              <button
-                onClick={() => setRequesting(true)}
-                disabled={installBusy}
-                className="h-11 w-full rounded-xl border border-border bg-surface text-sm font-medium text-text-secondary disabled:opacity-50"
-              >
-                Request another time
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2.5 text-left">
-              <label className="text-sm font-medium text-text-secondary" htmlFor="note">
-                What time would suit you better?
-              </label>
-              <textarea
-                id="note"
-                value={requestNote}
-                onChange={(e) => setRequestNote(e.target.value)}
-                rows={3}
-                placeholder="e.g. Any weekday morning, or after 3pm on Fridays"
-                className="w-full rounded-xl border border-border bg-surface p-3 text-sm"
-              />
-              <button
-                onClick={handleInstallRequest}
-                disabled={installBusy}
-                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-              >
-                {installBusy ? 'Sending…' : 'Send request'}
-              </button>
-              <button
-                onClick={() => setRequesting(false)}
-                disabled={installBusy}
-                className="h-10 w-full text-sm font-medium text-text-muted disabled:opacity-50"
-              >
-                Back
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // Anything past 'sent' (awaiting_payment / in_progress / ready / installed)
-  // with no active installation proposal has already been confirmed.
+  // Anything past 'sent' (awaiting_payment / in_progress / ready /
+  // installed) has already been confirmed. Visit scheduling lives on
+  // the appointment's own public page (/appointment/:token), not here.
   if (estimate.status !== 'sent') {
     return (
       <Message

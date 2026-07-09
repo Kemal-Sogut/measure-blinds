@@ -4,18 +4,17 @@
 /**
  * Daily scheduled email jobs, run by the 10 AM (Toronto) cron trigger:
  *
- *   1. Estimate-appointment reminders — every order whose CONFIRMED
- *      appointment is tomorrow (Toronto calendar) gets the "see you
- *      tomorrow" email once (appointment_reminder_sent_at dedup).
- *   2. Installation reminders — same pattern for confirmed
- *      installations (install_reminder_sent_at dedup).
- *   3. Review requests — orders marked installed 2+ days ago (Toronto
+ *   1. Visit reminders — every CONFIRMED appointment (estimate visit or
+ *      installation) happening tomorrow (Toronto calendar) gets its
+ *      day-before reminder once; `appointments.reminder_sent_at` is the
+ *      dedup stamp, cleared whenever a new time is proposed.
+ *   2. Review requests — orders marked installed 2+ days ago (Toronto
  *      calendar date of installed_at) get the Google-review email once
- *      (review_request_sent_at dedup), only when the company has a
- *      google_review_url configured.
+ *      (orders.review_request_sent_at dedup), only when the company has
+ *      a google_review_url configured.
  *
- * Every send is per-order best-effort: a failure is logged and the
- * dedup stamp is NOT written, so the next run retries just that order.
+ * Every send is per-row best-effort: a failure is logged and the dedup
+ * stamp is NOT written, so the next run retries just that row.
  */
 
 import { createSupabaseAdmin } from './supabase';
@@ -25,7 +24,6 @@ import {
   buildAppointmentReminderHtml,
   buildInstallReminderHtml,
   buildReviewRequestHtml,
-  type CompanyBrand,
 } from './email';
 import { scheduleWindow, torontoDateISO, customerLocation } from './timeText';
 
@@ -45,15 +43,7 @@ export interface DailyJobsResult {
   reviewRequests: number;
 }
 
-/** Order row shape shared by the reminder queries. */
-interface ReminderRow {
-  id: string;
-  order_number: string;
-  customer: Record<string, any> | null;
-  [key: string]: unknown;
-}
-
-/** Runs all three daily jobs; see the module doc for what each does. */
+/** Runs both daily jobs; see the module doc for what each does. */
 export async function runDailyEmailJobs(env: JobsEnv): Promise<DailyJobsResult> {
   const result: DailyJobsResult = {
     appointmentReminders: 0,
@@ -70,43 +60,54 @@ export async function runDailyEmailJobs(env: JobsEnv): Promise<DailyJobsResult> 
   const brand = brandFromSettings(company);
   const tomorrow = torontoDateISO(1);
 
-  /* -- 1. Appointment reminders ----------------------------------- */
-  const { data: appointments } = await sb
-    .from('orders')
-    .select('id, order_number, appointment_date, appointment_time, customer:customers(*)')
-    .eq('appointment_status', 'confirmed')
+  /* -- 1. Day-before visit reminders (both kinds) ------------------- */
+  const { data: visits } = await sb
+    .from('appointments')
+    .select(
+      'id, kind, appointment_date, appointment_time, ' +
+        'customer:customers(*), order:orders(order_number)'
+    )
+    .eq('status', 'confirmed')
     .eq('appointment_date', tomorrow)
-    .is('appointment_reminder_sent_at', null);
-  for (const order of (appointments ?? []) as unknown as ReminderRow[]) {
-    const sent = await sendReminder(env, sb, brand, order, {
-      dateIso: order.appointment_date as string,
-      time: order.appointment_time as string,
-      stampColumn: 'appointment_reminder_sent_at',
-      subject: `Reminder: your estimate appointment tomorrow — ${order.order_number}`,
-      build: buildAppointmentReminderHtml,
-    });
-    if (sent) result.appointmentReminders++;
+    .is('reminder_sent_at', null);
+
+  for (const visit of (visits ?? []) as Array<Record<string, any>>) {
+    const email = visit.customer?.email;
+    if (!email) continue;
+    const isInstall = visit.kind === 'installation';
+    const orderNumber: string | undefined = visit.order?.order_number ?? undefined;
+    const win = scheduleWindow(visit.appointment_date, visit.appointment_time);
+    try {
+      await sendEmail(env, {
+        to: email,
+        subject: isInstall
+          ? `Reminder: installation tomorrow — ${orderNumber ?? ''}`.trim()
+          : 'Reminder: your estimate appointment tomorrow',
+        html: (isInstall ? buildInstallReminderHtml : buildAppointmentReminderHtml)({
+          company: brand,
+          customerFirstName: visit.customer?.first_name ?? '',
+          customerFullName:
+            `${visit.customer?.first_name ?? ''} ${visit.customer?.last_name ?? ''}`.trim(),
+          // Estimate visits carry no order — the row shows the customer.
+          orderNumber: isInstall ? orderNumber : undefined,
+          dateText: win.dateText,
+          startText: win.startText,
+          endText: win.endText,
+          locationText: customerLocation(visit.customer),
+        }),
+      });
+      await sb
+        .from('appointments')
+        .update({ reminder_sent_at: new Date().toISOString() })
+        .eq('id', visit.id);
+      if (isInstall) result.installReminders++;
+      else result.appointmentReminders++;
+    } catch (e) {
+      console.error(`Visit reminder failed for appointment ${visit.id}:`, e);
+    }
   }
 
-  /* -- 2. Installation reminders ----------------------------------- */
-  const { data: installs } = await sb
-    .from('orders')
-    .select('id, order_number, install_date, install_time, customer:customers(*)')
-    .eq('install_status', 'confirmed')
-    .eq('install_date', tomorrow)
-    .is('install_reminder_sent_at', null);
-  for (const order of (installs ?? []) as unknown as ReminderRow[]) {
-    const sent = await sendReminder(env, sb, brand, order, {
-      dateIso: order.install_date as string,
-      time: order.install_time as string,
-      stampColumn: 'install_reminder_sent_at',
-      subject: `Reminder: installation tomorrow — ${order.order_number}`,
-      build: buildInstallReminderHtml,
-    });
-    if (sent) result.installReminders++;
-  }
-
-  /* -- 3. Review requests ------------------------------------------ */
+  /* -- 2. Review requests ------------------------------------------ */
   const reviewUrl = String(company.google_review_url ?? '').trim();
   if (reviewUrl) {
     // Send on the 2nd Toronto calendar day after the install was marked.
@@ -117,7 +118,7 @@ export async function runDailyEmailJobs(env: JobsEnv): Promise<DailyJobsResult> 
       .eq('status', 'installed')
       .not('installed_at', 'is', null)
       .is('review_request_sent_at', null);
-    for (const order of (installed ?? []) as unknown as ReminderRow[]) {
+    for (const order of (installed ?? []) as Array<Record<string, any>>) {
       const installedDay = torontoDateISO(0, new Date(order.installed_at as string));
       const email = order.customer?.email;
       if (installedDay > cutoff || !email) continue;
@@ -143,61 +144,4 @@ export async function runDailyEmailJobs(env: JobsEnv): Promise<DailyJobsResult> 
   }
 
   return result;
-}
-
-/**
- * Sends one day-before reminder and stamps its dedup column. Returns
- * whether the email actually went out; failures are logged so the next
- * run retries.
- */
-async function sendReminder(
-  env: JobsEnv,
-  sb: ReturnType<typeof createSupabaseAdmin>,
-  brand: CompanyBrand,
-  order: ReminderRow,
-  opts: {
-    dateIso: string;
-    time: string;
-    stampColumn: 'appointment_reminder_sent_at' | 'install_reminder_sent_at';
-    subject: string;
-    build: (i: {
-      company: CompanyBrand;
-      customerFirstName: string;
-      customerFullName: string;
-      orderNumber: string;
-      dateText: string;
-      startText: string;
-      endText: string;
-      locationText?: string;
-    }) => string;
-  }
-): Promise<boolean> {
-  const email = order.customer?.email;
-  if (!email) return false;
-  const win = scheduleWindow(opts.dateIso, opts.time);
-  try {
-    await sendEmail(env, {
-      to: email,
-      subject: opts.subject,
-      html: opts.build({
-        company: brand,
-        customerFirstName: order.customer?.first_name ?? '',
-        customerFullName:
-          `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
-        orderNumber: order.order_number,
-        dateText: win.dateText,
-        startText: win.startText,
-        endText: win.endText,
-        locationText: customerLocation(order.customer),
-      }),
-    });
-    await sb
-      .from('orders')
-      .update({ [opts.stampColumn]: new Date().toISOString() })
-      .eq('id', order.id);
-    return true;
-  } catch (e) {
-    console.error(`Reminder failed for ${order.order_number}:`, e);
-    return false;
-  }
 }

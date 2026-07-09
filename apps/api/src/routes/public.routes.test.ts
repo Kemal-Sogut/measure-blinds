@@ -15,10 +15,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 interface FakeDb {
   order: Record<string, unknown> | null;
+  appointment: Record<string, unknown> | null;
   updated: boolean;
   calls: string[];
 }
-const db: FakeDb = { order: null, updated: false, calls: [] };
+const db: FakeDb = { order: null, appointment: null, updated: false, calls: [] };
 
 /** Fake supabase: orders reads return db.order; updates flip status. */
 function makeBuilder(table: string) {
@@ -38,6 +39,7 @@ function makeBuilder(table: string) {
     if (state.table === 'company_settings') {
       return { data: { company_name: 'Blinds Nisa', logo_url: null, email: 'biz@example.com', phone: '', address: '', hst_number: 'HST1' } };
     }
+    if (state.table === 'appointments') return { data: db.appointment };
     if (state.table !== 'orders') return { data: null };
     if (state.op === 'update') {
       // Mimic the status='sent' guard: only update when still sent.
@@ -103,8 +105,22 @@ function sentOrder(): Record<string, unknown> {
   };
 }
 
+/** A proposed installation visit from the appointments table. */
+function proposedAppointment(): Record<string, unknown> {
+  return {
+    id: 'a1',
+    kind: 'installation',
+    status: 'proposed',
+    appointment_date: '2026-08-07',
+    appointment_time: '09:00:00',
+    order: { order_number: 'F0307-126' },
+    customer: { first_name: 'A', last_name: 'B' },
+  };
+}
+
 beforeEach(() => {
   db.order = sentOrder();
+  db.appointment = null;
   db.updated = false;
   db.calls = [];
 });
@@ -164,41 +180,49 @@ describe('POST /public/estimate/:token/confirm', () => {
   });
 });
 
-describe('POST /public/estimate/:token/install/confirm', () => {
-  it('confirms a proposed installation time', async () => {
-    db.order = {
-      ...sentOrder(),
-      status: 'ready',
-      install_status: 'proposed',
-      install_date: '2026-08-07',
-      install_time: '09:00:00',
-    };
-    const res = await req(`/estimate/${TOKEN}/install/confirm`, 'POST');
+describe('GET /public/appointment/:token', () => {
+  it('returns the sanitized appointment for a valid token', async () => {
+    db.appointment = proposedAppointment();
+    const res = await req(`/appointment/${TOKEN}`);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { install_status: string } };
-    expect(body.data.install_status).toBe('confirmed');
+    const body = (await res.json()) as {
+      data: { kind: string; status: string; order_number: string | null };
+    };
+    expect(body.data.kind).toBe('installation');
+    expect(body.data.status).toBe('proposed');
+    expect(body.data.order_number).toBe('F0307-126');
+  });
+
+  it('404 for unknown token', async () => {
+    db.appointment = null;
+    const res = await req(`/appointment/${TOKEN}`);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /public/appointment/:token/confirm', () => {
+  it('confirms a proposed visit time', async () => {
+    db.appointment = proposedAppointment();
+    const res = await req(`/appointment/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { status: string } };
+    expect(body.data.status).toBe('confirmed');
   });
 
   it('409 when there is no active proposal', async () => {
-    db.order = { ...sentOrder(), status: 'ready', install_status: 'unscheduled' };
-    const res = await req(`/estimate/${TOKEN}/install/confirm`, 'POST');
+    db.appointment = { ...proposedAppointment(), status: 'confirmed' };
+    const res = await req(`/appointment/${TOKEN}/confirm`, 'POST');
     expect(res.status).toBe(409);
   });
 });
 
-describe('POST /public/estimate/:token/install/request', () => {
+describe('POST /public/appointment/:token/request', () => {
   it('records a change request with the customer note', async () => {
-    db.order = {
-      ...sentOrder(),
-      status: 'ready',
-      install_status: 'proposed',
-      install_date: '2026-08-07',
-      install_time: '09:00:00',
-    };
-    const res = await req(`/estimate/${TOKEN}/install/request`, 'POST');
+    db.appointment = { ...proposedAppointment(), kind: 'estimate', order: null };
+    const res = await req(`/appointment/${TOKEN}/request`, 'POST');
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { data: { install_status: string } };
-    expect(body.data.install_status).toBe('change_requested');
+    const body = (await res.json()) as { data: { status: string } };
+    expect(body.data.status).toBe('change_requested');
   });
 });
 

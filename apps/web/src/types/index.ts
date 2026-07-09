@@ -65,12 +65,38 @@ export type OrderStatus =
   | 'installed'
   | 'expired';
 
+/** Which kind of home visit an appointment is. */
+export type AppointmentKind = 'estimate' | 'installation';
+
 /**
- * Installation scheduling sub-state, independent of `OrderStatus`.
- * `unscheduled` → user proposes → `proposed` → customer either
- * `confirmed` the time or `change_requested` a different one.
+ * Appointment response sub-state: a proposal is always emailed at
+ * creation (`proposed`), then the customer either `confirmed` the time
+ * or `change_requested` a different one.
  */
-export type InstallStatus = 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
+export type AppointmentStatus = 'proposed' | 'confirmed' | 'change_requested';
+
+/**
+ * A scheduled home visit from the standalone `appointments` table.
+ * kind='estimate' visits attach to a CUSTOMER only (order_id is always
+ * null); kind='installation' visits attach to the order being
+ * installed.
+ */
+export interface Appointment {
+  id: string;
+  kind: AppointmentKind;
+  customer_id: string;
+  order_id: string | null;
+  appointment_date: string;
+  appointment_time: string;
+  status: AppointmentStatus;
+  confirmed_at: string | null;
+  response_note: string;
+  created_at: string;
+  updated_at: string;
+  /** Joined data — populated by the appointments API reads. */
+  customer?: Customer;
+  order?: Pick<Order, 'id' | 'order_number' | 'status'> | null;
+}
 
 /** Discount entry mode: fixed dollar amount or percentage of subtotal. */
 export type DiscountType = 'fixed' | 'percent';
@@ -115,22 +141,6 @@ export interface Order {
   public_token: string | null;
   sent_at: string | null;
   confirmed_at: string | null;
-  /** Installation scheduling (set once the order is `ready`). */
-  install_status: InstallStatus;
-  install_date: string | null;
-  install_time: string | null;
-  install_confirmed_at: string | null;
-  install_response_note: string;
-  /**
-   * Estimate-appointment scheduling (proposed on draft/sent orders,
-   * before the estimate is decided). Same propose → confirm/request
-   * state machine as installations.
-   */
-  appointment_status: InstallStatus;
-  appointment_date: string | null;
-  appointment_time: string | null;
-  appointment_confirmed_at: string | null;
-  appointment_response_note: string;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */
@@ -152,21 +162,23 @@ export interface OrderLog {
 }
 
 /**
- * Lightweight order projection returned by `GET /api/orders/calendar`
- * for the Calendar tab's monthly grid. A strict subset of `Order` —
- * only the fields the grid/chips need (no line items, no payments) so
- * a month's worth of installations stays a cheap fetch. Only orders
- * with an active `install_status` (`proposed` / `confirmed` /
- * `change_requested`) are ever returned; `unscheduled` orders have no
- * `install_date` to plot and are excluded server-side.
+ * Lightweight event returned by `GET /api/appointments/calendar` for
+ * the Calendar tab — one row per appointment, covering BOTH estimate
+ * visits (`kind: 'estimate'`, no order) and installations
+ * (`kind: 'installation'`, with the order id/number).
  */
 export interface CalendarEvent {
+  /** The APPOINTMENT id (not an order id). */
   id: string;
+  kind: AppointmentKind;
+  /** Visit date, YYYY-MM-DD. */
+  date: string;
+  /** Visit window start, HH:MM[:SS]. */
+  time: string;
+  schedule_status: AppointmentStatus;
+  /** Installation visits only — null / '' for estimate visits. */
+  order_id: string | null;
   order_number: string;
-  install_date: string;
-  install_time: string;
-  install_status: InstallStatus;
-  status: OrderStatus;
   /** Joined customer name only — no address/contact fields needed here. */
   customer: Pick<Customer, 'first_name' | 'last_name'>;
 }

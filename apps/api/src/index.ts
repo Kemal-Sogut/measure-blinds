@@ -18,6 +18,7 @@ import { requireAuth, type AuthVariables } from './middleware/auth';
 import settingsRoutes from './routes/settings';
 import customersRoutes from './routes/customers';
 import ordersRoutes from './routes/orders';
+import appointmentsRoutes from './routes/appointments';
 import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
@@ -114,6 +115,9 @@ app.route('/api/customers', customersRoutes);
 
 /** Orders module — server-priced CRUD, estimates/invoices, payments. */
 app.route('/api/orders', ordersRoutes);
+
+/** Appointments — estimate visits + installations, calendar events. */
+app.route('/api/appointments', appointmentsRoutes);
 
 /** Payment reconciliation — the unmatched e-Transfer inbox. */
 app.route('/api/payments', paymentsRoutes);

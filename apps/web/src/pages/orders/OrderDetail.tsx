@@ -16,7 +16,8 @@
  * Stage actions:
  *   awaiting_payment → Record Payment, Reverse Confirmation (user only)
  *   in_progress      → Record Payment, Mark Ready
- *   ready            → Propose Installation, Mark Installed, Record Payment
+ *   ready            → Mark Installed, Record Payment (installation is
+ *                      scheduled from the Calendar tab, not here)
  *   installed        → Record Payment, Download Invoice
  *
  * The generated PDF is an Estimate until the first payment is recorded,
@@ -45,10 +46,6 @@ import {
   useMarkInProgress,
   useMarkReady,
   useMarkInstalled,
-  useProposeInstallation,
-  useCancelInstallation,
-  useProposeAppointment,
-  useCancelAppointment,
   useRevertOrder,
   useDeleteOrder,
   useRecordPayment,
@@ -142,21 +139,6 @@ const STAGES: { key: OrderStatus; label: string }[] = [
   { key: 'ready', label: 'Ready' },
   { key: 'installed', label: 'Installed' },
 ];
-
-/** Formats "HH:MM" (24h) as "2:00 PM". */
-function to12Hour(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const period = h < 12 ? 'AM' : 'PM';
-  const hour12 = ((h + 11) % 12) + 1;
-  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-/** "HH:MM:SS" or "HH:MM" → the one-hour window "2:00 PM – 3:00 PM". */
-function installWindowText(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const end = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  return `${to12Hour(`${h}:${m}`)} – ${to12Hour(end)}`;
-}
 
 /** 16px action-button icon; paths inherit the button's text colour. */
 function ActionIcon({ children }: { children: ReactNode }) {
@@ -260,10 +242,6 @@ export default function OrderDetail() {
   const inProgressMut = useMarkInProgress();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
-  const proposeMut = useProposeInstallation();
-  const cancelInstallMut = useCancelInstallation();
-  const apptProposeMut = useProposeAppointment();
-  const apptCancelMut = useCancelAppointment();
   const revertMut = useRevertOrder();
   const deleteMut = useDeleteOrder();
   const paymentMut = useRecordPayment();
@@ -280,7 +258,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'install' | 'appointment' | 'send' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -299,16 +277,6 @@ export default function OrderDetail() {
   const [payNote, setPayNote] = useState('');
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
-
-  // Installation proposal form state (Propose Installation sheet).
-  const [installDate, setInstallDate] = useState<Date>(new Date());
-  const [installTime, setInstallTime] = useState('09:00');
-  const [installMessage, setInstallMessage] = useState('');
-
-  // Estimate-appointment proposal form state (Propose Appointment sheet).
-  const [apptDate, setApptDate] = useState<Date>(new Date());
-  const [apptTime, setApptTime] = useState('10:00');
-  const [apptMessage, setApptMessage] = useState('');
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
@@ -672,79 +640,7 @@ export default function OrderDetail() {
     }
   }
 
-  /** Opens the installation sheet, prefilled from an existing proposal. */
-  function openInstallSheet() {
-    if (existing?.install_date) setInstallDate(fromIso(existing.install_date));
-    if (existing?.install_time) setInstallTime(existing.install_time.slice(0, 5));
-    setInstallMessage('');
-    setSheet('install');
-  }
 
-  async function submitInstallProposal() {
-    if (!id) return;
-    try {
-      await proposeMut.mutateAsync({
-        id,
-        input: {
-          install_date: toIso(installDate),
-          install_time: installTime,
-          message: installMessage.trim() || undefined,
-        },
-      });
-      toast.success(`Installation time emailed to ${customer?.email ?? 'the customer'}.`);
-      setSheet('none');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not send proposal.');
-    }
-  }
-
-  async function handleCancelInstall() {
-    if (!id) return;
-    if (!window.confirm('Remove the set installation time?')) return;
-    try {
-      await cancelInstallMut.mutateAsync(id);
-      toast.success('Installation time removed.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not remove the time.');
-    }
-  }
-
-  /** Opens the appointment sheet, prefilled from an existing proposal. */
-  function openAppointmentSheet() {
-    if (existing?.appointment_date) setApptDate(fromIso(existing.appointment_date));
-    if (existing?.appointment_time) setApptTime(existing.appointment_time.slice(0, 5));
-    setApptMessage('');
-    setSheet('appointment');
-  }
-
-  async function submitAppointmentProposal() {
-    if (!id) return;
-    try {
-      await apptProposeMut.mutateAsync({
-        id,
-        input: {
-          appointment_date: toIso(apptDate),
-          appointment_time: apptTime,
-          message: apptMessage.trim() || undefined,
-        },
-      });
-      toast.success(`Appointment time emailed to ${customer?.email ?? 'the customer'}.`);
-      setSheet('none');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not send proposal.');
-    }
-  }
-
-  async function handleCancelAppointment() {
-    if (!id) return;
-    if (!window.confirm('Remove the set appointment time?')) return;
-    try {
-      await apptCancelMut.mutateAsync(id);
-      toast.success('Appointment time removed.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not remove the time.');
-    }
-  }
 
   async function handleRevert(to: OrderStatus) {
     if (!id) return;
@@ -1018,105 +914,6 @@ export default function OrderDetail() {
     </section>
   );
 
-  /** Installation schedule panel (ready/installed orders with a proposal). */
-  const installStatus = existing?.install_status ?? 'unscheduled';
-  const showInstall =
-    (status === 'ready' || status === 'installed') && installStatus !== 'unscheduled';
-  const responseLabel: Record<string, { text: string; cls: string }> = {
-    proposed: { text: 'Awaiting customer', cls: 'text-warning' },
-    confirmed: { text: 'Confirmed by customer', cls: 'text-success' },
-    change_requested: { text: 'Change requested', cls: 'text-danger' },
-  };
-  const installPanel = showInstall && (
-    <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-      <h2 className="mb-1 text-sm font-semibold text-text-primary">Installation</h2>
-      {existing?.install_date && (
-        <div className="flex justify-between gap-2">
-          <span className="text-[13px] text-text-secondary">Proposed time</span>
-          <span className="text-right font-mono text-[13px] text-text-primary">
-            {existing.install_date}
-            {existing.install_time ? ` · ${installWindowText(existing.install_time)}` : ''}
-          </span>
-        </div>
-      )}
-      <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">Customer response</span>
-        <span className={`text-[13px] font-semibold ${responseLabel[installStatus]?.cls ?? ''}`}>
-          {responseLabel[installStatus]?.text ?? installStatus}
-        </span>
-      </div>
-      {installStatus === 'change_requested' && existing?.install_response_note && (
-        <p className="rounded-sm bg-surface-sunken p-2 text-[13px] text-text-secondary">
-          &ldquo;{existing.install_response_note}&rdquo;
-        </p>
-      )}
-      {status === 'ready' && (
-        <div className="mt-1 flex gap-2">
-          <button
-            onClick={openInstallSheet}
-            disabled={proposeMut.isPending}
-            className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40"
-          >
-            Change time
-          </button>
-          <button
-            onClick={handleCancelInstall}
-            disabled={cancelInstallMut.isPending}
-            className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger disabled:opacity-40"
-          >
-            {cancelInstallMut.isPending ? 'Removing…' : 'Delete time'}
-          </button>
-        </div>
-      )}
-    </section>
-  );
-
-  /** Estimate-appointment panel (draft/sent orders with a proposal). */
-  const apptStatus = existing?.appointment_status ?? 'unscheduled';
-  const showAppointment =
-    (status === 'draft' || status === 'sent') && apptStatus !== 'unscheduled';
-  const appointmentPanel = showAppointment && (
-    <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-      <h2 className="mb-1 text-sm font-semibold text-text-primary">Estimate appointment</h2>
-      {existing?.appointment_date && (
-        <div className="flex justify-between gap-2">
-          <span className="text-[13px] text-text-secondary">Proposed time</span>
-          <span className="text-right font-mono text-[13px] text-text-primary">
-            {existing.appointment_date}
-            {existing.appointment_time ? ` · ${installWindowText(existing.appointment_time)}` : ''}
-          </span>
-        </div>
-      )}
-      <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">Customer response</span>
-        <span className={`text-[13px] font-semibold ${responseLabel[apptStatus]?.cls ?? ''}`}>
-          {responseLabel[apptStatus]?.text ?? apptStatus}
-        </span>
-      </div>
-      {apptStatus === 'change_requested' && existing?.appointment_response_note && (
-        <p className="rounded-sm bg-surface-sunken p-2 text-[13px] text-text-secondary">
-          &ldquo;{existing.appointment_response_note}&rdquo;
-        </p>
-      )}
-      <div className="mt-1 flex gap-2">
-        <button
-          onClick={openAppointmentSheet}
-          disabled={apptProposeMut.isPending}
-          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40"
-        >
-          Change time
-        </button>
-        <button
-          onClick={handleCancelAppointment}
-          disabled={apptCancelMut.isPending}
-          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger disabled:opacity-40"
-        >
-          {apptCancelMut.isPending ? 'Removing…' : 'Delete time'}
-        </button>
-      </div>
-    </section>
-  );
-
   /** Progress timeline with a per-stage revert control (earlier stages). */
   const stageIndex = STAGES.findIndex((s) => s.key === status);
   const curIdx = status === 'expired' ? 2 : stageIndex;
@@ -1270,27 +1067,12 @@ export default function OrderDetail() {
       );
     }
 
-    // Estimate appointment — available while the estimate is undecided.
-    const appointmentBtn = (
-      <button
-        onClick={openAppointmentSheet}
-        disabled={apptProposeMut.isPending}
-        className={secondary}
-      >
-        {ICONS.install}
-        {existing?.appointment_status === 'unscheduled' || !existing
-          ? 'Propose Appointment'
-          : 'Re-propose Appointment'}
-      </button>
-    );
-
     // Draft — send the estimate.
     if (status === 'draft') {
       return (
         <div className={box}>
           {sendBtn(primary)}
           {saveBtn}
-          {appointmentBtn}
           <button
             onClick={handleConfirm}
             disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
@@ -1317,7 +1099,6 @@ export default function OrderDetail() {
             Confirm
           </button>
           {saveBtn}
-          {appointmentBtn}
           {trailingRow}
         </div>
       );
@@ -1353,13 +1134,13 @@ export default function OrderDetail() {
       );
     }
 
-    // Ready — propose the installation time.
+    // Ready — installation is scheduled from the Calendar tab.
     if (status === 'ready') {
       return (
         <div className={box}>
-          <button onClick={openInstallSheet} disabled={proposeMut.isPending} className={primary}>
+          <button onClick={() => navigate('/calendar')} className={primary}>
             {ICONS.install}
-            {existing?.install_status === 'unscheduled' ? 'Propose Installation' : 'Re-propose Time'}
+            Schedule on Calendar
           </button>
           <button
             onClick={handleMarkInstalled}
@@ -1632,12 +1413,6 @@ export default function OrderDetail() {
 
           {/* Payments panel (both breakpoints; confirmed orders) */}
           {paymentsPanel}
-
-          {/* Estimate-appointment panel (draft/sent orders) */}
-          {appointmentPanel}
-
-          {/* Installation schedule panel (ready/installed orders) */}
-          {installPanel}
 
           {/* Delete order (outside the disabled fieldset) */}
           {id && (
@@ -1961,138 +1736,6 @@ export default function OrderDetail() {
                   {sendMut.isPending || sendInvoiceMut.isPending
                     ? 'Sending…'
                     : `Send ${docLabel}`}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Propose installation time bottom sheet */}
-      {sheet === 'install' && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
-          <div
-            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-1 text-sm font-semibold text-text-primary">Propose installation time</h2>
-            <p className="mb-3 text-[13px] text-text-muted">
-              We&apos;ll email {customer?.email ?? 'the customer'} a one-hour arrival window and a link
-              to confirm or request another time.
-            </p>
-            <div className="flex flex-col gap-3">
-              <DatePicker
-                label="Installation date"
-                value={installDate}
-                onChange={(d) => d && setInstallDate(d)}
-              />
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
-                  Arrival time (start of the 1-hour window)
-                </span>
-                <input
-                  type="time"
-                  value={installTime}
-                  onChange={(e) => setInstallTime(e.target.value)}
-                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 font-mono text-sm"
-                />
-              </label>
-              <p className="text-[13px] text-text-secondary">
-                Customer will see: <span className="font-medium">between {installWindowText(installTime)}</span> on{' '}
-                {format(installDate, 'EEEE, MMMM d, yyyy')}.
-              </p>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
-                  Message to include (optional)
-                </span>
-                <textarea
-                  value={installMessage}
-                  onChange={(e) => setInstallMessage(e.target.value)}
-                  maxLength={1000}
-                  rows={3}
-                  placeholder="e.g. Please clear the window areas before we arrive. Call if the time doesn't work."
-                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
-                />
-              </label>
-              <div className="mt-1 flex gap-2">
-                <button
-                  onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitInstallProposal}
-                  disabled={proposeMut.isPending}
-                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-                >
-                  {proposeMut.isPending ? 'Sending…' : 'Send Proposal'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Propose estimate-appointment time bottom sheet */}
-      {sheet === 'appointment' && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
-          <div
-            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="mb-1 text-sm font-semibold text-text-primary">Propose estimate appointment</h2>
-            <p className="mb-3 text-[13px] text-text-muted">
-              We&apos;ll email {customer?.email ?? 'the customer'} a one-hour visit window and a link
-              to confirm or request another time.
-            </p>
-            <div className="flex flex-col gap-3">
-              <DatePicker
-                label="Appointment date"
-                value={apptDate}
-                onChange={(d) => d && setApptDate(d)}
-              />
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
-                  Arrival time (start of the 1-hour window)
-                </span>
-                <input
-                  type="time"
-                  value={apptTime}
-                  onChange={(e) => setApptTime(e.target.value)}
-                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 font-mono text-sm"
-                />
-              </label>
-              <p className="text-[13px] text-text-secondary">
-                Customer will see: <span className="font-medium">between {installWindowText(apptTime)}</span> on{' '}
-                {format(apptDate, 'EEEE, MMMM d, yyyy')}.
-              </p>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
-                  Message to include (optional)
-                </span>
-                <textarea
-                  value={apptMessage}
-                  onChange={(e) => setApptMessage(e.target.value)}
-                  maxLength={1000}
-                  rows={3}
-                  placeholder="e.g. Let us know if a different day works better — happy to adjust."
-                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
-                />
-              </label>
-              <div className="mt-1 flex gap-2">
-                <button
-                  onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={submitAppointmentProposal}
-                  disabled={apptProposeMut.isPending}
-                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-                >
-                  {apptProposeMut.isPending ? 'Sending…' : 'Send Proposal'}
                 </button>
               </div>
             </div>
