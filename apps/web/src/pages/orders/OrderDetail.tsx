@@ -34,6 +34,7 @@ import { format } from 'date-fns';
 import PageHeader from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
+import CustomerCreateModal from '../../components/CustomerCreateModal';
 import { calculateTotals } from '../../lib/totals';
 import {
   useOrder,
@@ -270,6 +271,8 @@ export default function OrderDetail() {
   const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
+  // Quick add-customer pop-up opened from the customer picker sheet.
+  const [addingCustomer, setAddingCustomer] = useState(false);
 
   // Payment entry form state (used by the Record Payment sheet).
   const [payAmount, setPayAmount] = useState('');
@@ -1508,14 +1511,22 @@ export default function OrderDetail() {
             className="max-h-[80vh] w-full overflow-y-auto rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
             onClick={(e) => e.stopPropagation()}
           >
-            <input
-              autoFocus
-              type="search"
-              placeholder="Search customers…"
-              value={customerTerm}
-              onChange={(e) => setCustomerTerm(e.target.value)}
-              className="mb-3 h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm"
-            />
+            <div className="mb-3 flex gap-2">
+              <input
+                autoFocus
+                type="search"
+                placeholder="Search customers…"
+                value={customerTerm}
+                onChange={(e) => setCustomerTerm(e.target.value)}
+                className="h-11 min-w-0 flex-1 rounded-sm border border-border-input bg-surface px-3 text-sm"
+              />
+              <button
+                onClick={() => setAddingCustomer(true)}
+                className="h-11 shrink-0 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+              >
+                + Add customer
+              </button>
+            </div>
             <ul className="flex flex-col gap-1">
               {(customersQ.data ?? []).map((cust) => (
                 <li key={cust.id}>
@@ -1541,6 +1552,18 @@ export default function OrderDetail() {
             </ul>
           </div>
         </div>
+      )}
+
+      {/* Quick add-customer pop-up; the new customer is auto-selected. */}
+      {addingCustomer && (
+        <CustomerCreateModal
+          onClose={() => setAddingCustomer(false)}
+          onCreated={(created) => {
+            setCustomer(created);
+            setAddingCustomer(false);
+            setSheet('none');
+          }}
+        />
       )}
 
       {/* Preset picker bottom sheet */}

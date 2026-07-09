@@ -26,6 +26,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import DatePicker from '../../components/DatePicker';
+import CustomerCreateModal from '../../components/CustomerCreateModal';
 import {
   useCreateAppointment,
   useReproposeAppointment,
@@ -81,6 +82,7 @@ export default function AppointmentWizard({
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [term, setTerm] = useState('');
+  const [addingCustomer, setAddingCustomer] = useState(false);
 
   const customersQ = useCustomerSearch(term);
   const readyOrdersQ = useOrderList('ready', '');
@@ -254,17 +256,26 @@ export default function AppointmentWizard({
         {step === 'target' && kind === 'estimate' && (
           <div className="flex flex-col gap-3">
             <p className="text-[13px] text-text-muted">Pick the customer to visit.</p>
-            <input
-              type="search"
-              value={term}
-              onChange={(e) => setTerm(e.target.value)}
-              placeholder="Search customers…"
-              className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm"
-            />
+            <div className="flex gap-2">
+              <input
+                type="search"
+                value={term}
+                onChange={(e) => setTerm(e.target.value)}
+                placeholder="Search customers…"
+                className="h-11 min-w-0 flex-1 rounded-sm border border-border-input bg-surface px-3 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setAddingCustomer(true)}
+                className="h-11 shrink-0 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+              >
+                + Add customer
+              </button>
+            </div>
             {customersQ.isLoading && <p className="text-[13px] text-text-muted">Loading…</p>}
             {customersQ.data && customersQ.data.length === 0 && (
               <p className="text-[13px] text-text-muted">
-                No customers found — add them on the Customers tab first.
+                No customers found — use “+ Add customer” to create one.
               </p>
             )}
             <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
@@ -364,6 +375,19 @@ export default function AppointmentWizard({
             </button>
           )}
         </div>
+
+        {/* Quick add-customer pop-up; the new customer is auto-selected. */}
+        {addingCustomer && (
+          <CustomerCreateModal
+            requireEmail
+            onClose={() => setAddingCustomer(false)}
+            onCreated={(created) => {
+              setCustomer(created);
+              setTerm(`${created.first_name} ${created.last_name}`);
+              setAddingCustomer(false);
+            }}
+          />
+        )}
       </div>
     </div>
   );
