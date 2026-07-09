@@ -22,6 +22,7 @@ import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
 import { createSupabaseAdmin } from './lib/supabase';
+import { runDailyEmailJobs } from './lib/reminders';
 
 /** Environment bindings provided by Cloudflare Workers runtime. */
 export interface Env {
@@ -128,14 +129,27 @@ export default {
   fetch: app.fetch,
 
   /**
-   * Scheduled handler for Cloudflare Cron Triggers.
-   * Runs daily at 6:00 AM UTC and expires every 'sent' order whose
-   * estimate validity date has passed. The defensive per-read check in
-   * the order routes covers the window between cron runs.
+   * Scheduled handler for Cloudflare Cron Triggers. Two daily runs:
+   *
+   *   0 6 * * *  — expires every 'sent' order whose estimate validity
+   *                date has passed (the defensive per-read check in the
+   *                order routes covers the window between runs).
+   *   0 14 * * * — customer emails at 10 AM Toronto (EDT; 9 AM in
+   *                winter): day-before appointment + installation
+   *                reminders and review requests 2 days after install.
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       (async () => {
+        if (event.cron === '0 14 * * *') {
+          const sent = await runDailyEmailJobs(env);
+          console.log(
+            `Daily emails: ${sent.appointmentReminders} appointment reminder(s), ` +
+              `${sent.installReminders} install reminder(s), ` +
+              `${sent.reviewRequests} review request(s) (${event.cron})`
+          );
+          return;
+        }
         const sb = createSupabaseAdmin(env);
         const today = new Date().toISOString().slice(0, 10);
         const { data, error } = await sb

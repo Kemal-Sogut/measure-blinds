@@ -44,6 +44,8 @@ import {
   useMarkInstalled,
   useProposeInstallation,
   useCancelInstallation,
+  useProposeAppointment,
+  useCancelAppointment,
   useRevertOrder,
   useDeleteOrder,
   useRecordPayment,
@@ -255,6 +257,8 @@ export default function OrderDetail() {
   const installedMut = useMarkInstalled();
   const proposeMut = useProposeInstallation();
   const cancelInstallMut = useCancelInstallation();
+  const apptProposeMut = useProposeAppointment();
+  const apptCancelMut = useCancelAppointment();
   const revertMut = useRevertOrder();
   const deleteMut = useDeleteOrder();
   const paymentMut = useRecordPayment();
@@ -271,7 +275,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'install' | 'send' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'install' | 'appointment' | 'send' | 'editItem' | 'bulkEdit'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -295,6 +299,11 @@ export default function OrderDetail() {
   const [installDate, setInstallDate] = useState<Date>(new Date());
   const [installTime, setInstallTime] = useState('09:00');
   const [installMessage, setInstallMessage] = useState('');
+
+  // Estimate-appointment proposal form state (Propose Appointment sheet).
+  const [apptDate, setApptDate] = useState<Date>(new Date());
+  const [apptTime, setApptTime] = useState('10:00');
+  const [apptMessage, setApptMessage] = useState('');
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
@@ -693,6 +702,43 @@ export default function OrderDetail() {
     }
   }
 
+  /** Opens the appointment sheet, prefilled from an existing proposal. */
+  function openAppointmentSheet() {
+    if (existing?.appointment_date) setApptDate(fromIso(existing.appointment_date));
+    if (existing?.appointment_time) setApptTime(existing.appointment_time.slice(0, 5));
+    setApptMessage('');
+    setSheet('appointment');
+  }
+
+  async function submitAppointmentProposal() {
+    if (!id) return;
+    try {
+      await apptProposeMut.mutateAsync({
+        id,
+        input: {
+          appointment_date: toIso(apptDate),
+          appointment_time: apptTime,
+          message: apptMessage.trim() || undefined,
+        },
+      });
+      toast.success(`Appointment time emailed to ${customer?.email ?? 'the customer'}.`);
+      setSheet('none');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send proposal.');
+    }
+  }
+
+  async function handleCancelAppointment() {
+    if (!id) return;
+    if (!window.confirm('Remove the set appointment time?')) return;
+    try {
+      await apptCancelMut.mutateAsync(id);
+      toast.success('Appointment time removed.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove the time.');
+    }
+  }
+
   async function handleRevert(to: OrderStatus) {
     if (!id) return;
     const label = STAGES.find((s) => s.key === to)?.label ?? to;
@@ -1018,6 +1064,52 @@ export default function OrderDetail() {
     </section>
   );
 
+  /** Estimate-appointment panel (draft/sent orders with a proposal). */
+  const apptStatus = existing?.appointment_status ?? 'unscheduled';
+  const showAppointment =
+    (status === 'draft' || status === 'sent') && apptStatus !== 'unscheduled';
+  const appointmentPanel = showAppointment && (
+    <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
+      <h2 className="mb-1 text-sm font-semibold text-text-primary">Estimate appointment</h2>
+      {existing?.appointment_date && (
+        <div className="flex justify-between gap-2">
+          <span className="text-[13px] text-text-secondary">Proposed time</span>
+          <span className="text-right font-mono text-[13px] text-text-primary">
+            {existing.appointment_date}
+            {existing.appointment_time ? ` · ${installWindowText(existing.appointment_time)}` : ''}
+          </span>
+        </div>
+      )}
+      <div className="flex justify-between">
+        <span className="text-[13px] text-text-secondary">Customer response</span>
+        <span className={`text-[13px] font-semibold ${responseLabel[apptStatus]?.cls ?? ''}`}>
+          {responseLabel[apptStatus]?.text ?? apptStatus}
+        </span>
+      </div>
+      {apptStatus === 'change_requested' && existing?.appointment_response_note && (
+        <p className="rounded-sm bg-surface-sunken p-2 text-[13px] text-text-secondary">
+          &ldquo;{existing.appointment_response_note}&rdquo;
+        </p>
+      )}
+      <div className="mt-1 flex gap-2">
+        <button
+          onClick={openAppointmentSheet}
+          disabled={apptProposeMut.isPending}
+          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40"
+        >
+          Change time
+        </button>
+        <button
+          onClick={handleCancelAppointment}
+          disabled={apptCancelMut.isPending}
+          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger disabled:opacity-40"
+        >
+          {apptCancelMut.isPending ? 'Removing…' : 'Delete time'}
+        </button>
+      </div>
+    </section>
+  );
+
   /** Progress timeline with a per-stage revert control (earlier stages). */
   const stageIndex = STAGES.findIndex((s) => s.key === status);
   const curIdx = status === 'expired' ? 2 : stageIndex;
@@ -1171,12 +1263,27 @@ export default function OrderDetail() {
       );
     }
 
+    // Estimate appointment — available while the estimate is undecided.
+    const appointmentBtn = (
+      <button
+        onClick={openAppointmentSheet}
+        disabled={apptProposeMut.isPending}
+        className={secondary}
+      >
+        {ICONS.install}
+        {existing?.appointment_status === 'unscheduled' || !existing
+          ? 'Propose Appointment'
+          : 'Re-propose Appointment'}
+      </button>
+    );
+
     // Draft — send the estimate.
     if (status === 'draft') {
       return (
         <div className={box}>
           {sendBtn(primary)}
           {saveBtn}
+          {appointmentBtn}
           <button
             onClick={handleConfirm}
             disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
@@ -1203,6 +1310,7 @@ export default function OrderDetail() {
             Confirm
           </button>
           {saveBtn}
+          {appointmentBtn}
           {trailingRow}
         </div>
       );
@@ -1514,6 +1622,9 @@ export default function OrderDetail() {
 
           {/* Payments panel (both breakpoints; confirmed orders) */}
           {paymentsPanel}
+
+          {/* Estimate-appointment panel (draft/sent orders) */}
+          {appointmentPanel}
 
           {/* Installation schedule panel (ready/installed orders) */}
           {installPanel}
@@ -1893,6 +2004,72 @@ export default function OrderDetail() {
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   {proposeMut.isPending ? 'Sending…' : 'Send Proposal'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Propose estimate-appointment time bottom sheet */}
+      {sheet === 'appointment' && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+          <div
+            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">Propose estimate appointment</h2>
+            <p className="mb-3 text-[13px] text-text-muted">
+              We&apos;ll email {customer?.email ?? 'the customer'} a one-hour visit window and a link
+              to confirm or request another time.
+            </p>
+            <div className="flex flex-col gap-3">
+              <DatePicker
+                label="Appointment date"
+                value={apptDate}
+                onChange={(d) => d && setApptDate(d)}
+              />
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Arrival time (start of the 1-hour window)
+                </span>
+                <input
+                  type="time"
+                  value={apptTime}
+                  onChange={(e) => setApptTime(e.target.value)}
+                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 font-mono text-sm"
+                />
+              </label>
+              <p className="text-[13px] text-text-secondary">
+                Customer will see: <span className="font-medium">between {installWindowText(apptTime)}</span> on{' '}
+                {format(apptDate, 'EEEE, MMMM d, yyyy')}.
+              </p>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Message to include (optional)
+                </span>
+                <textarea
+                  value={apptMessage}
+                  onChange={(e) => setApptMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={3}
+                  placeholder="e.g. Let us know if a different day works better — happy to adjust."
+                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitAppointmentProposal}
+                  disabled={apptProposeMut.isPending}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {apptProposeMut.isPending ? 'Sending…' : 'Send Proposal'}
                 </button>
               </div>
             </div>

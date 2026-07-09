@@ -31,7 +31,12 @@ import { Hono } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
-import { sendEmail, buildConfirmationNoticeHtml, buildInstallationNoticeHtml } from '../lib/email';
+import {
+  sendEmail,
+  buildConfirmationNoticeHtml,
+  buildInstallationNoticeHtml,
+  buildAppointmentNoticeHtml,
+} from '../lib/email';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -101,6 +106,10 @@ app.get('/estimate/:token', async (c) => {
       install_status: order.install_status ?? 'unscheduled',
       install_date: order.install_date,
       install_time: order.install_time,
+      // Estimate-appointment scheduling (same confirm/request pattern).
+      appointment_status: order.appointment_status ?? 'unscheduled',
+      appointment_date: order.appointment_date,
+      appointment_time: order.appointment_time,
       customer: {
         first_name: order.customer?.first_name ?? '',
         last_name: order.customer?.last_name ?? '',
@@ -275,6 +284,96 @@ app.post('/estimate/:token/install/request', async (c) => {
 
   await notifyInstallResponse(c, order, false, note);
   return c.json({ data: { install_status: 'change_requested' } });
+});
+
+/** Best-effort internal notice when a customer responds to an appointment. */
+async function notifyAppointmentResponse(
+  c: { env: Env },
+  order: Record<string, any>,
+  confirmed: boolean,
+  note?: string
+): Promise<void> {
+  try {
+    const sb = createSupabaseAdmin(c.env);
+    const { data: company } = await sb
+      .from('company_settings')
+      .select('email, company_name')
+      .eq('id', 1)
+      .single();
+    if (company?.email) {
+      await sendEmail(c.env, {
+        to: company.email,
+        subject: confirmed
+          ? `✅ Estimate appointment confirmed — ${order.order_number}`
+          : `🕑 Appointment time change requested — ${order.order_number}`,
+        html: buildAppointmentNoticeHtml({
+          orderNumber: order.order_number,
+          customerName: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
+          confirmed,
+          note,
+        }),
+      });
+    }
+  } catch (e) {
+    console.error('Appointment notification failed:', e);
+  }
+}
+
+/**
+ * Customer confirms the proposed estimate-appointment time.
+ * 404 unknown token · 409 when there is no proposal to confirm.
+ */
+app.post('/estimate/:token/appointment/confirm', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Order not found' }, 404);
+  if (order.appointment_status !== 'proposed') {
+    return c.json({ error: 'There is no appointment time to confirm right now.' }, 409);
+  }
+
+  const { error } = await sb
+    .from('orders')
+    .update({
+      appointment_status: 'confirmed',
+      appointment_confirmed_at: new Date().toISOString(),
+    })
+    .eq('id', order.id)
+    .eq('appointment_status', 'proposed');
+  if (error) return c.json({ error: error.message }, 500);
+
+  await notifyAppointmentResponse(c, order, true);
+  return c.json({ data: { appointment_status: 'confirmed' } });
+});
+
+/**
+ * Customer requests a different estimate-appointment time (optional
+ * note). 404 unknown token · 409 when there is no active proposal.
+ */
+app.post('/estimate/:token/appointment/request', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Order not found' }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
+  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : '';
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Order not found' }, 404);
+  if (!['proposed', 'confirmed'].includes(order.appointment_status)) {
+    return c.json({ error: 'There is no appointment time to change right now.' }, 409);
+  }
+
+  const { error } = await sb
+    .from('orders')
+    .update({ appointment_status: 'change_requested', appointment_response_note: note })
+    .eq('id', order.id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  await notifyAppointmentResponse(c, order, false, note);
+  return c.json({ data: { appointment_status: 'change_requested' } });
 });
 
 export default app;

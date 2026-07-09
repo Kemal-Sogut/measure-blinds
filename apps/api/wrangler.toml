@@ -5,7 +5,11 @@ compatibility_date = "2025-06-01"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["0 6 * * *"]  # 6:00 AM UTC daily — auto-expire stale estimates
+# 06:00 UTC — auto-expire stale estimates.
+# 14:00 UTC — customer emails at 10 AM Toronto (EDT; 9 AM during EST):
+#             day-before appointment/installation reminders + review
+#             requests 2 days after an order is marked installed.
+crons = ["0 6 * * *", "0 14 * * *"]
 
 [vars]
 ENVIRONMENT = "development"

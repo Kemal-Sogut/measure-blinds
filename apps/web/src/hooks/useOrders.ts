@@ -100,6 +100,14 @@ export interface InstallProposeInput {
   message?: string;
 }
 
+/** Payload for POST /api/orders/:id/appointment/propose. */
+export interface AppointmentProposeInput {
+  appointment_date: string;
+  appointment_time: string;
+  /** Optional personal note included in the customer email. */
+  message?: string;
+}
+
 const LIST_KEY = ['orders', 'list'] as const;
 const ETRANSFERS_KEY = ['payments', 'pending'] as const;
 
@@ -284,6 +292,30 @@ export function useProposeInstallation(): UseMutationResult<
       ).data,
     onSuccess: cache,
   });
+}
+
+/** Proposes an estimate-appointment time and emails the customer. */
+export function useProposeAppointment(): UseMutationResult<
+  Order,
+  Error,
+  { id: string; input: AppointmentProposeInput }
+> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, input }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/appointment/propose`, {
+          method: 'POST',
+          body: JSON.stringify(input),
+        })
+      ).data,
+    onSuccess: cache,
+  });
+}
+
+/** Clears a set estimate-appointment time (back to unscheduled). */
+export function useCancelAppointment() {
+  return useLifecycleMutation((id) => `/api/orders/${id}/appointment/cancel`);
 }
 
 /** Records a payment against an order (first one → in_progress). */

@@ -37,6 +37,9 @@
  *   POST   /:id/install/propose  email the customer a 1-hour arrival
  *                         window + link to confirm or request another
  *   POST   /:id/install/cancel   clear a set installation time
+ *   POST   /:id/appointment/propose  email the customer a 1-hour
+ *                         estimate-visit window (draft/sent orders)
+ *   POST   /:id/appointment/cancel   clear a set appointment time
  *   POST   /:id/revert    move an order back to an earlier stage
  *   DELETE /:id           delete an order (+ line items + payments)
  *
@@ -58,10 +61,13 @@ import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
 import {
   sendEmail,
+  brandFromSettings,
   buildEstimateEmailHtml,
   buildInvoiceEmailHtml,
   buildInstallationProposalHtml,
+  buildAppointmentProposalHtml,
 } from '../lib/email';
+import { scheduleWindow, customerLocation } from '../lib/timeText';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -149,6 +155,15 @@ const installProposeSchema = z
   })
   .strict();
 
+/** Payload for POST /:id/appointment/propose — a proposed visit time. */
+const appointmentProposeSchema = z
+  .object({
+    appointment_date: isoDate,
+    appointment_time: clockTime,
+    message: z.string().max(1000).optional(),
+  })
+  .strict();
+
 /** Optional consultant note accepted when emailing an estimate/invoice. */
 const sendMessageSchema = z
   .object({ message: z.string().max(1000).optional() })
@@ -163,38 +178,6 @@ function isConfirmed(status: string): boolean {
   return (CONFIRMED as readonly string[]).includes(status);
 }
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-/** Formats "HH:MM" (24h) as a 12-hour clock string, e.g. "2:00 PM". */
-function to12Hour(time: string): string {
-  const [h, m] = time.split(':').map(Number);
-  const period = h < 12 ? 'AM' : 'PM';
-  const hour12 = ((h + 11) % 12) + 1;
-  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
-}
-
-/**
- * Builds the human-readable installation window from a stored date +
- * start time: the date as "Friday, August 7, 2026" and the one-hour
- * arrival window [start, start + 1h]. Formatting is done by hand (no
- * `Intl` locale data) so it is identical under workerd and Node.
- */
-function installWindow(dateIso: string, time: string): {
-  dateText: string;
-  startText: string;
-  endText: string;
-} {
-  const [y, mo, d] = dateIso.split('-').map(Number);
-  const dow = new Date(y, mo - 1, d).getDay();
-  const dateText = `${WEEKDAYS[dow]}, ${MONTHS[mo - 1]} ${d}, ${y}`;
-  const [h, m] = time.split(':').map(Number);
-  const endTime = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  return { dateText, startText: to12Hour(time), endText: to12Hour(endTime) };
-}
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -762,7 +745,7 @@ app.post('/:id/send', async (c) => {
       to: email,
       subject: `Your estimate ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildEstimateEmailHtml({
-        companyName: company.company_name || 'Blinds Nisa',
+        company: brandFromSettings(company),
         customerFirstName: order.customer.first_name,
         orderNumber: order.order_number,
         total: Number(order.total),
@@ -841,7 +824,7 @@ app.post('/:id/send-invoice', async (c) => {
       to: email,
       subject: `Your invoice ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildInvoiceEmailHtml({
-        companyName: company.company_name || 'Blinds Nisa',
+        company: brandFromSettings(company),
         customerFirstName: order.customer.first_name,
         orderNumber: order.order_number,
         total: Number(order.total),
@@ -1094,7 +1077,11 @@ app.post('/:id/installed', async (c) => {
       409
     );
   }
-  const { error } = await sb.from('orders').update({ status: 'installed' }).eq('id', id);
+  // installed_at drives the post-installation review request cron.
+  const { error } = await sb
+    .from('orders')
+    .update({ status: 'installed', installed_at: new Date().toISOString() })
+    .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
   const { data } = await readDetail(sb, id);
@@ -1133,14 +1120,14 @@ app.post('/:id/install/propose', async (c) => {
 
   const publicToken: string = order.public_token ?? crypto.randomUUID();
   const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
-  const win = installWindow(input.install_date, input.install_time);
+  const win = scheduleWindow(input.install_date, input.install_time);
 
   try {
     await sendEmail(c.env, {
       to: email,
       subject: `Installation time for order ${order.order_number}`,
       html: buildInstallationProposalHtml({
-        companyName: company.company_name || 'Blinds Nisa',
+        company: brandFromSettings(company),
         customerFirstName: order.customer.first_name,
         orderNumber: order.order_number,
         dateText: win.dateText,
@@ -1162,6 +1149,7 @@ app.post('/:id/install/propose', async (c) => {
       install_status: 'proposed',
       install_confirmed_at: null,
       install_response_note: '',
+      install_reminder_sent_at: null,
       public_token: publicToken,
     })
     .eq('id', id);
@@ -1221,9 +1209,121 @@ app.post('/:id/revert', async (c) => {
     update.install_time = null;
     update.install_confirmed_at = null;
     update.install_response_note = '';
+    update.install_reminder_sent_at = null;
   }
+  // Leaving `installed` un-marks the installation moment. The review
+  // request stamp is deliberately kept: a customer who already got the
+  // review email should not receive it again after a re-install.
+  if (toIdx < STAGE_ORDER.indexOf('installed')) update.installed_at = null;
 
   const { error } = await sb.from('orders').update(update).eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
+/**
+ * Proposes an estimate-appointment time to the customer (draft/sent
+ * orders — the in-home visit happens before the estimate is decided).
+ *
+ * Ordering mirrors the other sends: email FIRST, then persist — a
+ * failed send leaves the schedule untouched. Reuses the order's
+ * public_token (minting one if the order was never emailed) so the
+ * customer confirms/requests on the same token'd public page. The
+ * emailed window is [appointment_time, appointment_time + 1 hour].
+ */
+app.post('/:id/appointment/propose', async (c) => {
+  const parsed = appointmentProposeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const input = parsed.data;
+  const id = c.req.param('id');
+  const sb = createSupabaseAdmin(c.env);
+
+  const bundle = await loadOrderBundle(sb, id);
+  if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const { order, company } = bundle;
+  if (!EDITABLE.includes(order.status)) {
+    return c.json(
+      {
+        error: `An estimate appointment can only be proposed on a draft or sent order (this one is ${order.status}).`,
+      },
+      409
+    );
+  }
+  const email = order.customer?.email;
+  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
+
+  const publicToken: string = order.public_token ?? crypto.randomUUID();
+  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+  const win = scheduleWindow(input.appointment_date, input.appointment_time);
+
+  try {
+    await sendEmail(c.env, {
+      to: email,
+      subject: `Your estimate appointment — ${order.order_number}`,
+      html: buildAppointmentProposalHtml({
+        company: brandFromSettings(company),
+        customerFirstName: order.customer.first_name,
+        customerFullName:
+          `${order.customer.first_name ?? ''} ${order.customer.last_name ?? ''}`.trim(),
+        orderNumber: order.order_number,
+        dateText: win.dateText,
+        startText: win.startText,
+        endText: win.endText,
+        locationText: customerLocation(order.customer),
+        viewUrl,
+        message: input.message,
+      }),
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+  }
+
+  const { error } = await sb
+    .from('orders')
+    .update({
+      appointment_date: input.appointment_date,
+      appointment_time: input.appointment_time,
+      appointment_status: 'proposed',
+      appointment_confirmed_at: null,
+      appointment_response_note: '',
+      appointment_reminder_sent_at: null,
+      public_token: publicToken,
+    })
+    .eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
+/** Clears a proposed/confirmed estimate appointment (back to unscheduled). */
+app.post('/:id/appointment/cancel', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, appointment_status')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (existing.appointment_status === 'unscheduled') {
+    return c.json({ error: 'No appointment time is set.' }, 409);
+  }
+  const { error } = await sb
+    .from('orders')
+    .update({
+      appointment_status: 'unscheduled',
+      appointment_date: null,
+      appointment_time: null,
+      appointment_confirmed_at: null,
+      appointment_response_note: '',
+      appointment_reminder_sent_at: null,
+    })
+    .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
   const { data } = await readDetail(sb, id);

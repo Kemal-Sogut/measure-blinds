@@ -43,6 +43,8 @@ const companySchema = z
     hst_number: z.string().max(50),
     default_expiry_days: z.number().int().min(1).max(365),
     terms_and_conditions: z.string().max(20_000),
+    /** Google review link for the post-installation review request. */
+    google_review_url: z.string().url().max(500).or(z.literal('')),
   })
   .partial()
   .strict();

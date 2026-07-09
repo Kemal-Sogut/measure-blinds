@@ -29,6 +29,7 @@ interface FormState {
   address: string;
   hst_number: string;
   default_expiry_days: string;
+  google_review_url: string;
 }
 
 const INPUT_CLS =
@@ -51,6 +52,7 @@ export default function CompanyInfo() {
         address: data.address ?? '',
         hst_number: data.hst_number ?? '',
         default_expiry_days: String(data.default_expiry_days ?? 14),
+        google_review_url: data.google_review_url ?? '',
       });
     }
   }, [data, form]);
@@ -67,6 +69,10 @@ export default function CompanyInfo() {
     if (!Number.isInteger(days) || days < 1 || days > 365) {
       return toast.error('Expiry days must be a whole number between 1 and 365.');
     }
+    const reviewUrl = form.google_review_url.trim();
+    if (reviewUrl && !/^https?:\/\//i.test(reviewUrl)) {
+      return toast.error('The Google review link must start with http:// or https://.');
+    }
     update.mutate(
       {
         company_name: form.company_name.trim(),
@@ -75,6 +81,7 @@ export default function CompanyInfo() {
         address: form.address.trim(),
         hst_number: form.hst_number.trim(),
         default_expiry_days: days,
+        google_review_url: reviewUrl,
       },
       {
         onSuccess: () => toast.success('Company info saved.'),
@@ -194,6 +201,21 @@ export default function CompanyInfo() {
               value={form.default_expiry_days}
               onChange={(e) => set('default_expiry_days', e.target.value)}
             />
+          </label>
+          <label className="text-sm font-medium text-text-secondary">
+            Google Review Link
+            <input
+              type="url"
+              inputMode="url"
+              placeholder="https://g.page/r/…/review"
+              className={`mt-1 ${INPUT_CLS}`}
+              value={form.google_review_url}
+              onChange={(e) => set('google_review_url', e.target.value)}
+            />
+            <span className="mt-1 block text-xs font-normal text-text-muted">
+              Customers are emailed a review request 2 days after their installation. Leave blank
+              to turn this off.
+            </span>
           </label>
           <button
             onClick={handleSave}

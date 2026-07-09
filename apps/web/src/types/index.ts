@@ -121,6 +121,16 @@ export interface Order {
   install_time: string | null;
   install_confirmed_at: string | null;
   install_response_note: string;
+  /**
+   * Estimate-appointment scheduling (proposed on draft/sent orders,
+   * before the estimate is decided). Same propose → confirm/request
+   * state machine as installations.
+   */
+  appointment_status: InstallStatus;
+  appointment_date: string | null;
+  appointment_time: string | null;
+  appointment_confirmed_at: string | null;
+  appointment_response_note: string;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */
@@ -244,4 +254,6 @@ export interface CompanySettings {
   hst_number: string | null;
   terms_and_conditions: string | null;
   default_expiry_days: number;
+  /** Google review link for the post-installation review request email. */
+  google_review_url: string | null;
 }

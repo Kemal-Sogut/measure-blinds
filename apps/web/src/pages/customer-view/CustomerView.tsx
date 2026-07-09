@@ -56,6 +56,9 @@ interface PublicEstimate {
   install_status: 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
   install_date: string | null;
   install_time: string | null;
+  appointment_status: 'unscheduled' | 'proposed' | 'confirmed' | 'change_requested';
+  appointment_date: string | null;
+  appointment_time: string | null;
   customer: {
     first_name: string;
     last_name: string;
@@ -147,6 +150,12 @@ export default function CustomerView() {
   const [requesting, setRequesting] = useState(false);
   const [requestNote, setRequestNote] = useState('');
 
+  // Estimate-appointment proposal response state.
+  const [apptBusy, setApptBusy] = useState(false);
+  const [apptError, setApptError] = useState<string | null>(null);
+  const [apptRequesting, setApptRequesting] = useState(false);
+  const [apptNote, setApptNote] = useState('');
+
   // Load the public estimate once on mount.
   useEffect(() => {
     let cancelled = false;
@@ -226,6 +235,44 @@ export default function CustomerView() {
     }
   }
 
+  /** Customer confirms the proposed estimate-appointment window. */
+  async function handleApptConfirm() {
+    setApptBusy(true);
+    setApptError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/appointment/confirm`, {
+        method: 'POST',
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (res.ok) setEstimate((e) => (e ? { ...e, appointment_status: 'confirmed' } : e));
+      else setApptError(body?.error ?? 'Could not confirm. Please try again.');
+    } catch {
+      setApptError('Network problem — please try again.');
+    } finally {
+      setApptBusy(false);
+    }
+  }
+
+  /** Customer requests a different appointment time (optional note). */
+  async function handleApptRequest() {
+    setApptBusy(true);
+    setApptError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/appointment/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: apptNote }),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (res.ok) setEstimate((e) => (e ? { ...e, appointment_status: 'change_requested' } : e));
+      else setApptError(body?.error ?? 'Could not send your request. Please try again.');
+    } catch {
+      setApptError('Network problem — please try again.');
+    } finally {
+      setApptBusy(false);
+    }
+  }
+
   if (loadError) return <Message icon="🔍" title="Estimate not found" body={loadError} />;
   if (!estimate) {
     return (
@@ -261,6 +308,119 @@ export default function CustomerView() {
           />
         </div>
       </div>
+    );
+  }
+
+  // Estimate-appointment proposal flow (proposed before the estimate is
+  // decided). A pending proposal takes precedence; once the customer
+  // responds, the page falls through to the estimate (if sent) or a
+  // short status message (if still draft).
+  if (estimate.appointment_status === 'proposed') {
+    const apptWindow =
+      estimate.appointment_date && estimate.appointment_time
+        ? installWindow(estimate.appointment_date, estimate.appointment_time)
+        : null;
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
+        <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
+          <div className="mb-3 text-4xl">🗓️</div>
+          <h1 className="mb-2 text-xl font-semibold text-text-primary">
+            Your Estimate Appointment
+          </h1>
+          <p className="mb-6 text-text-secondary">
+            {apptWindow
+              ? `We will visit ${apptWindow} for your free in-home estimate, if that works for you.`
+              : 'We have a proposed appointment time for you.'}
+          </p>
+
+          {apptError && <p className="mb-3 text-sm text-danger">{apptError}</p>}
+
+          {!apptRequesting ? (
+            <div className="flex flex-col gap-2.5">
+              <button
+                onClick={handleApptConfirm}
+                disabled={apptBusy}
+                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {apptBusy ? 'Confirming…' : 'Confirm this time'}
+              </button>
+              <button
+                onClick={() => setApptRequesting(true)}
+                disabled={apptBusy}
+                className="h-11 w-full rounded-xl border border-border bg-surface text-sm font-medium text-text-secondary disabled:opacity-50"
+              >
+                Request another time
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2.5 text-left">
+              <label className="text-sm font-medium text-text-secondary" htmlFor="appt-note">
+                What time would suit you better?
+              </label>
+              <textarea
+                id="appt-note"
+                value={apptNote}
+                onChange={(e) => setApptNote(e.target.value)}
+                rows={3}
+                placeholder="e.g. Any weekday morning, or after 3pm on Fridays"
+                className="w-full rounded-xl border border-border bg-surface p-3 text-sm"
+              />
+              <button
+                onClick={handleApptRequest}
+                disabled={apptBusy}
+                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {apptBusy ? 'Sending…' : 'Send request'}
+              </button>
+              <button
+                onClick={() => setApptRequesting(false)}
+                disabled={apptBusy}
+                className="h-10 w-full text-sm font-medium text-text-muted disabled:opacity-50"
+              >
+                Back
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // A draft order the customer can only reach via an appointment email —
+  // show the appointment outcome instead of the (unsent) estimate.
+  if (estimate.status === 'draft') {
+    if (estimate.appointment_status === 'confirmed') {
+      const apptWindow =
+        estimate.appointment_date && estimate.appointment_time
+          ? installWindow(estimate.appointment_date, estimate.appointment_time)
+          : null;
+      return (
+        <Message
+          icon="🗓️"
+          title="Appointment confirmed"
+          body={
+            apptWindow
+              ? `Thanks! We'll see you ${apptWindow}.`
+              : 'Thanks! Your appointment time is confirmed.'
+          }
+        />
+      );
+    }
+    if (estimate.appointment_status === 'change_requested') {
+      return (
+        <Message
+          icon="🕑"
+          title="Request received"
+          body="Thanks — we've received your request for a different time and will be in touch to arrange it."
+        />
+      );
+    }
+    return (
+      <Message
+        icon="📋"
+        title="Your estimate is on its way"
+        body="We're still preparing your written estimate — you'll receive an email as soon as it's ready."
+      />
     );
   }
 
