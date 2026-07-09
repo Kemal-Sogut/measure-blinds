@@ -6,11 +6,14 @@
  *
  * While an order is draft/sent it behaves as an estimate editor:
  * customer, dates, line items with live pricing, discount, totals, and
- * a Send Estimate / Save / Confirm / PDF action set.
+ * a Send Estimate / Save / Confirm / PDF action set. The editor stays
+ * live at every later stage too — customer, dates, and line items can
+ * always be changed and saved; the Worker recalculates totals on every
+ * save regardless of status.
  *
- * Once confirmed the order becomes read-only and grows a Payments panel
- * (balance = total − payments). Payments can be applied at ANY
- * post-confirmation stage. Stage actions:
+ * Once confirmed the order also grows a Payments panel (balance = total
+ * − payments). Payments can be applied at ANY post-confirmation stage.
+ * Stage actions:
  *   awaiting_payment → Record Payment, Reverse Confirmation (user only)
  *   in_progress      → Record Payment, Mark Ready
  *   ready            → Propose Installation, Mark Installed, Record Payment
@@ -52,6 +55,7 @@ import {
   useDeletePayment,
   useUnmatchedEtransfers,
   useDismissEtransfer,
+  useOrderLogs,
   downloadOrderPdf,
   type OrderInput,
   type LineItemInput,
@@ -238,6 +242,7 @@ export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
+  const { data: logs } = useOrderLogs(id);
 
   const fabricsQ = useCatalogList<Fabric>('fabrics');
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
@@ -363,7 +368,9 @@ export default function OrderDetail() {
   );
 
   const status = existing?.status ?? 'draft';
-  const readOnly = Boolean(id) && !['draft', 'sent'].includes(status);
+  // Orders are editable at every lifecycle stage — the Worker recomputes
+  // totals authoritatively on every save, regardless of status.
+  const readOnly = false;
   const postConfirm = POST_CONFIRM.includes(status as (typeof POST_CONFIRM)[number]);
   const saving = createMut.isPending || updateMut.isPending;
   const canAct = !readOnly && !saving;
@@ -1325,6 +1332,7 @@ export default function OrderDetail() {
             {ICONS.reverse}
             {unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation'}
           </button>
+          {saveBtn}
           {trailingRow}
         </div>
       );
@@ -1339,6 +1347,7 @@ export default function OrderDetail() {
             {readyMut.isPending ? 'Saving…' : 'Mark Ready'}
           </button>
           {paymentBtn(secondary)}
+          {saveBtn}
           {trailingRow}
         </div>
       );
@@ -1361,6 +1370,7 @@ export default function OrderDetail() {
             {installedMut.isPending ? 'Saving…' : 'Mark Installed'}
           </button>
           {paymentBtn(secondary)}
+          {saveBtn}
           {trailingRow}
         </div>
       );
@@ -1371,13 +1381,19 @@ export default function OrderDetail() {
       return (
         <div className={box}>
           {paymentBtn(primary)}
+          {saveBtn}
           {trailingRow}
         </div>
       );
     }
 
     // Expired — send (after updating expiry) + document download.
-    return <div className={box}>{trailingRow}</div>;
+    return (
+      <div className={box}>
+        {saveBtn}
+        {trailingRow}
+      </div>
+    );
   };
 
   return (
@@ -1395,12 +1411,6 @@ export default function OrderDetail() {
           {timelineCard}
 
           <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
-          {readOnly && (
-            <p className="rounded-sm border border-border bg-surface p-3 text-sm text-text-secondary">
-              This order is <StatusBadge status={status} /> and its estimate can no longer be edited.
-            </p>
-          )}
-
           {/* Header card: customer + dates */}
           <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
             <div>
@@ -1629,15 +1639,6 @@ export default function OrderDetail() {
           {/* Installation schedule panel (ready/installed orders) */}
           {installPanel}
 
-          {/* Meta line for sent orders */}
-          {existing?.sent_at && (
-            <p className="text-xs text-text-muted">
-              Sent {format(new Date(existing.sent_at), 'MMM d, yyyy HH:mm')}
-              {existing.confirmed_at &&
-                ` · Confirmed ${format(new Date(existing.confirmed_at), 'MMM d, yyyy HH:mm')}`}
-            </p>
-          )}
-
           {/* Delete order (outside the disabled fieldset) */}
           {id && (
             <button
@@ -1647,6 +1648,28 @@ export default function OrderDetail() {
             >
               {deleteMut.isPending ? 'Deleting…' : 'Delete Order'}
             </button>
+          )}
+
+          {/* Activity log (very bottom of the page) */}
+          {id && (
+            <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
+              <h2 className="mb-1 text-sm font-semibold text-text-primary">Activity Log</h2>
+              {logs && logs.length === 0 && (
+                <p className="text-[13px] text-text-muted">No activity recorded yet.</p>
+              )}
+              {logs && logs.length > 0 && (
+                <ul className="flex flex-col gap-2.5">
+                  {logs.map((log) => (
+                    <li key={log.id} className="flex justify-between gap-3 text-[13px]">
+                      <span className="text-text-secondary">{log.message}</span>
+                      <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
+                        {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           )}
         </div>
 

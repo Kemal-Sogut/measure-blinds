@@ -21,6 +21,7 @@ import type { Order } from '../../types';
 
 /** Tab definitions in display order. */
 const TABS: { key: OrderTab; label: string }[] = [
+  { key: 'all', label: 'All' },
   { key: 'active', label: 'Active' },
   { key: 'awaiting_payment', label: 'Awaiting Payment' },
   { key: 'in_progress', label: 'In Progress' },
@@ -109,7 +110,13 @@ export default function OrderList() {
         {error && <p className="text-danger">{error.message}</p>}
         {orders && orders.length === 0 && (
           <EmptyState
-            title={term ? 'No orders match your search' : `No ${tab.replace('_', ' ')} orders`}
+            title={
+              term
+                ? 'No orders match your search'
+                : tab === 'all'
+                  ? 'No orders yet'
+                  : `No ${tab.replace('_', ' ')} orders`
+            }
             hint={term ? 'Try an order number or customer name.' : 'Create one below.'}
           />
         )}

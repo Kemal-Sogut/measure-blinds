@@ -25,7 +25,8 @@
  *   GET    /:id           order + ordered line items + customer +
  *                         payments, with a defensive expiry check
  *   PUT    /:id           replace fields + line items, full recalc;
- *                         only draft/sent orders are editable
+ *                         editable at ANY lifecycle stage
+ *   GET    /:id/logs      activity trail (newest first)
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
  *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/confirm   user confirm (draft/sent → awaiting_payment)
@@ -312,6 +313,19 @@ function sumPayments(payments: Array<{ amount: number | string }> | null | undef
 }
 
 /**
+ * Appends one row to the order's activity trail. Best-effort: a logging
+ * failure must never fail the request it is describing, so errors are
+ * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
+ */
+async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+  try {
+    await sb.from('order_logs').insert({ order_id: orderId, message });
+  } catch {
+    // Logging is diagnostic only — never block the caller's mutation.
+  }
+}
+
+/**
  * Defensive expiry: if a sent order's estimate validity date has
  * passed, mark it expired in the DB before returning it, so reads are
  * correct even if the daily cron hasn't run yet. Only `sent` orders
@@ -364,7 +378,9 @@ app.get('/', async (c) => {
 
   const status = c.req.query('status') ?? '';
   if (status === 'active') query = query.in('status', ['draft', 'sent']);
-  else if (LIST_STATUSES.includes(status)) query = query.eq('status', status);
+  else if (status === 'all') {
+    // No filter — every status, including expired.
+  } else if (LIST_STATUSES.includes(status)) query = query.eq('status', status);
 
   const q = (c.req.query('q') ?? '').replace(/[,().%*\\]/g, ' ').trim().slice(0, 100);
   if (q) {
@@ -510,6 +526,8 @@ app.post('/', async (c) => {
     }
   }
 
+  await logOrderEvent(sb, order.id as string, 'Order created.');
+
   const { data: full } = await readDetail(sb, order.id as string);
   return c.json({ data: full ?? order }, 201);
 });
@@ -525,7 +543,7 @@ app.get('/:id', async (c) => {
   return c.json({ data });
 });
 
-/** Updates an order (draft/sent only) with full server recalc. */
+/** Updates an order — editable at ANY lifecycle stage, with full server recalc. */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
@@ -539,9 +557,6 @@ app.put('/:id', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
-  if (!EDITABLE.includes(existing.status)) {
-    return c.json({ error: `A ${existing.status} order can no longer be edited.` }, 409);
-  }
 
   const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
   const expiry_date = input.expiry_date ?? existing.expiry_date;
@@ -585,10 +600,25 @@ app.put('/:id', async (c) => {
     if (insError) return c.json({ error: insError.message }, 500);
   }
 
+  await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+
   const { data: full, error: readError } = await readDetail(sb, id);
   if (readError) return c.json({ error: readError.message }, 500);
   if (full) full.amount_paid = sumPayments(full.payments);
   return c.json({ data: full });
+});
+
+/** Returns an order's activity trail, newest first. */
+app.get('/:id/logs', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('order_logs')
+    .select('id, order_id, message, created_at')
+    .eq('order_id', c.req.param('id'))
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: data ?? [] });
 });
 
 /* ------------------------------------------------------------------ */
@@ -776,6 +806,8 @@ app.post('/:id/send', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
+  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
+
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
   return c.json({ data: updated });
@@ -852,6 +884,8 @@ app.post('/:id/send-invoice', async (c) => {
     if (error) return c.json({ error: error.message }, 500);
   }
 
+  await logOrderEvent(sb, id, `Invoice emailed to ${email}.`);
+
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
   return c.json({ data: updated });
@@ -875,6 +909,8 @@ app.post('/:id/confirm', async (c) => {
     .update({ status: 'awaiting_payment', confirmed_at: new Date().toISOString() })
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Order confirmed.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -906,6 +942,8 @@ app.post('/:id/unconfirm', async (c) => {
     .update({ status: 'sent', confirmed_at: null })
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Confirmation reversed.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -956,6 +994,8 @@ app.post('/:id/payments', async (c) => {
       .eq('id', input.etransfer_id);
   }
 
+  await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);
+
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data }, 201);
@@ -974,7 +1014,7 @@ app.delete('/:id/payments/:paymentId', async (c) => {
   // Verify the payment exists and belongs to this order.
   const { data: payment } = await sb
     .from('payments')
-    .select('id, order_id')
+    .select('id, order_id, amount')
     .eq('id', paymentId)
     .eq('order_id', id)
     .maybeSingle();
@@ -999,6 +1039,8 @@ app.delete('/:id/payments/:paymentId', async (c) => {
       await sb.from('orders').update({ status: 'awaiting_payment' }).eq('id', id);
     }
   }
+
+  await logOrderEvent(sb, id, `Payment of $${Number(payment.amount).toFixed(2)} deleted.`);
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1028,6 +1070,8 @@ app.post('/:id/in-progress', async (c) => {
   const { error } = await sb.from('orders').update({ status: 'in_progress' }).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
+  await logOrderEvent(sb, id, 'Order moved to In Progress.');
+
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
@@ -1053,6 +1097,8 @@ app.post('/:id/ready', async (c) => {
   }
   const { error } = await sb.from('orders').update({ status: 'ready' }).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Order marked Ready.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1083,6 +1129,8 @@ app.post('/:id/installed', async (c) => {
     .update({ status: 'installed', installed_at: new Date().toISOString() })
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Order marked Installed.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1155,6 +1203,8 @@ app.post('/:id/install/propose', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
+  await logOrderEvent(sb, id, `Installation proposed for ${input.install_date} at ${input.install_time}.`);
+
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
@@ -1218,6 +1268,8 @@ app.post('/:id/revert', async (c) => {
 
   const { error } = await sb.from('orders').update(update).eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1355,6 +1407,8 @@ app.post('/:id/install/cancel', async (c) => {
     })
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Installation time cleared.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);

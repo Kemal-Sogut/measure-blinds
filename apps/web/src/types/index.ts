@@ -143,6 +143,14 @@ export interface Order {
   customer?: Customer;
 }
 
+/** One row of an order's activity trail (`GET /api/orders/:id/logs`). */
+export interface OrderLog {
+  id: string;
+  order_id: string;
+  message: string;
+  created_at: string;
+}
+
 /**
  * Lightweight order projection returned by `GET /api/orders/calendar`
  * for the Calendar tab's monthly grid. A strict subset of `Order` —
