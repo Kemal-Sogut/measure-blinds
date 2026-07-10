@@ -3,9 +3,11 @@
 
 /**
  * TanStack Query hooks for the Calendar tab and the standalone
- * appointments API (`/api/appointments`): the monthly event feed plus
- * the create / re-propose / delete mutations used by the wizard and the
- * under-grid section lists.
+ * appointments API (`/api/appointments`): the monthly event feed, the
+ * per-order installation lookup used by the order page's Installation
+ * panel, plus the create / re-propose / staff-confirm / delete
+ * mutations used by the wizard, the under-grid section lists, and the
+ * order page.
  *
  * Follows `useOrders.ts`'s direct-import style deliberately: this file
  * is NOT re-exported from the `hooks/index.ts` barrel, matching the
@@ -51,10 +53,33 @@ export function useCalendarEvents(
   });
 }
 
-/** Shared onSuccess: any appointment mutation refreshes the calendar. */
-function useInvalidateCalendar() {
+/**
+ * The installation appointment attached to one order (or null when the
+ * order has nothing scheduled) — drives the Installation panel on the
+ * order page. Disabled until the order id is known.
+ */
+export function useOrderAppointment(
+  orderId: string | undefined
+): UseQueryResult<Appointment | null> {
+  return useQuery({
+    queryKey: ['appointments', 'order', orderId],
+    queryFn: async () =>
+      (await apiFetch<Envelope<Appointment | null>>(`/api/appointments/order/${orderId}`)).data,
+    enabled: Boolean(orderId),
+  });
+}
+
+/**
+ * Shared onSuccess: any appointment mutation refreshes every
+ * appointment read (calendar feed + per-order lookups) and the order
+ * activity logs (installation mutations append log entries).
+ */
+function useInvalidateAppointments() {
   const qc = useQueryClient();
-  return () => void qc.invalidateQueries({ queryKey: CALENDAR_KEY });
+  return () => {
+    void qc.invalidateQueries({ queryKey: ['appointments'] });
+    void qc.invalidateQueries({ queryKey: ['orders', 'logs'] });
+  };
 }
 
 /**
@@ -77,7 +102,7 @@ export function useCreateAppointment(): UseMutationResult<
   Error,
   AppointmentCreateInput
 > {
-  const invalidate = useInvalidateCalendar();
+  const invalidate = useInvalidateAppointments();
   return useMutation({
     mutationFn: async (input) =>
       (
@@ -103,7 +128,7 @@ export function useReproposeAppointment(): UseMutationResult<
   Error,
   { id: string; input: AppointmentReproposeInput }
 > {
-  const invalidate = useInvalidateCalendar();
+  const invalidate = useInvalidateAppointments();
   return useMutation({
     mutationFn: async ({ id, input }) =>
       (
@@ -116,9 +141,26 @@ export function useReproposeAppointment(): UseMutationResult<
   });
 }
 
+/**
+ * Staff-side confirm — records that the customer agreed to the time
+ * through another channel (phone, text, in person). No email is sent.
+ */
+export function useConfirmAppointment(): UseMutationResult<Appointment, Error, string> {
+  const invalidate = useInvalidateAppointments();
+  return useMutation({
+    mutationFn: async (id) =>
+      (
+        await apiFetch<Envelope<Appointment>>(`/api/appointments/${id}/confirm`, {
+          method: 'POST',
+        })
+      ).data,
+    onSuccess: invalidate,
+  });
+}
+
 /** Removes a visit from the schedule entirely. */
 export function useDeleteAppointment(): UseMutationResult<{ id: string }, Error, string> {
-  const invalidate = useInvalidateCalendar();
+  const invalidate = useInvalidateAppointments();
   return useMutation({
     mutationFn: async (id) =>
       (

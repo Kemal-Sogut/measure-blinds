@@ -16,9 +16,13 @@
  * Stage actions:
  *   awaiting_payment → Record Payment, Reverse Confirmation (user only)
  *   in_progress      → Record Payment, Mark Ready
- *   ready            → Mark Installed, Record Payment (installation is
- *                      scheduled from the Calendar tab, not here)
+ *   ready            → Propose Installation (opens the Installation
+ *                      section's sheet), Mark Installed, Record Payment
  *   installed        → Record Payment, Download Invoice
+ *
+ * Ready/installed orders also show the Installation panel
+ * (`InstallationSection`): the scheduled window, the customer's
+ * response, and change / staff-confirm / delete actions.
  *
  * The generated PDF is an Estimate until the first payment is recorded,
  * after which it is an Invoice.
@@ -61,6 +65,7 @@ import {
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
 import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
+import InstallationSection from './InstallationSection';
 import {
   BlindEditForm,
   FlatEditForm,
@@ -283,6 +288,10 @@ export default function OrderDetail() {
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
+
+  // Installation propose/change sheet (lives in InstallationSection;
+  // lifted here so the ready-status actions panel can open it too).
+  const [installSheetOpen, setInstallSheetOpen] = useState(false);
 
   // Hydrate once from a loaded order.
   useEffect(() => {
@@ -1137,13 +1146,13 @@ export default function OrderDetail() {
       );
     }
 
-    // Ready — installation is scheduled from the Calendar tab.
+    // Ready — propose the installation (emails the customer).
     if (status === 'ready') {
       return (
         <div className={box}>
-          <button onClick={() => navigate('/calendar')} className={primary}>
+          <button onClick={() => setInstallSheetOpen(true)} className={primary}>
             {ICONS.install}
-            Schedule on Calendar
+            Propose Installation
           </button>
           <button
             onClick={handleMarkInstalled}
@@ -1413,6 +1422,18 @@ export default function OrderDetail() {
             {totalsRows}
           </section>
           </fieldset>
+
+          {/* Installation panel + sheet (ready/installed orders) */}
+          {id && (
+            <InstallationSection
+              orderId={id}
+              orderStatus={status}
+              customerEmail={customer?.email}
+              sheetOpen={installSheetOpen}
+              onOpenSheet={() => setInstallSheetOpen(true)}
+              onCloseSheet={() => setInstallSheetOpen(false)}
+            />
+          )}
 
           {/* Payments panel (both breakpoints; confirmed orders) */}
           {paymentsPanel}

@@ -14,8 +14,12 @@
  * Endpoints:
  *   GET    /calendar       unified events for the Calendar tab —
  *                          `?from=&to=` (inclusive ISO dates)
+ *   GET    /order/:orderId the installation visit attached to an order
+ *                          (or null) — the order page's panel
  *   POST   /               create + email the customer
  *   POST   /:id/propose    re-propose a new time (same public link)
+ *   POST   /:id/confirm    staff-side confirm — the customer agreed
+ *                          through another channel; no email is sent
  *   DELETE /:id            remove an appointment
  *
  * Estimate visits are CONFIRMED the moment they are created — there is
@@ -207,6 +211,23 @@ app.get('/calendar', async (c) => {
     customer: a.customer,
   }));
   return c.json({ data: events });
+});
+
+/**
+ * The installation appointment attached to one order, or null when the
+ * order has nothing scheduled — read by the order page's Installation
+ * panel. (An order has at most one appointment — unique index.)
+ */
+app.get('/order/:orderId', async (c) => {
+  const orderId = c.req.param('orderId');
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('appointments')
+    .select(APPT_SELECT)
+    .eq('order_id', orderId)
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: data ?? null });
 });
 
 /**
@@ -419,6 +440,40 @@ app.post('/:id/propose', async (c) => {
       appt.order_id,
       `Installation re-proposed for ${input.appointment_date} at ${input.appointment_time}.`
     );
+  }
+  return c.json({ data });
+});
+
+/**
+ * Staff-side confirm — the user records that the customer agreed to
+ * the time through another channel (phone, text, in person). Unlike
+ * the customer's public confirm this works from any non-confirmed
+ * status and sends NO email.
+ * 404 unknown id · 409 already confirmed.
+ */
+app.post('/:id/confirm', async (c) => {
+  const id = c.req.param('id');
+  const sb = createSupabaseAdmin(c.env);
+  const { data: appt } = await sb
+    .from('appointments')
+    .select('id, kind, order_id, status')
+    .eq('id', id)
+    .maybeSingle();
+  if (!appt) return c.json({ error: 'Appointment not found' }, 404);
+  if (appt.status === 'confirmed') {
+    return c.json({ error: 'This appointment is already confirmed.' }, 409);
+  }
+
+  const { data, error } = await sb
+    .from('appointments')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('id', id)
+    .select(APPT_SELECT)
+    .single();
+  if (error) return c.json({ error: error.message }, 500);
+
+  if (appt.order_id) {
+    await logOrderEvent(sb, appt.order_id, 'Installation time confirmed by staff.');
   }
   return c.json({ data });
 });

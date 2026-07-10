@@ -12,6 +12,9 @@
  *   - creating an installation requires a READY order (409 otherwise)
  *   - a failed proposal email leaves the schedule untouched (502, no
  *     insert/update after)
+ *   - staff confirm (POST /:id/confirm) flips a non-confirmed visit to
+ *     confirmed without any email; 409 when already confirmed
+ *   - GET /order/:orderId returns the order's appointment or null
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -271,6 +274,56 @@ describe('POST /api/appointments (installation)', () => {
       expect(inserted.kind).toBe('installation');
       expect(inserted.order_id).toBe(ORDER_ID);
     });
+  });
+});
+
+describe('GET /api/appointments/order/:orderId', () => {
+  it('returns the appointment attached to the order', async () => {
+    db.responses['appointments.select'] = [
+      { id: 'a2', kind: 'installation', order_id: ORDER_ID, status: 'proposed' },
+    ];
+    const res = await appointmentsApp.request(`/order/${ORDER_ID}`, { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { id: string } | null };
+    expect(body.data?.id).toBe('a2');
+  });
+
+  it('returns null when the order has nothing scheduled', async () => {
+    const res = await appointmentsApp.request(`/order/${ORDER_ID}`, { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: unknown };
+    expect(body.data).toBeNull();
+  });
+});
+
+describe('POST /api/appointments/:id/confirm (staff)', () => {
+  it('confirms a proposed visit WITHOUT sending any email', async () => {
+    db.responses['appointments.select'] = [
+      { id: 'a2', kind: 'installation', order_id: ORDER_ID, status: 'proposed' },
+    ];
+    db.responses['appointments.update'] = [
+      { id: 'a2', kind: 'installation', order_id: ORDER_ID, status: 'confirmed' },
+    ];
+    // No withResend stub: any email attempt would hit the real fetch and fail.
+    const res = await appointmentsApp.request('/a2/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('appointments.update');
+    const body = (await res.json()) as { data: { status: string } };
+    expect(body.data.status).toBe('confirmed');
+  });
+
+  it('409 when the visit is already confirmed', async () => {
+    db.responses['appointments.select'] = [
+      { id: 'a2', kind: 'installation', order_id: ORDER_ID, status: 'confirmed' },
+    ];
+    const res = await appointmentsApp.request('/a2/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('appointments.update');
+  });
+
+  it('404 for a missing appointment', async () => {
+    const res = await appointmentsApp.request('/missing/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
   });
 });
 

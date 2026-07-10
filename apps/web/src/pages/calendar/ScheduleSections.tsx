@@ -7,16 +7,18 @@
  *   left  — Estimate appointments (customer-only visits).
  *   right — Installation appointments (each tied to an order).
  *
- * All scheduling is managed HERE — the orders page carries no
- * appointment UI. Every row offers "Change" (re-opens the wizard on
- * the same appointment and re-emails the proposal) and "Remove";
- * installation rows additionally link to their order.
+ * Every row offers "Change" (re-opens the wizard on the same
+ * appointment and re-emails the proposal) and "Remove"; rows that are
+ * not yet confirmed also offer "Confirm" (staff-side — the customer
+ * agreed through another channel; no email). Installation rows
+ * additionally link to their order, where the same schedule can also
+ * be managed from the order page's Installation panel.
  */
 
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import { useDeleteAppointment } from '../../hooks/useCalendar';
+import { useConfirmAppointment, useDeleteAppointment } from '../../hooks/useCalendar';
 import type { CalendarEvent } from '../../types';
 
 /** Formats "HH:MM[:SS]" (24h) as a 12-hour label, e.g. "2:00 PM". */
@@ -75,9 +77,20 @@ export default function ScheduleSections({
 }) {
   const navigate = useNavigate();
   const deleteMut = useDeleteAppointment();
+  const confirmMut = useConfirmAppointment();
 
   const estimates = events.filter((e) => e.kind === 'estimate');
   const installs = events.filter((e) => e.kind === 'installation');
+
+  /** Staff confirm — the customer agreed through another channel. */
+  async function confirm(event: CalendarEvent) {
+    try {
+      await confirmMut.mutateAsync(event.id);
+      toast.success('Appointment confirmed.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not confirm the appointment.');
+    }
+  }
 
   async function remove(event: CalendarEvent) {
     const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
@@ -102,6 +115,16 @@ export default function ScheduleSections({
             className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
           >
             View order
+          </button>
+        )}
+        {event.schedule_status !== 'confirmed' && (
+          <button
+            type="button"
+            onClick={() => confirm(event)}
+            disabled={confirmMut.isPending}
+            className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
+          >
+            Confirm
           </button>
         )}
         <button
