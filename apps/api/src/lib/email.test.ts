@@ -12,7 +12,7 @@ import {
   escapeHtml,
   buildEstimateEmailHtml,
   buildConfirmationNoticeHtml,
-  buildAppointmentProposalHtml,
+  buildAppointmentBookedHtml,
   buildAppointmentReminderHtml,
   buildInstallReminderHtml,
   buildReviewRequestHtml,
@@ -79,22 +79,23 @@ const scheduleInputs = {
   locationText: '148 Maple Grove Ave, Nepean ON',
 };
 
-describe('buildAppointmentProposalHtml', () => {
-  const html = buildAppointmentProposalHtml({
+describe('buildAppointmentBookedHtml', () => {
+  const html = buildAppointmentBookedHtml({
     ...scheduleInputs,
     viewUrl: 'https://app.example.com/customer/abc-123',
     message: 'See <you> soon',
   });
 
-  it('escapes user fields and renders the proposed window with both CTAs', () => {
+  it('escapes user fields and renders the booked window with NO confirm step', () => {
     expect(html).not.toContain('<i>Sarah</i>');
     expect(html).toContain('Sarah &lt;Bennett&gt;');
     expect(html).toContain('See &lt;you&gt; soon');
     expect(html).toContain('Thursday, July 16, 2026');
     expect(html).toContain('2:00 PM');
     expect(html).toContain('148 Maple Grove Ave');
-    expect(html).toContain('Confirm this time');
-    expect(html).toContain('Request another time');
+    expect(html).toContain('is booked');
+    expect(html).toContain('View appointment');
+    expect(html).not.toContain('Confirm this time');
     expect(html).toContain('https://app.example.com/customer/abc-123');
   });
 });

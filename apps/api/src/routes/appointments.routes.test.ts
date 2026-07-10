@@ -6,8 +6,9 @@
  * the real Hono app with a scripted fake Supabase client. Pins:
  *   - /calendar maps appointment rows into the unified event shape and
  *     validates its date-range params
- *   - creating an estimate visit requires a customer and REJECTS any
- *     attached order (estimate visits are customer-only by design)
+ *   - creating an estimate visit requires a customer, REJECTS any
+ *     attached order (estimate visits are customer-only by design),
+ *     and inserts the row already CONFIRMED — no customer approval step
  *   - creating an installation requires a READY order (409 otherwise)
  *   - a failed proposal email leaves the schedule untouched (502, no
  *     insert/update after)
@@ -194,7 +195,7 @@ describe('POST /api/appointments (estimate)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('emails the customer then inserts the visit with NO order_id', async () => {
+  it('emails the customer then inserts the visit CONFIRMED with NO order_id', async () => {
     db.responses['company_settings.select'] = COMPANY;
     db.responses['customers.select'] = [
       { id: CUSTOMER_ID, first_name: 'Ann', last_name: 'Lee', email: 'ann@example.com' },
@@ -210,6 +211,8 @@ describe('POST /api/appointments (estimate)', () => {
       expect(db.calls).toContain('appointments.insert');
       const inserted = db.insertPayloads['appointments']?.[0] as Record<string, unknown>;
       expect(inserted.kind).toBe('estimate');
+      expect(inserted.status).toBe('confirmed');
+      expect(inserted.confirmed_at).toBeTruthy();
       expect(inserted).not.toHaveProperty('order_id');
     });
   });

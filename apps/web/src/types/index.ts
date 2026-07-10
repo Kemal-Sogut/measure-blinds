@@ -69,9 +69,11 @@ export type OrderStatus =
 export type AppointmentKind = 'estimate' | 'installation';
 
 /**
- * Appointment response sub-state: a proposal is always emailed at
- * creation (`proposed`), then the customer either `confirmed` the time
- * or `change_requested` a different one.
+ * Appointment response sub-state. Installations are emailed as a
+ * proposal (`proposed`), then the customer either `confirmed` the time
+ * or `change_requested` a different one. Estimate visits skip the
+ * approval step — they are created as `confirmed` and only ever move
+ * to `change_requested`.
  */
 export type AppointmentStatus = 'proposed' | 'confirmed' | 'change_requested';
 

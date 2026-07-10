@@ -17,8 +17,10 @@
  * new time for that same appointment through `POST /:id/propose` —
  * the customer keeps the same public link.
  *
- * Every submit EMAILS the customer a proposal with a confirm /
- * request-another-time link; there is no quiet calendar-only path.
+ * Every submit EMAILS the customer; there is no quiet calendar-only
+ * path. Estimate visits are booked as CONFIRMED immediately (the email
+ * is a booking confirmation — no approval step); installations get a
+ * proposal with a confirm / request-another-time link.
  */
 
 import { useEffect, useState } from 'react';
@@ -133,7 +135,9 @@ export default function AppointmentWizard({
         });
       }
       toast.success(
-        `${kind === 'installation' ? 'Installation' : 'Estimate appointment'} proposed — customer emailed`
+        kind === 'installation'
+          ? 'Installation proposed — customer emailed'
+          : 'Estimate appointment booked — customer emailed'
       );
       void qc.invalidateQueries({ queryKey: ['orders', 'list'] });
       onClose();
@@ -298,7 +302,7 @@ export default function AppointmentWizard({
                       {cust.first_name} {cust.last_name}
                     </span>
                     <span className="mt-0.5 block text-[13px] text-text-secondary">
-                      {hasEmail ? cust.email : 'No email — cannot be emailed a proposal'}
+                      {hasEmail ? cust.email : 'No email — cannot be emailed the booking'}
                     </span>
                   </button>
                 );
@@ -371,7 +375,7 @@ export default function AppointmentWizard({
               disabled={!stepValid || busy}
               className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
             >
-              {busy ? 'Sending…' : 'Propose'}
+              {busy ? 'Sending…' : kind === 'estimate' ? 'Book' : 'Propose'}
             </button>
           )}
         </div>

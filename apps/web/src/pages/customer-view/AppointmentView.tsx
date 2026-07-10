@@ -5,10 +5,13 @@
  * Public appointment view — token-gated, NO authentication.
  *
  * Fetches `/public/appointment/:token` with a plain fetch and lets the
- * customer respond to a proposed home visit of either kind (estimate
- * visit or installation):
+ * customer respond to a home visit of either kind (estimate visit or
+ * installation):
  *   proposed          → confirm the window, or request another time
- *   confirmed         → "see you then" message
+ *                       (installations only — estimate visits are
+ *                       booked as confirmed, no approval step)
+ *   confirmed         → "see you then" card, with the option to
+ *                       request another time
  *   change_requested  → "request received" message
  *   not found         → generic error
  *
@@ -152,18 +155,16 @@ export default function AppointmentView() {
   }
 
   const isInstall = appt.kind === 'installation';
-  const kindTitle = isInstall ? 'Installation Time' : 'Your Estimate Appointment';
+  const isConfirmed = appt.status === 'confirmed';
+  const kindTitle = isConfirmed
+    ? isInstall
+      ? 'Installation time confirmed'
+      : 'Appointment confirmed'
+    : isInstall
+      ? 'Installation Time'
+      : 'Your Estimate Appointment';
   const windowText = visitWindow(appt.appointment_date, appt.appointment_time);
 
-  if (appt.status === 'confirmed') {
-    return (
-      <Message
-        icon="🗓️"
-        title={isInstall ? 'Installation time confirmed' : 'Appointment confirmed'}
-        body={`Thanks! We'll see you ${windowText}.`}
-      />
-    );
-  }
   if (appt.status === 'change_requested') {
     return (
       <Message
@@ -174,7 +175,8 @@ export default function AppointmentView() {
     );
   }
 
-  // status === 'proposed' → confirm or request another time.
+  // proposed → confirm or request another time;
+  // confirmed → "see you then" plus request another time.
   return (
     <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
       <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
@@ -188,9 +190,11 @@ export default function AppointmentView() {
         <div className="mb-3 text-4xl">🗓️</div>
         <h1 className="mb-2 text-xl font-semibold text-text-primary">{kindTitle}</h1>
         <p className="mb-2 text-text-secondary">
-          {isInstall
-            ? `We will be there ${windowText} to install your blinds, if that works for you.`
-            : `We will visit ${windowText} for your free in-home estimate, if that works for you.`}
+          {isConfirmed
+            ? `Thanks! We'll see you ${windowText}.`
+            : isInstall
+              ? `We will be there ${windowText} to install your blinds, if that works for you.`
+              : `We will visit ${windowText} for your free in-home estimate, if that works for you.`}
         </p>
         {isInstall && appt.order_number && (
           <p className="mb-6 text-sm text-text-muted">
@@ -203,13 +207,15 @@ export default function AppointmentView() {
 
         {!requesting ? (
           <div className="flex flex-col gap-2.5">
-            <button
-              onClick={handleConfirm}
-              disabled={busy}
-              className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              {busy ? 'Confirming…' : 'Confirm this time'}
-            </button>
+            {!isConfirmed && (
+              <button
+                onClick={handleConfirm}
+                disabled={busy}
+                className="h-12 w-full rounded-xl bg-brand-600 text-base font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {busy ? 'Confirming…' : 'Confirm this time'}
+              </button>
+            )}
             <button
               onClick={() => setRequesting(true)}
               disabled={busy}

@@ -459,37 +459,36 @@ function appointmentRows(i: AppointmentEmailInputs): Array<[string, string]> {
   return rows;
 }
 
-/** Inputs for the estimate-appointment proposal email. */
-export interface AppointmentProposalInputs extends AppointmentEmailInputs {
-  /** Public page where the customer confirms or requests another time */
+/** Inputs for the estimate-appointment booking-confirmation email. */
+export interface AppointmentBookedInputs extends AppointmentEmailInputs {
+  /** Public page where the customer views the visit or requests another time */
   viewUrl: string;
   /** Optional personal note from the consultant, shown above the CTA. */
   message?: string;
 }
 
 /**
- * Builds the estimate-appointment proposal email ("01 — Appointment
- * confirmation" in the design doc): the proposed visit window in a
- * tinted card with paired CTAs to confirm or request another time.
- * All dynamic strings are HTML-escaped.
+ * Builds the estimate-appointment booking confirmation ("01 —
+ * Appointment confirmation" in the design doc): the visit is booked
+ * as soon as it is created — no confirm step for the customer — so
+ * the card presents the time as settled, with a link to the public
+ * page where they can request a different time if needed. All dynamic
+ * strings are HTML-escaped.
  */
-export function buildAppointmentProposalHtml(i: AppointmentProposalInputs): string {
+export function buildAppointmentBookedHtml(i: AppointmentBookedInputs): string {
   const company = escapeHtml(i.company.name);
   const name = escapeHtml(i.customerFirstName);
   const url = escapeHtml(i.viewUrl);
-  const body = `${headingHtml('Your estimate appointment')}
-    ${introHtml(`Hi ${name} &mdash; thanks for booking a free in-home estimate with ${company}. We&#39;ve proposed a time below. Confirm it, or ask for another that suits you better.`)}
+  const body = `${headingHtml('Your estimate appointment is booked')}
+    ${introHtml(`Hi ${name} &mdash; thanks for booking a free in-home estimate with ${company}. You&#39;re all set for the time below &mdash; no need to do anything else.`)}
     ${summaryCardHtml({
-      eyebrow: 'Proposed time',
+      eyebrow: 'Booked time',
       headline: `${escapeHtml(i.dateText)} &middot; ${escapeHtml(i.startText)} &ndash; ${escapeHtml(i.endText)}`,
       rows: appointmentRows(i),
     })}
     ${messageBlockHtml(i.message)}
-    ${buttonPairHtml(
-      primaryButtonHtml(url, 'Confirm this time'),
-      secondaryButtonHtml(url, 'Request another time')
-    )}
-    ${finePrintHtml(`The visit takes about an hour &mdash; we measure your windows, show samples, and leave you with a written estimate. No obligation.`)}
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View appointment')}</div>
+    ${finePrintHtml(`The visit takes about an hour &mdash; we measure your windows, show samples, and leave you with a written estimate. No obligation. Need a different time? Use the button above or reply to this email.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);
 }

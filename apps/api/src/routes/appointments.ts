@@ -14,15 +14,17 @@
  * Endpoints:
  *   GET    /calendar       unified events for the Calendar tab —
  *                          `?from=&to=` (inclusive ISO dates)
- *   POST   /               create + email the proposal to the customer
+ *   POST   /               create + email the customer
  *   POST   /:id/propose    re-propose a new time (same public link)
  *   DELETE /:id            remove an appointment
  *
- * Every proposal emails the customer a one-hour visit window with a
- * link to the appointment's own public page (`/appointment/:token`)
- * where they confirm or request another time. Ordering mirrors the
- * order emails: email FIRST, persist after — a failed send leaves the
- * schedule untouched.
+ * Estimate visits are CONFIRMED the moment they are created — there is
+ * no approval step for the customer. Their email is a booking
+ * confirmation whose public page (`/appointment/:token`) still lets
+ * them request a different time. Installations keep the proposal flow:
+ * the email asks the customer to confirm the window or request another
+ * time. Either way the ordering mirrors the order emails: email FIRST,
+ * persist after — a failed send leaves the schedule untouched.
  */
 
 import { Hono } from 'hono';
@@ -32,7 +34,7 @@ import { createSupabaseAdmin } from '../lib/supabase';
 import {
   sendEmail,
   brandFromSettings,
-  buildAppointmentProposalHtml,
+  buildAppointmentBookedHtml,
   buildInstallationProposalHtml,
 } from '../lib/email';
 import { scheduleWindow, customerLocation } from '../lib/timeText';
@@ -101,11 +103,11 @@ async function logOrderEvent(sb: SupabaseClient, orderId: string, message: strin
 }
 
 /**
- * Emails the kind-appropriate proposal for a visit window. Estimate
- * visits get the appointment template (customer name, no order
- * reference); installations get the installation template with the
- * order number. Throws on send failure so callers can leave state
- * untouched.
+ * Emails the kind-appropriate message for a visit window. Estimate
+ * visits get the booking-confirmation template (customer name, no
+ * order reference — the time is already settled); installations get
+ * the installation proposal with the order number and a confirm step.
+ * Throws on send failure so callers can leave state untouched.
  */
 async function sendProposalEmail(
   env: Env,
@@ -142,8 +144,8 @@ async function sendProposalEmail(
   } else {
     await sendEmail(env, {
       to: opts.customer.email,
-      subject: 'Your estimate appointment — confirm your time',
-      html: buildAppointmentProposalHtml({
+      subject: 'Your estimate appointment is booked',
+      html: buildAppointmentBookedHtml({
         company: brandFromSettings(opts.company),
         customerFirstName: opts.customer.first_name,
         customerFullName: fullName,
@@ -208,10 +210,11 @@ app.get('/calendar', async (c) => {
 });
 
 /**
- * Books a new visit and emails the proposal.
+ * Books a new visit and emails the customer.
  *
  * kind='estimate': requires `customer_id`; the customer must have an
- * email. NO order is attached — ever.
+ * email. NO order is attached — ever. The visit is created CONFIRMED
+ * (no approval step) and the email is a booking confirmation.
  * kind='installation': requires `order_id` pointing at a READY order;
  * the customer comes from the order. An order has at most one
  * installation appointment (unique index) — re-booking replaces the
@@ -262,6 +265,9 @@ app.post('/', async (c) => {
         customer_id: customer.id,
         appointment_date: input.appointment_date,
         appointment_time: input.appointment_time,
+        // No approval step — an estimate visit is booked as confirmed.
+        status: 'confirmed',
+        confirmed_at: new Date().toISOString(),
         public_token: token,
       })
       .select(APPT_SELECT)
@@ -349,10 +355,12 @@ app.post('/', async (c) => {
 });
 
 /**
- * Re-proposes a new time for an existing visit (either kind): resets
- * the status to `proposed`, clears the customer's previous response and
- * the reminder stamp, keeps the SAME public token (already-emailed
- * links stay valid), and emails a fresh proposal.
+ * Re-proposes a new time for an existing visit (either kind): clears
+ * the customer's previous response and the reminder stamp, keeps the
+ * SAME public token (already-emailed links stay valid), and emails a
+ * fresh message. Installations reset to `proposed` (the customer
+ * confirms again); estimate visits have no approval step, so the new
+ * time lands directly as `confirmed`.
  */
 app.post('/:id/propose', async (c) => {
   const parsed = reproposeSchema.safeParse(await c.req.json().catch(() => null));
@@ -389,13 +397,14 @@ app.post('/:id/propose', async (c) => {
     return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
   }
 
+  const isEstimate = appt.kind === 'estimate';
   const { data, error } = await sb
     .from('appointments')
     .update({
       appointment_date: input.appointment_date,
       appointment_time: input.appointment_time,
-      status: 'proposed',
-      confirmed_at: null,
+      status: isEstimate ? 'confirmed' : 'proposed',
+      confirmed_at: isEstimate ? new Date().toISOString() : null,
       response_note: '',
       reminder_sent_at: null,
     })
