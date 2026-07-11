@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { useCreateCustomer } from '../hooks/useCustomers';
+import AddressAutocomplete from './AddressAutocomplete';
 import type { Customer } from '../types';
 
 const INPUT_CLS =
@@ -139,7 +140,17 @@ export default function CustomerCreateModal({
           </div>
           <Field label="Email" type="email" value={email} onChange={setEmail} required={requireEmail} />
           <Field label="Phone" type="tel" value={phone} onChange={setPhone} />
-          <Field label="Address line 1" value={line1} onChange={setLine1} />
+          <AddressAutocomplete
+            label="Address line 1"
+            value={line1}
+            onChange={setLine1}
+            onSelect={(s) => {
+              setLine1(s.line1);
+              if (s.city) setCity(s.city);
+              if (s.province) setProvince(s.province);
+              if (s.postal_code) setPostal(s.postal_code);
+            }}
+          />
           <Field label="Address line 2" value={line2} onChange={setLine2} />
           <div className="grid grid-cols-[1fr_5rem_7rem] gap-2">
             <Field label="City" value={city} onChange={setCity} />

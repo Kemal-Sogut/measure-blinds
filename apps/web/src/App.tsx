@@ -28,6 +28,8 @@ const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
 const OrderList = lazy(() => import('./pages/orders/OrderList'));
 const OrderDetail = lazy(() => import('./pages/orders/OrderDetail'));
 const CalendarPage = lazy(() => import('./pages/calendar/CalendarPage'));
+const AppointmentsList = lazy(() => import('./pages/calendar/AppointmentsList'));
+const AppointmentDetail = lazy(() => import('./pages/calendar/AppointmentDetail'));
 const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
 const CompanyInfo = lazy(() => import('./pages/settings/CompanyInfo'));
 const Fabrics = lazy(() => import('./pages/settings/Fabrics'));
@@ -91,6 +93,8 @@ export default function App() {
 
             {/* Calendar */}
             <Route path="/calendar" element={guard(<Layout><CalendarPage /></Layout>)} />
+            <Route path="/appointments" element={guard(<Layout nav={false}><AppointmentsList /></Layout>)} />
+            <Route path="/appointments/:id" element={guard(<Layout nav={false}><AppointmentDetail /></Layout>)} />
 
             {/* Legacy /estimates paths redirect to /orders */}
             <Route path="/estimates" element={guard(<Layout><OrderList /></Layout>)} />

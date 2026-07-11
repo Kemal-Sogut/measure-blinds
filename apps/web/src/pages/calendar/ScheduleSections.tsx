@@ -7,12 +7,14 @@
  *   left  — Estimate appointments (customer-only visits).
  *   right — Installation appointments (each tied to an order).
  *
- * Every row offers "Change" (re-opens the wizard on the same
- * appointment and re-emails the proposal) and "Remove"; rows that are
- * not yet confirmed also offer "Confirm" (staff-side — the customer
- * agreed through another channel; no email). Installation rows
- * additionally link to their order, where the same schedule can also
- * be managed from the order page's Installation panel.
+ * Tapping a row's summary opens that appointment's details page
+ * (`/appointments/:id`). Every row also offers "Change" (re-opens the
+ * wizard on the same appointment and re-emails the proposal) and
+ * "Remove"; rows that are not yet confirmed also offer "Confirm"
+ * (staff-side — the customer agreed through another channel; no email).
+ * Installation rows additionally link to their order, where the same
+ * schedule can also be managed from the order page's Installation
+ * panel.
  */
 
 import { useNavigate } from 'react-router-dom';
@@ -158,7 +160,14 @@ export default function ScheduleSections({
         <div className="flex flex-col gap-2">
           {estimates.map((ev) => (
             <div key={ev.id} className="rounded-sm border border-border-light bg-surface p-3">
-              <EventMeta event={ev} />
+              <button
+                type="button"
+                onClick={() => navigate(`/appointments/${ev.id}`)}
+                className="block w-full text-left"
+                aria-label="View appointment details"
+              >
+                <EventMeta event={ev} />
+              </button>
               {actionRow(ev)}
             </div>
           ))}
@@ -172,7 +181,14 @@ export default function ScheduleSections({
         <div className="flex flex-col gap-2">
           {installs.map((ev) => (
             <div key={ev.id} className="rounded-sm border border-border-light bg-surface p-3">
-              <EventMeta event={ev} />
+              <button
+                type="button"
+                onClick={() => navigate(`/appointments/${ev.id}`)}
+                className="block w-full text-left"
+                aria-label="View appointment details"
+              >
+                <EventMeta event={ev} />
+              </button>
               {actionRow(ev)}
             </div>
           ))}

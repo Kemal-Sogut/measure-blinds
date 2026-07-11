@@ -59,6 +59,22 @@ const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM');
 /** Query params for GET /calendar — an inclusive date-only range. */
 const calendarRangeSchema = z.object({ from: isoDate, to: isoDate }).strict();
 
+/** Fixed page size for the paginated "See All" appointments list. */
+const LIST_PAGE_SIZE = 20;
+
+/**
+ * Query params for GET / (the "See All" list): an optional kind filter
+ * and a 1-based page number. Both arrive as strings on the query and
+ * are coerced/validated here so a bad `?page=abc` fails loudly (400)
+ * rather than silently paging from row NaN.
+ */
+const listQuerySchema = z
+  .object({
+    kind: z.enum(['estimate', 'installation', 'all']).default('all'),
+    page: z.coerce.number().int().min(1).default(1),
+  })
+  .strict();
+
 /**
  * Payload for POST / — an estimate visit targets a customer, an
  * installation targets a ready order (its customer is derived).
@@ -175,6 +191,64 @@ async function loadCompany(sb: SupabaseClient) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Paginated "See All" appointments list (the calendar's See All page):
+ * every appointment (optionally filtered to one kind), newest first
+ * (date desc, then time desc), 20 per page. Returns the same
+ * lightweight event shape as `/calendar` plus pagination metadata
+ * (`page`, `page_size`, `total`, `total_pages`) so the client can
+ * render the pager without a second count request.
+ *
+ * Registered before `/:id` so the literal path wins (locked routing
+ * pattern: literal routes precede param routes in a Hono group).
+ */
+app.get('/', async (c) => {
+  const parsed = listQuerySchema.safeParse({
+    kind: c.req.query('kind') ?? undefined,
+    page: c.req.query('page') ?? undefined,
+  });
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const { kind, page } = parsed.data;
+
+  const sb = createSupabaseAdmin(c.env);
+  const fromRow = (page - 1) * LIST_PAGE_SIZE;
+  const toRow = fromRow + LIST_PAGE_SIZE - 1;
+
+  let query = sb
+    .from('appointments')
+    .select(
+      'id, kind, order_id, appointment_date, appointment_time, status, ' +
+        'order:orders(order_number), customer:customers(first_name, last_name)',
+      { count: 'exact' }
+    )
+    .order('appointment_date', { ascending: false })
+    .order('appointment_time', { ascending: false })
+    .range(fromRow, toRow);
+  if (kind !== 'all') query = query.eq('kind', kind);
+
+  const { data, count, error } = await query;
+  if (error) return c.json({ error: error.message }, 500);
+
+  const events = (data ?? []).map((a: Record<string, any>) => ({
+    id: a.id,
+    kind: a.kind,
+    date: a.appointment_date,
+    time: a.appointment_time,
+    schedule_status: a.status,
+    order_id: a.order_id,
+    order_number: a.order?.order_number ?? '',
+    customer: a.customer,
+  }));
+  const total = count ?? 0;
+  return c.json({
+    data: events,
+    page,
+    page_size: LIST_PAGE_SIZE,
+    total,
+    total_pages: Math.max(1, Math.ceil(total / LIST_PAGE_SIZE)),
+  });
+});
+
+/**
  * Unified calendar events for the Calendar tab: both kinds in one list,
  * sorted by date then time. `order_id`/`order_number` are null/'' for
  * estimate visits.
@@ -228,6 +302,30 @@ app.get('/order/:orderId', async (c) => {
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   return c.json({ data: data ?? null });
+});
+
+/**
+ * A single appointment by its id, with its joined customer (full
+ * record, so the details page can show contact + address) and, for
+ * installations, the summary order fields. Drives the staff-side
+ * appointment-details page (`/appointments/:id`) reached by tapping any
+ * appointment on the calendar or the See All list.
+ *
+ * Registered after the literal `/calendar` and `/order/:orderId` reads
+ * so those paths are not swallowed by this `/:id` param route.
+ * 404 when the id is unknown.
+ */
+app.get('/:id', async (c) => {
+  const id = c.req.param('id');
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('appointments')
+    .select(APPT_SELECT)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Appointment not found' }, 404);
+  return c.json({ data });
 });
 
 /**

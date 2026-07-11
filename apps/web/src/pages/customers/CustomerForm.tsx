@@ -16,6 +16,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
+import AddressAutocomplete from '../../components/AddressAutocomplete';
+import type { AddressSuggestion } from '../../lib/addressSearch';
 import {
   useCustomer,
   useCreateCustomer,
@@ -118,6 +120,35 @@ export default function CustomerForm() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  /**
+   * Fills a whole address block (shipping or billing) from a chosen
+   * autocomplete suggestion in one update. Line 2 is intentionally left
+   * untouched — unit/suite numbers rarely come back from the geocoder
+   * and the consultant may have already typed one. Literal keys (not a
+   * computed `${prefix}_…`) keep the update strictly typed against
+   * FormState, whose `billing_same_as_shipping` boolean would otherwise
+   * clash with an inferred string index signature.
+   */
+  function applyAddress(prefix: 'shipping' | 'billing', s: AddressSuggestion) {
+    setForm((f) =>
+      prefix === 'shipping'
+        ? {
+            ...f,
+            shipping_address_line1: s.line1,
+            shipping_city: s.city || f.shipping_city,
+            shipping_province: s.province || f.shipping_province,
+            shipping_postal_code: s.postal_code || f.shipping_postal_code,
+          }
+        : {
+            ...f,
+            billing_address_line1: s.line1,
+            billing_city: s.city || f.billing_city,
+            billing_province: s.province || f.billing_province,
+            billing_postal_code: s.postal_code || f.billing_postal_code,
+          }
+    );
+  }
+
   /** Validates and saves; navigates back to the list on success. */
   function handleSave() {
     if (!form.first_name.trim()) return toast.error('First name is required.');
@@ -194,7 +225,12 @@ export default function CustomerForm() {
         {/* Shipping address */}
         <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
           <h2 className="text-sm font-semibold text-text-primary">Shipping Address</h2>
-          <Field label="Address Line 1" value={form.shipping_address_line1} onChange={(v) => set('shipping_address_line1', v)} />
+          <AddressAutocomplete
+            label="Address Line 1"
+            value={form.shipping_address_line1}
+            onChange={(v) => set('shipping_address_line1', v)}
+            onSelect={(s) => applyAddress('shipping', s)}
+          />
           <Field label="Address Line 2" value={form.shipping_address_line2} onChange={(v) => set('shipping_address_line2', v)} />
           <div className="grid grid-cols-2 gap-3.5">
             <Field label="City" value={form.shipping_city} onChange={(v) => set('shipping_city', v)} />
@@ -216,7 +252,12 @@ export default function CustomerForm() {
           </label>
           {!form.billing_same_as_shipping && (
             <>
-              <Field label="Address Line 1" value={form.billing_address_line1} onChange={(v) => set('billing_address_line1', v)} />
+              <AddressAutocomplete
+                label="Address Line 1"
+                value={form.billing_address_line1}
+                onChange={(v) => set('billing_address_line1', v)}
+                onSelect={(s) => applyAddress('billing', s)}
+              />
               <Field label="Address Line 2" value={form.billing_address_line2} onChange={(v) => set('billing_address_line2', v)} />
               <div className="grid grid-cols-2 gap-3.5">
                 <Field label="City" value={form.billing_city} onChange={(v) => set('billing_city', v)} />

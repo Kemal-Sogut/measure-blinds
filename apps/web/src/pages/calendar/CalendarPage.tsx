@@ -18,6 +18,7 @@
  */
 
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { startOfMonth, endOfMonth, startOfWeek, endOfWeek, addMonths, format } from 'date-fns';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
@@ -82,13 +83,21 @@ export default function CalendarPage() {
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h1 className="hidden text-[22px] font-semibold text-text-primary lg:block">Calendar</h1>
           <div className="flex flex-1 flex-wrap items-center justify-between gap-2 lg:flex-none lg:justify-end">
-            <button
-              type="button"
-              onClick={() => setWizard({ day: new Date() })}
-              className="h-9 rounded-sm bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
-            >
-              + New Appointment
-            </button>
+            <div className="flex items-center gap-2">
+              <Link
+                to="/appointments"
+                className="flex h-9 items-center rounded-sm border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+              >
+                See All
+              </Link>
+              <button
+                type="button"
+                onClick={() => setWizard({ day: new Date() })}
+                className="h-9 rounded-sm bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
+              >
+                + New Appointment
+              </button>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"

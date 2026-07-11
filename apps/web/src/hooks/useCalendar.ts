@@ -19,15 +19,28 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  keepPreviousData,
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query';
 import { apiFetch } from '../lib/api';
-import type { Appointment, CalendarEvent } from '../types';
+import type { Appointment, AppointmentKind, CalendarEvent } from '../types';
 
 /** API envelope: every appointments endpoint returns `{ data: T }`. */
 interface Envelope<T> {
   data: T;
+}
+
+/** Kind filter accepted by the paginated list ('all' = both kinds). */
+export type AppointmentKindFilter = AppointmentKind | 'all';
+
+/** Response shape of GET /api/appointments — events plus pager metadata. */
+export interface PaginatedAppointments {
+  data: CalendarEvent[];
+  page: number;
+  page_size: number;
+  total: number;
+  total_pages: number;
 }
 
 const CALENDAR_KEY = ['appointments', 'calendar'] as const;
@@ -50,6 +63,41 @@ export function useCalendarEvents(
         .data;
     },
     enabled: Boolean(fromIso && toIso),
+  });
+}
+
+/**
+ * Paginated appointments feed for the calendar's "See All" page: all
+ * appointments (or one kind), newest first, 20 per page. Keeps the
+ * previous page on screen while the next loads so the list doesn't
+ * flash empty during pagination. Returns the events plus pager
+ * metadata (`total`, `total_pages`).
+ */
+export function useAppointmentsList(
+  kind: AppointmentKindFilter,
+  page: number
+): UseQueryResult<PaginatedAppointments> {
+  return useQuery({
+    queryKey: [...CALENDAR_KEY, 'list', kind, page],
+    queryFn: async () => {
+      const params = new URLSearchParams({ kind, page: String(page) });
+      return await apiFetch<PaginatedAppointments>(`/api/appointments?${params}`);
+    },
+    placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * One appointment by id, with its joined customer (full record) and,
+ * for installations, the order summary — drives the appointment
+ * details page. Disabled until an id is provided.
+ */
+export function useAppointment(id: string | undefined): UseQueryResult<Appointment> {
+  return useQuery({
+    queryKey: ['appointments', 'detail', id],
+    queryFn: async () =>
+      (await apiFetch<Envelope<Appointment>>(`/api/appointments/${id}`)).data,
+    enabled: Boolean(id),
   });
 }
 

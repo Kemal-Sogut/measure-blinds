@@ -12,11 +12,11 @@
  *     `proposed` / `change_requested` → the `success` tint/ink pair,
  *     so the two schedules are distinguishable at a glance.
  *
- * Tapping an INSTALLATION chip navigates to the appointment's order.
- * Estimate appointments have no order (and no presence on the orders
- * page by design) — they are managed in the "Estimate appointments"
- * section under the calendar — so estimate chips are non-navigating
- * markers.
+ * Tapping ANY chip (either kind) navigates to that appointment's
+ * details page (`/appointments/:id`), where the customer block, the
+ * Google-Maps-linked address, and the linked order (installations) are
+ * shown. Scheduling changes still happen from the under-grid section
+ * rows and the order page.
  */
 
 import { useNavigate } from 'react-router-dom';
@@ -49,13 +49,13 @@ export default function EventChip({ event }: { event: CalendarEvent }) {
     <button
       type="button"
       onClick={(e) => {
+        // Stop the day-cell tap (which opens the booking wizard) from
+        // also firing, then open this appointment's details page.
         e.stopPropagation();
-        if (!isEstimate && event.order_id) navigate(`/orders/${event.order_id}`);
+        navigate(`/appointments/${event.id}`);
       }}
       title={`${event.order_number || customerName || 'Customer'} — ${customerName || 'Customer'} (${kindLabel}, ${event.schedule_status})`}
-      className={`block w-full truncate rounded-sm px-1 py-0.5 text-left text-[10px] font-medium leading-tight ${cls} ${
-        isEstimate ? 'cursor-default' : ''
-      }`}
+      className={`block w-full truncate rounded-sm px-1 py-0.5 text-left text-[10px] font-medium leading-tight ${cls}`}
     >
       {shortTime(event.time)} {customerName || event.order_number}
     </button>
