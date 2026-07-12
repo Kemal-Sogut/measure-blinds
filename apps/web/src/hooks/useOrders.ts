@@ -51,6 +51,7 @@ export interface BlindItemInput {
   cassette_id: string;
   control_id: string;
   note: string;
+  color: string;
   quantity: number;
 }
 

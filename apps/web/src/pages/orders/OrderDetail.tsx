@@ -113,6 +113,7 @@ function toDrafts(order: Order): ItemDraft[] {
         cassette_id: li.cassette_id ?? '',
         control_id: li.control_id ?? '',
         note: li.note ?? '',
+        color: li.color ?? '',
         quantity: String(li.quantity),
       } satisfies BlindDraft;
     }
@@ -381,6 +382,7 @@ export default function OrderDetail() {
       cassette_id: '',
       control_id: '',
       note: '',
+      color: '',
       quantity: '1',
     };
     setItems((list) => [...list, draft]);
@@ -520,6 +522,7 @@ export default function OrderDetail() {
           cassette_id: it.cassette_id,
           control_id: it.control_id,
           note: it.note.trim(),
+          color: it.color.trim(),
           quantity: Math.round(qty),
         });
       } else {
