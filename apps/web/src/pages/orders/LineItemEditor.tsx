@@ -7,8 +7,8 @@
  * The old inline BlindItemCard / FlatItemCard have been replaced by
  * BlindEditForm and FlatEditForm which live inside popup modals rather
  * than expanded inline in the page.  BulkEditForm lets the user change
- * only fabric, cassette, and control across all selected blind items
- * without touching any measurement or quantity fields.
+ * only fabric, cassette, control, and color across all selected blind
+ * items without touching any measurement or quantity fields.
  *
  * Drafts hold every numeric field as a string so partially-typed values
  * ("12.", "") never fight the keyboard; parsing happens in the pricing
@@ -406,7 +406,7 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — only fabric, cassette and control are exposed.
+ * Bulk-edit form — only fabric, cassette, control, and color are exposed.
  * Each starts as "" (no change); only non-empty selections are applied
  * by the parent when the user clicks Apply.
  */

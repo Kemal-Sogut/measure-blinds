@@ -472,7 +472,7 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  // ── Bulk edit (fabric / cassette / control only) ──────────────────
+  // ── Bulk edit (fabric / cassette / control / color only) ──────────
   function openBulkEdit() {
     setBulkState({ fabric_id: '', cassette_id: '', control_id: '', color: '' });
     setSheet('bulkEdit');
@@ -1280,7 +1280,7 @@ export default function OrderDetail() {
                           ? 'Select blind items to bulk edit'
                           : selectionHasNonBlind
                             ? 'Bulk edit is only available for blind items'
-                            : 'Edit fabric, cassette and control for selected items'
+                            : 'Edit fabric, cassette, control and color for selected items'
                       }
                       className="flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -1838,7 +1838,7 @@ export default function OrderDetail() {
         );
       })()}
 
-      {/* Bulk edit popup (fabric / cassette / control only) */}
+      {/* Bulk edit popup (fabric / cassette / control / color only) */}
       {sheet === 'bulkEdit' && (
         <div
           className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
