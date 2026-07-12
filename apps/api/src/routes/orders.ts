@@ -87,6 +87,7 @@ const blindItemSchema = z
     cassette_id: z.string().uuid(),
     control_id: z.string().uuid(),
     note: z.string().max(1000).default(''),
+    color: z.string().max(100).default(''),
     quantity: z.number().int().min(1).max(999),
   })
   .strict();
@@ -220,6 +221,7 @@ async function resolveLineItems(
         control_price_per_item: null,
         description: it.description,
         note: '',
+        color: '',
         quantity: it.quantity,
         unit_price: unit,
         line_total: Math.round(unit * it.quantity * 100) / 100,
@@ -257,6 +259,7 @@ async function resolveLineItems(
       control_price_per_item: control.price,
       description: '',
       note: it.note,
+      color: it.color,
       quantity: it.quantity,
       unit_price,
       line_total: Math.round(unit_price * it.quantity * 100) / 100,

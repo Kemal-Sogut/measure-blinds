@@ -126,6 +126,7 @@ app.get('/estimate/:token', async (c) => {
         control_name: li.control_name,
         description: li.description,
         note: li.note,
+        color: li.color,
         quantity: li.quantity,
         unit_price: li.unit_price,
         line_total: li.line_total,
