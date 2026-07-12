@@ -31,7 +31,7 @@ interface PublicLineItem {
   blinds_type: string | null;
   panels: number[] | null;
   height_cm: number | null;
-  fabric_name: string | null;
+  material_name: string | null;
   cassette_name: string | null;
   control_name: string | null;
   description: string | null;
@@ -82,7 +82,7 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
         li.panels?.length
           ? `Panels: ${li.panels.join(' + ')} cm × H ${li.height_cm} cm`
           : '',
-        li.fabric_name ? `Fabric: ${li.fabric_name}` : '',
+        li.material_name ? `Material: ${li.material_name}` : '',
         li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
         li.control_name ? `Control: ${li.control_name}` : '',
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',

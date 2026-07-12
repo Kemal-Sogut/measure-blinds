@@ -5,8 +5,10 @@
  * TanStack Query hooks for the Settings module.
  *
  * Covers the company settings singleton (read / partial update / logo
- * upload) and the four catalog entities (fabrics, cassette options,
- * control options, presets) through a shared hook factory.
+ * upload) and the catalog entities (materials, cassette options,
+ * control options, presets, blind types) through a shared hook factory.
+ * Materials additionally carry `blind_type_ids`, passed straight through
+ * the generic create/update mutations to the Materials API.
  *
  * Update mutations apply optimistic cache patches with rollback on
  * error; create/delete simply invalidate — the lists hold at most a
@@ -38,7 +40,7 @@ export interface CatalogRow {
 
 /** URL segments for the four catalog entities under /api/settings. */
 export type CatalogPath =
-  | 'fabrics'
+  | 'materials'
   | 'cassette-options'
   | 'control-options'
   | 'presets'

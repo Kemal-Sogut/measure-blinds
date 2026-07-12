@@ -16,16 +16,18 @@ import {
   applyWidthMinimum,
   applyHeightMinimum,
   calculateBlindUnitPrice,
+  calculateBlindUnitPriceForType,
   calculateBlindLineTotal,
   type BlindInputs,
 } from './pricing';
+import { getCalculator } from './calculators';
 
 /** Builds a baseline blind input; individual tests override single fields. */
 function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
   return {
     panels: [140],
     height_cm: 200,
-    fabric_price_per_sqm: 50,
+    material_price_per_sqm: 50,
     cassette_price_per_m: 0,
     control_price_per_item: 0,
     quantity: 1,
@@ -68,7 +70,7 @@ describe('calculateBlindUnitPrice', () => {
   });
 
   it('sums panel widths before pricing', () => {
-    // Two 70cm panels ≡ one 140cm width for fabric/cassette purposes
+    // Two 70cm panels ≡ one 140cm width for material/cassette purposes
     const twoPanel = blind({ panels: [70, 70], control_price_per_item: 0 });
     expect(calculateBlindUnitPrice(twoPanel)).toBe(140);
   });
@@ -85,15 +87,15 @@ describe('calculateBlindUnitPrice', () => {
     expect(price).toBe(140 + (140 / 100) * 20); // 140 + 28
   });
 
-  it('applies the width minimum to fabric and cassette cost', () => {
-    // 60cm wide → priced as 100cm: fabric 100×200×50/10000 = 100, cassette 1m×20 = 20
+  it('applies the width minimum to material and cassette cost', () => {
+    // 60cm wide → priced as 100cm: material 100×200×50/10000 = 100, cassette 1m×20 = 20
     const price = calculateBlindUnitPrice(
       blind({ panels: [60], cassette_price_per_m: 20 })
     );
     expect(price).toBe(100 + 20);
   });
 
-  it('applies the tiered height minimum to fabric cost', () => {
+  it('applies the tiered height minimum to material cost', () => {
     // H=150 → priced as 200 → same as baseline
     expect(calculateBlindUnitPrice(blind({ height_cm: 150 }))).toBe(140);
   });
@@ -101,10 +103,27 @@ describe('calculateBlindUnitPrice', () => {
   it('rounds to 2 decimal places', () => {
     // 133 × 217 × 33.33 / 10000 = 96.213...
     const price = calculateBlindUnitPrice(
-      blind({ panels: [133], height_cm: 217, fabric_price_per_sqm: 33.33 })
+      blind({ panels: [133], height_cm: 217, material_price_per_sqm: 33.33 })
     );
     expect(price).toBe(Math.round(((133 * 217 * 33.33) / 10000) * 100) / 100);
     expect(Number.isInteger(price * 100)).toBe(true);
+  });
+});
+
+describe('calculateBlindUnitPriceForType (type dispatch)', () => {
+  it('resolves each canonical type to its own calculator', () => {
+    expect(getCalculator('Roller').blindType).toBe('Roller');
+    expect(getCalculator('Sunscreen/Solar').blindType).toBe('Sunscreen/Solar');
+    expect(getCalculator('Vertical Roller').blindType).toBe('Vertical Roller');
+    expect(getCalculator('unknown').blindType).toBe('Default');
+  });
+
+  it('prices identically to the default while every type inherits it', () => {
+    const base = blind({ panels: [70, 70], cassette_price_per_m: 20, control_price_per_item: 10 });
+    const expected = calculateBlindUnitPrice(base);
+    for (const type of ['Roller', 'Honeycomb', 'Curtains', '']) {
+      expect(calculateBlindUnitPriceForType(type, base)).toBe(expected);
+    }
   });
 });
 
@@ -115,7 +134,7 @@ describe('calculateBlindLineTotal', () => {
 
   it('rounds the line total to 2 decimal places', () => {
     const total = calculateBlindLineTotal(
-      blind({ fabric_price_per_sqm: 33.33, quantity: 7 })
+      blind({ material_price_per_sqm: 33.33, quantity: 7 })
     );
     expect(Number.isInteger(Math.round(total * 100))).toBe(true);
   });

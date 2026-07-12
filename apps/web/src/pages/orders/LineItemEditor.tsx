@@ -7,7 +7,7 @@
  * The old inline BlindItemCard / FlatItemCard have been replaced by
  * BlindEditForm and FlatEditForm which live inside popup modals rather
  * than expanded inline in the page.  BulkEditForm lets the user change
- * only fabric, cassette, and control across all selected blind items
+ * only material, cassette, and control across all selected blind items
  * without touching any measurement or quantity fields.
  *
  * Drafts hold every numeric field as a string so partially-typed values
@@ -15,8 +15,8 @@
  * helpers and at save time.
  */
 
-import { calculateBlindUnitPrice } from '../../lib/pricing';
-import type { Fabric, CassetteOption, ControlOption, BlindType } from '../../types';
+import { calculateBlindUnitPriceForType } from '../../lib/pricing';
+import type { Material, CassetteOption, ControlOption, BlindType } from '../../types';
 
 /* ------------------------------------------------------------------ */
 /* Draft models                                                        */
@@ -30,7 +30,7 @@ export interface BlindDraft {
   blinds_type: string;
   panels: string[];
   height_cm: string;
-  fabric_id: string;
+  material_id: string;
   cassette_id: string;
   control_id: string;
   note: string;
@@ -50,10 +50,25 @@ export type ItemDraft = BlindDraft | FlatDraft;
 
 /** Catalog data needed to price and render blind forms. */
 export interface Catalogs {
-  fabrics: Fabric[];
+  materials: Material[];
   cassettes: CassetteOption[];
   controls: ControlOption[];
   blindTypes: BlindType[];
+}
+
+/**
+ * Materials available for a given blind type name. A Material with no
+ * `blind_type_ids` links is available for ALL types; otherwise it must
+ * be linked to the selected type. When no type is selected yet (or the
+ * name is unknown), every Material is returned so the field is never
+ * mysteriously empty.
+ */
+export function materialsForType(catalogs: Catalogs, blindsType: string): Material[] {
+  const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
+  if (!typeId) return catalogs.materials;
+  return catalogs.materials.filter(
+    (m) => m.blind_type_ids.length === 0 || m.blind_type_ids.includes(typeId)
+  );
 }
 
 /** Parses a positive number from a draft string; null when invalid. */
@@ -73,16 +88,17 @@ export function blindDraftPrice(
   const panels = draft.panels.map(parsePositive);
   const height = parsePositive(draft.height_cm);
   const qty = parsePositive(draft.quantity);
-  const fabric = catalogs.fabrics.find((f) => f.id === draft.fabric_id);
+  const material = catalogs.materials.find((m) => m.id === draft.material_id);
   const cassette = catalogs.cassettes.find((x) => x.id === draft.cassette_id);
   const control = catalogs.controls.find((x) => x.id === draft.control_id);
   if (panels.some((p) => p === null) || panels.length === 0) return null;
-  if (!height || !qty || !fabric || !cassette || !control) return null;
+  if (!height || !qty || !material || !cassette || !control) return null;
 
-  const unit = calculateBlindUnitPrice({
+  // Dispatch to the selected blind type's calculator (default fallback).
+  const unit = calculateBlindUnitPriceForType(draft.blinds_type, {
     panels: panels as number[],
     height_cm: height,
-    fabric_price_per_sqm: Number(fabric.price_per_sqm),
+    material_price_per_sqm: Number(material.price_per_sqm),
     cassette_price_per_m: Number(cassette.price_per_m),
     control_price_per_item: Number(control.price_per_item),
     quantity: qty,
@@ -144,7 +160,7 @@ export function OptionSelect({
 
 /**
  * Full blind editing form — all fields: room, type, panels, height,
- * quantity, fabric, cassette, control + live pricing footer.
+ * quantity, material, cassette, control + live pricing footer.
  * Designed to be embedded inside a modal; does not include its own
  * save/cancel buttons.
  */
@@ -185,7 +201,18 @@ export function BlindEditForm({
         <span className={LABEL}>Blind type</span>
         <select
           value={draft.blinds_type}
-          onChange={(e) => onChange({ ...draft, blinds_type: e.target.value })}
+          onChange={(e) => {
+            const blinds_type = e.target.value;
+            // Drop a selected Material that isn't offered for the new type.
+            const stillValid = materialsForType({ ...catalogs }, blinds_type).some(
+              (m) => m.id === draft.material_id
+            );
+            onChange({
+              ...draft,
+              blinds_type,
+              material_id: stillValid ? draft.material_id : '',
+            });
+          }}
           className={INPUT}
         >
           <option value="">Select…</option>
@@ -266,13 +293,13 @@ export function BlindEditForm({
         />
       </label>
 
-      {/* Fabric / Cassette / Control */}
+      {/* Material / Cassette / Control */}
       <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
         <OptionSelect
-          label="Fabric"
-          value={draft.fabric_id}
-          onChange={(id) => onChange({ ...draft, fabric_id: id })}
-          options={catalogs.fabrics}
+          label="Material"
+          value={draft.material_id}
+          onChange={(id) => onChange({ ...draft, material_id: id })}
+          options={materialsForType(catalogs, draft.blinds_type)}
         />
         <OptionSelect
           label="Cassette"
@@ -393,12 +420,14 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — only fabric, cassette and control are exposed.
+ * Bulk-edit form — only material, cassette and control are exposed.
  * Each starts as "" (no change); only non-empty selections are applied
- * by the parent when the user clicks Apply.
+ * by the parent when the user clicks Apply. The Material list is not
+ * type-filtered here because a bulk selection may span several blind
+ * types; every Material is offered.
  */
 export interface BulkEditState {
-  fabric_id: string;
+  material_id: string;
   cassette_id: string;
   control_id: string;
 }
@@ -420,10 +449,10 @@ export function BulkEditForm({
       </p>
       <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
         <OptionSelect
-          label="Fabric"
-          value={state.fabric_id}
-          onChange={(id) => onChange({ ...state, fabric_id: id })}
-          options={catalogs.fabrics}
+          label="Material"
+          value={state.material_id}
+          onChange={(id) => onChange({ ...state, material_id: id })}
+          options={catalogs.materials}
           placeholder="No change"
         />
         <OptionSelect

@@ -47,7 +47,7 @@ export interface BlindItemInput {
   blinds_type: string;
   panels: number[];
   height_cm: number;
-  fabric_id: string;
+  material_id: string;
   cassette_id: string;
   control_id: string;
   note: string;

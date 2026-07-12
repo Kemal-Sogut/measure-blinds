@@ -2,15 +2,19 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Settings route group — company info, catalog entities (fabrics,
- * cassette options, control options, preset line items), and the
- * company logo upload. Mounted at `/api/settings` behind `requireAuth`.
+ * Settings route group — company info, catalog entities (cassette
+ * options, control options, preset line items, blind types), Materials
+ * (a catalog with many-to-many blind-type links), and the company logo
+ * upload. Mounted at `/api/settings` behind `requireAuth`.
  *
- * Every write is Zod-validated before touching the database. The four
+ * Every write is Zod-validated before touching the database. The simple
  * catalog entities share one route factory since they differ only in
- * table name, price column, and ordering; this keeps the file well
- * under the 800-line limit without splitting a single responsibility
- * ("settings endpoints") across modules.
+ * table name, price column, and ordering. Materials get their own
+ * handlers because each Material also carries `blind_type_ids` (which
+ * blind types it appears under), synced into the `material_blind_types`
+ * join table; that join logic does not fit the generic factory. All of
+ * this is still the single "settings endpoints" responsibility, kept
+ * well under the 800-line limit.
  *
  * Responses: `{ data: T }` on success, `{ error: string }` on failure.
  */
@@ -132,12 +136,12 @@ app.post('/company/logo', async (c) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Catalog entities (fabrics / cassettes / controls / presets)         */
+/* Catalog entities (cassettes / controls / presets / blind types)     */
 /* ------------------------------------------------------------------ */
 
 /** Configuration for one catalog entity handled by the route factory. */
 interface CatalogConfig {
-  /** URL segment under /api/settings (e.g. 'fabrics') */
+  /** URL segment under /api/settings (e.g. 'cassette-options') */
   path: string;
   /** Postgres table name */
   table: string;
@@ -154,12 +158,6 @@ const active = z.boolean();
 const sortOrder = z.number().int().min(0);
 
 const catalogs: CatalogConfig[] = [
-  {
-    path: 'fabrics',
-    table: 'fabrics',
-    schema: z.object({ name, price_per_sqm: price, active, sort_order: sortOrder }),
-    orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
-  },
   {
     path: 'cassette-options',
     table: 'cassette_options',
@@ -244,6 +242,130 @@ function registerCatalog(target: SettingsApp, cfg: CatalogConfig): void {
 }
 
 for (const cfg of catalogs) registerCatalog(app, cfg);
+
+/* ------------------------------------------------------------------ */
+/* Materials (catalog + many-to-many blind-type links)                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Full Materials schema. `blind_type_ids` is NOT a column — it is the
+ * set of blind types this Material appears under, synced into the
+ * `material_blind_types` join table. An empty/absent list means the
+ * Material is available for ALL blind types (see the line-item editor).
+ */
+const materialSchema = z.object({
+  name,
+  price_per_sqm: price,
+  active,
+  sort_order: sortOrder,
+  blind_type_ids: z.array(z.string().uuid()).max(50),
+});
+
+/** Create: only name + price required; the rest default / optional. */
+const materialCreateSchema = materialSchema.partial({
+  active: true,
+  sort_order: true,
+  blind_type_ids: true,
+} as never);
+
+/** Update: partial; `.strict()` still rejects unknown fields. */
+const materialUpdateSchema = materialSchema.partial().strict();
+
+/** Nested select shape used to attach `blind_type_ids` to a Material. */
+type MaterialRow = Record<string, unknown> & {
+  material_blind_types?: { blind_type_id: string }[];
+};
+
+/** Flattens the join embed into a plain `blind_type_ids: string[]`. */
+function withBlindTypeIds(row: MaterialRow) {
+  const { material_blind_types, ...rest } = row;
+  return { ...rest, blind_type_ids: (material_blind_types ?? []).map((l) => l.blind_type_id) };
+}
+
+/** Replaces a Material's blind-type links with the given set. */
+async function syncMaterialLinks(
+  sb: ReturnType<typeof createSupabaseAdmin>,
+  materialId: string,
+  blindTypeIds: string[]
+): Promise<string | null> {
+  const del = await sb.from('material_blind_types').delete().eq('material_id', materialId);
+  if (del.error) return del.error.message;
+  if (blindTypeIds.length > 0) {
+    const ins = await sb
+      .from('material_blind_types')
+      .insert(blindTypeIds.map((bt) => ({ material_id: materialId, blind_type_id: bt })));
+    if (ins.error) return ins.error.message;
+  }
+  return null;
+}
+
+/** Lists Materials (sorted), each with its linked `blind_type_ids`. */
+app.get('/materials', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('materials')
+    .select('*, material_blind_types(blind_type_id)')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: (data ?? []).map((r) => withBlindTypeIds(r as MaterialRow)) });
+});
+
+/** Creates a Material and its blind-type links. */
+app.post('/materials', async (c) => {
+  const parsed = materialCreateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const { blind_type_ids = [], ...fields } = parsed.data;
+  const sb = createSupabaseAdmin(c.env);
+
+  const { data, error } = await sb.from('materials').insert(fields).select().single();
+  if (error) return c.json({ error: error.message }, 500);
+
+  const linkError = await syncMaterialLinks(sb, data.id as string, blind_type_ids);
+  if (linkError) return c.json({ error: linkError }, 500);
+  return c.json({ data: { ...data, blind_type_ids } }, 201);
+});
+
+/** Updates a Material's fields and/or its blind-type links (partial). */
+app.put('/materials/:id', async (c) => {
+  const parsed = materialUpdateSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const id = c.req.param('id');
+  const { blind_type_ids, ...fields } = parsed.data;
+  const sb = createSupabaseAdmin(c.env);
+
+  if (Object.keys(fields).length > 0) {
+    const { error } = await sb.from('materials').update(fields).eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+  }
+  if (blind_type_ids !== undefined) {
+    const linkError = await syncMaterialLinks(sb, id, blind_type_ids);
+    if (linkError) return c.json({ error: linkError }, 500);
+  }
+
+  const { data, error } = await sb
+    .from('materials')
+    .select('*, material_blind_types(blind_type_id)')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Not found' }, 404);
+  return c.json({ data: withBlindTypeIds(data as MaterialRow) });
+});
+
+/** Deletes a Material; its blind-type links cascade in the DB. */
+app.delete('/materials/:id', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('materials')
+    .delete()
+    .eq('id', c.req.param('id'))
+    .select('id')
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Not found' }, 404);
+  return c.json({ data: { id: data.id } });
+});
 
 /**
  * Extracts the first, most user-relevant message from a ZodError so

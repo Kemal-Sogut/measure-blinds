@@ -203,9 +203,9 @@ export interface LineItem {
   blinds_type: string;
   panels: number[];
   height_cm: number | null;
-  fabric_id: string | null;
-  fabric_name: string | null;
-  fabric_price_per_sqm: number | null;
+  material_id: string | null;
+  material_name: string | null;
+  material_price_per_sqm: number | null;
   cassette_id: string | null;
   cassette_name: string | null;
   cassette_price_per_m: number | null;
@@ -221,13 +221,21 @@ export interface LineItem {
   updated_at: string;
 }
 
-/** Fabric option from settings — price per square meter. */
-export interface Fabric {
+/**
+ * Material option from settings — price per square meter, plus the set
+ * of blind types it appears under (`blind_type_ids`, from the
+ * `material_blind_types` join). An EMPTY list means "available for all
+ * blind types"; the line-item editor filters the Material dropdown by
+ * the selected blind type using this list.
+ */
+export interface Material {
   id: string;
   name: string;
   price_per_sqm: number;
   active: boolean;
   sort_order: number;
+  /** Blind-type ids this Material is scoped to; empty = all types. */
+  blind_type_ids: string[];
 }
 
 /** Cassette option from settings — price per linear meter (width). */

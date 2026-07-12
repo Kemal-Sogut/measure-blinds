@@ -32,7 +32,7 @@ const AppointmentsList = lazy(() => import('./pages/calendar/AppointmentsList'))
 const AppointmentDetail = lazy(() => import('./pages/calendar/AppointmentDetail'));
 const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
 const CompanyInfo = lazy(() => import('./pages/settings/CompanyInfo'));
-const Fabrics = lazy(() => import('./pages/settings/Fabrics'));
+const Materials = lazy(() => import('./pages/settings/Materials'));
 const BlindTypes = lazy(() => import('./pages/settings/BlindTypes'));
 const CassetteOptions = lazy(() => import('./pages/settings/CassetteOptions'));
 const ControlOptions = lazy(() => import('./pages/settings/ControlOptions'));
@@ -104,7 +104,7 @@ export default function App() {
             {/* Settings */}
             <Route path="/settings" element={guard(<Layout><SettingsIndex /></Layout>)} />
             <Route path="/settings/company" element={guard(<Layout nav={false}><CompanyInfo /></Layout>)} />
-            <Route path="/settings/fabrics" element={guard(<Layout nav={false}><Fabrics /></Layout>)} />
+            <Route path="/settings/materials" element={guard(<Layout nav={false}><Materials /></Layout>)} />
             <Route path="/settings/blind-types" element={guard(<Layout nav={false}><BlindTypes /></Layout>)} />
             <Route path="/settings/cassette" element={guard(<Layout nav={false}><CassetteOptions /></Layout>)} />
             <Route path="/settings/controls" element={guard(<Layout nav={false}><ControlOptions /></Layout>)} />

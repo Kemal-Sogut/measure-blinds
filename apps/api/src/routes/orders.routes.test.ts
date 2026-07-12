@@ -94,7 +94,7 @@ const ENV = {
   ENVIRONMENT: 'test',
 };
 
-const FABRIC = { id: '11111111-1111-4111-8111-111111111111', name: 'Blackout White', price_per_sqm: 55 };
+const MATERIAL = { id: '11111111-1111-4111-8111-111111111111', name: 'Blackout White', price_per_sqm: 55 };
 const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price_per_m: 20 };
 const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price_per_item: 0 };
 
@@ -113,7 +113,7 @@ function payload() {
         blinds_type: 'Roller',
         panels: [70, 70],
         height_cm: 200,
-        fabric_id: FABRIC.id,
+        material_id: MATERIAL.id,
         cassette_id: CASSETTE.id,
         control_id: CONTROL.id,
         quantity: 2,
@@ -128,7 +128,7 @@ beforeEach(() => {
   db.orderInsertResults = [];
   db.insertPayloads = {};
   db.responses = {
-    'fabrics.select': [FABRIC],
+    'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
     'control_options.select': [CONTROL],
     'company_settings.select': [{ default_expiry_days: 14 }],
@@ -147,7 +147,7 @@ describe('POST /api/orders', () => {
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(201);
-    // fabric 154 + cassette 28 + control 0 = 182/blind ×2 = 364 + 25 = 389
+    // material 154 + cassette 28 + control 0 = 182/blind ×2 = 364 + 25 = 389
     const orderRow = db.insertPayloads['orders']?.[0] as Record<string, number>;
     expect(orderRow.subtotal).toBe(389);
     expect(orderRow.discount_amount).toBe(38.9);
@@ -304,5 +304,3 @@ describe('DELETE /api/orders/:id', () => {
     db.responses['orders.select'] = [];
     const res = await ordersApp.request('/nope', { method: 'DELETE' }, ENV);
     expect(res.status).toBe(404);
-  });
-});

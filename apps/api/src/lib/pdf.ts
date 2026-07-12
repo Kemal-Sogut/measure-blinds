@@ -58,7 +58,7 @@ export interface PdfDocumentData {
     blinds_type: string | null;
     panels: number[] | null;
     height_cm: number | null;
-    fabric_name: string | null;
+    material_name: string | null;
     cassette_name: string | null;
     control_name: string | null;
     description: string | null;
@@ -138,7 +138,7 @@ function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.panels?.length
         ? `Panels: ${li.panels.join(' + ')} cm (total ${li.panels.reduce((a, b) => a + b, 0)} cm) x H ${li.height_cm} cm`
         : null,
-      li.fabric_name ? `Fabric: ${li.fabric_name}` : null,
+      li.material_name ? `Material: ${li.material_name}` : null,
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
       li.note?.trim() ? `Note: ${li.note.trim()}` : null,

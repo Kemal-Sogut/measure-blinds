@@ -2,10 +2,11 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Generic CRUD editor for settings catalog entities (fabrics, cassette
- * options, control options, presets).
+ * Generic CRUD editor for simple settings catalog entities (cassette
+ * options, control options, presets, blind types). Materials are NOT
+ * handled here — they carry blind-type links and have their own page.
  *
- * All four entities are "name + one price + active flag (+ optional
+ * All these entities are "name + one price + active flag (+ optional
  * description)" lists, so one component handles them: an add form at
  * the top, then a card per row with inline edit, active toggle, and
  * delete (with confirm). The price column key/label and description
@@ -36,7 +37,7 @@ export interface CatalogEditorConfig {
   priceKey?: string;
   /** Label shown for the price input (e.g. 'Price / m²') */
   priceLabel?: string;
-  /** Noun for empty state and add button (e.g. 'fabric') */
+  /** Noun for empty state and add button (e.g. 'cassette option') */
   noun: string;
   /** Whether the entity has a description field (presets only) */
   hasDescription?: boolean;

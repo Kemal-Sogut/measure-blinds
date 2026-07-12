@@ -34,7 +34,7 @@ const SAMPLE: PdfDocumentData = {
       blinds_type: 'Roller',
       panels: [70, 70],
       height_cm: 200,
-      fabric_name: 'Blackout White',
+      material_name: 'Blackout White',
       cassette_name: 'Standard Cassette',
       control_name: 'Chain Control',
       description: '',
@@ -48,7 +48,7 @@ const SAMPLE: PdfDocumentData = {
       blinds_type: null,
       panels: null,
       height_cm: null,
-      fabric_name: null,
+      material_name: null,
       cassette_name: null,
       control_name: null,
       description: 'Installation — Professional installation per blind',
@@ -123,4 +123,4 @@ describe('buildDocumentPdf', () => {
     const bytes = await buildDocumentPdf(minimal);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
   });
-});
+}

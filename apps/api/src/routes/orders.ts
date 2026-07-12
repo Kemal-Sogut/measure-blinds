@@ -38,7 +38,7 @@
  *   DELETE /:id           delete an order (+ line items + payments)
  *
  * AUTHORITATIVE PRICING: clients send measurements and option IDs only.
- * The Worker fetches fabric/cassette/control prices from the catalog,
+ * The Worker fetches material/cassette/control prices from the catalog,
  * snapshots names + prices onto each line item, and computes unit
  * prices, line totals, and order totals with lib/pricing + lib/totals.
  * Client-computed money values are never trusted or persisted.
@@ -48,7 +48,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
-import { calculateBlindUnitPrice } from '../lib/pricing';
+import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -83,7 +83,7 @@ const blindItemSchema = z
     blinds_type: z.string().max(100).default(''),
     panels: z.array(z.number().positive().max(1000)).min(1, 'At least one panel').max(10),
     height_cm: z.number().positive().max(1000),
-    fabric_id: z.string().uuid(),
+    material_id: z.string().uuid(),
     cassette_id: z.string().uuid(),
     control_id: z.string().uuid(),
     note: z.string().max(1000).default(''),
@@ -154,20 +154,20 @@ type LineItemRow = Record<string, unknown> & { line_total: number };
  * and computes unit_price / line_total server-side.
  *
  * @throws Error with a user-readable message when an option id is
- *         unknown (e.g. a fabric was deleted mid-edit).
+ *         unknown (e.g. a material was deleted mid-edit).
  */
 async function resolveLineItems(
   sb: SupabaseClient,
   items: z.infer<typeof lineItemSchema>[]
 ): Promise<LineItemRow[]> {
   const ids = {
-    fabrics: new Set<string>(),
+    materials: new Set<string>(),
     cassette_options: new Set<string>(),
     control_options: new Set<string>(),
   };
   for (const it of items) {
     if (it.item_type === 'blind') {
-      ids.fabrics.add(it.fabric_id);
+      ids.materials.add(it.material_id);
       ids.cassette_options.add(it.cassette_id);
       ids.control_options.add(it.control_id);
     }
@@ -189,8 +189,8 @@ async function resolveLineItems(
     );
   }
 
-  const [fabrics, cassettes, controls] = await Promise.all([
-    lookup('fabrics', ids.fabrics, 'price_per_sqm'),
+  const [materials, cassettes, controls] = await Promise.all([
+    lookup('materials', ids.materials, 'price_per_sqm'),
     lookup('cassette_options', ids.cassette_options, 'price_per_m'),
     lookup('control_options', ids.control_options, 'price_per_item'),
   ]);
@@ -209,9 +209,9 @@ async function resolveLineItems(
         blinds_type: '',
         panels: [],
         height_cm: null,
-        fabric_id: null,
-        fabric_name: null,
-        fabric_price_per_sqm: null,
+        material_id: null,
+        material_name: null,
+        material_price_per_sqm: null,
         cassette_id: null,
         cassette_name: null,
         cassette_price_per_m: null,
@@ -225,17 +225,19 @@ async function resolveLineItems(
         line_total: Math.round(unit * it.quantity * 100) / 100,
       };
     }
-    const fabric = fabrics.get(it.fabric_id);
+    const material = materials.get(it.material_id);
     const cassette = cassettes.get(it.cassette_id);
     const control = controls.get(it.control_id);
-    if (!fabric) throw new Error('Selected fabric no longer exists.');
+    if (!material) throw new Error('Selected material no longer exists.');
     if (!cassette) throw new Error('Selected cassette option no longer exists.');
     if (!control) throw new Error('Selected control option no longer exists.');
 
-    const unit_price = calculateBlindUnitPrice({
+    // Dispatch to the blind type's own calculator (falls back to the
+    // shared default when the type has no dedicated formula yet).
+    const unit_price = calculateBlindUnitPriceForType(it.blinds_type, {
       panels: it.panels,
       height_cm: it.height_cm,
-      fabric_price_per_sqm: fabric.price,
+      material_price_per_sqm: material.price,
       cassette_price_per_m: cassette.price,
       control_price_per_item: control.price,
     });
@@ -246,9 +248,9 @@ async function resolveLineItems(
       blinds_type: it.blinds_type,
       panels: it.panels,
       height_cm: it.height_cm,
-      fabric_id: it.fabric_id,
-      fabric_name: fabric.name,
-      fabric_price_per_sqm: fabric.price,
+      material_id: it.material_id,
+      material_name: material.name,
+      material_price_per_sqm: material.price,
       cassette_id: it.cassette_id,
       cassette_name: cassette.name,
       cassette_price_per_m: cassette.price,

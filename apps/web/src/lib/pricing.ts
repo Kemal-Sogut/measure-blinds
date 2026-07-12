@@ -2,87 +2,71 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Client-side pricing calculation logic for blind line items.
+ * Client-side blind pricing entry points (live keystroke previews).
  *
- * Implements the exact pricing formula from IMPLEMENTATION.md §5:
- *   unit_price = (W × H × fabric_price_per_sqm) / 10000
- *              + (W / 100 × cassette_price_per_m)
- *              + (numPanels × control_price_per_item)
+ * The math lives in the calculator hierarchy (`./calculators/*`): a
+ * `BaseBlindCalculator` holds the shared default formula and each blind
+ * type has a subclass that (for now) inherits it unchanged. This module
+ * is a thin façade that keeps the historical function API stable and
+ * adds a type-aware dispatch:
+ *   - `calculateBlindUnitPrice` — the type-agnostic default (base).
+ *   - `calculateBlindUnitPriceForType` — dispatches to the blind type's
+ *     own calculator via the registry.
+ *   - `calculateBlindLineTotal` — unit price × quantity.
  *
- * Width and height minimums are applied independently:
- *   - Width: if total panel width < 100cm, treat as 100cm
- *   - Height: if < 100cm → 100cm; if 100-199cm → 200cm; if ≥ 200cm → actual
- *
- * These calculations run on every keystroke for live preview.
- * The Worker recalculates authoritatively on save to prevent tampering.
+ * Mirrors `apps/api/src/lib/pricing.ts` (the AUTHORITATIVE recalc that
+ * runs on save); the two, and their `pricing.test.ts` suites, MUST stay
+ * in sync — the Worker recalculates authoritatively to prevent tampering.
  */
 
-/**
- * Applies the minimum width rule: widths below 100cm are charged as 100cm.
- *
- * @param totalCm - Total width from summing all panel widths
- * @returns Effective width in cm for pricing (minimum 100cm)
- */
-export function applyWidthMinimum(totalCm: number): number {
-  return totalCm < 100 ? 100 : totalCm;
-}
+import { BaseBlindCalculator, type BlindPricingInputs } from './calculators/base';
+import { getCalculator } from './calculators/registry';
 
-/**
- * Applies the tiered minimum height rule for pricing:
- * - Below 100cm → charged as 100cm
- * - 100cm to 199cm → charged as 200cm
- * - 200cm and above → actual height used
- *
- * @param heightCm - Actual height measurement in cm
- * @returns Effective height in cm for pricing
- */
-export function applyHeightMinimum(heightCm: number): number {
-  if (heightCm < 100) return 100;
-  if (heightCm < 200) return 200;
-  return heightCm;
-}
+export type { BlindPricingInputs };
 
-/** Input parameters required to calculate a single blind's unit price. */
-export interface BlindInputs {
-  /** Individual panel widths in cm (e.g., [70, 70] for a two-panel blind) */
-  panels: number[];
-  /** Height measurement in cm */
-  height_cm: number;
-  /** Fabric cost per square meter from the fabrics settings table */
-  fabric_price_per_sqm: number;
-  /** Cassette cost per linear meter (charged by width) from cassette options */
-  cassette_price_per_m: number;
-  /** Control mechanism cost per panel from control options */
-  control_price_per_item: number;
-  /** Number of identical blinds */
+/** Input parameters for a single blind's live preview (adds quantity). */
+export interface BlindInputs extends BlindPricingInputs {
+  /** Number of identical blinds (used only for the line total). */
   quantity: number;
 }
 
-/**
- * Calculates the unit price for a single blind, applying width/height
- * minimums and summing fabric, cassette, and control costs.
- *
- * @param item - Blind specification with dimensions, pricing, and panel layout
- * @returns Unit price in dollars, rounded to 2 decimal places
- */
-export function calculateBlindUnitPrice(item: BlindInputs): number {
-  const numPanels = item.panels.length;
-  const rawWidth = item.panels.reduce((a, b) => a + b, 0);
-  const W = applyWidthMinimum(rawWidth);
-  const H = applyHeightMinimum(item.height_cm);
+/** Shared default calculator instance for the type-agnostic helpers. */
+const defaultCalculator = new BaseBlindCalculator();
 
-  const fabricCost = (W * H * item.fabric_price_per_sqm) / 10000;
-  const cassetteCost = (W / 100) * item.cassette_price_per_m;
-  const controlCost = numPanels * item.control_price_per_item;
+/** Raises widths below 100cm to 100cm. */
+export function applyWidthMinimum(totalCm: number): number {
+  return defaultCalculator.applyWidthMinimum(totalCm);
+}
 
-  return Math.round((fabricCost + cassetteCost + controlCost) * 100) / 100;
+/** Tiered height minimum: <100→100cm, 100–199→200cm, ≥200→actual. */
+export function applyHeightMinimum(heightCm: number): number {
+  return defaultCalculator.applyHeightMinimum(heightCm);
 }
 
 /**
- * Calculates the total line cost for a blind item (unit price × quantity).
- *
- * @param item - Blind specification with dimensions, pricing, and quantity
- * @returns Line total in dollars, rounded to 2 decimal places
+ * Unit price using the shared DEFAULT formula. Prefer
+ * `calculateBlindUnitPriceForType` when the blind type is known.
+ */
+export function calculateBlindUnitPrice(item: BlindInputs): number {
+  return defaultCalculator.calculateUnitPrice(item);
+}
+
+/**
+ * Type-aware unit price: resolves the blind type's calculator from the
+ * registry (default fallback when unknown) and prices with it.
+ */
+export function calculateBlindUnitPriceForType(
+  blindsType: string | null | undefined,
+  item: BlindInputs
+): number {
+  return getCalculator(blindsType).calculateUnitPrice(item);
+}
+
+/**
+ * Line total for a blind (default unit price × quantity), rounded to 2
+ * decimals. The editor computes per-type totals via
+ * `calculateBlindUnitPriceForType`; this default-formula helper backs
+ * the shared money-math test suite.
  */
 export function calculateBlindLineTotal(item: BlindInputs): number {
   return Math.round(calculateBlindUnitPrice(item) * item.quantity * 100) / 100;

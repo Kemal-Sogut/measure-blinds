@@ -121,7 +121,7 @@ app.get('/estimate/:token', async (c) => {
         blinds_type: li.blinds_type,
         panels: li.panels,
         height_cm: li.height_cm,
-        fabric_name: li.fabric_name,
+        material_name: li.material_name,
         cassette_name: li.cassette_name,
         control_name: li.control_name,
         description: li.description,
