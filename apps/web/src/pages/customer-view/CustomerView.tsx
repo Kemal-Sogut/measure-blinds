@@ -34,6 +34,7 @@ interface PublicLineItem {
   fabric_name: string | null;
   cassette_name: string | null;
   control_name: string | null;
+  color: string | null;
   description: string | null;
   note: string | null;
   quantity: number;
@@ -85,6 +86,7 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
         li.fabric_name ? `Fabric: ${li.fabric_name}` : '',
         li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
         li.control_name ? `Control: ${li.control_name}` : '',
+        li.color?.trim() ? `Color: ${li.color.trim()}` : '',
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',
       ].filter(Boolean),
     };
