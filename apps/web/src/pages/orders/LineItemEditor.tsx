@@ -414,6 +414,7 @@ export interface BulkEditState {
   fabric_id: string;
   cassette_id: string;
   control_id: string;
+  color: string;
 }
 
 export function BulkEditForm({
@@ -454,6 +455,16 @@ export function BulkEditForm({
           placeholder="No change"
         />
       </div>
+      <label>
+        <span className={LABEL}>Color code</span>
+        <input
+          value={state.color}
+          onChange={(e) => onChange({ ...state, color: e.target.value })}
+          maxLength={100}
+          placeholder="No change"
+          className={INPUT}
+        />
+      </label>
     </div>
   );
 }

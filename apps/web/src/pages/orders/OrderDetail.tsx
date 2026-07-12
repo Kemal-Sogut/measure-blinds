@@ -274,7 +274,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '', color: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -474,7 +474,7 @@ export default function OrderDetail() {
 
   // ── Bulk edit (fabric / cassette / control only) ──────────────────
   function openBulkEdit() {
-    setBulkState({ fabric_id: '', cassette_id: '', control_id: '' });
+    setBulkState({ fabric_id: '', cassette_id: '', control_id: '', color: '' });
     setSheet('bulkEdit');
   }
 
@@ -486,6 +486,7 @@ export default function OrderDetail() {
         if (bulkState.fabric_id) patch.fabric_id = bulkState.fabric_id;
         if (bulkState.cassette_id) patch.cassette_id = bulkState.cassette_id;
         if (bulkState.control_id) patch.control_id = bulkState.control_id;
+        if (bulkState.color.trim()) patch.color = bulkState.color.trim();
         return { ...it, ...patch };
       })
     );
@@ -1865,7 +1866,7 @@ export default function OrderDetail() {
               </button>
               <button
                 onClick={applyBulkEdit}
-                disabled={!bulkState.fabric_id && !bulkState.cassette_id && !bulkState.control_id}
+                disabled={!bulkState.fabric_id && !bulkState.cassette_id && !bulkState.control_id && !bulkState.color.trim()}
                 className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 Apply to selected
