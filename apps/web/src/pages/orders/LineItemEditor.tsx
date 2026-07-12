@@ -7,8 +7,8 @@
  * The old inline BlindItemCard / FlatItemCard have been replaced by
  * BlindEditForm and FlatEditForm which live inside popup modals rather
  * than expanded inline in the page.  BulkEditForm lets the user change
- * only fabric, cassette, and control across all selected blind items
- * without touching any measurement or quantity fields.
+ * only fabric, cassette, control, and color across all selected blind
+ * items without touching any measurement or quantity fields.
  *
  * Drafts hold every numeric field as a string so partially-typed values
  * ("12.", "") never fight the keyboard; parsing happens in the pricing
@@ -34,6 +34,7 @@ export interface BlindDraft {
   cassette_id: string;
   control_id: string;
   note: string;
+  color: string;
   quantity: string;
 }
 
@@ -288,6 +289,18 @@ export function BlindEditForm({
         />
       </div>
 
+      {/* Color code (free text, no pricing effect) */}
+      <label>
+        <span className={LABEL}>Color code</span>
+        <input
+          value={draft.color}
+          onChange={(e) => onChange({ ...draft, color: e.target.value })}
+          maxLength={100}
+          placeholder="e.g. White 02"
+          className={INPUT}
+        />
+      </label>
+
       {/* Note (shown to the customer under the item) */}
       <label>
         <span className={LABEL}>Note</span>
@@ -393,7 +406,7 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — only fabric, cassette and control are exposed.
+ * Bulk-edit form — only fabric, cassette, control, and color are exposed.
  * Each starts as "" (no change); only non-empty selections are applied
  * by the parent when the user clicks Apply.
  */
@@ -401,6 +414,7 @@ export interface BulkEditState {
   fabric_id: string;
   cassette_id: string;
   control_id: string;
+  color: string;
 }
 
 export function BulkEditForm({
@@ -441,6 +455,16 @@ export function BulkEditForm({
           placeholder="No change"
         />
       </div>
+      <label>
+        <span className={LABEL}>Color code</span>
+        <input
+          value={state.color}
+          onChange={(e) => onChange({ ...state, color: e.target.value })}
+          maxLength={100}
+          placeholder="No change"
+          className={INPUT}
+        />
+      </label>
     </div>
   );
 }

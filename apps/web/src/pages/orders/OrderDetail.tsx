@@ -113,6 +113,7 @@ function toDrafts(order: Order): ItemDraft[] {
         cassette_id: li.cassette_id ?? '',
         control_id: li.control_id ?? '',
         note: li.note ?? '',
+        color: li.color ?? '',
         quantity: String(li.quantity),
       } satisfies BlindDraft;
     }
@@ -273,7 +274,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>({ fabric_id: '', cassette_id: '', control_id: '', color: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -381,6 +382,7 @@ export default function OrderDetail() {
       cassette_id: '',
       control_id: '',
       note: '',
+      color: '',
       quantity: '1',
     };
     setItems((list) => [...list, draft]);
@@ -470,9 +472,9 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  // ── Bulk edit (fabric / cassette / control only) ──────────────────
+  // ── Bulk edit (fabric / cassette / control / color only) ──────────
   function openBulkEdit() {
-    setBulkState({ fabric_id: '', cassette_id: '', control_id: '' });
+    setBulkState({ fabric_id: '', cassette_id: '', control_id: '', color: '' });
     setSheet('bulkEdit');
   }
 
@@ -484,6 +486,7 @@ export default function OrderDetail() {
         if (bulkState.fabric_id) patch.fabric_id = bulkState.fabric_id;
         if (bulkState.cassette_id) patch.cassette_id = bulkState.cassette_id;
         if (bulkState.control_id) patch.control_id = bulkState.control_id;
+        if (bulkState.color.trim()) patch.color = bulkState.color.trim();
         return { ...it, ...patch };
       })
     );
@@ -520,6 +523,7 @@ export default function OrderDetail() {
           cassette_id: it.cassette_id,
           control_id: it.control_id,
           note: it.note.trim(),
+          color: it.color.trim(),
           quantity: Math.round(qty),
         });
       } else {
@@ -1276,7 +1280,7 @@ export default function OrderDetail() {
                           ? 'Select blind items to bulk edit'
                           : selectionHasNonBlind
                             ? 'Bulk edit is only available for blind items'
-                            : 'Edit fabric, cassette and control for selected items'
+                            : 'Edit fabric, cassette, control and color for selected items'
                       }
                       className="flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -1834,7 +1838,7 @@ export default function OrderDetail() {
         );
       })()}
 
-      {/* Bulk edit popup (fabric / cassette / control only) */}
+      {/* Bulk edit popup (fabric / cassette / control / color only) */}
       {sheet === 'bulkEdit' && (
         <div
           className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
@@ -1862,7 +1866,7 @@ export default function OrderDetail() {
               </button>
               <button
                 onClick={applyBulkEdit}
-                disabled={!bulkState.fabric_id && !bulkState.cassette_id && !bulkState.control_id}
+                disabled={!bulkState.fabric_id && !bulkState.cassette_id && !bulkState.control_id && !bulkState.color.trim()}
                 className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 Apply to selected

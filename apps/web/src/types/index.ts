@@ -214,6 +214,7 @@ export interface LineItem {
   control_price_per_item: number | null;
   description: string;
   note: string;
+  color: string;
   quantity: number;
   unit_price: number;
   line_total: number;

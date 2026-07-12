@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildDocumentPdf, type PdfDocumentData } from './pdf';
+import { buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
 
 const SAMPLE: PdfDocumentData = {
   docType: 'estimate',
@@ -122,5 +122,38 @@ describe('buildDocumentPdf', () => {
     };
     const bytes = await buildDocumentPdf(minimal);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('itemContent color', () => {
+  const blind: PdfDocumentData['line_items'][number] = {
+    item_type: 'blind',
+    room_name: 'Living Room',
+    blinds_type: 'Roller',
+    panels: [70, 70],
+    height_cm: 200,
+    fabric_name: 'Blackout White',
+    cassette_name: 'Standard Cassette',
+    control_name: 'Chain Control',
+    color: 'White 02',
+    note: 'Inside mount',
+    description: '',
+    quantity: 1,
+    unit_price: 0,
+    line_total: 0,
+  };
+
+  it('places the Color line after Control and before Note when set', () => {
+    const { attrs } = itemContent(blind);
+    const controlIdx = attrs.findIndex((a) => a.startsWith('Control:'));
+    const colorIdx = attrs.findIndex((a) => a === 'Color: White 02');
+    const noteIdx = attrs.findIndex((a) => a.startsWith('Note:'));
+    expect(colorIdx).toBeGreaterThan(controlIdx);
+    expect(noteIdx).toBeGreaterThan(colorIdx);
+  });
+
+  it('omits the Color line when empty or whitespace', () => {
+    expect(itemContent({ ...blind, color: '' }).attrs.some((a) => a.startsWith('Color:'))).toBe(false);
+    expect(itemContent({ ...blind, color: '   ' }).attrs.some((a) => a.startsWith('Color:'))).toBe(false);
   });
 });
