@@ -304,3 +304,5 @@ describe('DELETE /api/orders/:id', () => {
     db.responses['orders.select'] = [];
     const res = await ordersApp.request('/nope', { method: 'DELETE' }, ENV);
     expect(res.status).toBe(404);
+  });
+});

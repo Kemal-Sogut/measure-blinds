@@ -9,7 +9,7 @@ insert into public.company_settings (id, company_name, email, phone, default_exp
 values (1, 'Blinds Nisa', 'blindsnisa@gmail.com', '', 14)
 on conflict (id) do update set company_name = excluded.company_name;
 
-insert into public.fabrics (name, price_per_sqm, sort_order)
+insert into public.materials (name, price_per_sqm, sort_order)
 select * from (values
   ('Light Filtering White', 45.00::numeric, 1),
   ('Light Filtering Grey',  45.00::numeric, 2),
@@ -17,7 +17,25 @@ select * from (values
   ('Blackout Grey',         55.00::numeric, 4),
   ('Sunscreen 5%',          65.00::numeric, 5)
 ) as v(name, price_per_sqm, sort_order)
-where not exists (select 1 from public.fabrics);
+where not exists (select 1 from public.materials);
+
+-- Canonical blind types (each has a dedicated calculation module). A
+-- Material with no material_blind_types link shows for every type, so
+-- the seeded Materials above are available under all of these.
+insert into public.blind_types (name, sort_order)
+select * from (values
+  ('Roller',          1),
+  ('Zebra',           2),
+  ('Roman',           3),
+  ('Sunscreen/Solar', 4),
+  ('Honeycomb',       5),
+  ('Shutter',         6),
+  ('Vertical Sheer',  7),
+  ('Vertical Panel',  8),
+  ('Vertical Roller', 9),
+  ('Curtains',        10)
+) as v(name, sort_order)
+where not exists (select 1 from public.blind_types);
 
 insert into public.cassette_options (name, price_per_m, sort_order)
 select * from (values

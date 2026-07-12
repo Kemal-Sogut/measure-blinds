@@ -123,4 +123,4 @@ describe('buildDocumentPdf', () => {
     const bytes = await buildDocumentPdf(minimal);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
   });
-}
+});
