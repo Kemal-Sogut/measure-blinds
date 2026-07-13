@@ -230,12 +230,23 @@ export function useMarkReady() {
 }
 
 /**
- * Mark the order's workshop cuts complete (Manufacturer Copy). One-way and
- * idempotent server-side; the cached order comes back with `cut_done_at`
- * set so the page flips to its "done" state.
+ * Toggle the order's workshop "cuts done" milestone (Manufacturer Copy).
+ * REVERSIBLE — pass `{ done: true }` to stamp it, `{ done: false }` to
+ * clear it. The cached order comes back with `cut_done_at` set/cleared so
+ * the page's switch reflects the new state immediately and on reload.
  */
-export function useMarkCutDone() {
-  return useLifecycleMutation((id) => `/api/orders/${id}/cut-done`);
+export function useSetCutDone(): UseMutationResult<Order, Error, { id: string; done: boolean }> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, done }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/cut-done`, {
+          method: 'POST',
+          body: JSON.stringify({ done }),
+        })
+      ).data,
+    onSuccess: cache,
+  });
 }
 
 /** Mark a ready order installed — the terminal state. */

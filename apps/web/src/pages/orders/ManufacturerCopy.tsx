@@ -27,7 +27,7 @@ import { useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
-import { useOrder, useMarkCutDone } from '../../hooks/useOrders';
+import { useOrder, useSetCutDone } from '../../hooks/useOrders';
 import { useCatalogList } from '../../hooks/useSettings';
 import type { Material } from '../../types';
 import {
@@ -181,15 +181,20 @@ export default function ManufacturerCopy() {
   const { id } = useParams<{ id: string }>();
   const { data: order, isLoading, error } = useOrder(id);
   const { data: materials } = useCatalogList<Material>('materials');
-  const cutDone = useMarkCutDone();
+  const cutDone = useSetCutDone();
+  const isCutDone = Boolean(order?.cut_done_at);
 
-  /** Stamp the cuts done — one-way; ignored if already done. */
-  function handleCutDone() {
-    if (!id || order?.cut_done_at) return;
-    cutDone.mutate(id, {
-      onSuccess: () => toast.success('Marked as cut done.'),
-      onError: (e) => toast.error(e.message),
-    });
+  /** Flip the cut-done milestone on/off (reversible toggle). */
+  function toggleCutDone() {
+    if (!id || cutDone.isPending) return;
+    const next = !isCutDone;
+    cutDone.mutate(
+      { id, done: next },
+      {
+        onSuccess: () => toast.success(next ? 'Marked as cut done.' : 'Cut-done cleared.'),
+        onError: (e) => toast.error(e.message),
+      }
+    );
   }
 
   // material id → roll width (live from the catalog).
@@ -309,39 +314,34 @@ export default function ManufacturerCopy() {
               </Card>
             )}
 
-            {/* Cut-done milestone — set once, shown as done on re-entry. */}
+            {/* Cut-done milestone — reversible toggle; state persists on re-entry. */}
             {hasCutWork && (
-              <div className="rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
-                {order.cut_done_at ? (
-                  <div className="flex items-center gap-2 text-success">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M21.8 10A10 10 0 1 1 17 3.3" />
-                      <path d="m9 11 3 3L22 4" />
-                    </svg>
-                    <span className="text-sm font-semibold">
-                      Cuts completed on {formatStamp(order.cut_done_at)}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-text-primary">Cut done?</p>
-                      <p className="text-xs text-text-muted">
-                        Mark this once the cutting is finished — it can only be set once.
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleCutDone}
-                      disabled={cutDone.isPending}
-                      className="flex h-11 shrink-0 items-center gap-2 rounded-sm bg-brand-600 px-5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 print:hidden"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M20 6 9 17l-5-5" />
-                      </svg>
-                      {cutDone.isPending ? 'Saving…' : 'Cut Done'}
-                    </button>
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-text-primary">Cut done</p>
+                  <p className="text-xs text-text-muted">
+                    {isCutDone && order.cut_done_at
+                      ? `Cuts completed on ${formatStamp(order.cut_done_at)}`
+                      : 'Turn on once the cutting is finished. You can turn it back off.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isCutDone}
+                  aria-label="Cut done"
+                  onClick={toggleCutDone}
+                  disabled={cutDone.isPending}
+                  className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                    isCutDone ? 'bg-success' : 'bg-border-input'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                      isCutDone ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
               </div>
             )}
           </div>

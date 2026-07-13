@@ -308,31 +308,54 @@ describe('DELETE /api/orders/:id', () => {
 });
 
 describe('POST /api/orders/:id/cut-done', () => {
-  it('stamps cut_done_at on a confirmed order not yet cut', async () => {
+  /** Helper: POST the toggle body to the cut-done route. */
+  const toggle = (path: string, done: boolean) =>
+    ordersApp.request(
+      path,
+      { method: 'POST', body: JSON.stringify({ done }), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  it('stamps cut_done_at when toggled on (confirmed, not yet cut)', async () => {
     db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress', cut_done_at: null, payments: [] }];
-    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    const res = await toggle('/e1/cut-done', true);
     expect(res.status).toBe(200);
-    expect(db.calls).toContain('orders.update'); // the one-way stamp was written
+    expect(db.calls).toContain('orders.update'); // stamp written
   });
 
-  it('is idempotent — never re-stamps an already-cut order', async () => {
+  it('clears cut_done_at when toggled off (reversible)', async () => {
     db.responses['orders.select'] = [
       { id: 'e1', status: 'ready', cut_done_at: '2026-07-13T10:00:00.000Z', payments: [] },
     ];
-    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    const res = await toggle('/e1/cut-done', false);
     expect(res.status).toBe(200);
-    expect(db.calls).not.toContain('orders.update'); // no overwrite of the date
+    expect(db.calls).toContain('orders.update'); // cleared back to null
+  });
+
+  it('no-ops when already in the requested state (keeps the original date)', async () => {
+    db.responses['orders.select'] = [
+      { id: 'e1', status: 'ready', cut_done_at: '2026-07-13T10:00:00.000Z', payments: [] },
+    ];
+    const res = await toggle('/e1/cut-done', true); // already done → no write
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('orders.update');
   });
 
   it('409 when the order is not yet confirmed', async () => {
     db.responses['orders.select'] = [{ id: 'e1', status: 'sent', cut_done_at: null }];
-    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    const res = await toggle('/e1/cut-done', true);
     expect(res.status).toBe(409);
+  });
+
+  it('400 on a malformed body', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress', cut_done_at: null }];
+    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV); // no body
+    expect(res.status).toBe(400);
   });
 
   it('404 for a missing order', async () => {
     db.responses['orders.select'] = [];
-    const res = await ordersApp.request('/nope/cut-done', { method: 'POST' }, ENV);
+    const res = await toggle('/nope/cut-done', true);
     expect(res.status).toBe(404);
   });
 });

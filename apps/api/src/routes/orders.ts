@@ -1029,16 +1029,22 @@ app.post('/:id/ready', async (c) => {
   return c.json({ data });
 });
 
+/** Body for the cut-done toggle: the desired state. */
+const cutDoneSchema = z.object({ done: z.boolean() }).strict();
+
 /**
- * Marks the order's workshop cuts complete (Manufacturer Copy page).
- *
- * ONE-WAY and idempotent: `cut_done_at` is stamped once with the current
- * time and never overwritten — a repeat call returns the already-cut
- * order unchanged (so the button can't reset the date). Allowed only on a
- * confirmed order (past the estimate stage); this is a manufacturing
- * milestone and does NOT change the order's status.
+ * Toggles the order's workshop "cuts done" milestone (Manufacturer Copy
+ * page). REVERSIBLE: `{ done: true }` stamps `cut_done_at = now()` (only
+ * if not already set, so re-marking keeps the original date); `{ done:
+ * false }` clears it back to null. Allowed only on a confirmed order (past
+ * the estimate stage); this is a manufacturing milestone and does NOT
+ * change the order's status. No-ops (already in the desired state) skip
+ * the write + log but still return the current order.
  */
 app.post('/:id/cut-done', async (c) => {
+  const parsed = cutDoneSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: 'Body must be { done: boolean }.' }, 400);
+
   const sb = createSupabaseAdmin(c.env);
   const id = c.req.param('id');
   const { data: existing } = await sb
@@ -1049,19 +1055,19 @@ app.post('/:id/cut-done', async (c) => {
   if (!existing) return c.json({ error: 'Order not found' }, 404);
   if (!isConfirmed(existing.status)) {
     return c.json(
-      { error: `A confirmed order is needed to mark cuts done (this one is ${existing.status}).` },
+      { error: `A confirmed order is needed to change the cut status (this one is ${existing.status}).` },
       409
     );
   }
 
-  // Idempotent one-way stamp: only write (and log) on the first call.
-  if (!existing.cut_done_at) {
-    const { error } = await sb
-      .from('orders')
-      .update({ cut_done_at: new Date().toISOString() })
-      .eq('id', id);
+  const isDone = Boolean(existing.cut_done_at);
+  if (parsed.data.done !== isDone) {
+    // Marking done stamps NOW; un-marking clears it. Re-marking an already
+    // done order keeps its original date (the `!== isDone` guard skips it).
+    const cut_done_at = parsed.data.done ? new Date().toISOString() : null;
+    const { error } = await sb.from('orders').update({ cut_done_at }).eq('id', id);
     if (error) return c.json({ error: error.message }, 500);
-    await logOrderEvent(sb, id, 'Cuts marked done.');
+    await logOrderEvent(sb, id, parsed.data.done ? 'Cuts marked done.' : 'Cut-done cleared.');
   }
 
   const { data } = await readDetail(sb, id);
