@@ -306,3 +306,33 @@ describe('DELETE /api/orders/:id', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('POST /api/orders/:id/cut-done', () => {
+  it('stamps cut_done_at on a confirmed order not yet cut', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress', cut_done_at: null, payments: [] }];
+    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('orders.update'); // the one-way stamp was written
+  });
+
+  it('is idempotent — never re-stamps an already-cut order', async () => {
+    db.responses['orders.select'] = [
+      { id: 'e1', status: 'ready', cut_done_at: '2026-07-13T10:00:00.000Z', payments: [] },
+    ];
+    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('orders.update'); // no overwrite of the date
+  });
+
+  it('409 when the order is not yet confirmed', async () => {
+    db.responses['orders.select'] = [{ id: 'e1', status: 'sent', cut_done_at: null }];
+    const res = await ordersApp.request('/e1/cut-done', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+  });
+
+  it('404 for a missing order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/nope/cut-done', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
+  });
+});

@@ -25,8 +25,9 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
-import { useOrder } from '../../hooks/useOrders';
+import { useOrder, useMarkCutDone } from '../../hooks/useOrders';
 import { useCatalogList } from '../../hooks/useSettings';
 import type { Material } from '../../types';
 import {
@@ -44,6 +45,12 @@ function cm(value: number): string {
 /** Formats cm as metres to 2dp (for roll-length / bar totals). */
 function meters(value: number): string {
   return `${(value / 100).toFixed(2)} m`;
+}
+
+/** Formats an ISO timestamp as a readable local date + time. */
+function formatStamp(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
 }
 
 /** Card wrapper shared by every section. */
@@ -174,6 +181,16 @@ export default function ManufacturerCopy() {
   const { id } = useParams<{ id: string }>();
   const { data: order, isLoading, error } = useOrder(id);
   const { data: materials } = useCatalogList<Material>('materials');
+  const cutDone = useMarkCutDone();
+
+  /** Stamp the cuts done — one-way; ignored if already done. */
+  function handleCutDone() {
+    if (!id || order?.cut_done_at) return;
+    cutDone.mutate(id, {
+      onSuccess: () => toast.success('Marked as cut done.'),
+      onError: (e) => toast.error(e.message),
+    });
+  }
 
   // material id → roll width (live from the catalog).
   const widthByMaterialId = useMemo(() => {
@@ -195,6 +212,9 @@ export default function ManufacturerCopy() {
     plan.aluminumGroups.length === 0 &&
     plan.fabricGroups.length === 0 &&
     plan.asIs.length === 0;
+
+  // Only offer "Cut Done" when there is something to cut in-house.
+  const hasCutWork = plan.aluminumGroups.length > 0 || plan.fabricGroups.length > 0;
 
   return (
     <div className="min-h-screen bg-surface-muted print:bg-white">
@@ -287,6 +307,42 @@ export default function ManufacturerCopy() {
                   ))}
                 </ul>
               </Card>
+            )}
+
+            {/* Cut-done milestone — set once, shown as done on re-entry. */}
+            {hasCutWork && (
+              <div className="rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
+                {order.cut_done_at ? (
+                  <div className="flex items-center gap-2 text-success">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21.8 10A10 10 0 1 1 17 3.3" />
+                      <path d="m9 11 3 3L22 4" />
+                    </svg>
+                    <span className="text-sm font-semibold">
+                      Cuts completed on {formatStamp(order.cut_done_at)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-text-primary">Cut done?</p>
+                      <p className="text-xs text-text-muted">
+                        Mark this once the cutting is finished — it can only be set once.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleCutDone}
+                      disabled={cutDone.isPending}
+                      className="flex h-11 shrink-0 items-center gap-2 rounded-sm bg-brand-600 px-5 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-50 print:hidden"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                      {cutDone.isPending ? 'Saving…' : 'Cut Done'}
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         )}

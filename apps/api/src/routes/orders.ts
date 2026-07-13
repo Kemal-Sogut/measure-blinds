@@ -1029,6 +1029,46 @@ app.post('/:id/ready', async (c) => {
   return c.json({ data });
 });
 
+/**
+ * Marks the order's workshop cuts complete (Manufacturer Copy page).
+ *
+ * ONE-WAY and idempotent: `cut_done_at` is stamped once with the current
+ * time and never overwritten — a repeat call returns the already-cut
+ * order unchanged (so the button can't reset the date). Allowed only on a
+ * confirmed order (past the estimate stage); this is a manufacturing
+ * milestone and does NOT change the order's status.
+ */
+app.post('/:id/cut-done', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, status, cut_done_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (!isConfirmed(existing.status)) {
+    return c.json(
+      { error: `A confirmed order is needed to mark cuts done (this one is ${existing.status}).` },
+      409
+    );
+  }
+
+  // Idempotent one-way stamp: only write (and log) on the first call.
+  if (!existing.cut_done_at) {
+    const { error } = await sb
+      .from('orders')
+      .update({ cut_done_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+    await logOrderEvent(sb, id, 'Cuts marked done.');
+  }
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
 /** Marks a ready order installed — the terminal state (user action). */
 app.post('/:id/installed', async (c) => {
   const sb = createSupabaseAdmin(c.env);

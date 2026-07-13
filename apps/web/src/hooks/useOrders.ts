@@ -229,6 +229,15 @@ export function useMarkReady() {
   return useLifecycleMutation((id) => `/api/orders/${id}/ready`);
 }
 
+/**
+ * Mark the order's workshop cuts complete (Manufacturer Copy). One-way and
+ * idempotent server-side; the cached order comes back with `cut_done_at`
+ * set so the page flips to its "done" state.
+ */
+export function useMarkCutDone() {
+  return useLifecycleMutation((id) => `/api/orders/${id}/cut-done`);
+}
+
 /** Mark a ready order installed — the terminal state. */
 export function useMarkInstalled() {
   return useLifecycleMutation((id) => `/api/orders/${id}/installed`);

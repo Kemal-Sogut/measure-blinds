@@ -143,6 +143,11 @@ export interface Order {
   public_token: string | null;
   sent_at: string | null;
   confirmed_at: string | null;
+  /**
+   * When the workshop marked the order's cuts complete on the Manufacturer
+   * Copy page; `null` = not cut yet. One-way (set once, never reset).
+   */
+  cut_done_at: string | null;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */
