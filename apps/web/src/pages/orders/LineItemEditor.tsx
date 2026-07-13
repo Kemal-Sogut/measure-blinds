@@ -33,6 +33,7 @@ export interface BlindDraft {
   material_id: string;
   cassette_id: string;
   control_id: string;
+  color: string;
   note: string;
   quantity: string;
 }
@@ -313,6 +314,18 @@ export function BlindEditForm({
           options={catalogs.controls}
         />
       </div>
+
+      {/* Color (free text, no price effect; shown on the item, PDF & customer view) */}
+      <label>
+        <span className={LABEL}>Color</span>
+        <input
+          placeholder="e.g. White, Oak, Charcoal"
+          value={draft.color}
+          onChange={(e) => onChange({ ...draft, color: e.target.value })}
+          maxLength={100}
+          className={INPUT}
+        />
+      </label>
 
       {/* Note (shown to the customer under the item) */}
       <label>

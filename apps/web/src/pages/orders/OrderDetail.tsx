@@ -112,6 +112,7 @@ function toDrafts(order: Order): ItemDraft[] {
         material_id: li.material_id ?? '',
         cassette_id: li.cassette_id ?? '',
         control_id: li.control_id ?? '',
+        color: li.color ?? '',
         note: li.note ?? '',
         quantity: String(li.quantity),
       } satisfies BlindDraft;
@@ -132,6 +133,23 @@ function draftLabel(it: ItemDraft, index: number): string {
     return [it.room_name || `Blind ${index + 1}`, it.blinds_type].filter(Boolean).join(' — ');
   }
   return it.description || `Item ${index + 1}`;
+}
+
+/**
+ * Finds an active catalog option's id by name — exact match preferred,
+ * otherwise the first case-insensitive substring match. Returns '' when
+ * nothing matches so the field stays unset. Used to pre-select sensible
+ * defaults (e.g. "Regular" cassette, "Chain" control) on a new blind.
+ */
+function findOptionIdByName(
+  options: { id: string; name: string; active: boolean }[],
+  needle: string
+): string {
+  const lower = needle.toLowerCase();
+  const active = options.filter((o) => o.active);
+  const exact = active.find((o) => o.name.toLowerCase() === lower);
+  if (exact) return exact.id;
+  return active.find((o) => o.name.toLowerCase().includes(lower))?.id ?? '';
 }
 
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
@@ -369,6 +387,21 @@ export default function OrderDetail() {
   function removeItem(key: string) {
     setItems((list) => list.filter((it) => it.key !== key));
   }
+  /** Clones a line item (fresh key, copied panels) right after the original. */
+  function duplicateItem(key: string) {
+    setItems((list) => {
+      const idx = list.findIndex((it) => it.key === key);
+      if (idx === -1) return list;
+      const src = list[idx];
+      const copy: ItemDraft =
+        src.item_type === 'blind'
+          ? { ...src, key: nextKey(), panels: [...src.panels] }
+          : { ...src, key: nextKey() };
+      const next = list.slice();
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+  }
   function addBlind() {
     const draft: BlindDraft = {
       key: nextKey(),
@@ -378,8 +411,10 @@ export default function OrderDetail() {
       panels: [''],
       height_cm: '',
       material_id: '',
-      cassette_id: '',
-      control_id: '',
+      // Sensible defaults from the catalog (fall back to unset if absent).
+      cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
+      control_id: findOptionIdByName(catalogs.controls, 'Chain'),
+      color: '',
       note: '',
       quantity: '1',
     };
@@ -519,6 +554,7 @@ export default function OrderDetail() {
           material_id: it.material_id,
           cassette_id: it.cassette_id,
           control_id: it.control_id,
+          color: it.color.trim(),
           note: it.note.trim(),
           quantity: Math.round(qty),
         });
@@ -1361,6 +1397,17 @@ export default function OrderDetail() {
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => duplicateItem(it.key)}
+                                title={`Duplicate ${name}`}
+                                className="flex h-8 w-8 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                  <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                                 </svg>
                               </button>
                               <button

@@ -61,6 +61,7 @@ export interface PdfDocumentData {
     material_name: string | null;
     cassette_name: string | null;
     control_name: string | null;
+    color?: string | null;
     description: string | null;
     note?: string | null;
     quantity: number;
@@ -139,6 +140,7 @@ function itemContent(li: PdfDocumentData['line_items'][number]): {
         ? `Panels: ${li.panels.join(' + ')} cm (total ${li.panels.reduce((a, b) => a + b, 0)} cm) x H ${li.height_cm} cm`
         : null,
       li.material_name ? `Material: ${li.material_name}` : null,
+      li.color?.trim() ? `Color: ${li.color.trim()}` : null,
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
       li.note?.trim() ? `Note: ${li.note.trim()}` : null,

@@ -7,7 +7,9 @@
  * Second level of the Materials flow: shows only the Materials LINKED to
  * the blind type chosen on the Materials landing page, and lets the user
  * add new Materials (created and linked to THIS type), rename/reprice
- * them, toggle active, or delete them.
+ * them, toggle active, or delete them. A CSV import (two columns —
+ * material name and price per m²) bulk-creates Materials linked to this
+ * type; a leading header row and malformed rows are skipped.
  *
  * A Material is stored once (shared table) but scoped to types via the
  * `material_blind_types` join. Adding here sends `blind_type_ids:
@@ -17,7 +19,7 @@
  * targets are ≥44px.
  */
 
-import { useState } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
@@ -43,6 +45,74 @@ function parsePrice(value: string): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
 }
 
+/** One validated Material parsed from a CSV row. */
+interface CsvMaterial {
+  name: string;
+  price: number;
+}
+
+/**
+ * Splits a single CSV line into fields, honouring double-quoted values
+ * (so a Material name may contain a comma) and "" as an escaped quote.
+ */
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+/**
+ * Parses CSV text into Materials. Column 1 is the name, column 2 the
+ * price per m² (a leading `$` / thousands commas are tolerated). A first
+ * row whose price is non-numeric is treated as a header and skipped;
+ * every other row that lacks a name or a valid non-negative price is
+ * counted as skipped. Returns the valid Materials plus the skip count.
+ */
+function parseMaterialsCsv(text: string): { valid: CsvMaterial[]; skipped: number } {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const valid: CsvMaterial[] = [];
+  let skipped = 0;
+  lines.forEach((line, index) => {
+    const cols = parseCsvLine(line);
+    const name = (cols[0] ?? '').trim();
+    const rawPrice = (cols[1] ?? '').replace(/[$,]/g, '').trim();
+    const price = Number(rawPrice);
+    const priceValid = rawPrice !== '' && Number.isFinite(price) && price >= 0;
+    // First row with a non-numeric price is a header, not data.
+    if (index === 0 && !priceValid) return;
+    if (!name || !priceValid) {
+      skipped++;
+      return;
+    }
+    valid.push({ name, price: Math.round(price * 100) / 100 });
+  });
+  return { valid, skipped };
+}
+
 export default function MaterialsForType() {
   const { blindTypeId = '' } = useParams<{ blindTypeId: string }>();
   const { data: types } = useCatalogList<BlindType>('blind-types');
@@ -54,6 +124,7 @@ export default function MaterialsForType() {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [importing, setImporting] = useState(false);
 
   const type = (types ?? []).find((t) => t.id === blindTypeId);
   /** Materials scoped to this blind type (linked-only). */
@@ -75,6 +146,47 @@ export default function MaterialsForType() {
         onError: (e) => toast.error(e.message),
       }
     );
+  }
+
+  /**
+   * Reads a chosen CSV file (columns: name, price per m²) and creates a
+   * Material linked to this type for each valid row. Reports how many
+   * were imported, skipped (header/malformed), or failed on the server.
+   */
+  async function handleCsvImport(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-selecting the same file later
+    if (!file) return;
+    setImporting(true);
+    try {
+      const { valid, skipped } = parseMaterialsCsv(await file.text());
+      if (valid.length === 0) {
+        toast.error('No valid rows found. Expected columns: name, price per m².');
+        return;
+      }
+      let ok = 0;
+      let failed = 0;
+      for (const row of valid) {
+        try {
+          await create.mutateAsync({
+            name: row.name,
+            price_per_sqm: row.price,
+            blind_type_ids: [blindTypeId],
+          } as Partial<Material>);
+          ok++;
+        } catch {
+          failed++;
+        }
+      }
+      const parts = [`Imported ${ok} material${ok === 1 ? '' : 's'}`];
+      if (skipped) parts.push(`${skipped} skipped`);
+      if (failed) parts.push(`${failed} failed`);
+      (failed ? toast.error : toast.success)(parts.join(' · '));
+    } catch {
+      toast.error('Could not read the CSV file.');
+    } finally {
+      setImporting(false);
+    }
   }
 
   /** Enters inline edit mode for one Material. */
@@ -136,6 +248,27 @@ export default function MaterialsForType() {
               >
                 Add
               </button>
+            </div>
+
+            {/* CSV bulk import — columns: name, price per m² */}
+            <div className="mt-1 flex items-center justify-between gap-2 border-t border-border-light pt-3">
+              <span className="min-w-0 text-xs text-text-muted">
+                Or import a CSV — columns: name, price per m² (e.g. <span className="font-mono">Blackout White, 55</span>)
+              </span>
+              <label
+                className={`flex h-9 shrink-0 cursor-pointer items-center rounded-lg border border-border px-3 text-sm font-medium text-text-secondary hover:bg-surface-muted ${
+                  importing ? 'pointer-events-none opacity-50' : ''
+                }`}
+              >
+                {importing ? 'Importing…' : 'Import CSV'}
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleCsvImport}
+                  disabled={importing}
+                  className="hidden"
+                />
+              </label>
             </div>
           </div>
         </div>

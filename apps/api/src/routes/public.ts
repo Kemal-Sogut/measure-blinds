@@ -124,6 +124,7 @@ app.get('/estimate/:token', async (c) => {
         material_name: li.material_name,
         cassette_name: li.cassette_name,
         control_name: li.control_name,
+        color: li.color,
         description: li.description,
         note: li.note,
         quantity: li.quantity,

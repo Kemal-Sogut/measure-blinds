@@ -34,6 +34,7 @@ interface PublicLineItem {
   material_name: string | null;
   cassette_name: string | null;
   control_name: string | null;
+  color: string | null;
   description: string | null;
   note: string | null;
   quantity: number;
@@ -83,6 +84,7 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
           ? `Panels: ${li.panels.join(' + ')} cm × H ${li.height_cm} cm`
           : '',
         li.material_name ? `Material: ${li.material_name}` : '',
+        li.color?.trim() ? `Color: ${li.color.trim()}` : '',
         li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
         li.control_name ? `Control: ${li.control_name}` : '',
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',

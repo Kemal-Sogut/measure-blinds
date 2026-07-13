@@ -214,6 +214,8 @@ export interface LineItem {
   control_price_per_item: number | null;
   description: string;
   note: string;
+  /** Free-text colour label (display-only; no pricing effect). */
+  color: string;
   quantity: number;
   unit_price: number;
   line_total: number;

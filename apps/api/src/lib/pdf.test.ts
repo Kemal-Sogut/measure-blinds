@@ -38,6 +38,7 @@ const SAMPLE: PdfDocumentData = {
       material_name: 'Blackout White',
       cassette_name: 'Standard Cassette',
       control_name: 'Chain Control',
+      color: 'White',
       description: '',
       quantity: 2,
       unit_price: 220,
