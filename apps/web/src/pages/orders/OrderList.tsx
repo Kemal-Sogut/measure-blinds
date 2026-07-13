@@ -41,7 +41,7 @@ function customerName(order: Order): string {
 }
 
 export default function OrderList() {
-  const [tab, setTab] = useState<OrderTab>('active');
+  const [tab, setTab] = useState<OrderTab>('all');
   const [term, setTerm] = useState('');
   const { data: orders, isLoading, error } = useOrderList(tab, term);
   const navigate = useNavigate();
@@ -73,11 +73,10 @@ export default function OrderList() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`min-h-10 flex-1 whitespace-nowrap rounded-sm px-3 py-2 text-[13px] ${
-                tab === t.key
+              className={`min-h-10 flex-1 whitespace-nowrap rounded-sm px-3 py-2 text-[13px] ${tab === t.key
                   ? 'bg-surface font-semibold text-text-primary shadow-sm'
                   : 'font-medium text-text-muted'
-              }`}
+                }`}
             >
               {t.label}
             </button>
@@ -165,9 +164,8 @@ export default function OrderList() {
               <button
                 key={order.id}
                 onClick={() => navigate(`/orders/${order.id}`)}
-                className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 text-left hover:bg-surface-muted ${
-                  i > 0 ? 'border-t border-border-light' : ''
-                }`}
+                className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 text-left hover:bg-surface-muted ${i > 0 ? 'border-t border-border-light' : ''
+                  }`}
               >
                 <span className="font-mono text-[13px] text-text-primary">{order.order_number}</span>
                 <span className="text-[13px] text-text-primary">{customerName(order)}</span>
