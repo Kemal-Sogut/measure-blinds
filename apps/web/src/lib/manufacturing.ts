@@ -259,9 +259,13 @@ export interface AluminumGroup {
   wasteCm: number;
 }
 
-/** Fabric cut list for one material roll, with summary stats. */
+/** Fabric cut list for one distinct fabric code (roll), with summary stats. */
 export interface FabricGroup {
-  /** Material (fabric) name as snapshotted on the line items. */
+  /**
+   * The fabric code shown as the heading — the material (fabric) name plus
+   * its colour when set (e.g. "Vibe — Snow"). Distinct codes are always
+   * planned as separate rolls; they are never cut together.
+   */
   materialName: string;
   /** Roll width used for packing, in cm. */
   rollWidth: number;
@@ -298,8 +302,9 @@ export interface ManufacturingPlan {
   warnings: string[];
 }
 
-/** Internal accumulator while walking line items. */
+/** Internal accumulator while walking line items — one per fabric code. */
 interface FabricBucket {
+  /** Display heading: material name + colour code when present. */
   materialName: string;
   rollWidth: number;
   assumedWidth: boolean;
@@ -325,8 +330,10 @@ export function buildManufacturingPlan(
   // Aluminium cuts grouped by normalised blind type; label kept from the
   // first line item so casing follows the catalog.
   const aluminumByType = new Map<string, { label: string; cuts: AluminumCut[] }>();
-  // Fabric pieces grouped per material roll (keyed by material id, or the
-  // name when a line item somehow lacks an id).
+  // Fabric pieces grouped per DISTINCT fabric code — the physical roll,
+  // which is the material AND its colour. Two line items that share a
+  // material but differ in colour are different rolls and must NEVER be
+  // cut together, so the colour is part of the grouping key.
   const fabricByMaterial = new Map<string, FabricBucket>();
   const asIs: AsIsItem[] = [];
 
@@ -371,12 +378,18 @@ export function buildManufacturingPlan(
       aluminumByType.get(typeKey) ?? { label: typeLabel, cuts: [] };
     aluminumByType.set(typeKey, alu);
 
-    // Fabric bucket for this material roll.
-    const matKey = item.material_id || `name:${item.material_name}`;
+    // Fabric bucket for this DISTINCT fabric code (material + colour). The
+    // roll width still comes from the material catalog (colour doesn't
+    // change the roll width), but the colour splits the physical rolls.
+    const colorCode = item.color?.trim() ?? '';
+    const materialKey = item.material_id || `name:${item.material_name || ''}`;
+    const matKey = `${materialKey}|${colorCode.toLowerCase()}`;
     const rawWidth = item.material_id ? widthByMaterialId.get(item.material_id) : null;
     const rollWidth = rawWidth != null && rawWidth > 0 ? rawWidth : DEFAULT_FABRIC_WIDTH_CM;
     const bucket: FabricBucket = fabricByMaterial.get(matKey) ?? {
-      materialName: item.material_name || 'Unspecified fabric',
+      materialName: [item.material_name || 'Unspecified fabric', colorCode]
+        .filter(Boolean)
+        .join(' — '),
       rollWidth,
       assumedWidth: !(rawWidth != null && rawWidth > 0),
       pieces: [],

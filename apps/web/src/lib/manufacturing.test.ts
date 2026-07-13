@@ -173,6 +173,33 @@ describe('buildManufacturingPlan', () => {
     expect(plan.asIs.map((a) => a.label)).toContain('Installation fee');
   });
 
+  it('never merges the same material across different colour codes', () => {
+    // Same material id + width, different colour = different physical roll.
+    const items: LineItem[] = [
+      lineItem({ id: 'a', material_id: 'mat-1', color: 'Snow', panels: [150], height_cm: 150 }),
+      lineItem({ id: 'b', material_id: 'mat-1', color: 'Dune', panels: [150], height_cm: 150 }),
+    ];
+    const widths = new Map<string, number | null>([['mat-1', 300]]);
+    const plan = buildManufacturingPlan(items, widths);
+    expect(plan.fabricGroups).toHaveLength(2);
+    expect(plan.fabricGroups.map((g) => g.materialName).sort()).toEqual([
+      'Blackout White — Dune',
+      'Blackout White — Snow',
+    ]);
+    // Both rolls still read their width from the shared material.
+    expect(plan.fabricGroups.every((g) => g.rollWidth === 300)).toBe(true);
+  });
+
+  it('keeps same material + same colour on one roll', () => {
+    const items: LineItem[] = [
+      lineItem({ id: 'a', material_id: 'mat-1', color: 'Snow', panels: [150], height_cm: 150 }),
+      lineItem({ id: 'b', material_id: 'mat-1', color: 'Snow', panels: [100], height_cm: 130 }),
+    ];
+    const plan = buildManufacturingPlan(items, new Map([['mat-1', 300]]));
+    expect(plan.fabricGroups).toHaveLength(1);
+    expect(plan.fabricGroups[0].pieceCount).toBe(2);
+  });
+
   it('assumes the default roll width when a material has none set', () => {
     const items = [lineItem({ material_id: 'mat-x', panels: [140], height_cm: 200 })];
     const plan = buildManufacturingPlan(items, new Map());
