@@ -258,6 +258,11 @@ const materialSchema = z.object({
   price_per_sqm: price,
   active,
   sort_order: sortOrder,
+  /**
+   * Fabric roll width in cm — a manufacturing input (not money). Positive
+   * when present; `null` clears it (the cut planner then assumes 300 cm).
+   */
+  width_cm: z.number().positive('Width must be greater than 0').finite().nullable(),
   blind_type_ids: z.array(z.string().uuid()).max(50),
 });
 
@@ -265,6 +270,7 @@ const materialSchema = z.object({
 const materialCreateSchema = materialSchema.partial({
   active: true,
   sort_order: true,
+  width_cm: true,
   blind_type_ids: true,
 } as never);
 

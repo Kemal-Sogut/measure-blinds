@@ -242,6 +242,12 @@ const ICONS = {
       <path d="M12 15V3" />
     </ActionIcon>
   ),
+  manufacturer: (
+    <ActionIcon>
+      <path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+      <path d="M17 18h1M12 18h1M7 18h1" />
+    </ActionIcon>
+  ),
 };
 
 export default function OrderDetail() {
@@ -1164,13 +1170,21 @@ export default function OrderDetail() {
       );
     }
 
-    // In progress — mark the order ready.
+    // In progress — mark the order ready; open the workshop cut sheet.
     if (status === 'in_progress') {
       return (
         <div className={box}>
           <button onClick={handleMarkReady} disabled={readyMut.isPending} className={primary}>
             {ICONS.ready}
             {readyMut.isPending ? 'Saving…' : 'Mark Ready'}
+          </button>
+          <button
+            onClick={() => id && window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener')}
+            disabled={!id}
+            className={secondary}
+          >
+            {ICONS.manufacturer}
+            See Manufacturer Copy
           </button>
           {paymentBtn(secondary)}
           {saveBtn}

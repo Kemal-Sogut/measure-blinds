@@ -35,9 +35,11 @@ import type { BlindType, Material } from '../../types';
 interface Draft {
   name: string;
   price: string;
+  /** Optional fabric roll width in cm; blank = use the 3 m default. */
+  width: string;
 }
 
-const EMPTY_DRAFT: Draft = { name: '', price: '' };
+const EMPTY_DRAFT: Draft = { name: '', price: '', width: '' };
 
 /** Parses a draft price string; returns null when invalid. */
 function parsePrice(value: string): number | null {
@@ -45,10 +47,26 @@ function parsePrice(value: string): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
 }
 
+/**
+ * Parses the optional width field (cm). A blank value is VALID and maps
+ * to `null` (the planner then assumes a 3 m roll). A non-blank value must
+ * parse to a positive number. Returns `{ ok:false }` for invalid input so
+ * the caller can surface a single toast.
+ */
+function parseWidth(value: string): { ok: boolean; value: number | null } {
+  const trimmed = value.trim();
+  if (trimmed === '') return { ok: true, value: null };
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, value: null };
+  return { ok: true, value: Math.round(n * 100) / 100 };
+}
+
 /** One validated Material parsed from a CSV row. */
 interface CsvMaterial {
   name: string;
   price: number;
+  /** Optional third CSV column — roll width in cm, or null when absent. */
+  width: number | null;
 }
 
 /**
@@ -87,10 +105,13 @@ function parseCsvLine(line: string): string[] {
 
 /**
  * Parses CSV text into Materials. Column 1 is the name, column 2 the
- * price per m² (a leading `$` / thousands commas are tolerated). A first
+ * price per m², and an OPTIONAL column 3 the fabric roll width in cm (a
+ * leading `$` / thousands commas are tolerated on the numbers). A first
  * row whose price is non-numeric is treated as a header and skipped;
  * every other row that lacks a name or a valid non-negative price is
- * counted as skipped. Returns the valid Materials plus the skip count.
+ * counted as skipped. A blank or invalid width column simply yields a
+ * `null` width (assume 3 m) rather than skipping the row. Returns the
+ * valid Materials plus the skip count.
  */
 function parseMaterialsCsv(text: string): { valid: CsvMaterial[]; skipped: number } {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
@@ -108,7 +129,14 @@ function parseMaterialsCsv(text: string): { valid: CsvMaterial[]; skipped: numbe
       skipped++;
       return;
     }
-    valid.push({ name, price: Math.round(price * 100) / 100 });
+    const rawWidth = (cols[2] ?? '').replace(/[$,]/g, '').trim();
+    const width = Number(rawWidth);
+    const widthValid = rawWidth !== '' && Number.isFinite(width) && width > 0;
+    valid.push({
+      name,
+      price: Math.round(price * 100) / 100,
+      width: widthValid ? Math.round(width * 100) / 100 : null,
+    });
   });
   return { valid, skipped };
 }
@@ -135,10 +163,13 @@ export default function MaterialsForType() {
     if (!draft.name.trim()) return toast.error('Enter a name.');
     const price = parsePrice(draft.price);
     if (price === null) return toast.error('Enter a valid price.');
+    const width = parseWidth(draft.width);
+    if (!width.ok) return toast.error('Width must be a positive number, or left blank.');
     create.mutate(
       {
         name: draft.name.trim(),
         price_per_sqm: price,
+        width_cm: width.value,
         blind_type_ids: [blindTypeId],
       } as Partial<Material>,
       {
@@ -171,6 +202,7 @@ export default function MaterialsForType() {
           await create.mutateAsync({
             name: row.name,
             price_per_sqm: row.price,
+            width_cm: row.width,
             blind_type_ids: [blindTypeId],
           } as Partial<Material>);
           ok++;
@@ -192,19 +224,33 @@ export default function MaterialsForType() {
   /** Enters inline edit mode for one Material. */
   function startEdit(material: Material) {
     setEditingId(material.id);
-    setEditDraft({ name: material.name, price: String(material.price_per_sqm ?? '') });
+    setEditDraft({
+      name: material.name,
+      price: String(material.price_per_sqm ?? ''),
+      width: material.width_cm == null ? '' : String(material.width_cm),
+    });
   }
 
   /**
-   * Saves name/price only — `blind_type_ids` is intentionally omitted so
-   * the Material's links (including to other types) are left untouched.
+   * Saves name/price/width only — `blind_type_ids` is intentionally
+   * omitted so the Material's links (including to other types) are left
+   * untouched. A blank width clears the column back to `null`.
    */
   function handleSaveEdit(id: string) {
     if (!editDraft.name.trim()) return toast.error('Enter a name.');
     const price = parsePrice(editDraft.price);
     if (price === null) return toast.error('Enter a valid price.');
+    const width = parseWidth(editDraft.width);
+    if (!width.ok) return toast.error('Width must be a positive number, or left blank.');
     update.mutate(
-      { id, patch: { name: editDraft.name.trim(), price_per_sqm: price } as Partial<Material> },
+      {
+        id,
+        patch: {
+          name: editDraft.name.trim(),
+          price_per_sqm: price,
+          width_cm: width.value,
+        } as Partial<Material>,
+      },
       { onSuccess: () => setEditingId(null), onError: (e) => toast.error(e.message) }
     );
   }
@@ -241,6 +287,14 @@ export default function MaterialsForType() {
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                 className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
               />
+              <input
+                placeholder="Width cm"
+                inputMode="decimal"
+                value={draft.width}
+                onChange={(e) => setDraft({ ...draft, width: e.target.value })}
+                title="Fabric roll width in cm — leave blank to assume 3 m (300 cm)"
+                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+              />
               <button
                 onClick={handleAdd}
                 disabled={create.isPending}
@@ -249,11 +303,15 @@ export default function MaterialsForType() {
                 Add
               </button>
             </div>
+            <p className="text-xs text-text-muted">
+              Width is the fabric roll width used to plan cuts — leave blank to assume 3 m.
+            </p>
 
-            {/* CSV bulk import — columns: name, price per m² */}
+            {/* CSV bulk import — columns: name, price per m², optional width cm */}
             <div className="mt-1 flex items-center justify-between gap-2 border-t border-border-light pt-3">
               <span className="min-w-0 text-xs text-text-muted">
-                Or import a CSV — columns: name, price per m² (e.g. <span className="font-mono">Blackout White, 55</span>)
+                Or import a CSV — columns: name, price per m², width cm (optional) (e.g.{' '}
+                <span className="font-mono">Blackout White, 55, 250</span>)
               </span>
               <label
                 className={`flex h-9 shrink-0 cursor-pointer items-center rounded-lg border border-border px-3 text-sm font-medium text-text-secondary hover:bg-surface-muted ${
@@ -299,6 +357,15 @@ export default function MaterialsForType() {
                       inputMode="decimal"
                       value={editDraft.price}
                       onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
+                      placeholder="Price / m²"
+                      className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                    />
+                    <input
+                      inputMode="decimal"
+                      value={editDraft.width}
+                      onChange={(e) => setEditDraft({ ...editDraft, width: e.target.value })}
+                      placeholder="Width cm"
+                      title="Fabric roll width in cm — leave blank to assume 3 m (300 cm)"
                       className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
                     />
                     <button
@@ -322,6 +389,12 @@ export default function MaterialsForType() {
                     <span className="text-sm text-text-secondary">
                       ${Number(material.price_per_sqm).toFixed(2)}{' '}
                       <span className="text-text-muted">per m²</span>
+                      {material.width_cm != null && (
+                        <>
+                          {' · '}
+                          <span className="text-text-muted">{Number(material.width_cm)} cm wide</span>
+                        </>
+                      )}
                     </span>
                   </button>
                   <button

@@ -236,6 +236,12 @@ export interface Material {
   price_per_sqm: number;
   active: boolean;
   sort_order: number;
+  /**
+   * Fabric roll width in cm — a MANUFACTURING input (not pricing) used by
+   * the cut planner on the Manufacturer Copy page. `null` when unset; the
+   * planner then assumes a default 3 m (300 cm) roll.
+   */
+  width_cm: number | null;
   /** Blind-type ids this Material is scoped to; empty = all types. */
   blind_type_ids: string[];
 }
