@@ -6,8 +6,10 @@
  * headers, leading icons, and chevrons — BUSINESS (company info,
  * catalogs, terms) and ACCOUNT (sign out, danger-tinted). The design
  * omitted Control Options and Preset Line Items; they're included
- * here because the app manages both. Sign-out moved here from the
- * dashboard per the design.
+ * here because the app manages both. Blind types are managed inside
+ * Materials (the Materials landing page lists them), so there is no
+ * separate Blind Types row. Sign-out moved here from the dashboard per
+ * the design.
  */
 
 import { Link } from 'react-router-dom';
@@ -24,7 +26,6 @@ interface Row {
 const BUSINESS: Row[] = [
   { to: '/settings/company', label: 'Company Info', d: 'M2 7h20v14H2z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16' },
   { to: '/settings/materials', label: 'Materials', d: 'M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5' },
-  { to: '/settings/blind-types', label: 'Blind Types', d: 'M4 3h16v4H4z M6 7v13 M10 7v13 M14 7v13 M18 7v13 M4 20h16' },
   { to: '/settings/cassette', label: 'Cassette Options', d: 'M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z' },
   { to: '/settings/controls', label: 'Control Options', d: 'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6' },
   { to: '/settings/presets', label: 'Preset Line Items', d: 'M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01' },

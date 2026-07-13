@@ -57,18 +57,16 @@ export interface Catalogs {
 }
 
 /**
- * Materials available for a given blind type name. A Material with no
- * `blind_type_ids` links is available for ALL types; otherwise it must
- * be linked to the selected type. When no type is selected yet (or the
- * name is unknown), every Material is returned so the field is never
- * mysteriously empty.
+ * Materials available for a given blind type name. Materials are scoped
+ * per type (managed under Settings → Materials → <type>): only those
+ * LINKED to the selected type are offered. When no type is selected yet
+ * (or the name is unknown/legacy free-text), an empty list is returned
+ * so the user must pick a blind type first.
  */
 export function materialsForType(catalogs: Catalogs, blindsType: string): Material[] {
   const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
-  if (!typeId) return catalogs.materials;
-  return catalogs.materials.filter(
-    (m) => m.blind_type_ids.length === 0 || m.blind_type_ids.includes(typeId)
-  );
+  if (!typeId) return [];
+  return catalogs.materials.filter((m) => m.blind_type_ids.includes(typeId));
 }
 
 /** Parses a positive number from a draft string; null when invalid. */
@@ -300,6 +298,7 @@ export function BlindEditForm({
           value={draft.material_id}
           onChange={(id) => onChange({ ...draft, material_id: id })}
           options={materialsForType(catalogs, draft.blinds_type)}
+          placeholder={draft.blinds_type ? 'Select…' : 'Pick a blind type first'}
         />
         <OptionSelect
           label="Cassette"

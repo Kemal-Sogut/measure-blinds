@@ -2,22 +2,23 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Materials settings page — CRUD list of Materials priced per square
- * meter, each scoped to zero or more blind types.
+ * Materials landing page — the entry to the two-level Materials flow.
  *
- * Unlike the generic CatalogEditor entities (cassettes / controls /
- * presets), a Material carries a many-to-many blind-type link set
- * (`blind_type_ids`). It is edited here as a checkbox group: leaving
- * every box unchecked means the Material is offered for ALL blind types
- * in the line-item editor; checking some scopes it to just those types.
- * The link set rides along the standard catalog create/update mutations
- * (the Materials API syncs the `material_blind_types` join table).
+ * This page lists the BLIND TYPES (Roller, Zebra, …); tapping one opens
+ * that type's Material list (`/settings/materials/:blindTypeId`, the
+ * MaterialsForType page) where its Materials are added/edited. Blind
+ * types themselves are also managed here (add / rename / activate /
+ * delete) — there is no separate "Blind Types" settings page; this is
+ * the single place for both.
  *
- * Numeric input uses inputMode="decimal" for mobile keyboards; all tap
- * targets are ≥44px.
+ * Each row shows how many Materials are linked to that type. Deleting a
+ * type removes its Material links (DB cascade) but never the Material
+ * rows; a Material left with no links simply stops appearing until it is
+ * re-linked to a type. All tap targets are ≥44px.
  */
 
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import {
@@ -26,161 +27,71 @@ import {
   useUpdateCatalogItem,
   useDeleteCatalogItem,
 } from '../../hooks/useSettings';
-import type { Material, BlindType } from '../../types';
-
-/** Draft state for the add/edit forms. */
-interface Draft {
-  name: string;
-  price: string;
-  blind_type_ids: string[];
-}
-
-const EMPTY_DRAFT: Draft = { name: '', price: '', blind_type_ids: [] };
-
-/** Parses a draft price string; returns null when invalid. */
-function parsePrice(value: string): number | null {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
-}
-
-/** Adds or removes an id from a selection array (immutably). */
-function toggleId(list: string[], id: string): string[] {
-  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
-}
+import type { BlindType, Material } from '../../types';
 
 export default function Materials() {
-  const { data: materials, isLoading, error } = useCatalogList<Material>('materials');
-  const { data: blindTypes } = useCatalogList<BlindType>('blind-types');
-  const create = useCreateCatalogItem<Material>('materials');
-  const update = useUpdateCatalogItem<Material>('materials');
-  const remove = useDeleteCatalogItem('materials');
+  const { data: types, isLoading, error } = useCatalogList<BlindType>('blind-types');
+  const { data: materials } = useCatalogList<Material>('materials');
+  const create = useCreateCatalogItem<BlindType>('blind-types');
+  const update = useUpdateCatalogItem<BlindType>('blind-types');
+  const remove = useDeleteCatalogItem('blind-types');
 
-  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [name, setName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
+  const [editName, setEditName] = useState('');
 
-  /** Active blind types offered as scope checkboxes. */
-  const types = (blindTypes ?? []).filter((t) => t.active);
-
-  /** Validates and submits the "add new" form. */
-  function handleAdd() {
-    if (!draft.name.trim()) return toast.error('Enter a name.');
-    const price = parsePrice(draft.price);
-    if (price === null) return toast.error('Enter a valid price.');
-    create.mutate(
-      {
-        name: draft.name.trim(),
-        price_per_sqm: price,
-        blind_type_ids: draft.blind_type_ids,
-      } as Partial<Material>,
-      {
-        onSuccess: () => setDraft(EMPTY_DRAFT),
-        onError: (e) => toast.error(e.message),
-      }
-    );
+  /** Number of Materials linked to a given blind type. */
+  function materialCount(typeId: string): number {
+    return (materials ?? []).filter((m) => m.blind_type_ids.includes(typeId)).length;
   }
 
-  /** Enters inline edit mode for one Material. */
-  function startEdit(material: Material) {
-    setEditingId(material.id);
-    setEditDraft({
-      name: material.name,
-      price: String(material.price_per_sqm ?? ''),
-      blind_type_ids: material.blind_type_ids ?? [],
+  /** Validates and creates a new blind type. */
+  function handleAdd() {
+    if (!name.trim()) return toast.error('Enter a name.');
+    create.mutate({ name: name.trim() } as Partial<BlindType>, {
+      onSuccess: () => setName(''),
+      onError: (e) => toast.error(e.message),
     });
   }
 
-  /** Validates and saves the inline edit form. */
+  /** Saves an inline blind-type rename. */
   function handleSaveEdit(id: string) {
-    if (!editDraft.name.trim()) return toast.error('Enter a name.');
-    const price = parsePrice(editDraft.price);
-    if (price === null) return toast.error('Enter a valid price.');
+    if (!editName.trim()) return toast.error('Enter a name.');
     update.mutate(
-      {
-        id,
-        patch: {
-          name: editDraft.name.trim(),
-          price_per_sqm: price,
-          blind_type_ids: editDraft.blind_type_ids,
-        } as Partial<Material>,
-      },
-      {
-        onSuccess: () => setEditingId(null),
-        onError: (e) => toast.error(e.message),
-      }
+      { id, patch: { name: editName.trim() } as Partial<BlindType> },
+      { onSuccess: () => setEditingId(null), onError: (e) => toast.error(e.message) }
     );
   }
 
-  /** Confirms then deletes a Material. */
-  function handleDelete(material: Material) {
-    if (!window.confirm(`Delete "${material.name}"? Existing estimates keep their prices.`)) return;
-    remove.mutate(material.id, { onError: (e) => toast.error(e.message) });
-  }
-
-  /** Human-readable summary of a Material's blind-type scope. */
-  function scopeLabel(material: Material): string {
-    if (!material.blind_type_ids.length) return 'All blind types';
-    const names = material.blind_type_ids
-      .map((id) => (blindTypes ?? []).find((t) => t.id === id)?.name)
-      .filter(Boolean);
-    return names.length ? names.join(', ') : '—';
-  }
-
-  /** Checkbox group for choosing which blind types a Material appears under. */
-  function TypePicker({ selected, onToggle }: { selected: string[]; onToggle: (id: string) => void }) {
-    return (
-      <div>
-        <p className="mb-1 text-xs font-medium text-text-secondary">
-          Blind types <span className="text-text-muted">(none = all)</span>
-        </p>
-        <div className="flex flex-wrap gap-1.5">
-          {types.map((t) => {
-            const on = selected.includes(t.id);
-            return (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => onToggle(t.id)}
-                aria-pressed={on}
-                className={`min-h-8 rounded-lg border px-2.5 py-1 text-sm ${
-                  on
-                    ? 'border-brand-600 bg-brand-100 text-brand-800'
-                    : 'border-border bg-surface text-text-secondary'
-                }`}
-              >
-                {t.name}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
+  /** Confirms then deletes a blind type (its Material links cascade). */
+  function handleDelete(type: BlindType) {
+    if (
+      !window.confirm(
+        `Delete blind type "${type.name}"? Its Material links are removed; the Materials themselves stay in the system.`
+      )
+    )
+      return;
+    remove.mutate(type.id, { onError: (e) => toast.error(e.message) });
   }
 
   return (
     <div className="min-h-screen bg-surface-muted">
       <PageHeader title="Materials" backTo="/settings" />
       <div className="mx-auto max-w-lg p-4">
-        {/* Add form */}
+        <p className="mb-4 text-sm text-text-muted">
+          Choose a blind type to manage its materials, or add a new type below.
+        </p>
+
+        {/* Add blind type */}
         <div className="mb-6 rounded-xl border border-border bg-surface-elevated p-4">
-          <h2 className="mb-3 text-sm font-semibold text-text-secondary">Add material</h2>
-          <div className="flex flex-col gap-2">
+          <h2 className="mb-3 text-sm font-semibold text-text-secondary">Add blind type</h2>
+          <div className="flex gap-2">
             <input
-              placeholder="Name"
-              value={draft.name}
-              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
-            />
-            <input
-              placeholder="Price / m²"
-              inputMode="decimal"
-              value={draft.price}
-              onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-              className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
-            />
-            <TypePicker
-              selected={draft.blind_type_ids}
-              onToggle={(id) => setDraft({ ...draft, blind_type_ids: toggleId(draft.blind_type_ids, id) })}
+              placeholder="e.g. Roller"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+              className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
             />
             <button
               onClick={handleAdd}
@@ -192,40 +103,28 @@ export default function Materials() {
           </div>
         </div>
 
-        {/* Rows */}
+        {/* Blind types */}
         {isLoading && <p className="p-4 text-text-muted">Loading…</p>}
         {error && <p className="p-4 text-danger">{error.message}</p>}
-        {materials && materials.length === 0 && (
-          <p className="text-center text-text-muted">No materials yet — add the first one above.</p>
+        {types && types.length === 0 && (
+          <p className="text-center text-text-muted">No blind types yet — add the first one above.</p>
         )}
         <ul className="flex flex-col gap-2">
-          {materials?.map((material) => (
+          {types?.map((type) => (
             <li
-              key={material.id}
-              className={`rounded-xl border border-border bg-surface-elevated p-3 ${material.active ? '' : 'opacity-60'}`}
+              key={type.id}
+              className={`rounded-xl border border-border bg-surface-elevated ${type.active ? '' : 'opacity-60'}`}
             >
-              {editingId === material.id ? (
-                <div className="flex flex-col gap-2">
+              {editingId === type.id ? (
+                <div className="flex flex-col gap-2 p-3">
                   <input
-                    value={editDraft.name}
-                    onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
                     className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
-                  />
-                  <input
-                    inputMode="decimal"
-                    value={editDraft.price}
-                    onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
-                    className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
-                  />
-                  <TypePicker
-                    selected={editDraft.blind_type_ids}
-                    onToggle={(id) =>
-                      setEditDraft({ ...editDraft, blind_type_ids: toggleId(editDraft.blind_type_ids, id) })
-                    }
                   />
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleSaveEdit(material.id)}
+                      onClick={() => handleSaveEdit(type.id)}
                       className="h-11 flex-1 rounded-lg bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
                     >
                       Save
@@ -239,34 +138,70 @@ export default function Materials() {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
-                  <button onClick={() => startEdit(material)} className="min-w-0 flex-1 py-2 text-left">
-                    <span className="block truncate font-medium text-text-primary">{material.name}</span>
-                    <span className="text-sm text-text-secondary">
-                      ${Number(material.price_per_sqm).toFixed(2)}{' '}
-                      <span className="text-text-muted">per m²</span>
+                <div className="flex items-center gap-1 p-1.5">
+                  <Link
+                    to={`/settings/materials/${type.id}`}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 hover:bg-surface-muted"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-text-primary">{type.name}</span>
+                      <span className="text-sm text-text-muted">
+                        {materialCount(type.id)} material{materialCount(type.id) === 1 ? '' : 's'}
+                      </span>
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-text-muted">{scopeLabel(material)}</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="m9 18 6-6-6-6"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="text-text-muted"
+                      />
+                    </svg>
+                  </Link>
+                  <button
+                    aria-label="Rename"
+                    onClick={() => {
+                      setEditingId(type.id);
+                      setEditName(type.name);
+                    }}
+                    className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-muted"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
                   </button>
                   <button
-                    aria-label={material.active ? 'Deactivate' : 'Activate'}
+                    aria-label={type.active ? 'Deactivate' : 'Activate'}
                     onClick={() =>
                       update.mutate(
-                        { id: material.id, patch: { active: !material.active } as Partial<Material> },
+                        { id: type.id, patch: { active: !type.active } as Partial<BlindType> },
                         { onError: (e) => toast.error(e.message) }
                       )
                     }
                     className={`h-11 rounded-lg px-3 text-sm font-medium ${
-                      material.active
-                        ? 'bg-surface-muted text-text-secondary'
-                        : 'bg-brand-100 text-brand-800'
+                      type.active ? 'bg-surface-muted text-text-secondary' : 'bg-brand-100 text-brand-800'
                     }`}
                   >
-                    {material.active ? 'Active' : 'Inactive'}
+                    {type.active ? 'Active' : 'Inactive'}
                   </button>
                   <button
                     aria-label="Delete"
-                    onClick={() => handleDelete(material)}
+                    onClick={() => handleDelete(type)}
                     className="flex h-11 w-11 items-center justify-center rounded-lg text-danger hover:bg-red-50"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
