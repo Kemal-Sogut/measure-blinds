@@ -30,6 +30,8 @@ interface FormState {
   hst_number: string;
   default_expiry_days: string;
   google_review_url: string;
+  etransfer_email: string;
+  etransfer_instructions: string;
 }
 
 const INPUT_CLS =
@@ -53,6 +55,8 @@ export default function CompanyInfo() {
         hst_number: data.hst_number ?? '',
         default_expiry_days: String(data.default_expiry_days ?? 14),
         google_review_url: data.google_review_url ?? '',
+        etransfer_email: data.etransfer_email ?? '',
+        etransfer_instructions: data.etransfer_instructions ?? '',
       });
     }
   }, [data, form]);
@@ -73,6 +77,12 @@ export default function CompanyInfo() {
     if (reviewUrl && !/^https?:\/\//i.test(reviewUrl)) {
       return toast.error('The Google review link must start with http:// or https://.');
     }
+    // The Worker rejects a malformed e-Transfer address with a 400; catch
+    // it here so the message names the field instead of a Zod path.
+    const etransferEmail = form.etransfer_email.trim();
+    if (etransferEmail && !etransferEmail.includes('@')) {
+      return toast.error('The e-Transfer email must be a valid email address.');
+    }
     update.mutate(
       {
         company_name: form.company_name.trim(),
@@ -82,6 +92,8 @@ export default function CompanyInfo() {
         hst_number: form.hst_number.trim(),
         default_expiry_days: days,
         google_review_url: reviewUrl,
+        etransfer_email: etransferEmail,
+        etransfer_instructions: form.etransfer_instructions.trim(),
       },
       {
         onSuccess: () => toast.success('Company info saved.'),
@@ -215,6 +227,34 @@ export default function CompanyInfo() {
             <span className="mt-1 block text-xs font-normal text-text-muted">
               Customers are emailed a review request 2 days after their installation. Leave blank
               to turn this off.
+            </span>
+          </label>
+          <label className="text-sm font-medium text-text-secondary">
+            e-Transfer Email
+            <input
+              type="email"
+              inputMode="email"
+              placeholder="payments@example.com"
+              className={`mt-1 ${INPUT_CLS}`}
+              value={form.etransfer_email}
+              onChange={(e) => set('etransfer_email', e.target.value)}
+            />
+            <span className="mt-1 block text-xs font-normal text-text-muted">
+              Where customers send Interac e-Transfers. Shown on their order page once they
+              confirm and still owe a balance. Leave blank to hide payment details entirely.
+            </span>
+          </label>
+          <label className="text-sm font-medium text-text-secondary">
+            e-Transfer Instructions
+            <textarea
+              rows={3}
+              placeholder="e.g. A 50% deposit is due before production begins."
+              className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text-primary"
+              value={form.etransfer_instructions}
+              onChange={(e) => set('etransfer_instructions', e.target.value)}
+            />
+            <span className="mt-1 block text-xs font-normal text-text-muted">
+              Optional note shown under the e-Transfer address.
             </span>
           </label>
           <button

@@ -261,6 +261,42 @@ export function useSetCutDone(): UseMutationResult<Order, Error, { id: string; d
   });
 }
 
+/**
+ * Answers a customer's cancellation request (the red banner above the
+ * order's Progress card).
+ *
+ * `accept: true` grants it — the Worker clears the request AND reverses
+ * the confirmation (awaiting_payment → sent), refusing with 409 once a
+ * payment exists. No email is sent; the customer's public page simply
+ * shows the estimate with its Confirm button again.
+ *
+ * `accept: false` denies it — the request is cleared, the status is left
+ * alone, and the customer is emailed. `message` is the optional
+ * explanation shown in that email and is ignored when accepting. Denial
+ * is email-then-persist, so a 502 leaves the request open for a retry
+ * rather than dropping it silently.
+ *
+ * Either way the refreshed order detail replaces the cached order, so
+ * the banner disappears without a manual refetch.
+ */
+export function useResolveCancelRequest(): UseMutationResult<
+  Order,
+  Error,
+  { id: string; accept: boolean; message?: string }
+> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, accept, message }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/cancel-request/resolve`, {
+          method: 'POST',
+          body: JSON.stringify(accept ? { accept } : { accept, message }),
+        })
+      ).data,
+    onSuccess: cache,
+  });
+}
+
 /** Mark a ready order installed — the terminal state. */
 export function useMarkInstalled() {
   return useLifecycleMutation((id) => `/api/orders/${id}/installed`);

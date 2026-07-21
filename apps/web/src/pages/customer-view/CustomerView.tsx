@@ -2,27 +2,44 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Public customer estimate view — token-gated, NO authentication.
+ * Public customer order summary — token-gated, NO authentication.
  *
  * Fetches `/public/estimate/:token` with a plain fetch (no Supabase
- * session exists here) and renders one of four states:
- *   expired    → "contact us for a new quote" message
- *   confirmed  → "already confirmed" message (or the fresh
- *                post-confirmation screen with deposit instructions)
- *   sent       → full estimate (same layout as the PDF: company
- *                header, meta, line items with indented attributes,
- *                totals with HST#, terms) + big Confirm button
- *   not found  → generic error
+ * session exists here). This page used to be an estimate that dead-ended
+ * into a one-line "already confirmed" card; it is now a PERMANENT order
+ * summary that the same emailed link keeps opening for the life of the
+ * order:
+ *
+ *   not found / draft → generic error card
+ *   expired           → "contact us for a new quote" card
+ *   sent              → summary + Confirm button (the estimate)
+ *   confirmed         → summary + progress tracker + e-Transfer details
+ *                       + cancellation-request block
+ *
+ * Because the tracker is always live here, the app sends customers NO
+ * status-update emails.
  *
  * The confirm POST is rate-limited server-side and succeeds exactly
- * once; a 409 flips the UI into the already-confirmed state.
+ * once; a 409 flips the UI into the confirmed state. A confirmation can
+ * NEVER be undone from this page — the most a customer can do is REQUEST
+ * cancellation, which raises a flag for staff and changes no status.
+ *
+ * This module owns fetching, state and the summary markup. The two new
+ * concerns are delegated: `OrderProgress` (tracker) and
+ * `CancellationRequest` (request/withdraw), both pure and stateless
+ * apart from their own local form drafts.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
+import OrderProgress from './OrderProgress';
+import CancellationRequest from './CancellationRequest';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
+
+/** Statuses in which the customer's confirmation already exists. */
+const CONFIRMED_STATUSES = ['awaiting_payment', 'in_progress', 'ready', 'installed'];
 
 /** Public line item shape returned by the Worker. */
 interface PublicLineItem {
@@ -42,7 +59,7 @@ interface PublicLineItem {
   line_total: number;
 }
 
-/** Full public estimate payload rendered by this page. */
+/** Full public order payload rendered by this page. */
 interface PublicEstimate {
   status: string;
   order_number: string;
@@ -53,7 +70,13 @@ interface PublicEstimate {
   taxable_amount: number;
   tax_amount: number;
   total: number;
+  /** Server-computed sum of the payments ledger. */
+  amount_paid: number;
+  /** Server-computed `total − amount_paid`. */
+  balance: number;
   terms: string;
+  /** Set while the customer has an open cancellation request. */
+  cancel_requested_at: string | null;
   customer: {
     first_name: string;
     last_name: string;
@@ -70,6 +93,8 @@ interface PublicEstimate {
     phone: string;
     address: string;
     hst_number: string;
+    etransfer_email: string;
+    etransfer_instructions: string;
   } | null;
   line_items: PublicLineItem[];
 }
@@ -113,54 +138,80 @@ export default function CustomerView() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [justConfirmed, setJustConfirmed] = useState(false);
-  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Load the public estimate once on mount.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`${API_URL}/public/estimate/${token}`);
-        const body = await res.json().catch(() => null);
-        if (cancelled) return;
-        if (!res.ok) setLoadError((body as { error?: string })?.error ?? 'Estimate not found.');
-        else setEstimate((body as { data: PublicEstimate }).data);
-      } catch {
-        if (!cancelled) setLoadError('Could not load the estimate. Please try again.');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  /**
+   * (Re)loads the public payload. Called on mount and after every
+   * mutation, so server-computed figures (balance, request flag) are
+   * always the server's, never patched client-side.
+   */
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}`);
+      const body = await res.json().catch(() => null);
+      if (!res.ok) setLoadError((body as { error?: string })?.error ?? 'Order not found.');
+      else setEstimate((body as { data: PublicEstimate }).data);
+    } catch {
+      setLoadError('Could not load your order. Please try again.');
+    }
   }, [token]);
 
-  /** POSTs the one-shot confirm; 409 flips to already-confirmed. */
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** POSTs the one-shot confirm; 409 means someone already did it. */
   async function handleConfirm() {
     setConfirming(true);
-    setConfirmError(null);
+    setActionError(null);
     try {
       const res = await fetch(`${API_URL}/public/estimate/${token}/confirm`, { method: 'POST' });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       if (res.ok) {
         setJustConfirmed(true);
-        setEstimate((e) => (e ? { ...e, status: 'awaiting_payment' } : e));
+        await load();
       } else if (res.status === 409) {
-        setEstimate((e) => (e ? { ...e, status: 'awaiting_payment' } : e));
+        await load();
       } else {
-        setConfirmError(body?.error ?? 'Confirmation failed. Please try again.');
+        setActionError(body?.error ?? 'Confirmation failed. Please try again.');
       }
     } catch {
-      setConfirmError('Network problem — please try again.');
+      setActionError('Network problem — please try again.');
     } finally {
       setConfirming(false);
     }
   }
 
-  if (loadError) return <Message icon="🔍" title="Estimate not found" body={loadError} />;
+  /**
+   * Opens or withdraws a cancellation request. Both endpoints share this
+   * handler because they behave identically from the page's point of
+   * view: POST, then re-read the server's version of the truth.
+   */
+  async function handleCancelAction(path: 'cancel-request' | 'cancel-withdraw', note?: string) {
+    setCancelBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(note !== undefined ? { note } : {}),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) setActionError(body?.error ?? 'Something went wrong. Please try again.');
+      await load();
+    } catch {
+      setActionError('Network problem — please try again.');
+    } finally {
+      setCancelBusy(false);
+    }
+  }
+
+  if (loadError) return <Message icon="🔍" title="Order not found" body={loadError} />;
   if (!estimate) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-muted">
-        <p className="text-text-muted">Loading your estimate…</p>
+        <p className="text-text-muted">Loading your order…</p>
       </div>
     );
   }
@@ -175,71 +226,74 @@ export default function CustomerView() {
     );
   }
 
-  // Post-confirmation screen (fresh confirm) with deposit instructions.
-  if (justConfirmed) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-surface-muted px-4 py-8">
-        <div className="w-full max-w-md rounded-2xl bg-surface-elevated p-8 text-center shadow-md">
-          <div className="mb-3 text-4xl">✅</div>
-          <h1 className="mb-2 text-xl font-semibold text-text-primary">Estimate Confirmed!</h1>
-          <p className="mb-6 text-text-secondary">
-            Thank you — we&apos;ve been notified and will be in touch shortly.
-          </p>
-          <PaymentSection
-            depositAmount={estimate.total / 2}
-            payToEmail="blindsnisa@gmail.com"
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // Anything past 'sent' (awaiting_payment / in_progress / ready /
-  // installed) has already been confirmed. Visit scheduling lives on
-  // the appointment's own public page (/appointment/:token), not here.
-  if (estimate.status !== 'sent') {
+  // A draft was never sent to anyone; if a token somehow resolves to one
+  // (a receipt send can mint a token without sending an estimate), say
+  // nothing about it.
+  if (estimate.status === 'draft') {
     return (
       <Message
-        icon="✅"
-        title="You've already confirmed this estimate"
-        body="We'll be in touch! If you have any questions, just reply to our email."
+        icon="🔍"
+        title="Order not found"
+        body="This link isn't ready yet. Please contact us if you were expecting an estimate."
       />
     );
   }
 
+  const confirmed = CONFIRMED_STATUSES.includes(estimate.status);
+  // A cancellation can only be granted before any money is recorded, so
+  // it is only offered in exactly that window — never shown when the
+  // server would refuse it.
+  const canRequestCancel = estimate.status === 'awaiting_payment' && estimate.amount_paid === 0;
   const c = estimate.company;
   const cust = estimate.customer;
 
   return (
-    <div className="min-h-screen bg-surface-muted pb-28">
+    <div className={`min-h-screen bg-surface-muted ${confirmed ? 'pb-8' : 'pb-28'}`}>
       <div className="mx-auto max-w-lg p-4">
         {/* Company header */}
         <header className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-elevated p-4">
           {c?.logo_url && (
             <img src={c.logo_url} alt="" className="h-12 w-12 rounded-lg object-contain" />
           )}
-          <div>
-            <h1 className="text-lg font-bold text-text-primary">{c?.company_name || 'Estimate'}</h1>
-            <p className="text-xs text-text-muted">
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-text-primary">{c?.company_name || 'Order'}</h1>
+            <p className="truncate text-xs text-text-muted">
               {[c?.phone, c?.email].filter(Boolean).join(' · ')}
             </p>
           </div>
         </header>
 
-        {/* Estimate meta */}
+        {/* One-time success banner, shown only on the confirming visit */}
+        {justConfirmed && (
+          <div className="mb-4 rounded-2xl bg-success/10 p-4 text-center">
+            <div className="mb-1 text-3xl">✅</div>
+            <h2 className="mb-1 font-semibold text-text-primary">Order confirmed!</h2>
+            <p className="text-sm text-text-secondary">
+              Thank you — we&apos;ve been notified and will be in touch shortly.
+            </p>
+          </div>
+        )}
+
+        {/* Live status — only meaningful once confirmed */}
+        {confirmed && <OrderProgress status={estimate.status} />}
+
+        {/* Order meta */}
         <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-sm">
-          <div className="flex justify-between">
+          <div className="flex justify-between gap-2">
             <span className="font-semibold text-text-primary">
-              Estimate <span className="font-mono">{estimate.order_number}</span>
+              {confirmed ? 'Order' : 'Estimate'}{' '}
+              <span className="font-mono">{estimate.order_number}</span>
             </span>
-            <span className="text-text-muted">{estimate.order_date}</span>
+            <span className="whitespace-nowrap text-text-muted">{estimate.order_date}</span>
           </div>
           <p className="mt-1 text-text-secondary">
             For {cust.first_name} {cust.last_name}
             {cust.shipping_address_line1 &&
               ` · ${cust.shipping_address_line1}, ${cust.shipping_city}`}
           </p>
-          <p className="mt-1 text-xs text-warning">Valid until {estimate.expiry_date}</p>
+          {!confirmed && (
+            <p className="mt-1 text-xs text-warning">Valid until {estimate.expiry_date}</p>
+          )}
         </section>
 
         {/* Line items — same structure as the PDF */}
@@ -298,6 +352,23 @@ export default function CustomerView() {
           </div>
         </section>
 
+        {/* How to pay — only once something is actually owed */}
+        {confirmed && estimate.balance > 0 && (
+          <PaymentSection
+            balance={Number(estimate.balance)}
+            amountPaid={Number(estimate.amount_paid)}
+            payToEmail={c?.etransfer_email ?? ''}
+            instructions={c?.etransfer_instructions}
+            orderNumber={estimate.order_number}
+          />
+        )}
+
+        {confirmed && estimate.balance <= 0 && (
+          <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-center text-sm font-medium text-success">
+            Paid in full — thank you!
+          </section>
+        )}
+
         {/* Terms */}
         {estimate.terms && (
           <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
@@ -306,19 +377,31 @@ export default function CustomerView() {
           </section>
         )}
 
-        {confirmError && <p className="mb-2 text-center text-sm text-danger">{confirmError}</p>}
+        {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
+
+        {/* Cancellation — pending notice, or the request form */}
+        {(estimate.cancel_requested_at || canRequestCancel) && (
+          <CancellationRequest
+            pending={Boolean(estimate.cancel_requested_at)}
+            busy={cancelBusy}
+            onRequest={(note) => void handleCancelAction('cancel-request', note)}
+            onWithdraw={() => void handleCancelAction('cancel-withdraw')}
+          />
+        )}
       </div>
 
-      {/* Big confirm button */}
-      <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <button
-          onClick={handleConfirm}
-          disabled={confirming}
-          className="mx-auto flex h-14 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-        >
-          {confirming ? 'Confirming…' : 'Confirm Estimate'}
-        </button>
-      </div>
+      {/* Big confirm button — pre-confirmation only */}
+      {!confirmed && (
+        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <button
+            onClick={handleConfirm}
+            disabled={confirming}
+            className="mx-auto flex h-14 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+          >
+            {confirming ? 'Confirming…' : 'Confirm Estimate'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

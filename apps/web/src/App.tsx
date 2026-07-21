@@ -13,7 +13,7 @@
  */
 
 import { Suspense, lazy, useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -22,7 +22,6 @@ import { useAuth } from './hooks';
 import './App.css';
 
 const Login = lazy(() => import('./pages/Login'));
-const Main = lazy(() => import('./pages/Main'));
 const CustomerList = lazy(() => import('./pages/customers/CustomerList'));
 const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
 const OrderList = lazy(() => import('./pages/orders/OrderList'));
@@ -80,16 +79,16 @@ export default function App() {
             {/* Auth */}
             <Route path="/login" element={<Login />} />
 
-            {/* Authenticated routes */}
-            <Route path="/" element={guard(<Layout><Main /></Layout>)} />
+            {/* Orders are the app's home screen */}
+            <Route path="/" element={guard(<Layout><OrderList /></Layout>)} />
 
             {/* Customers */}
             <Route path="/customers" element={guard(<Layout><CustomerList /></Layout>)} />
             <Route path="/customers/new" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
             <Route path="/customers/:id" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
 
-            {/* Orders */}
-            <Route path="/orders" element={guard(<Layout><OrderList /></Layout>)} />
+            {/* Orders — the list itself lives at "/", so /orders folds into it */}
+            <Route path="/orders" element={<Navigate to="/" replace />} />
             <Route path="/orders/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
             <Route path="/orders/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
             <Route path="/orders/:id/manufacturer" element={guard(<Layout nav={false}><ManufacturerCopy /></Layout>)} />
@@ -100,8 +99,8 @@ export default function App() {
             <Route path="/appointments" element={guard(<Layout nav={false}><AppointmentsList /></Layout>)} />
             <Route path="/appointments/:id" element={guard(<Layout nav={false}><AppointmentDetail /></Layout>)} />
 
-            {/* Legacy /estimates paths redirect to /orders */}
-            <Route path="/estimates" element={guard(<Layout><OrderList /></Layout>)} />
+            {/* Legacy /estimates paths map onto the order screens */}
+            <Route path="/estimates" element={<Navigate to="/" replace />} />
             <Route path="/estimates/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
             <Route path="/estimates/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
 

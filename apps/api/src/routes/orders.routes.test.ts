@@ -560,3 +560,168 @@ describe('POST /api/orders/:id/payments/:paymentId/receipt', () => {
     });
   });
 });
+
+describe('POST /api/orders/:id/cancel-request/resolve', () => {
+  /**
+   * Order with an OPEN cancellation request, in the only window where
+   * one can be granted: awaiting_payment with an empty ledger.
+   */
+  const requestedOrder = (over: Record<string, unknown> = {}) => ({
+    id: 'e6',
+    status: 'awaiting_payment',
+    order_number: 'F0307-127',
+    order_date: '2026-07-03',
+    expiry_date: '2026-07-17',
+    subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
+    public_token: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    terms_snapshot: 'T&C',
+    confirmed_at: '2026-07-20T10:00:00.000Z',
+    cancel_requested_at: '2026-07-21T09:00:00.000Z',
+    cancel_request_note: 'Changed my mind',
+    line_items: [],
+    payments: [],
+    customer: { id: 'c1', first_name: 'A', last_name: 'B', email: 'a@example.com',
+      shipping_address_line1: '', shipping_address_line2: '', shipping_city: '',
+      shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true,
+      billing_address_line1: '', billing_address_line2: '', billing_city: '',
+      billing_province: '', billing_postal_code: '' },
+    ...over,
+  });
+
+  const COMPANY2 = {
+    company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '',
+    hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14,
+  };
+
+  const post = (path: string, body: unknown) =>
+    ordersApp.request(
+      path,
+      { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  /** Same Resend interception used by the receipt suite. */
+  async function withResend(
+    status: number,
+    reply: unknown,
+    run: () => Promise<void>
+  ): Promise<string[]> {
+    const sent: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) {
+        sent.push(String(init?.body ?? ''));
+        return new Response(JSON.stringify(reply), { status });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return sent;
+  }
+
+  it('accepting reverses the confirmation and emails nobody', async () => {
+    db.responses['orders.select'] = [requestedOrder()];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e6/cancel-request/resolve', { accept: true });
+      expect(res.status).toBe(200);
+      expect(db.calls).toContain('orders.update');
+      const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+      expect(logs?.[0]?.message).toBe('Cancellation request accepted — confirmation reversed.');
+    });
+    // Accepting is self-explanatory on the customer's page — no email.
+    expect(sent).toHaveLength(0);
+  });
+
+  it('refuses to accept once a payment exists', async () => {
+    db.responses['orders.select'] = [requestedOrder({ payments: [{ id: 'p1', amount: 25 }] })];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const res = await post('/e6/cancel-request/resolve', { accept: true });
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('refuses to accept an order that has left awaiting_payment', async () => {
+    db.responses['orders.select'] = [requestedOrder({ status: 'ready' })];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const res = await post('/e6/cancel-request/resolve', { accept: true });
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('denying emails the customer, then clears the request', async () => {
+    db.responses['orders.select'] = [requestedOrder()];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e6/cancel-request/resolve', {
+        accept: false,
+        message: 'Already in production.',
+      });
+      expect(res.status).toBe(200);
+      expect(db.calls).toContain('orders.update');
+      const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+      expect(logs?.[0]?.message).toBe(
+        'Cancellation request denied — customer notified at a@example.com.'
+      );
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('F0307-127');
+    expect(sent[0]).toContain('Already in production.');
+  });
+
+  it('502 on a failed denial email leaves the request open for a retry', async () => {
+    db.responses['orders.select'] = [requestedOrder()];
+    db.responses['company_settings.select'] = [COMPANY2];
+    await withResend(401, { message: 'API key is invalid' }, async () => {
+      const res = await post('/e6/cancel-request/resolve', { accept: false });
+      expect(res.status).toBe(502);
+      // Email-then-persist: nothing cleared, nothing logged.
+      expect(db.calls).not.toContain('orders.update');
+      expect(db.insertPayloads['order_logs']).toBeUndefined();
+    });
+  });
+
+  it('denies without a send when the customer has no email on file', async () => {
+    const order = requestedOrder();
+    order.customer.email = '';
+    db.responses['orders.select'] = [order];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e6/cancel-request/resolve', { accept: false });
+      // A missing address must never trap staff in an unresolvable request.
+      expect(res.status).toBe(200);
+      expect(db.calls).toContain('orders.update');
+      const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+      expect(logs?.[0]?.message).toBe(
+        'Cancellation request denied — customer has no email address on file.'
+      );
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('409 when there is no open request', async () => {
+    db.responses['orders.select'] = [requestedOrder({ cancel_requested_at: null })];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const res = await post('/e6/cancel-request/resolve', { accept: true });
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('404 for a missing order', async () => {
+    db.responses['orders.select'] = [];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const res = await post('/nope/cancel-request/resolve', { accept: true });
+    expect(res.status).toBe(404);
+  });
+
+  it('400 on an unknown body field (strict schema)', async () => {
+    db.responses['orders.select'] = [requestedOrder()];
+    db.responses['company_settings.select'] = [COMPANY2];
+    const res = await post('/e6/cancel-request/resolve', { accept: true, status: 'installed' });
+    expect(res.status).toBe(400);
+  });
+});

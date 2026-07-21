@@ -70,6 +70,7 @@ import {
   useSendInvoice,
   useConfirmOrder,
   useUnconfirmOrder,
+  useResolveCancelRequest,
   useMarkInProgress,
   useMarkReady,
   useMarkInstalled,
@@ -324,6 +325,7 @@ export default function OrderDetail() {
   const sendInvoiceMut = useSendInvoice();
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
+  const resolveCancelMut = useResolveCancelRequest();
   const inProgressMut = useMarkInProgress();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
@@ -344,7 +346,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'editItem' | 'bulkEdit' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -373,6 +375,10 @@ export default function OrderDetail() {
   // optional personal message included in the receipt email.
   const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null);
   const [receiptMessage, setReceiptMessage] = useState('');
+
+  // Optional explanation emailed to the customer when DENYING their
+  // cancellation request (accepting sends nothing).
+  const [cancelDenyMessage, setCancelDenyMessage] = useState('');
 
   // Installation propose/change sheet (lives in InstallationSection;
   // lifted here so the ready-status actions panel can open it too).
@@ -776,7 +782,7 @@ export default function OrderDetail() {
     try {
       await deleteMut.mutateAsync(id);
       toast.success('Order deleted.');
-      navigate('/orders');
+      navigate('/');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Delete failed.');
     }
@@ -925,6 +931,62 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Grants the customer's cancellation request. This REVERSES the
+   * confirmation (awaiting_payment → sent), so it is gated behind a
+   * confirm dialog like every other backward move, and the Worker
+   * refuses it outright once a payment exists. No email is sent — the
+   * customer's public page shows the estimate with its Confirm button
+   * again, which speaks for itself.
+   */
+  async function handleAcceptCancel() {
+    if (!id) return;
+    if (
+      !window.confirm(
+        'Cancel this confirmation? The order goes back to Sent and the customer can confirm again.'
+      )
+    ) {
+      return;
+    }
+    try {
+      await resolveCancelMut.mutateAsync({ id, accept: true });
+      toast.success('Cancellation accepted — order returned to Sent.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not accept the request.');
+    }
+  }
+
+  /** Opens the deny sheet, where the optional explanation is written. */
+  function openCancelDeny() {
+    setCancelDenyMessage('');
+    setSheet('cancelDeny');
+  }
+
+  /**
+   * Denies the request. Unlike accepting, this DOES email the customer —
+   * they asked for something and did not get it — so it goes through a
+   * sheet offering an optional explanation. The Worker sends first and
+   * clears the request second, so a 502 leaves the banner up for a retry
+   * instead of dropping the request silently.
+   */
+  async function submitCancelDeny() {
+    if (!id) return;
+    try {
+      await resolveCancelMut.mutateAsync({
+        id,
+        accept: false,
+        message: cancelDenyMessage.trim() || undefined,
+      });
+      toast.success(
+        customer?.email ? `Request denied — ${customer.email} notified.` : 'Request denied.'
+      );
+      setSheet('none');
+      setCancelDenyMessage('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not deny the request.');
+    }
+  }
+
   async function handlePdf() {
     const savedId = id ?? (await save());
     if (!savedId) return;
@@ -940,7 +1002,7 @@ export default function OrderDetail() {
   if (id && loadingExisting) {
     return (
       <div className="min-h-screen bg-surface-muted">
-        <PageHeader title="Order" backTo="/orders" />
+        <PageHeader title="Order" backTo="/" />
         <p className="p-4 text-text-muted">Loading…</p>
       </div>
     );
@@ -948,7 +1010,7 @@ export default function OrderDetail() {
   if (id && loadError) {
     return (
       <div className="min-h-screen bg-surface-muted">
-        <PageHeader title="Order" backTo="/orders" />
+        <PageHeader title="Order" backTo="/" />
         <p className="p-4 text-danger">{loadError.message}</p>
       </div>
     );
@@ -1106,6 +1168,55 @@ export default function OrderDetail() {
         {ICONS.payment}
         Record Payment
       </button>
+    </section>
+  );
+
+  /**
+   * Red warning shown above the Progress card while the customer has an
+   * open cancellation request (raised from their public page; it changes
+   * no status by itself).
+   *
+   * Red is deliberate — this is the one thing on the page that needs an
+   * answer before anything else proceeds. The customer's own page shows
+   * the same request in a neutral style, where red would read as an
+   * error rather than a call to act.
+   *
+   * Confirm reverses the confirmation; Deny keeps it and emails the
+   * customer. Both are disabled together while either call is in flight.
+   */
+  const cancelRequestBanner = existing?.cancel_requested_at && (
+    <section className="rounded-sm border border-danger bg-danger/10 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <span aria-hidden="true">⚠️</span>
+        <h2 className="text-sm font-semibold text-danger">Cancellation requested</h2>
+      </div>
+      <p className="text-[13px] text-text-secondary">
+        The customer asked to cancel their confirmation on{' '}
+        {new Date(existing.cancel_requested_at).toLocaleDateString()}.
+      </p>
+      {existing.cancel_request_note?.trim() && (
+        <p className="mt-2 rounded-sm bg-surface p-2.5 text-[13px] break-words whitespace-pre-wrap text-text-secondary">
+          {existing.cancel_request_note.trim()}
+        </p>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={handleAcceptCancel}
+          disabled={resolveCancelMut.isPending}
+          className="h-10 flex-1 rounded-sm bg-danger text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-40"
+        >
+          Confirm
+        </button>
+        <button
+          type="button"
+          onClick={openCancelDeny}
+          disabled={resolveCancelMut.isPending}
+          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
+        >
+          Deny
+        </button>
+      </div>
     </section>
   );
 
@@ -1449,13 +1560,16 @@ export default function OrderDetail() {
     <div className="min-h-screen overflow-x-clip bg-surface-muted pb-40 lg:pb-8">
       <PageHeader
         title={id ? existing?.order_number ?? 'Order' : 'New Order'}
-        backTo="/orders"
+        backTo="/"
         right={headerActions}
       />
 
       <div className="mx-auto w-full max-w-lg lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-0">
         {/* ── Form column ── */}
         <div className="flex w-full min-w-0 flex-col gap-4 p-4 lg:p-8">
+          {/* Open cancellation request — needs an answer before anything else */}
+          {cancelRequestBanner}
+
           {/* Progress timeline (revert lives here — outside the disabled fieldset) */}
           {timelineCard}
 
@@ -1986,6 +2100,56 @@ export default function OrderDetail() {
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   {paymentMut.isPending ? 'Saving…' : 'Record Payment'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deny cancellation request (with optional explanation emailed) */}
+      {sheet === 'cancelDeny' && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+          <div
+            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">
+              Deny cancellation request
+            </h2>
+            <p className="mb-3 text-[13px] text-text-muted">
+              {customer?.email
+                ? `The order stays confirmed and we'll email ${customer.email} to let them know.`
+                : 'The order stays confirmed. This customer has no email address on file, so they will not be notified.'}
+            </p>
+            <div className="flex flex-col gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Explanation to include (optional)
+                </span>
+                <textarea
+                  autoFocus
+                  value={cancelDenyMessage}
+                  onChange={(e) => setCancelDenyMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="e.g. Your blinds are already in production, so we're unable to cancel at this stage."
+                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitCancelDeny}
+                  disabled={resolveCancelMut.isPending}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {resolveCancelMut.isPending ? 'Sending…' : 'Deny request'}
                 </button>
               </div>
             </div>

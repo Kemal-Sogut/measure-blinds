@@ -155,6 +155,16 @@ export interface Order {
    * Copy page; `null` = not cut yet. One-way (set once, never reset).
    */
   cut_done_at: string | null;
+  /**
+   * When the customer asked, from the public page, for their confirmation
+   * to be cancelled; `null` = no open request. The request changes no
+   * status by itself — staff answer it on
+   * `POST /orders/:id/cancel-request/resolve`, and either answer clears
+   * this back to `null` (the activity log keeps the history).
+   */
+  cancel_requested_at: string | null;
+  /** The customer's stated reason, shown in the staff warning banner. */
+  cancel_request_note: string;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */
@@ -306,4 +316,12 @@ export interface CompanySettings {
   default_expiry_days: number;
   /** Google review link for the post-installation review request email. */
   google_review_url: string | null;
+  /**
+   * Interac e-Transfer recipient shown to customers on the public order
+   * summary once they have confirmed and still owe a balance. Empty
+   * hides the payment block entirely.
+   */
+  etransfer_email: string | null;
+  /** Optional extra instructions rendered under the e-Transfer address. */
+  etransfer_instructions: string | null;
 }

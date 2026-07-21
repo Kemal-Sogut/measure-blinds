@@ -18,38 +18,75 @@ interface FakeDb {
   appointment: Record<string, unknown> | null;
   updated: boolean;
   calls: string[];
+  /** Payload of the most recent orders UPDATE that passed its guards. */
+  lastUpdate: Record<string, unknown> | null;
 }
-const db: FakeDb = { order: null, appointment: null, updated: false, calls: [] };
+const db: FakeDb = {
+  order: null,
+  appointment: null,
+  updated: false,
+  calls: [],
+  lastUpdate: null,
+};
 
-/** Fake supabase: orders reads return db.order; updates flip status. */
+/**
+ * Fake supabase. Reads return the seeded row; UPDATEs apply their real
+ * payload, but only when every chained filter still matches the current
+ * row — the routes lean on those filters as concurrency guards
+ * (`.eq('status', …)`, `.is('cancel_requested_at', null)`), so a fake
+ * that ignored them would let guarded routes pass untested.
+ *
+ * Filters are enforced on UPDATE only; SELECTs keep returning the seeded
+ * row so token/id lookups stay trivial.
+ */
 function makeBuilder(table: string) {
-  const state = { table, op: 'select', filteredBySentStatus: false };
+  const state = {
+    table,
+    op: 'select',
+    payload: null as Record<string, unknown> | null,
+    guards: [] as Array<(row: Record<string, unknown>) => boolean>,
+  };
   const builder: Record<string, unknown> = {};
   const chain = (name: string) =>
     ((...args: unknown[]) => {
-      if (['insert', 'update', 'delete'].includes(name)) state.op = name;
-      if (name === 'eq' && args[0] === 'status' && args[1] === 'sent') state.filteredBySentStatus = true;
+      if (['insert', 'update', 'delete'].includes(name)) {
+        state.op = name;
+        if (name === 'update') state.payload = args[0] as Record<string, unknown>;
+      }
+      if (name === 'eq') {
+        const [col, val] = args as [string, unknown];
+        state.guards.push((r) => r[col] === val);
+      }
+      if (name === 'is') {
+        const [col, val] = args as [string, unknown];
+        state.guards.push((r) => (r[col] ?? null) === val);
+      }
+      if (name === 'not') {
+        const [col, op, val] = args as [string, string, unknown];
+        if (op === 'is') state.guards.push((r) => (r[col] ?? null) !== val);
+      }
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'lt', 'or', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'not', 'lt', 'or', 'order', 'limit']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
     db.calls.push(`${state.table}.${state.op}`);
     if (state.table === 'company_settings') {
-      return { data: { company_name: 'Blinds Nisa', logo_url: null, email: 'biz@example.com', phone: '', address: '', hst_number: 'HST1' } };
+      return { data: { company_name: 'Blinds Nisa', logo_url: null, email: 'biz@example.com', phone: '', address: '', hst_number: 'HST1', etransfer_email: 'pay@example.com', etransfer_instructions: '50% deposit please.' } };
     }
     if (state.table === 'appointments') return { data: db.appointment };
     if (state.table !== 'orders') return { data: null };
     if (state.op === 'update') {
-      // Mimic the status='sent' guard: only update when still sent.
-      if (state.filteredBySentStatus && (db.order as { status?: string })?.status !== 'sent') {
+      if (!db.order) return { data: null };
+      // Every chained filter must still hold — this is what makes the
+      // routes' racing guards actually testable.
+      if (!state.guards.every((g) => g(db.order as Record<string, unknown>))) {
         return { data: null };
       }
-      if (db.order) {
-        db.order = { ...db.order, status: 'awaiting_payment' };
-        db.updated = true;
-      }
+      db.lastUpdate = state.payload;
+      db.order = { ...db.order, ...(state.payload ?? {}) };
+      db.updated = true;
       return { data: db.order };
     }
     return { data: db.order };
@@ -99,9 +136,22 @@ function sentOrder(): Record<string, unknown> {
     tax_rate: 0.13, tax_amount: 13, total: 113,
     terms_snapshot: 'Terms here',
     confirmed_at: null,
+    cancel_requested_at: null,
+    cancel_request_note: '',
     public_token: TOKEN,
     line_items: [],
+    payments: [],
     customer: { first_name: 'A', last_name: 'B', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '', shipping_postal_code: '' },
+  };
+}
+
+/** A confirmed order awaiting payment — the cancellation-request window. */
+function awaitingOrder(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...sentOrder(),
+    status: 'awaiting_payment',
+    confirmed_at: '2026-07-20T10:00:00.000Z',
+    ...over,
   };
 }
 
@@ -123,7 +173,21 @@ beforeEach(() => {
   db.appointment = null;
   db.updated = false;
   db.calls = [];
+  db.lastUpdate = null;
 });
+
+/** POSTs a JSON body (the cancellation routes accept an optional note). */
+function postJson(path: string, body: unknown) {
+  return publicApp.request(
+    path,
+    {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': `10.0.0.${++ipSeq}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+    ENV
+  );
+}
 
 describe('GET /public/estimate/:token', () => {
   it('rejects malformed tokens with 404', async () => {
@@ -176,6 +240,98 @@ describe('POST /public/estimate/:token/confirm', () => {
   it('409 for a draft order (no token should exist, but belt & braces)', async () => {
     db.order = { ...sentOrder(), status: 'draft' };
     const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('GET /public/estimate/:token — order summary payload', () => {
+  it('computes amount_paid and balance server-side from the ledger', async () => {
+    db.order = awaitingOrder({ payments: [{ amount: 50 }, { amount: '13.00' }] });
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as { data: { amount_paid: number; balance: number } };
+    expect(body.data.amount_paid).toBe(63);
+    expect(body.data.balance).toBe(50);
+  });
+
+  it('never leaks individual payment rows, only the two aggregates', async () => {
+    db.order = awaitingOrder({ payments: [{ amount: 50, note: 'cheque #12' }] });
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(body.data).not.toHaveProperty('payments');
+    expect(JSON.stringify(body.data)).not.toContain('cheque');
+  });
+
+  it('exposes the e-Transfer details and the cancellation flag', async () => {
+    db.order = awaitingOrder({ cancel_requested_at: '2026-07-21T09:00:00.000Z' });
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as {
+      data: { cancel_requested_at: string | null; company: Record<string, unknown> };
+    };
+    expect(body.data.cancel_requested_at).toBe('2026-07-21T09:00:00.000Z');
+    expect(body.data.company.etransfer_email).toBe('pay@example.com');
+    expect(body.data.company.etransfer_instructions).toBe('50% deposit please.');
+  });
+});
+
+describe('POST /public/estimate/:token/cancel-request', () => {
+  it('raises the flag without touching the order status', async () => {
+    db.order = awaitingOrder();
+    const res = await postJson(`/estimate/${TOKEN}/cancel-request`, { note: 'Changed my mind' });
+    expect(res.status).toBe(200);
+    const row = db.order as { status: string; cancel_requested_at: string | null; cancel_request_note: string };
+    expect(row.cancel_requested_at).toBeTruthy();
+    expect(row.cancel_request_note).toBe('Changed my mind');
+    // The customer can ask, but can never move the order themselves.
+    expect(row.status).toBe('awaiting_payment');
+  });
+
+  it('409 before confirmation (nothing to cancel yet)', async () => {
+    db.order = sentOrder();
+    const res = await postJson(`/estimate/${TOKEN}/cancel-request`, {});
+    expect(res.status).toBe(409);
+    expect((db.order as { cancel_requested_at: string | null }).cancel_requested_at).toBeNull();
+  });
+
+  it('409 once a payment has been recorded', async () => {
+    db.order = awaitingOrder({ payments: [{ amount: 25 }] });
+    const res = await postJson(`/estimate/${TOKEN}/cancel-request`, {});
+    expect(res.status).toBe(409);
+    expect((db.order as { cancel_requested_at: string | null }).cancel_requested_at).toBeNull();
+  });
+
+  it('409 when a request is already open (no duplicate notifications)', async () => {
+    db.order = awaitingOrder({ cancel_requested_at: '2026-07-21T09:00:00.000Z' });
+    const res = await postJson(`/estimate/${TOKEN}/cancel-request`, {});
+    expect(res.status).toBe(409);
+  });
+
+  it('truncates an overlong note to 500 characters', async () => {
+    db.order = awaitingOrder();
+    const res = await postJson(`/estimate/${TOKEN}/cancel-request`, { note: 'x'.repeat(900) });
+    expect(res.status).toBe(200);
+    expect((db.lastUpdate?.cancel_request_note as string).length).toBe(500);
+  });
+
+  it('404 for a malformed token before any DB access', async () => {
+    const res = await postJson('/estimate/not-a-uuid/cancel-request', {});
+    expect(res.status).toBe(404);
+    expect(db.calls).toHaveLength(0);
+  });
+});
+
+describe('POST /public/estimate/:token/cancel-withdraw', () => {
+  it('clears an open request', async () => {
+    db.order = awaitingOrder({ cancel_requested_at: '2026-07-21T09:00:00.000Z', cancel_request_note: 'oops' });
+    const res = await postJson(`/estimate/${TOKEN}/cancel-withdraw`, {});
+    expect(res.status).toBe(200);
+    const row = db.order as { cancel_requested_at: string | null; cancel_request_note: string };
+    expect(row.cancel_requested_at).toBeNull();
+    expect(row.cancel_request_note).toBe('');
+  });
+
+  it('409 when there is no request to withdraw', async () => {
+    db.order = awaitingOrder();
+    const res = await postJson(`/estimate/${TOKEN}/cancel-withdraw`, {});
     expect(res.status).toBe(409);
   });
 });

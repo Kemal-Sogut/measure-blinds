@@ -2,17 +2,17 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Order list: segmented status tabs (Active / Awaiting Payment /
- * In Progress / Completed / Expired) and debounced search feed either
- * stacked cards (<lg) or the table (lg+). Rows/cards open the editor;
- * the primary "+ New Order" action is a sticky bar on mobile and lives
- * in the header on desktop.
+ * Order list — the app's home screen, mounted at "/" with the "All"
+ * tab selected. Segmented status tabs (All / Active / Awaiting Payment
+ * / In Progress / Ready / Installed / Expired) and debounced search
+ * feed either stacked cards (<lg) or the table (lg+). Rows/cards open
+ * the editor; the primary "+ New Order" action is a sticky bar on
+ * mobile and lives in the header on desktop.
  */
 
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
@@ -48,11 +48,10 @@ export default function OrderList() {
 
   return (
     <div className="min-h-screen bg-surface-muted pb-24 lg:pb-8">
-      <div className="lg:hidden">
-        <PageHeader title="Orders" backTo="/" />
-      </div>
-
       <div className="mx-auto max-w-lg p-4 lg:max-w-5xl lg:p-8">
+        {/* Mobile title — no back chevron; this is the home screen */}
+        <h1 className="mb-4 text-[22px] font-semibold text-text-primary lg:hidden">Orders</h1>
+
         {/* Desktop header row */}
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-[22px] font-semibold text-text-primary">Orders</h1>

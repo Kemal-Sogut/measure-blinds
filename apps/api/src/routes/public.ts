@@ -9,11 +9,16 @@
  *
  * The customer sees an ESTIMATE (the document we emailed) even though
  * the underlying record is an ORDER. Confirming it moves the order
- * `sent → awaiting_payment` and stamps `confirmed_at`.
+ * `sent → awaiting_payment` and stamps `confirmed_at`. After that the
+ * SAME url keeps working as a live order summary — status tracker,
+ * balance and e-Transfer details — which is why no status-update emails
+ * are sent to customers.
  *
  * Endpoints:
- *   GET  /estimate/:token          customer-facing estimate view data
+ *   GET  /estimate/:token          customer-facing order/estimate view data
  *   POST /estimate/:token/confirm  one-shot confirm (rate-limited)
+ *   POST /estimate/:token/cancel-request   ask to cancel the confirmation
+ *   POST /estimate/:token/cancel-withdraw  take that request back
  *   GET  /appointment/:token       visit proposal (estimate or install)
  *   POST /appointment/:token/confirm  confirm the proposed window
  *   POST /appointment/:token/request  ask for a different time (+note)
@@ -27,7 +32,10 @@
  *
  * NOTE (task: reversible confirmations): the customer can confirm but
  * can NEVER reverse — undoing a confirmation is a user-only action on
- * the authenticated `/api/orders/:id/unconfirm` route.
+ * the authenticated `/api/orders/:id/unconfirm` route. The most a
+ * customer can do is REQUEST cancellation here; the request is a flag
+ * on the order (`cancel_requested_at`) and changes no status by itself.
+ * Staff answer it on `/api/orders/:id/cancel-request/resolve`.
  */
 
 import { Hono } from 'hono';
@@ -39,6 +47,7 @@ import {
   buildConfirmationNoticeHtml,
   buildInstallationNoticeHtml,
   buildAppointmentNoticeHtml,
+  buildCancellationNoticeHtml,
 } from '../lib/email';
 import type { Env } from '../index';
 
@@ -50,15 +59,75 @@ const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 /** Rate limit everything under /public (5 requests/min/IP). */
 app.use('*', rateLimit(5, 60_000));
 
-/** Loads an order (+items/customer) by public token, or null. */
+/**
+ * Loads an order (+items/customer/payments) by public token, or null.
+ *
+ * The `payments(amount)` embed exists solely so the Worker can compute
+ * paid-to-date and the outstanding balance server-side — individual
+ * payment rows are NEVER exposed to the customer, only the two totals
+ * (see the sanitized payload below).
+ */
 async function loadByToken(sb: SupabaseClient, token: string) {
   const { data } = await sb
     .from('orders')
-    .select('*, line_items(*), customer:customers(*)')
+    .select('*, line_items(*), customer:customers(*), payments(amount)')
     .eq('public_token', token)
     .order('position', { referencedTable: 'line_items' })
     .maybeSingle();
   return data;
+}
+
+/**
+ * Sums a payments embed into paid-to-date. Mirrors `sumPayments` in
+ * `routes/orders.ts`; kept local because the public payload deliberately
+ * shares no code path (and no shape) with the authenticated detail
+ * response.
+ */
+function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
+  return (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
+}
+
+/** Statuses in which a confirmation still exists to be cancelled. */
+const CANCELLABLE_STATUS = 'awaiting_payment';
+
+/**
+ * Internal notice when a customer opens or withdraws a cancellation
+ * request. Best effort in the established `/public` style: staff also
+ * see an open request as a red banner on the order page, so a failed
+ * send is logged and never surfaces to the customer.
+ */
+async function notifyCancellationRequest(
+  env: Env,
+  order: Record<string, any>,
+  withdrawn: boolean,
+  note?: string
+): Promise<void> {
+  try {
+    const sb = createSupabaseAdmin(env);
+    const { data: company } = await sb
+      .from('company_settings')
+      .select('email, company_name')
+      .eq('id', 1)
+      .single();
+    if (!company?.email) return;
+    const customerName =
+      `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim();
+    await sendEmail(env, {
+      to: company.email,
+      subject: withdrawn
+        ? `↩️ Cancellation request withdrawn — ${order.order_number}`
+        : `⚠️ Cancellation requested — ${order.order_number}`,
+      html: buildCancellationNoticeHtml({
+        orderNumber: order.order_number,
+        customerName,
+        total: Number(order.total),
+        withdrawn,
+        note,
+      }),
+    });
+  } catch (e) {
+    console.error('Cancellation notification failed:', e);
+  }
 }
 
 /** Defensive expiry: flips stale 'sent' orders to expired in the DB. */
@@ -86,9 +155,17 @@ app.get('/estimate/:token', async (c) => {
 
   const { data: company } = await sb
     .from('company_settings')
-    .select('company_name, logo_url, email, phone, address, hst_number')
+    .select(
+      'company_name, logo_url, email, phone, address, hst_number, ' +
+      'etransfer_email, etransfer_instructions'
+    )
     .eq('id', 1)
     .single();
+
+  // Money is computed here, never accepted from or trusted to the
+  // client (AI_GUIDELINES rule 1). Only the two aggregates cross the
+  // wire — the payments ledger itself stays private.
+  const amountPaid = sumPayments(order.payments);
 
   // Sanitized payload: only what the customer page needs.
   return c.json({
@@ -103,8 +180,11 @@ app.get('/estimate/:token', async (c) => {
       tax_rate: order.tax_rate,
       tax_amount: order.tax_amount,
       total: order.total,
+      amount_paid: amountPaid,
+      balance: Number(order.total) - amountPaid,
       terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,
+      cancel_requested_at: order.cancel_requested_at ?? null,
       customer: {
         first_name: order.customer?.first_name ?? '',
         last_name: order.customer?.last_name ?? '',
@@ -193,6 +273,108 @@ app.post('/estimate/:token/confirm', async (c) => {
   }
 
   return c.json({ data: { status: 'awaiting_payment', total: Number(updated.total) } });
+});
+
+/* ------------------------------------------------------------------ */
+/* Cancellation requests (customer asks, staff answers)                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Customer asks for their confirmation to be cancelled.
+ *
+ * This changes NO order status — it only raises `cancel_requested_at`,
+ * which surfaces as a red banner on the staff order page. Undoing a
+ * confirmation stays a user-only action.
+ *
+ * Accepted only while the order is `awaiting_payment` with zero
+ * payments — precisely the window in which `/api/orders/:id/unconfirm`
+ * would still succeed, so staff can never be handed a request they are
+ * unable to grant. The status half of that rule is re-applied as a DB
+ * guard on the UPDATE, so a payment landing mid-request cannot slip past
+ * the read-then-write gap.
+ *
+ * 404 unknown token · 409 wrong status, payment already recorded, or a
+ * request already open (which also makes a double tap idempotent and
+ * stops duplicate staff notifications).
+ */
+app.post('/estimate/:token/cancel-request', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
+  const note = typeof body.note === 'string' ? body.note.slice(0, 500) : '';
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+
+  if (order.status !== CANCELLABLE_STATUS) {
+    return c.json(
+      { error: 'This order can no longer be cancelled online. Please contact us directly.' },
+      409
+    );
+  }
+  if (sumPayments(order.payments) > 0) {
+    return c.json(
+      { error: 'A payment has already been recorded. Please contact us directly.' },
+      409
+    );
+  }
+  if (order.cancel_requested_at) {
+    return c.json({ error: 'We have already received your cancellation request.' }, 409);
+  }
+
+  const { data: updated, error } = await sb
+    .from('orders')
+    .update({ cancel_requested_at: new Date().toISOString(), cancel_request_note: note })
+    .eq('id', order.id)
+    .eq('status', CANCELLABLE_STATUS)
+    .is('cancel_requested_at', null)
+    .select('id')
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!updated) {
+    return c.json({ error: 'We have already received your cancellation request.' }, 409);
+  }
+
+  await notifyCancellationRequest(c.env, order, false, note);
+  return c.json({ data: { cancel_requested: true } });
+});
+
+/**
+ * Customer takes back a cancellation request they already opened.
+ *
+ * Clears the flag and the note so the staff banner disappears. Guarded
+ * on the flag being set, so a stale tab cannot clear a request that
+ * staff have already answered.
+ *
+ * 404 unknown token · 409 when no request is open.
+ */
+app.post('/estimate/:token/cancel-withdraw', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+  if (!order.cancel_requested_at) {
+    return c.json({ error: 'There is no cancellation request to withdraw.' }, 409);
+  }
+
+  const { data: updated, error } = await sb
+    .from('orders')
+    .update({ cancel_requested_at: null, cancel_request_note: '' })
+    .eq('id', order.id)
+    .not('cancel_requested_at', 'is', null)
+    .select('id')
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!updated) {
+    return c.json({ error: 'There is no cancellation request to withdraw.' }, 409);
+  }
+
+  await notifyCancellationRequest(c.env, order, true);
+  return c.json({ data: { cancel_requested: false } });
 });
 
 /* ------------------------------------------------------------------ */

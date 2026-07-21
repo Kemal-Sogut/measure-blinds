@@ -49,6 +49,10 @@ const companySchema = z
     terms_and_conditions: z.string().max(20_000),
     /** Google review link for the post-installation review request. */
     google_review_url: z.string().url().max(500).or(z.literal('')),
+    /** Interac e-Transfer recipient shown on the public order summary. */
+    etransfer_email: z.string().email().or(z.literal('')),
+    /** Free-text instructions rendered under the e-Transfer address. */
+    etransfer_instructions: z.string().max(1000),
   })
   .partial()
   .strict();

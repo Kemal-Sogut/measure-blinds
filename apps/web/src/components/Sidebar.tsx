@@ -3,7 +3,8 @@
 
 /**
  * Desktop sidebar navigation (design screen 07): fixed 220px rail
- * with the brand mark, the four sections (active item gets a brand
+ * with the brand mark, the four sections — Orders (the home screen at
+ * "/"), Customers, Calendar, Settings — (active item gets a brand
  * tint + 2px left border), and the signed-in user pinned to the
  * bottom. Rendered by Layout on lg+ screens only — mobile keeps the
  * bottom nav.
@@ -12,18 +13,18 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth, useCompanySettings } from '../hooks';
 
-/** Nav destinations; `end` forces exact matching for Home. */
+/** Nav destinations; `end` forces exact matching for Orders at "/". */
 const ITEMS = [
-  { to: '/', label: 'Home', end: true, d: 'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M9 22V12h6v10' },
+  {
+    to: '/',
+    label: 'Orders',
+    end: true,
+    d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h6',
+  },
   {
     to: '/customers',
     label: 'Customers',
     d: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 100-8 4 4 0 000 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
-  },
-  {
-    to: '/orders',
-    label: 'Orders',
-    d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h6',
   },
   {
     to: '/calendar',

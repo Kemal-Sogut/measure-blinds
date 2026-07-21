@@ -225,7 +225,7 @@ export default function ManufacturerCopy() {
     <div className="min-h-screen bg-surface-muted print:bg-white">
       <PageHeader
         title="Manufacturer Copy"
-        backTo={id ? `/orders/${id}` : '/orders'}
+        backTo={id ? `/orders/${id}` : '/'}
         right={
           <button
             onClick={() => window.print()}

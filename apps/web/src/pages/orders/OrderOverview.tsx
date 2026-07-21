@@ -233,7 +233,7 @@ export default function OrderOverview() {
     <div className="min-h-screen bg-surface-muted print:bg-white">
       <PageHeader
         title="Order Overview"
-        backTo={id ? `/orders/${id}` : '/orders'}
+        backTo={id ? `/orders/${id}` : '/'}
         right={
           <button
             onClick={() => window.print()}

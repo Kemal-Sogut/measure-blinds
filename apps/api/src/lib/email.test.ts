@@ -17,6 +17,8 @@ import {
   buildAppointmentReminderHtml,
   buildInstallReminderHtml,
   buildReviewRequestHtml,
+  buildCancellationDeniedHtml,
+  buildCancellationNoticeHtml,
 } from './email';
 
 describe('escapeHtml', () => {
@@ -212,5 +214,59 @@ describe('buildConfirmationNoticeHtml', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('F2606-1226');
     expect(html).toContain('$500.00');
+  });
+});
+
+describe('buildCancellationDeniedHtml', () => {
+  const base = {
+    company: { name: 'Blinds Nisa', email: 'info@blindsnisa.com' },
+    customerFirstName: 'Ada',
+    orderNumber: 'F2606-1226',
+    total: 500,
+    viewUrl: 'https://app.example.com/customer/tok',
+  };
+
+  it('escapes the consultant message, which is free text staff type', () => {
+    const html = buildCancellationDeniedHtml({
+      ...base,
+      message: '<img src=x onerror=alert(1)>',
+    });
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&lt;img src=x');
+  });
+
+  it('states the order still stands and links back to the summary', () => {
+    const html = buildCancellationDeniedHtml(base);
+    expect(html).toContain('About your cancellation request');
+    expect(html).toContain('Still confirmed');
+    expect(html).toContain('$500.00');
+    expect(html).toContain('https://app.example.com/customer/tok');
+  });
+});
+
+describe('buildCancellationNoticeHtml', () => {
+  it('escapes the customer-supplied reason and prompts staff to answer', () => {
+    const html = buildCancellationNoticeHtml({
+      orderNumber: 'F2606-1226',
+      customerName: 'Ada',
+      total: 500,
+      withdrawn: false,
+      note: '<script>alert(1)</script>',
+    });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).toContain('Cancellation requested');
+    expect(html).toContain('confirm or deny');
+  });
+
+  it('reads as a stand-down when the customer withdrew, with no reason line', () => {
+    const html = buildCancellationNoticeHtml({
+      orderNumber: 'F2606-1226',
+      customerName: 'Ada',
+      total: 500,
+      withdrawn: true,
+    });
+    expect(html).toContain('withdrawn');
+    expect(html).not.toContain('Reason:');
   });
 });

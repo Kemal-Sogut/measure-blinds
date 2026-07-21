@@ -33,6 +33,10 @@
  *                         email a branded receipt for one payment with
  *                         server-computed paid-to-date and balance;
  *                         stamps payments.receipt_sent_at on success
+ *   POST   /:id/cancel-request/resolve
+ *                         answer a customer's cancellation request:
+ *                         accept (reverses the confirmation, no email)
+ *                         or deny (keeps it, emails the customer)
  *   POST   /:id/ready     goods ready to install (in_progress → ready)
  *   POST   /:id/installed terminal state (ready → installed)
  *   POST   /:id/revert    move an order back to an earlier stage
@@ -64,6 +68,7 @@ import {
   buildEstimateEmailHtml,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
+  buildCancellationDeniedHtml,
 } from '../lib/email';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
@@ -136,6 +141,18 @@ const paymentSchema = z
 /** Optional consultant note accepted when emailing an estimate/invoice/receipt. */
 const sendMessageSchema = z
   .object({ message: z.string().max(1000).optional() })
+  .strict();
+
+/**
+ * Payload for POST /:id/cancel-request/resolve.
+ *
+ * `accept` mirrors the `/cut-done { done }` shape. `message` is the
+ * consultant's optional explanation, included in the denial email and
+ * ignored entirely when `accept` is true (an accepted request sends no
+ * email — the order simply returns to `sent`).
+ */
+const resolveCancelSchema = z
+  .object({ accept: z.boolean(), message: z.string().max(1000).optional() })
   .strict();
 
 /** Statuses that accept edits and estimate sends. */
@@ -1127,6 +1144,127 @@ app.post('/:id/payments/:paymentId/receipt', async (c) => {
     sb,
     id,
     `Receipt for $${Number(payment.amount).toFixed(2)} emailed to ${email}.`
+  );
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
+/**
+ * Answers a customer's cancellation request (raised from the public page
+ * at POST /public/estimate/:token/cancel-request).
+ *
+ * `accept: true` grants it — the request flag is cleared AND the
+ * confirmation is reversed (awaiting_payment → sent, confirmed_at
+ * nulled), exactly the transition `/unconfirm` performs. The same
+ * precondition applies: refused once a payment exists, because a
+ * confirmation can never be undone with money on the order. No email is
+ * sent — the customer's page shows the estimate with its Confirm button
+ * again, which is self-explanatory.
+ *
+ * `accept: false` denies it — the flag is cleared, the status is left
+ * alone, and the customer IS emailed (the one outcome worth announcing,
+ * since they asked for something and did not get it).
+ *
+ * Denial uses email-then-persist ordering (SECURITY INVARIANT): a Resend
+ * failure returns 502 with the request still open, so staff can retry
+ * rather than silently dropping a request the customer is waiting on.
+ * The single exception is a customer with no email on file — there the
+ * request is cleared without a send and the activity log records why,
+ * because a missing address must never trap staff in a request they
+ * cannot resolve.
+ *
+ * 404 unknown order · 409 no open request · 409 accept refused once the
+ * order has left awaiting_payment or a payment exists.
+ */
+app.post('/:id/cancel-request/resolve', async (c) => {
+  const parsed = resolveCancelSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const { accept, message } = parsed.data;
+
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const bundle = await loadOrderBundle(sb, id);
+  if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const { order, company } = bundle;
+
+  if (!order.cancel_requested_at) {
+    return c.json({ error: 'There is no cancellation request on this order.' }, 409);
+  }
+
+  const clearRequest = { cancel_requested_at: null, cancel_request_note: '' };
+
+  if (accept) {
+    // Granting the request means reversing the confirmation, so the
+    // unconfirm preconditions apply unchanged.
+    if (order.status !== 'awaiting_payment') {
+      return c.json(
+        { error: `Only an awaiting-payment order can be reversed (this one is ${order.status}).` },
+        409
+      );
+    }
+    if (sumPayments(order.payments) > 0) {
+      return c.json(
+        { error: 'A payment has been recorded — reverse or delete it before cancelling.' },
+        409
+      );
+    }
+    const { error } = await sb
+      .from('orders')
+      .update({ ...clearRequest, status: 'sent', confirmed_at: null })
+      .eq('id', id)
+      .eq('status', 'awaiting_payment');
+    if (error) return c.json({ error: error.message }, 500);
+
+    await logOrderEvent(sb, id, 'Cancellation request accepted — confirmation reversed.');
+    const { data } = await readDetail(sb, id);
+    if (data) data.amount_paid = sumPayments(data.payments);
+    return c.json({ data });
+  }
+
+  // Denial: email first, persist second.
+  const email = order.customer?.email;
+  if (email) {
+    const publicToken: string = order.public_token ?? crypto.randomUUID();
+    const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+    try {
+      await sendEmail(c.env, {
+        to: email,
+        subject: `About your cancellation request — ${order.order_number}`,
+        html: buildCancellationDeniedHtml({
+          company: brandFromSettings(company),
+          customerFirstName: order.customer.first_name,
+          orderNumber: order.order_number,
+          total: Number(order.total),
+          viewUrl,
+          message,
+        }),
+      });
+    } catch (e) {
+      // Request stays open so staff can retry — never silently dropped.
+      return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+    }
+    // The link we just emailed must resolve, so persist a freshly
+    // minted token (same reuse-or-mint rule as the send routes).
+    if (!order.public_token) {
+      const { error } = await sb
+        .from('orders')
+        .update({ public_token: publicToken })
+        .eq('id', id);
+      if (error) return c.json({ error: error.message }, 500);
+    }
+  }
+
+  const { error } = await sb.from('orders').update(clearRequest).eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(
+    sb,
+    id,
+    email
+      ? `Cancellation request denied — customer notified at ${email}.`
+      : 'Cancellation request denied — customer has no email address on file.'
   );
 
   const { data } = await readDetail(sb, id);

@@ -440,6 +440,55 @@ export function buildReceiptEmailHtml(i: ReceiptEmailInputs): string {
   return brandedShell(i.company, body);
 }
 
+/** Inputs for the customer-facing cancellation-denied email. */
+export interface CancellationDeniedInputs {
+  company: CompanyBrand;
+  customerFirstName: string;
+  orderNumber: string;
+  /** Order total, restated so the customer knows what still stands. */
+  total: number;
+  /** Public order summary page the CTA button links to. */
+  viewUrl: string;
+  /** Optional explanation typed by the consultant when denying. */
+  message?: string;
+}
+
+/**
+ * Builds the branded email sent when the business DENIES a customer's
+ * request to cancel their confirmation (same "Customer Emails" visual
+ * system as the estimate, invoice and receipt templates).
+ *
+ * This is the only outcome of a cancellation request that is announced
+ * by email. An ACCEPTED request sends nothing: accepting returns the
+ * order to `sent`, so the customer's public page shows the estimate with
+ * its Confirm button again, which speaks for itself.
+ *
+ * The tone matters here — the customer asked for something and did not
+ * get it — so the template leads with the decision, restates what is
+ * still owed, gives the consultant's optional explanation prominence,
+ * and closes by inviting a reply. All dynamic strings are HTML-escaped;
+ * the total is server-computed by the caller.
+ */
+export function buildCancellationDeniedHtml(i: CancellationDeniedInputs): string {
+  const company = escapeHtml(i.company.name);
+  const name = escapeHtml(i.customerFirstName);
+  const order = escapeHtml(i.orderNumber);
+  const url = escapeHtml(i.viewUrl);
+  const body = `${headingHtml('About your cancellation request')}
+    ${introHtml(`Hi ${name} &mdash; thank you for getting in touch. We&#39;ve reviewed your request to cancel order ${order}, and we&#39;re not able to cancel it at this stage. Your order stands as confirmed and we&#39;re carrying on with it.`)}
+    ${summaryCardHtml({
+      eyebrow: 'Still confirmed',
+      badge: order,
+      rows: [['Company', company]],
+      total: { label: 'Order total', amount: i.total },
+    })}
+    ${messageBlockHtml(i.message)}
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View your order')}</div>
+    ${finePrintHtml(`If you think this is a mistake, or you&#39;d like to talk it through, just reply to this email &mdash; we read every one.`)}
+    ${linkFallbackHtml(url)}`;
+  return brandedShell(i.company, body);
+}
+
 /** Inputs for the customer-facing installation-time proposal email. */
 export interface InstallationProposalInputs {
   company: CompanyBrand;
@@ -695,6 +744,49 @@ export function buildAppointmentNoticeHtml(i: InstallationNoticeInputs): string 
   <div style="max-width:560px;margin:0 auto;padding:24px">
     <h2 style="margin:0 0 12px">${headline}</h2>
     <p style="margin:0 0 8px">${body}</p>
+  </div>
+</body></html>`;
+}
+
+/** Inputs for the internal "cancellation request" notification. */
+export interface CancellationNoticeInputs {
+  orderNumber: string;
+  customerName: string;
+  total: number;
+  /** true = the customer withdrew a request they had already opened */
+  withdrawn: boolean;
+  /** the customer's stated reason (request only, never on withdrawal) */
+  note?: string;
+}
+
+/**
+ * Builds the internal notification sent to the business when a customer
+ * opens — or withdraws — a request to cancel their confirmation.
+ *
+ * Staff also see an open request as a red banner above the Progress card
+ * on the order page, so this email is a prompt, not the system of
+ * record; delivery failure never blocks the customer's action. The
+ * customer's reason is free text and is escaped like every other dynamic
+ * string.
+ */
+export function buildCancellationNoticeHtml(i: CancellationNoticeInputs): string {
+  const order = escapeHtml(i.orderNumber);
+  const name = escapeHtml(i.customerName);
+  const note = escapeHtml(i.note ?? '');
+  const headline = i.withdrawn
+    ? `↩️ Cancellation request withdrawn`
+    : `⚠️ Cancellation requested`;
+  const body = i.withdrawn
+    ? `<strong>${name}</strong> withdrew their request to cancel order <strong>${order}</strong>. Nothing further is needed — the order is still confirmed.`
+    : `<strong>${name}</strong> asked to cancel their confirmation of order <strong>${order}</strong>.` +
+      (note ? `<br>Reason: <em>${note}</em>` : '') +
+      `<br>Open the order to confirm or deny the request.`;
+  return `<!doctype html>
+<html><body style="margin:0;font-family:Arial,Helvetica,sans-serif;color:#212529">
+  <div style="max-width:560px;margin:0 auto;padding:24px">
+    <h2 style="margin:0 0 12px">${headline}</h2>
+    <p style="margin:0 0 8px">${body}</p>
+    <p style="margin:0 0 8px">Order total: <strong>$${i.total.toFixed(2)}</strong> (incl. HST)</p>
   </div>
 </body></html>`;
 }

@@ -5,9 +5,10 @@
  * Bottom navigation bar for top-level sections (mobile-first, per
  * IMPLEMENTATION.md §14: bottom nav preferred over hamburger menus).
  *
- * Five fixed tabs — Home, Customers, Orders, Calendar, Settings — each
- * with an icon + label and a ≥44px tap area (`flex-1` keeps each tab
- * ~20% of a 380px viewport wide, comfortably above the 44px minimum).
+ * Four fixed tabs — Orders, Customers, Calendar, Settings — each with
+ * an icon + label and a ≥44px tap area (`flex-1` keeps each tab ~25%
+ * of a 380px viewport wide, comfortably above the 44px minimum).
+ * Orders is the app's home screen and lives at "/".
  * The active tab is derived from the current location prefix.
  * Rendered only by `Layout`, which wraps section-level pages;
  * detail/form pages omit it to maximize space for their sticky action
@@ -27,16 +28,16 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { to: '/', label: 'Home', end: true, d: 'M3 10.5L12 3l9 7.5M5 9.5V21h5v-6h4v6h5V9.5' },
+  {
+    to: '/',
+    label: 'Orders',
+    end: true,
+    d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6',
+  },
   {
     to: '/customers',
     label: 'Customers',
     d: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM22 21v-2a4 4 0 00-3-3.87M15 3.13A4 4 0 0118 7a4 4 0 01-3 3.87',
-  },
-  {
-    to: '/orders',
-    label: 'Orders',
-    d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zM14 2v6h6M9 13h6M9 17h6',
   },
   {
     to: '/calendar',
