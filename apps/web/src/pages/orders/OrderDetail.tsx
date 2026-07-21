@@ -14,7 +14,11 @@
  * Once confirmed the order also grows a Payments panel (balance = total
  * − payments). Payments can be applied at ANY post-confirmation stage,
  * and "Record Payment" lives in that panel's body rather than in the
- * stage action set — the button sits with the ledger it changes.
+ * stage action set — the button sits with the ledger it changes. Each
+ * payment row also carries a Send Receipt icon action that opens a
+ * confirmation sheet (recipient, amount/date, optional message) and
+ * emails the customer a branded receipt; once sent the row shows a
+ * muted "✓ Receipt sent" marker and the action becomes Resend receipt.
  * Stage actions:
  *   awaiting_payment → Reverse Confirmation (user only)
  *   in_progress      → Mark Ready, Cut Sheet
@@ -66,6 +70,7 @@ import {
   useRevertOrder,
   useDeleteOrder,
   useRecordPayment,
+  useSendReceipt,
   useDeletePayment,
   useUnmatchedEtransfers,
   useDismissEtransfer,
@@ -91,7 +96,7 @@ import {
   type Catalogs,
   type BulkEditState,
 } from './LineItemEditor';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, ControlOption, BlindType, PresetLineItem, DiscountType } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
 
 /** Formats a Date as the API's YYYY-MM-DD. */
 function toIso(d: Date): string {
@@ -318,6 +323,7 @@ export default function OrderDetail() {
   const revertMut = useRevertOrder();
   const deleteMut = useDeleteOrder();
   const paymentMut = useRecordPayment();
+  const receiptMut = useSendReceipt();
   const deletePaymentMut = useDeletePayment();
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
@@ -331,7 +337,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'editItem' | 'bulkEdit'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -355,6 +361,11 @@ export default function OrderDetail() {
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
+
+  // Send-receipt sheet state: the payment row being receipted and the
+  // optional personal message included in the receipt email.
+  const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null);
+  const [receiptMessage, setReceiptMessage] = useState('');
 
   // Installation propose/change sheet (lives in InstallationSection;
   // lifted here so the ready-status actions panel can open it too).
@@ -863,6 +874,45 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Opens the send-receipt confirmation sheet for one recorded payment.
+   * Follows the send-estimate/invoice precedent for a missing customer
+   * email (`openSend`): block here with a toast instead of opening the
+   * sheet, since the receipt cannot be delivered anywhere.
+   */
+  function openReceipt(p: Payment) {
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    setReceiptPayment(p);
+    setReceiptMessage('');
+    setSheet('receipt');
+  }
+
+  /**
+   * Submits the send-receipt sheet. The Worker emails the branded
+   * receipt (computing paid-to-date/balance itself), stamps
+   * `receipt_sent_at`, and returns the refreshed order, so the row's
+   * "Receipt sent" indicator updates from the cache. Server errors
+   * (400 no email / 502 email service) surface as toasts, matching the
+   * other send flows.
+   */
+  async function submitReceipt() {
+    if (!id || !receiptPayment) return;
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    try {
+      await receiptMut.mutateAsync({
+        orderId: id,
+        paymentId: receiptPayment.id,
+        message: receiptMessage.trim() || undefined,
+      });
+      toast.success(`Receipt sent to ${customer.email}.`);
+      setSheet('none');
+      setReceiptPayment(null);
+      setReceiptMessage('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send the receipt.');
+    }
+  }
+
   async function handlePdf() {
     const savedId = id ?? (await save());
     if (!savedId) return;
@@ -965,8 +1015,9 @@ export default function OrderDetail() {
    * Payments + balance panel (confirmed orders only).
    *
    * Lists the ledger the way it is stored — order total, then ONE row
-   * per recorded payment (date · note, amount, delete), then amount
-   * paid and the balance — and owns the "Record Payment" button, which
+   * per recorded payment (date · note, amount, send/resend receipt,
+   * delete), then amount paid and the balance — and owns the "Record
+   * Payment" button, which
    * opens the payment sheet. That button used to live in the sticky
    * action bar / pricing rail; it sits in the panel body so the action
    * is next to the numbers it changes. Rendered at every
@@ -988,9 +1039,25 @@ export default function OrderDetail() {
           <span className="min-w-0 flex-1 truncate text-[13px]">
             {p.paid_on}
             {p.note ? ` · ${p.note}` : ''}
+            {p.receipt_sent_at && (
+              <span className="text-[11px]" title="Receipt sent"> · ✓ Receipt sent</span>
+            )}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
             <span className="font-mono text-[13px]">−${Number(p.amount).toFixed(2)}</span>
+            <button
+              type="button"
+              onClick={() => openReceipt(p)}
+              disabled={receiptMut.isPending}
+              title={p.receipt_sent_at ? 'Resend receipt' : 'Send receipt'}
+              aria-label={`${p.receipt_sent_at ? 'Resend' : 'Send'} receipt for payment of $${Number(p.amount).toFixed(2)}`}
+              className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:opacity-40"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" />
+                <path d="m22 7-10 6L2 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
             <button
               type="button"
               onClick={() => handleDeletePayment(p.id)}
@@ -1957,6 +2024,56 @@ export default function OrderDetail() {
                   {sendMut.isPending || sendInvoiceMut.isPending
                     ? 'Sending…'
                     : `Send ${docLabel}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send receipt bottom sheet (per payment, with optional message) */}
+      {sheet === 'receipt' && receiptPayment && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+          <div
+            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">
+              {receiptPayment.receipt_sent_at ? 'Resend receipt' : 'Send receipt'}
+            </h2>
+            <p className="mb-3 text-[13px] text-text-muted">
+              We&apos;ll email {customer?.email ?? 'the customer'} a receipt for the{' '}
+              <span className="font-mono">${Number(receiptPayment.amount).toFixed(2)}</span> payment
+              received on {receiptPayment.paid_on}, with the order&apos;s balance summary.
+            </p>
+            <div className="flex flex-col gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Message to include (optional)
+                </span>
+                <textarea
+                  autoFocus
+                  value={receiptMessage}
+                  onChange={(e) => setReceiptMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="e.g. Thank you for your payment — we'll be in touch about next steps."
+                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitReceipt}
+                  disabled={receiptMut.isPending || !customer?.email}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {receiptMut.isPending ? 'Sending…' : 'Send Receipt'}
                 </button>
               </div>
             </div>

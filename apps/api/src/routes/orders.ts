@@ -28,6 +28,10 @@
  *   POST   /:id/unconfirm reverse a confirmation (awaiting_payment → sent)
  *   POST   /:id/payments  record a payment (awaiting_payment → in_progress
  *                         on the first one); balance derived from ledger
+ *   POST   /:id/payments/:paymentId/receipt
+ *                         email a branded receipt for one payment with
+ *                         server-computed paid-to-date and balance;
+ *                         stamps payments.receipt_sent_at on success
  *   POST   /:id/ready     goods ready to install (in_progress → ready)
  *   POST   /:id/installed terminal state (ready → installed)
  *   POST   /:id/revert    move an order back to an earlier stage
@@ -58,6 +62,7 @@ import {
   brandFromSettings,
   buildEstimateEmailHtml,
   buildInvoiceEmailHtml,
+  buildReceiptEmailHtml,
 } from '../lib/email';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
@@ -127,7 +132,7 @@ const paymentSchema = z
   })
   .strict();
 
-/** Optional consultant note accepted when emailing an estimate/invoice. */
+/** Optional consultant note accepted when emailing an estimate/invoice/receipt. */
 const sendMessageSchema = z
   .object({ message: z.string().max(1000).optional() })
   .strict();
@@ -276,6 +281,23 @@ const DETAIL_SELECT = '*, line_items(*), customer:customers(*), payments(*)';
 function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
   const total = (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
   return Math.round(total * 100) / 100;
+}
+
+/** Month names for human-facing email dates (no `Intl` — see below). */
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/**
+ * Formats a stored "YYYY-MM-DD" date as "July 21, 2026" for email copy
+ * (e.g. a receipt's paid_on date). Formatted by hand rather than with
+ * `Intl` locale data so the output is identical under workerd and Node
+ * — the same precedent as lib/timeText's `scheduleWindow`.
+ */
+function formatDateLong(dateIso: string): string {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  return `${MONTH_NAMES[m - 1]} ${d}, ${y}`;
 }
 
 /**
@@ -965,6 +987,96 @@ app.delete('/:id/payments/:paymentId', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Payment of $${Number(payment.amount).toFixed(2)} deleted.`);
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
+/**
+ * Emails the customer a branded receipt for ONE recorded payment, with
+ * an optional consultant note. Paid-to-date and the remaining balance
+ * are computed server-side from the payments ledger and the order total
+ * — nothing money-related is accepted from the client (AUTHORITATIVE
+ * PRICING rule). The order's lifecycle stage is NOT changed. The public
+ * token is reused (minted + persisted if the order was never emailed,
+ * exactly like send-invoice) so the "View your order" link always works.
+ *
+ * Email-then-persist ordering: `payments.receipt_sent_at` is stamped and
+ * the activity log written ONLY after Resend confirms the send; a failed
+ * send returns 502 and leaves the payment row untouched. Resending is
+ * always allowed — the stamp simply moves forward.
+ */
+app.post('/:id/payments/:paymentId/receipt', async (c) => {
+  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const message = parsed.data.message;
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const paymentId = c.req.param('paymentId');
+  const bundle = await loadOrderBundle(sb, id);
+  if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const { order, company } = bundle;
+
+  // The payment must exist AND belong to this order — the ledger from
+  // readDetail is already scoped to the order, so a lookup suffices.
+  const payment = (order.payments ?? []).find((p: { id: string }) => p.id === paymentId);
+  if (!payment) return c.json({ error: 'Payment not found on this order.' }, 404);
+
+  const email = order.customer?.email;
+  if (!email) return c.json({ error: 'This customer has no email address on file.' }, 400);
+
+  const publicToken: string = order.public_token ?? crypto.randomUUID();
+  const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
+  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+
+  // Server-authoritative money: both figures derive from the DB ledger.
+  const paidToDate = sumPayments(order.payments);
+  const balance = Math.round((Number(order.total) - paidToDate) * 100) / 100;
+
+  try {
+    await sendEmail(c.env, {
+      to: email,
+      subject: `Your payment receipt ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
+      html: buildReceiptEmailHtml({
+        company: brandFromSettings(company),
+        customerFirstName: order.customer.first_name,
+        orderNumber: order.order_number,
+        paymentAmount: Number(payment.amount),
+        paidOnText: formatDateLong(payment.paid_on),
+        orderTotal: Number(order.total),
+        paidToDate,
+        balance,
+        viewUrl,
+        message,
+      }),
+    });
+  } catch (e) {
+    // Send failed → no DB writes at all (no stamp, no token, no log).
+    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+  }
+
+  // Persist the token (and terms snapshot) if this order had never been
+  // emailed; the lifecycle status is deliberately left unchanged.
+  if (!order.public_token) {
+    const { error } = await sb
+      .from('orders')
+      .update({ public_token: publicToken, terms_snapshot: terms })
+      .eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+  }
+
+  const { error: stampError } = await sb
+    .from('payments')
+    .update({ receipt_sent_at: new Date().toISOString() })
+    .eq('id', paymentId);
+  if (stampError) return c.json({ error: stampError.message }, 500);
+
+  await logOrderEvent(
+    sb,
+    id,
+    `Receipt for $${Number(payment.amount).toFixed(2)} emailed to ${email}.`
+  );
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
