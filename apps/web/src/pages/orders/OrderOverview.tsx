@@ -6,100 +6,192 @@
  *
  * A read-only, print-friendly itemised listing of an order, opened in a
  * NEW TAB from the Order Overview action available at every post-draft
- * stage on the order detail page. It fetches the order and renders each
- * line item in an organized format:
+ * stage on the order detail page. It fetches the order and renders the
+ * line items as TABLES — one column per field, and a SEPARATE table per
+ * blind type (Roller, Zebra, …, grouped by the snapshotted
+ * `blinds_type`), plus one "Other Items" table for preset/custom lines:
  *
- *   - Blind items: room name, blind type, size (panel widths × height),
- *     material, colour, cassette, control, quantity, note and line total.
- *   - Preset/custom items: description, quantity × unit price and total.
+ *   - Blind tables: Room | Size (cm) | Material | Colour | Cassette |
+ *     Control | Qty | Unit | Total | Note.
+ *   - Other Items: Type | Description | Qty | Unit | Total.
  *
  * All names and money come from the SERVER row — the snapshotted
  * `material_name` / `cassette_name` / `control_name` and the stored
  * `unit_price` / `line_total` / totals — so the page reflects exactly
  * what was priced, independent of later catalog changes and of any
- * unsaved edits on the detail page. A Print button (hidden on paper)
- * calls `window.print()`.
+ * unsaved edits on the detail page. Tables scroll horizontally on
+ * narrow screens; a Print button (hidden on paper) calls
+ * `window.print()`.
  */
 
+import { useMemo, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import { useOrder } from '../../hooks/useOrders';
 import type { LineItem } from '../../types';
 
-/** Formats a number as dollars, e.g. `$1,234.50` without the comma grouping. */
+/** Formats a number as dollars, e.g. `$1234.50`. */
 function money(value: number | null | undefined): string {
   return `$${(Number(value) || 0).toFixed(2)}`;
 }
 
-/** One "label: value" detail row inside a blind item card. */
-function DetailRow({ label, value }: { label: string; value: string }) {
+/** Sums a group's stored line totals for the table-header subtotal. */
+function groupTotal(items: LineItem[]): number {
+  return items.reduce((sum, it) => sum + (Number(it.line_total) || 0), 0);
+}
+
+/** Shared table header cell (matches the app's grid-table header style). */
+function Th({ children, right = false }: { children: ReactNode; right?: boolean }) {
   return (
-    <div className="flex gap-3 text-[13px]">
-      <span className="w-[76px] shrink-0 text-text-muted">{label}</span>
-      <span className="min-w-0 flex-1 text-text-secondary">{value}</span>
-    </div>
+    <th
+      className={`whitespace-nowrap px-3 py-2 text-xs font-semibold uppercase tracking-wide text-text-muted ${right ? 'text-right' : 'text-left'}`}
+    >
+      {children}
+    </th>
+  );
+}
+
+/** Shared table body cell. `mono` marks money/size figures. */
+function Td({
+  children,
+  right = false,
+  mono = false,
+}: {
+  children: ReactNode;
+  right?: boolean;
+  mono?: boolean;
+}) {
+  return (
+    <td
+      className={`px-3 py-2 text-[13px] text-text-secondary ${right ? 'text-right' : 'text-left'} ${mono ? 'whitespace-nowrap font-mono' : ''}`}
+    >
+      {children}
+    </td>
   );
 }
 
 /**
- * Renders one persisted line item. Blinds get the full detail block from
- * the snapshotted option names; preset/custom lines are a single
- * description + qty × unit price row.
+ * Card wrapper for one item table: a title row (group name, item count,
+ * group subtotal) above a horizontally scrollable table so the many
+ * field columns never squash on phones (the page body never scrolls
+ * sideways).
  */
-function ItemRow({ item, index }: { item: LineItem; index: number }) {
-  if (item.item_type !== 'blind') {
-    return (
-      <li className="flex flex-col gap-1 py-3 print:break-inside-avoid">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="min-w-0 text-sm font-medium text-text-primary">
-            {item.description || `Item ${index + 1}`}
-          </span>
-          <span className="shrink-0 font-mono text-[13px] text-text-primary">
-            {money(item.line_total)}
-          </span>
-        </div>
-        <span className="text-[13px] text-text-muted">
-          {item.item_type === 'preset' ? 'Preset item' : 'Custom item'} · Qty {item.quantity} ×{' '}
-          {money(item.unit_price)}
-        </span>
-      </li>
-    );
-  }
-
-  const widths = item.panels.filter((w) => w > 0);
-  const details: [string, string][] = [
-    ['Type', item.blinds_type || '—'],
-    [
-      'Size',
-      widths.length ? `${widths.join(' + ')} × ${item.height_cm ?? '—'} cm` : '—',
-    ],
-    ['Material', item.material_name ?? '—'],
-  ];
-  if (item.color) details.push(['Colour', item.color]);
-  details.push(
-    ['Cassette', item.cassette_name ?? '—'],
-    ['Control', item.control_name ?? '—'],
-    ['Quantity', `${item.quantity} × ${money(item.unit_price)}`]
-  );
-  if (item.note) details.push(['Note', item.note]);
-
+function TableCard({
+  title,
+  items,
+  children,
+}: {
+  title: string;
+  items: LineItem[];
+  children: ReactNode;
+}) {
   return (
-    <li className="flex flex-col gap-1.5 py-3 print:break-inside-avoid">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="min-w-0 text-sm font-medium text-text-primary">
-          {item.room_name || `Blind ${index + 1}`}
-        </span>
-        <span className="shrink-0 font-mono text-[13px] text-text-primary">
-          {money(item.line_total)}
+    <section className="rounded-lg border border-border bg-surface print:break-inside-avoid">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-border px-4 py-3">
+        <h3 className="text-base font-semibold text-text-primary">
+          {title}{' '}
+          <span className="text-sm font-normal text-text-muted">
+            ({items.length} item{items.length !== 1 ? 's' : ''})
+          </span>
+        </h3>
+        <span className="font-mono text-sm font-semibold text-text-primary">
+          {money(groupTotal(items))}
         </span>
       </div>
-      <div className="flex flex-col gap-1">
-        {details.map(([label, value]) => (
-          <DetailRow key={label} label={label} value={value} />
-        ))}
-      </div>
-    </li>
+      <div className="overflow-x-auto">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One blind type's table — a row per blind with one column per field.
+ * Sizes are `panel widths × height` in cm; option names are the
+ * pricing-time snapshots stored on the line item.
+ */
+function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) {
+  return (
+    <TableCard title={title} items={items}>
+      <table className="w-full min-w-[760px] border-collapse">
+        <thead>
+          <tr className="border-b border-border bg-surface-muted">
+            <Th>Room</Th>
+            <Th>Size (cm)</Th>
+            <Th>Material</Th>
+            <Th>Colour</Th>
+            <Th>Cassette</Th>
+            <Th>Control</Th>
+            <Th right>Qty</Th>
+            <Th right>Unit</Th>
+            <Th right>Total</Th>
+            <Th>Note</Th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-light">
+          {items.map((item, i) => {
+            const widths = item.panels.filter((w) => w > 0);
+            return (
+              <tr key={item.id}>
+                <Td>{item.room_name || `Blind ${i + 1}`}</Td>
+                <Td mono>
+                  {widths.length ? `${widths.join(' + ')} × ${item.height_cm ?? '—'}` : '—'}
+                </Td>
+                <Td>{item.material_name ?? '—'}</Td>
+                <Td>{item.color || '—'}</Td>
+                <Td>{item.cassette_name ?? '—'}</Td>
+                <Td>{item.control_name ?? '—'}</Td>
+                <Td right mono>
+                  {item.quantity}
+                </Td>
+                <Td right mono>
+                  {money(item.unit_price)}
+                </Td>
+                <Td right mono>
+                  {money(item.line_total)}
+                </Td>
+                <Td>{item.note || '—'}</Td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableCard>
+  );
+}
+
+/** The preset/custom lines table — one column per field. */
+function FlatItemsTable({ items }: { items: LineItem[] }) {
+  return (
+    <TableCard title="Other Items" items={items}>
+      <table className="w-full min-w-[520px] border-collapse">
+        <thead>
+          <tr className="border-b border-border bg-surface-muted">
+            <Th>Type</Th>
+            <Th>Description</Th>
+            <Th right>Qty</Th>
+            <Th right>Unit</Th>
+            <Th right>Total</Th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-light">
+          {items.map((item, i) => (
+            <tr key={item.id}>
+              <Td>{item.item_type === 'preset' ? 'Preset' : 'Custom'}</Td>
+              <Td>{item.description || `Item ${i + 1}`}</Td>
+              <Td right mono>
+                {item.quantity}
+              </Td>
+              <Td right mono>
+                {money(item.unit_price)}
+              </Td>
+              <Td right mono>
+                {money(item.line_total)}
+              </Td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }
 
@@ -110,9 +202,27 @@ export default function OrderOverview() {
   const customerName = order?.customer
     ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
     : '';
-  const items = order?.line_items ?? [];
+  // Stable reference so the grouping memos below don't recompute (and
+  // re-trigger the exhaustive-deps rule) on every render.
+  const lineItems = order?.line_items;
+  const items = useMemo(() => lineItems ?? [], [lineItems]);
   const amountPaid = Number(order?.amount_paid ?? 0);
   const balance = order ? Math.round((Number(order.total) - amountPaid) * 100) / 100 : 0;
+
+  // One table per blind type (insertion order preserved), plus one
+  // trailing group for preset/custom lines.
+  const blindGroups = useMemo(() => {
+    const groups = new Map<string, LineItem[]>();
+    for (const item of items) {
+      if (item.item_type !== 'blind') continue;
+      const type = item.blinds_type || 'Blind';
+      const group = groups.get(type);
+      if (group) group.push(item);
+      else groups.set(type, [item]);
+    }
+    return [...groups.entries()];
+  }, [items]);
+  const flatItems = useMemo(() => items.filter((it) => it.item_type !== 'blind'), [items]);
 
   return (
     <div className="min-h-screen bg-surface-muted print:bg-white">
@@ -152,21 +262,16 @@ export default function OrderOverview() {
               <StatusBadge status={order.status} />
             </div>
 
-            {/* Itemised listing */}
-            <section className="rounded-lg border border-border bg-surface p-4">
-              <h3 className="mb-1 text-base font-semibold text-text-primary">
-                Items ({items.length})
-              </h3>
-              {items.length === 0 ? (
-                <p className="py-2 text-[13px] text-text-muted">This order has no items.</p>
-              ) : (
-                <ul className="divide-y divide-border">
-                  {items.map((item, i) => (
-                    <ItemRow key={item.id} item={item} index={i} />
-                  ))}
-                </ul>
-              )}
-            </section>
+            {/* Itemised tables — one per blind type + Other Items */}
+            {items.length === 0 && (
+              <p className="rounded-lg border border-border bg-surface p-4 text-[13px] text-text-muted">
+                This order has no items.
+              </p>
+            )}
+            {blindGroups.map(([type, group]) => (
+              <BlindTypeTable key={type} title={type} items={group} />
+            ))}
+            {flatItems.length > 0 && <FlatItemsTable items={flatItems} />}
 
             {/* Totals (server-authoritative row values) */}
             <section className="flex flex-col gap-1.5 rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">

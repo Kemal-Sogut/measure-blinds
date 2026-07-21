@@ -22,9 +22,12 @@
  * Every post-draft stage additionally offers an Order Overview action
  * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
  * itemised listing of the line items (sizes, options, notes, totals).
- * On mobile the sticky action bar renders the stage's primary action
- * full-width on its own row and every other action as smaller inline
- * buttons (max three per row, max three rows).
+ * Save (green), Send (blue) and Download (gray) live in the TOP BAR
+ * (PageHeader right slot, icon-only on phones) at every stage; the
+ * action areas hold only the stage-specific actions. On mobile the
+ * sticky action bar renders the stage's primary action full-width on
+ * its own row and every other action as smaller inline buttons (max
+ * three per row, max three rows).
  *
  * Ready/installed orders also show the Installation panel
  * (`InstallationSection`): the scheduled window, the customer's
