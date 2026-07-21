@@ -11,8 +11,8 @@
  * blind type (Roller, Zebra, …, grouped by the snapshotted
  * `blinds_type`), plus one "Other Items" table for preset/custom lines:
  *
- *   - Blind tables: Room | Size (cm) | Material | Colour | Cassette |
- *     Control | Qty | Unit | Total | Note.
+ *   - Blind tables: Room | Width (cm) | Height (cm) | Material |
+ *     Colour | Cassette | Control | Qty | Unit | Total | Note.
  *   - Other Items: Type | Description | Qty | Unit | Total.
  *
  * All names and money come from the SERVER row — the snapshotted
@@ -106,17 +106,19 @@ function TableCard({
 
 /**
  * One blind type's table — a row per blind with one column per field.
- * Sizes are `panel widths × height` in cm; option names are the
- * pricing-time snapshots stored on the line item.
+ * Width and height are separate columns in cm (multi-panel widths join
+ * as `120 + 80`); option names are the pricing-time snapshots stored on
+ * the line item.
  */
 function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) {
   return (
     <TableCard title={title} items={items}>
-      <table className="w-full min-w-[760px] border-collapse">
+      <table className="w-full min-w-[820px] border-collapse">
         <thead>
           <tr className="border-b border-border bg-surface-muted">
             <Th>Room</Th>
-            <Th>Size (cm)</Th>
+            <Th right>Width (cm)</Th>
+            <Th right>Height (cm)</Th>
             <Th>Material</Th>
             <Th>Colour</Th>
             <Th>Cassette</Th>
@@ -133,8 +135,11 @@ function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) 
             return (
               <tr key={item.id}>
                 <Td>{item.room_name || `Blind ${i + 1}`}</Td>
-                <Td mono>
-                  {widths.length ? `${widths.join(' + ')} × ${item.height_cm ?? '—'}` : '—'}
+                <Td right mono>
+                  {widths.length ? widths.join(' + ') : '—'}
+                </Td>
+                <Td right mono>
+                  {item.height_cm ?? '—'}
                 </Td>
                 <Td>{item.material_name ?? '—'}</Td>
                 <Td>{item.color || '—'}</Td>
@@ -243,7 +248,9 @@ export default function OrderOverview() {
         }
       />
 
-      <div className="mx-auto max-w-3xl p-4 lg:p-8">
+      {/* Wide container — the many-column tables need the room to stay
+          readable without horizontal scrolling on desktop. */}
+      <div className="mx-auto max-w-6xl p-4 lg:p-8">
         {isLoading && <p className="p-4 text-text-muted">Loading…</p>}
         {error && <p className="p-4 text-danger">{error.message}</p>}
 
