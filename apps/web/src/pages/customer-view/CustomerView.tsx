@@ -59,6 +59,12 @@ interface PublicLineItem {
   line_total: number;
 }
 
+/** One receipt line in the customer's payment history. */
+interface PublicPayment {
+  amount: number;
+  paid_on: string;
+}
+
 /** Full public order payload rendered by this page. */
 interface PublicEstimate {
   status: string;
@@ -74,6 +80,13 @@ interface PublicEstimate {
   amount_paid: number;
   /** Server-computed `total − amount_paid`. */
   balance: number;
+  /**
+   * The customer's own receipt history, oldest-first. Amount + date
+   * only — the server withholds the ledger's internal columns. Optional
+   * because a Worker predating this field still serves the rest of the
+   * payload; this page treats its absence as an empty history.
+   */
+  payments?: PublicPayment[];
   terms: string;
   /** Set while the customer has an open cancellation request. */
   cancel_requested_at: string | null;
@@ -97,6 +110,20 @@ interface PublicEstimate {
     etransfer_instructions: string;
   } | null;
   line_items: PublicLineItem[];
+}
+
+/**
+ * "July 21, 2026" from a `YYYY-MM-DD` string. The parts are split and
+ * fed to the Date constructor rather than parsed from the string, which
+ * would be read as UTC and render as the previous day west of Greenwich.
+ */
+function receiptDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('en-CA', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
 }
 
 /** Title + attribute lines for one item (mirrors the PDF layout). */
@@ -240,6 +267,10 @@ export default function CustomerView() {
   }
 
   const confirmed = CONFIRMED_STATUSES.includes(estimate.status);
+  // Defaulted, not assumed: if the web app ships ahead of the Worker
+  // this field is absent, and a public page must degrade to "no receipt
+  // history" rather than crash for the customer.
+  const payments = estimate.payments ?? [];
   // A cancellation can only be granted before any money is recorded, so
   // it is only offered in exactly that window — never shown when the
   // server would refuse it.
@@ -350,13 +381,46 @@ export default function CustomerView() {
             <span>Total</span>
             <span className="font-mono">${Number(estimate.total).toFixed(2)}</span>
           </div>
+
+          {/*
+            Receipt history + balance. Confirmed orders only: before
+            confirmation nothing has been paid, so a "Balance due" equal
+            to the total would just restate the line above.
+          */}
+          {confirmed && (
+            <>
+              {payments.length > 0 && (
+                <div className="mt-3 border-t border-border-light pt-2">
+                  <h3 className="mb-1 text-xs font-semibold text-text-muted">PAYMENTS RECEIVED</h3>
+                  {payments.map((p, i) => (
+                    <div key={i} className="flex justify-between text-text-secondary">
+                      <span>{receiptDate(p.paid_on)}</span>
+                      <span className="font-mono">−${Number(p.amount).toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="mt-1 flex justify-between border-t border-border-light pt-1 font-medium text-text-primary">
+                    <span>Paid to date</span>
+                    <span className="font-mono">−${Number(estimate.amount_paid).toFixed(2)}</span>
+                  </div>
+                </div>
+              )}
+              <div className="mt-2 flex justify-between border-t border-border-light pt-2 text-base font-semibold">
+                <span className="text-text-primary">Balance due</span>
+                <span
+                  className={`font-mono ${
+                    Number(estimate.balance) <= 0 ? 'text-success' : 'text-text-primary'
+                  }`}
+                >
+                  ${Number(estimate.balance).toFixed(2)}
+                </span>
+              </div>
+            </>
+          )}
         </section>
 
         {/* How to pay — only once something is actually owed */}
         {confirmed && estimate.balance > 0 && (
           <PaymentSection
-            balance={Number(estimate.balance)}
-            amountPaid={Number(estimate.amount_paid)}
             payToEmail={c?.etransfer_email ?? ''}
             instructions={c?.etransfer_instructions}
             orderNumber={estimate.order_number}

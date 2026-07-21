@@ -246,19 +246,60 @@ describe('POST /public/estimate/:token/confirm', () => {
 
 describe('GET /public/estimate/:token — order summary payload', () => {
   it('computes amount_paid and balance server-side from the ledger', async () => {
-    db.order = awaitingOrder({ payments: [{ amount: 50 }, { amount: '13.00' }] });
+    db.order = awaitingOrder({
+      payments: [
+        { amount: 50, paid_on: '2026-07-05' },
+        { amount: '13.00', paid_on: '2026-07-18' },
+      ],
+    });
     const res = await req(`/estimate/${TOKEN}`);
     const body = (await res.json()) as { data: { amount_paid: number; balance: number } };
     expect(body.data.amount_paid).toBe(63);
     expect(body.data.balance).toBe(50);
   });
 
-  it('never leaks individual payment rows, only the two aggregates', async () => {
-    db.order = awaitingOrder({ payments: [{ amount: 50, note: 'cheque #12' }] });
+  it('returns the receipt history as amount + date, oldest-first', async () => {
+    db.order = awaitingOrder({
+      payments: [
+        { amount: '13.00', paid_on: '2026-07-18' },
+        { amount: 50, paid_on: '2026-07-05' },
+      ],
+    });
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as { data: { payments: unknown[] } };
+    expect(body.data.payments).toEqual([
+      { amount: 50, paid_on: '2026-07-05' },
+      { amount: 13, paid_on: '2026-07-18' },
+    ]);
+  });
+
+  it('withholds the staff-only payment columns from the receipt history', async () => {
+    db.order = awaitingOrder({
+      payments: [
+        {
+          id: 'pay-1',
+          amount: 50,
+          paid_on: '2026-07-05',
+          note: 'cheque #12',
+          receipt_sent_at: '2026-07-06T10:00:00.000Z',
+        },
+      ],
+    });
     const res = await req(`/estimate/${TOKEN}`);
     const body = (await res.json()) as { data: Record<string, unknown> };
-    expect(body.data).not.toHaveProperty('payments');
-    expect(JSON.stringify(body.data)).not.toContain('cheque');
+    expect(body.data.payments).toEqual([{ amount: 50, paid_on: '2026-07-05' }]);
+    const serialized = JSON.stringify(body.data);
+    expect(serialized).not.toContain('cheque');
+    expect(serialized).not.toContain('pay-1');
+    expect(serialized).not.toContain('receipt_sent_at');
+  });
+
+  it('returns an empty receipt history when nothing has been paid', async () => {
+    db.order = awaitingOrder({ payments: [] });
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as { data: { payments: unknown[]; amount_paid: number } };
+    expect(body.data.payments).toEqual([]);
+    expect(body.data.amount_paid).toBe(0);
   });
 
   it('exposes the e-Transfer details and the cancellation flag', async () => {

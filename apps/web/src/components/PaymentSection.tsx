@@ -9,9 +9,10 @@
  * `/public/estimate/:token`) — they used to be a literal in this file,
  * which meant changing where customers send money required a redeploy.
  *
- * Money is display-only here: `balance` is computed server-side from the
- * order total minus the payments ledger and passed straight through.
- * This component never derives an amount (AI_GUIDELINES rule 1).
+ * Instructions only — no money. The receipt history, paid-to-date and
+ * balance due all live in the totals block on the customer page so they
+ * stay visible once an order is paid in full (at which point this
+ * section is unmounted), and so no figure is stated in two places.
  *
  * The caller decides when to mount it — the rule is "confirmed, and
  * still owing" — so this renders unconditionally EXCEPT when no
@@ -23,10 +24,6 @@
  */
 
 interface PaymentSectionProps {
-  /** Outstanding balance, server-computed (total − payments). */
-  balance: number;
-  /** Total already received, server-computed. Shown once non-zero. */
-  amountPaid: number;
   /** e-Transfer recipient from company settings; empty hides the block. */
   payToEmail: string;
   /** Optional extra instructions from company settings. */
@@ -36,8 +33,6 @@ interface PaymentSectionProps {
 }
 
 export default function PaymentSection({
-  balance,
-  amountPaid,
   payToEmail,
   instructions,
   orderNumber,
@@ -53,19 +48,6 @@ export default function PaymentSection({
       <p className="mb-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-center font-medium break-all text-text-primary">
         {payToEmail}
       </p>
-
-      <div className="mb-3 text-sm">
-        {amountPaid > 0 && (
-          <div className="flex justify-between text-text-secondary">
-            <span>Paid to date</span>
-            <span className="font-mono">${amountPaid.toFixed(2)}</span>
-          </div>
-        )}
-        <div className="flex justify-between font-semibold text-text-primary">
-          <span>Balance due</span>
-          <span className="font-mono">${balance.toFixed(2)}</span>
-        </div>
-      </div>
 
       {instructions?.trim() && (
         <p className="mb-2 whitespace-pre-wrap text-xs text-text-secondary">

@@ -62,15 +62,16 @@ app.use('*', rateLimit(5, 60_000));
 /**
  * Loads an order (+items/customer/payments) by public token, or null.
  *
- * The `payments(amount)` embed exists solely so the Worker can compute
- * paid-to-date and the outstanding balance server-side — individual
- * payment rows are NEVER exposed to the customer, only the two totals
- * (see the sanitized payload below).
+ * The `payments(amount, paid_on)` embed lets the Worker compute
+ * paid-to-date and the outstanding balance server-side AND render the
+ * customer's own receipt history. Only those two columns are selected:
+ * the row `id`, the internal `note`, and `receipt_sent_at` are staff
+ * data and never reach the public payload (see the sanitizer below).
  */
 async function loadByToken(sb: SupabaseClient, token: string) {
   const { data } = await sb
     .from('orders')
-    .select('*, line_items(*), customer:customers(*), payments(amount)')
+    .select('*, line_items(*), customer:customers(*), payments(amount, paid_on)')
     .eq('public_token', token)
     .order('position', { referencedTable: 'line_items' })
     .maybeSingle();
@@ -85,6 +86,26 @@ async function loadByToken(sb: SupabaseClient, token: string) {
  */
 function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
   return (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
+}
+
+/** One receipt line on the customer's payment history. */
+interface PublicPayment {
+  amount: number;
+  paid_on: string;
+}
+
+/**
+ * Reduces the payments embed to the receipt history the customer sees:
+ * amount + date only, oldest-first so the list reads as a running
+ * record. Supabase does not guarantee embed ordering, so sort here
+ * rather than relying on insertion order.
+ */
+function publicPayments(
+  payments: Array<{ amount: number | string; paid_on: string }> | null | undefined
+): PublicPayment[] {
+  return (payments ?? [])
+    .map((p) => ({ amount: Number(p.amount), paid_on: p.paid_on }))
+    .sort((a, b) => a.paid_on.localeCompare(b.paid_on));
 }
 
 /** Statuses in which a confirmation still exists to be cancelled. */
@@ -163,8 +184,8 @@ app.get('/estimate/:token', async (c) => {
     .single();
 
   // Money is computed here, never accepted from or trusted to the
-  // client (AI_GUIDELINES rule 1). Only the two aggregates cross the
-  // wire — the payments ledger itself stays private.
+  // client (AI_GUIDELINES rule 1). The aggregates and the amount/date
+  // of each receipt cross the wire; staff-only payment columns do not.
   const amountPaid = sumPayments(order.payments);
 
   // Sanitized payload: only what the customer page needs.
@@ -182,6 +203,7 @@ app.get('/estimate/:token', async (c) => {
       total: order.total,
       amount_paid: amountPaid,
       balance: Number(order.total) - amountPaid,
+      payments: publicPayments(order.payments),
       terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,
       cancel_requested_at: order.cancel_requested_at ?? null,
