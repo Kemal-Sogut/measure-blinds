@@ -128,8 +128,20 @@ function addressLines(a: {
   );
 }
 
-/** Human title + indented attribute lines for one line item. */
-function itemContent(li: PdfDocumentData['line_items'][number]): {
+/**
+ * Human title + indented attribute lines for one line item.
+ *
+ * Blind rows get a "Room — Type" title and the attribute lines in a
+ * fixed print order: Panels, Material, Color, Cassette, Control, Note.
+ * Any attribute that is missing — including a color that is empty or
+ * only whitespace — is dropped rather than printed blank, so the block
+ * never shows a dangling label. Non-blind rows (presets, custom lines)
+ * print their description alone with no attributes.
+ *
+ * Exported for unit tests, which assert the attribute order and the
+ * omission rules without having to parse rendered PDF bytes.
+ */
+export function itemContent(li: PdfDocumentData['line_items'][number]): {
   title: string;
   attrs: string[];
 } {

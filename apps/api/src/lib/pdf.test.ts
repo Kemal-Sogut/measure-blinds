@@ -7,10 +7,14 @@
  * the real pdf-lib pipeline and asserts we get a non-trivial,
  * well-formed PDF byte stream, for both the Estimate and Invoice
  * variants. This catches layout mistakes without visual inspection.
+ *
+ * The second suite covers `itemContent` directly: the rendered bytes
+ * are opaque, so the attribute order and the omission rules for a
+ * blind's indented lines are asserted on the string array instead.
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildDocumentPdf, type PdfDocumentData } from './pdf';
+import { buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
 
 const SAMPLE: PdfDocumentData = {
   docType: 'estimate',
@@ -123,5 +127,70 @@ describe('buildDocumentPdf', () => {
     };
     const bytes = await buildDocumentPdf(minimal);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('itemContent color', () => {
+  const blind: PdfDocumentData['line_items'][number] = {
+    item_type: 'blind',
+    room_name: 'Living Room',
+    blinds_type: 'Roller',
+    panels: [70, 70],
+    height_cm: 200,
+    material_name: 'Blackout White',
+    cassette_name: 'Standard Cassette',
+    control_name: 'Chain Control',
+    color: 'White 02',
+    note: 'Inside mount',
+    description: '',
+    quantity: 1,
+    unit_price: 0,
+    line_total: 0,
+  };
+
+  it('places the Color line after Material and before Cassette when set', () => {
+    const { attrs } = itemContent(blind);
+    const materialIdx = attrs.findIndex((a) => a.startsWith('Material:'));
+    const colorIdx = attrs.findIndex((a) => a === 'Color: White 02');
+    const cassetteIdx = attrs.findIndex((a) => a.startsWith('Cassette:'));
+    expect(colorIdx).toBeGreaterThan(materialIdx);
+    expect(cassetteIdx).toBeGreaterThan(colorIdx);
+  });
+
+  it('prints the full blind attribute block in order', () => {
+    expect(itemContent(blind).attrs).toEqual([
+      'Panels: 70 + 70 cm (total 140 cm) x H 200 cm',
+      'Material: Blackout White',
+      'Color: White 02',
+      'Cassette: Standard Cassette',
+      'Control: Chain Control',
+      'Note: Inside mount',
+    ]);
+  });
+
+  it('trims surrounding whitespace from the color', () => {
+    const { attrs } = itemContent({ ...blind, color: '  Beige 07  ' });
+    expect(attrs).toContain('Color: Beige 07');
+  });
+
+  it('omits the Color line when empty, whitespace, null or absent', () => {
+    const hasColor = (li: PdfDocumentData['line_items'][number]) =>
+      itemContent(li).attrs.some((a) => a.startsWith('Color:'));
+    expect(hasColor({ ...blind, color: '' })).toBe(false);
+    expect(hasColor({ ...blind, color: '   ' })).toBe(false);
+    expect(hasColor({ ...blind, color: null })).toBe(false);
+    expect(hasColor({ ...blind, color: undefined })).toBe(false);
+  });
+
+  it('leaves non-blind items without attribute lines', () => {
+    const preset: PdfDocumentData['line_items'][number] = {
+      ...blind,
+      item_type: 'preset',
+      description: 'Installation — Professional installation per blind',
+    };
+    expect(itemContent(preset)).toEqual({
+      title: 'Installation — Professional installation per blind',
+      attrs: [],
+    });
   });
 });
