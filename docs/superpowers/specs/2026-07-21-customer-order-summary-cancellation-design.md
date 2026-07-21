@@ -33,8 +33,12 @@ same link already emailed with the estimate):
   Settings → Company Info. Replaces the `blindsnisa@gmail.com` literal
   currently hardcoded in `components/PaymentSection.tsx`.
 - **Staff emails:** the business IS notified by email when a customer opens or
-  withdraws a cancellation request. No status emails go to the customer — the
-  tracker replaces them.
+  withdraws a cancellation request.
+- **Customer emails:** exactly one — the customer is emailed when their
+  cancellation request is **denied**. No routine status emails; the tracker
+  replaces those. An *accepted* request needs no email: the order returns to
+  `sent` and the customer's page shows the estimate with its Confirm button
+  again, which is self-explanatory.
 - **Customer tracker stages:** four customer-facing steps — Confirmed ·
   In Production · Ready · Installed. Internal names (`draft`, `sent`) are never
   shown.
@@ -87,10 +91,9 @@ customer confirms ──► awaiting_payment            (unchanged, still one-sh
 The customer never mutates order status — only the request flag. Order status
 changes remain a staff action exclusively.
 
-**Denial is silent to the customer.** The pending notice simply disappears from
-their page; no email is sent. This is a deliberate consequence of "no update
-emails to the customer" and is the most likely candidate for a follow-up
-change.
+**Denial notifies the customer by email** (§5.2). An accepted request does not:
+the order returns to `sent`, and the customer's page shows the estimate with its
+Confirm button again.
 
 ## 3. API — public routes (`apps/api/src/routes/public.ts`)
 
@@ -137,14 +140,22 @@ registered by `app.use('*', rateLimit(5, 60_000))`.
 
 ### `POST /:id/cancel-request/resolve`
 
-- **Body:** `{ accept: boolean }`, zod `.strict()` — mirrors the existing
-  `/cut-done { done: boolean }` shape.
+- **Body:** `{ accept: boolean, message?: string }`, zod `.strict()` — the
+  boolean mirrors the existing `/cut-done { done: boolean }` shape; `message`
+  is the optional staff explanation included in the denial email and is
+  ignored when `accept` is true.
 - **Guards:** 404 unknown order · 409 when no request is open · when
   `accept` is true, the existing unconfirm preconditions apply (must be
   `awaiting_payment`; refused once a payment exists).
 - **`accept: true`:** clears the request AND applies the unconfirm transition
   (`status → 'sent'`, `confirmed_at → null`).
-- **`accept: false`:** clears the request only; status untouched.
+- **`accept: false`:** emails the customer the denial (§5.2), then clears the
+  request; status untouched. **Email-then-persist** (Rule 2): a Resend failure
+  returns 502 and leaves `cancel_requested_at` set, so staff can retry rather
+  than silently dropping the customer's request. If the customer has no email
+  on file the request is cleared anyway and the activity log records that no
+  notice could be sent — a missing address must never trap staff in an
+  unresolvable request.
 - Both call `logOrderEvent` ("Cancellation request accepted — confirmation
   reversed." / "Cancellation request denied.") and return the refreshed detail
   via `readDetail` + `sumPayments`.
@@ -159,9 +170,13 @@ payments(*)'`, so the two new order columns flow through with no query change.
 
 ## 5. Email — `apps/api/src/lib/email.ts`
 
-One new builder, `buildCancellationNoticeHtml`, added to the **internal
-notifications** section at the bottom of the file (below
-`buildAppointmentNoticeHtml`). It is plain staff-facing markup in the style of
+Two new builders, one for each audience. They sit in different halves of the
+file because they follow different rules.
+
+### 5.1 `buildCancellationNoticeHtml` — internal, to staff
+
+Added to the **internal notifications** section at the bottom of the file
+(below `buildAppointmentNoticeHtml`). Plain staff-facing markup in the style of
 `buildInstallationNoticeHtml` — deliberately NOT part of the "Customer Emails"
 branded design system, because it is never seen by a customer.
 
@@ -180,6 +195,35 @@ export interface CancellationNoticeInputs {
 Headline `⚠️ Cancellation requested` / `↩️ Cancellation request withdrawn`.
 Every dynamic string passes through `escapeHtml` (Rule 2) — the note is
 customer-supplied free text and is the reason that matters here.
+
+### 5.2 `buildCancellationDeniedHtml` — customer-facing
+
+Added to the customer-email section, and it DOES follow the "Customer Emails"
+design system: `brandedShell`, heading, intro, `summaryCardHtml`,
+`messageBlockHtml` for the optional staff note, `primaryButtonHtml` CTA and
+`linkFallbackHtml` — the same composition `buildReceiptEmailHtml` uses.
+
+```ts
+export interface CancellationDeniedInputs {
+  company: CompanyBrand;
+  customerFirstName: string;
+  orderNumber: string;
+  total: number;
+  /** optional explanation typed by staff when denying */
+  message?: string;
+  /** link back to the public order summary */
+  viewUrl: string;
+}
+```
+
+Heading: "About your cancellation request". The body states plainly that the
+order is still confirmed and remains in progress, shows the order number and
+total in the summary card, includes the staff note when present, and links back
+to `/customer/:public_token`. All dynamic strings escaped.
+
+The staff **Deny** button therefore opens a small sheet with an optional
+message field before sending, matching the existing Send/Resend receipt sheet
+pattern rather than firing immediately.
 
 ## 6. Web — customer page (`apps/web/src/pages/customer-view/`)
 
@@ -227,7 +271,10 @@ never reach it.
   `timelineCard`, rendered only when `existing.cancel_requested_at` is set. It
   shows the customer's note and two buttons, **Confirm** and **Deny**, wired to
   the resolve route. Placed outside the disabled fieldset, like the Progress
-  card it sits above.
+  card it sits above. **Deny** opens a bottom sheet with an optional message
+  field (sent to the customer in the denial email) before it submits;
+  **Confirm** submits directly after a `window.confirm`, since it reverses the
+  order's status.
 - `hooks/useOrders.ts` — `useResolveCancelRequest()`, invalidating through the
   same `useCacheOrder` callback every other lifecycle mutation uses.
 - `pages/settings/CompanyInfo.tsx` — e-Transfer email + instructions inputs.
@@ -248,7 +295,12 @@ never reach it.
 **`apps/api/src/routes/orders.routes.test.ts`**
 - resolve `accept:true` → status `sent`, `confirmed_at` null, request cleared
 - resolve `accept:true` refused (409) once a payment exists
-- resolve `accept:false` → request cleared, status still `awaiting_payment`
+- resolve `accept:false` → denial email sent, request cleared, status still
+  `awaiting_payment`
+- resolve `accept:false` with a failing Resend → 502 AND `cancel_requested_at`
+  still set (email-then-persist)
+- resolve `accept:false` for a customer with no email → request cleared, no
+  send attempted, 200
 - resolve with no open request → 409
 - unknown order → 404
 
@@ -272,7 +324,8 @@ project `lgbxxlwsdeuhdgzrjjen` before deploying either Worker.
 
 ## Out of scope
 
-- Notifying the customer that a request was denied (see §2).
+- Emailing the customer when a request is **accepted** (see §2) — only denial
+  is announced.
 - Cancelling an order outright, or any refund flow. "Cancellation" here means
   reversing the *confirmation* back to `sent`, nothing more.
 - Online card payment. e-Transfer details are display-only text.
