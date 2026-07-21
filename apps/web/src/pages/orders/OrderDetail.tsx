@@ -19,6 +19,11 @@
  *   ready            → Propose Installation (opens the Installation
  *                      section's sheet), Mark Installed, Record Payment
  *   installed        → Record Payment, Download Invoice
+ * Every post-draft stage additionally offers an Order Overview action
+ * that opens a read-only, itemised listing of the line items (sizes,
+ * options, notes, totals). On mobile the sticky action bar renders the
+ * stage's primary action full-width on its own row and every other
+ * action as smaller inline buttons (max three per row, max three rows).
  *
  * Ready/installed orders also show the Installation panel
  * (`InstallationSection`): the scheduled window, the customer's
@@ -125,6 +130,16 @@ function toDrafts(order: Order): ItemDraft[] {
       unit_price: String(li.unit_price),
     } satisfies FlatDraft;
   });
+}
+
+/**
+ * Resolves a catalog option's display name by id for the Order
+ * Overview sheet. Returns an em dash when the id is unset or no longer
+ * present in the (live) catalog, so the sheet never renders raw ids.
+ */
+function optionName(options: { id: string; name: string }[], optionId: string): string {
+  if (!optionId) return '—';
+  return options.find((o) => o.id === optionId)?.name ?? '—';
 }
 
 /** Short label for a draft in the live-pricing rail. */
@@ -248,6 +263,30 @@ const ICONS = {
       <path d="M17 18h1M12 18h1M7 18h1" />
     </ActionIcon>
   ),
+  overview: (
+    <ActionIcon>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </ActionIcon>
+  ),
+};
+
+/**
+ * One status-aware action rendered by both the desktop pricing-rail
+ * footer and the mobile sticky bar. `label` is the full wording (used
+ * on desktop rows and on the primary button); `short` is the compact
+ * wording used by the mobile inline grid where up to three buttons
+ * share one row. `tone` optionally recolours the button text (e.g. the
+ * success-green Confirm / Mark Installed secondaries).
+ */
+type StageAction = {
+  key: string;
+  icon: ReactNode;
+  label: string;
+  short: string;
+  onClick: () => void;
+  disabled?: boolean;
+  tone?: string;
 };
 
 export default function OrderDetail() {
@@ -288,7 +327,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit' | 'overview'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -464,7 +503,8 @@ export default function OrderDetail() {
   function toggleSelect(key: string) {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -1047,191 +1087,213 @@ export default function OrderDetail() {
   );
 
   /**
-   * Status-aware action buttons (mobile bar + desktop rail).
+   * Builds the status-aware action set consumed by both layouts.
    *
-   * Layout: one primary button that is the key action for the current
-   * stage, any stage-specific secondary actions, then a final 50/50 row
-   * of Send + Download (Send is omitted in a saved Draft, where sending
-   * the estimate is already the primary action). Every button carries an
-   * icon reflecting its action.
+   * `primary` is the single key action for the current stage (null for
+   * expired, which has no key action). `stacked` are the stage-specific
+   * secondary actions; `trailing` is the ever-present Send + Download
+   * pair (Send is dropped in a saved Draft, where sending is already
+   * the primary action). The Order Overview action is included at every
+   * post-draft stage and opens the read-only itemised sheet.
    */
-  const actions = (vertical: boolean) => {
-    const box = vertical ? 'flex flex-col gap-2.5' : 'flex flex-col gap-2';
-    const shared = 'w-full inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
-    const primary = `${vertical ? 'h-[46px]' : 'h-12'} ${shared} bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700`;
-    const secondary = `${vertical ? 'h-10' : 'h-11'} ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
-    const half = `${vertical ? 'h-10' : 'h-11'} inline-flex flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary disabled:opacity-40`;
-
+  const stageActions = (): {
+    primary: StageAction | null;
+    stacked: StageAction[];
+    trailing: StageAction[];
+  } => {
     const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
     const sendLabel = isInvoice
       ? 'Send Invoice'
       : status === 'sent'
         ? 'Resend Estimate'
         : 'Send Estimate';
-    const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
 
-    const sendBtn = (cls: string) => (
-      <button onClick={openSend} disabled={sendDisabled} className={cls}>
-        {ICONS.send}
-        {sendBusy ? 'Sending…' : sendLabel}
-      </button>
-    );
-    const downloadBtn = (cls: string) => (
-      <button onClick={handlePdf} disabled={(!id && !customer) || saving} className={cls}>
-        {ICONS.download}
-        Download {docLabel}
-      </button>
-    );
-    const paymentBtn = (cls: string) => (
-      <button onClick={openPayment} disabled={paymentMut.isPending} className={cls}>
-        {ICONS.payment}
-        Record Payment
-      </button>
-    );
-    const saveBtn = (
-      <button onClick={handleSaveDraft} disabled={!canAct} className={secondary}>
-        {ICONS.save}
-        {saving ? 'Saving…' : 'Save as Draft'}
-      </button>
-    );
-
-    // Final row — Send + Download at 50% each. Send is dropped in a saved
-    // Draft (there it is the primary action), leaving Download full width.
-    const isDraftSaved = Boolean(id) && status === 'draft';
-    const trailingRow = (
-      <div className="flex gap-2.5">
-        {!isDraftSaved && sendBtn(half)}
-        {downloadBtn(half)}
-      </div>
-    );
+    const send: StageAction = {
+      key: 'send',
+      icon: ICONS.send,
+      label: sendBusy ? 'Sending…' : sendLabel,
+      short: sendBusy ? 'Sending…' : status === 'sent' ? 'Resend' : 'Send',
+      onClick: openSend,
+      disabled: sendBusy || saving || !customer || (!isInvoice && items.length === 0),
+    };
+    const download: StageAction = {
+      key: 'download',
+      icon: ICONS.download,
+      label: `Download ${docLabel}`,
+      short: 'Download',
+      onClick: handlePdf,
+      disabled: (!id && !customer) || saving,
+    };
+    const save: StageAction = {
+      key: 'save',
+      icon: ICONS.save,
+      label: saving ? 'Saving…' : 'Save as Draft',
+      short: saving ? 'Saving…' : 'Save',
+      onClick: handleSaveDraft,
+      disabled: !canAct,
+    };
+    const payment: StageAction = {
+      key: 'payment',
+      icon: ICONS.payment,
+      label: 'Record Payment',
+      short: 'Payment',
+      onClick: openPayment,
+      disabled: paymentMut.isPending,
+    };
+    const overview: StageAction = {
+      key: 'overview',
+      icon: ICONS.overview,
+      label: 'Order Overview',
+      short: 'Overview',
+      onClick: () => setSheet('overview'),
+    };
+    const confirm: StageAction = {
+      key: 'confirm',
+      icon: ICONS.confirm,
+      label: 'Confirm',
+      short: 'Confirm',
+      onClick: handleConfirm,
+      disabled: !canAct || !customer || items.length === 0 || confirmMut.isPending,
+    };
 
     // Before Draft (unsaved) — save first.
-    if (!id) {
-      return (
-        <div className={box}>
-          <button onClick={handleSaveDraft} disabled={!canAct} className={primary}>
-            {ICONS.save}
-            {saving ? 'Saving…' : 'Save as Draft'}
-          </button>
-          {trailingRow}
-        </div>
-      );
-    }
+    if (!id) return { primary: save, stacked: [], trailing: [send, download] };
 
-    // Draft — send the estimate.
+    // Draft — send the estimate (no Overview yet; it is a post-draft view).
     if (status === 'draft') {
-      return (
-        <div className={box}>
-          {sendBtn(primary)}
-          {saveBtn}
-          <button
-            onClick={handleConfirm}
-            disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
-            className={`${secondary} text-success`}
-          >
-            {ICONS.confirm}
-            Confirm
-          </button>
-          {trailingRow}
-        </div>
-      );
+      return { primary: send, stacked: [save, { ...confirm, tone: 'text-success' }], trailing: [download] };
     }
 
     // Sent — confirm the order.
     if (status === 'sent') {
-      return (
-        <div className={box}>
-          <button
-            onClick={handleConfirm}
-            disabled={!canAct || !customer || items.length === 0 || confirmMut.isPending}
-            className={`${primary}`}
-          >
-            {ICONS.confirm}
-            Confirm
-          </button>
-          {saveBtn}
-          {trailingRow}
-        </div>
-      );
+      return { primary: confirm, stacked: [save, overview], trailing: [send, download] };
     }
 
     // Awaiting payment — record the payment.
     if (status === 'awaiting_payment') {
-      return (
-        <div className={box}>
-          {paymentBtn(primary)}
-          <button onClick={handleReverse} disabled={unconfirmMut.isPending} className={secondary}>
-            {ICONS.reverse}
-            {unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation'}
-          </button>
-          {saveBtn}
-          {trailingRow}
-        </div>
-      );
+      const reverse: StageAction = {
+        key: 'reverse',
+        icon: ICONS.reverse,
+        label: unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation',
+        short: unconfirmMut.isPending ? 'Reversing…' : 'Reverse',
+        onClick: handleReverse,
+        disabled: unconfirmMut.isPending,
+      };
+      return { primary: payment, stacked: [reverse, save, overview], trailing: [send, download] };
     }
 
     // In progress — mark the order ready; open the workshop cut sheet.
     if (status === 'in_progress') {
-      return (
-        <div className={box}>
-          <button onClick={handleMarkReady} disabled={readyMut.isPending} className={primary}>
-            {ICONS.ready}
-            {readyMut.isPending ? 'Saving…' : 'Mark Ready'}
-          </button>
-          <button
-            onClick={() => id && window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener')}
-            disabled={!id}
-            className={secondary}
-          >
-            {ICONS.manufacturer}
-            See Manufacturer Copy
-          </button>
-          {paymentBtn(secondary)}
-          {saveBtn}
-          {trailingRow}
-        </div>
-      );
+      const markReady: StageAction = {
+        key: 'ready',
+        icon: ICONS.ready,
+        label: readyMut.isPending ? 'Saving…' : 'Mark Ready',
+        short: 'Ready',
+        onClick: handleMarkReady,
+        disabled: readyMut.isPending,
+      };
+      const manufacturer: StageAction = {
+        key: 'manufacturer',
+        icon: ICONS.manufacturer,
+        label: 'See Manufacturer Copy',
+        short: 'Cut Sheet',
+        onClick: () => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener'),
+      };
+      return { primary: markReady, stacked: [manufacturer, payment, save, overview], trailing: [send, download] };
     }
 
     // Ready — propose the installation (emails the customer).
     if (status === 'ready') {
-      return (
-        <div className={box}>
-          <button onClick={() => setInstallSheetOpen(true)} className={primary}>
-            {ICONS.install}
-            Propose Installation
-          </button>
-          <button
-            onClick={handleMarkInstalled}
-            disabled={installedMut.isPending}
-            className={`${secondary} text-success`}
-          >
-            {ICONS.installed}
-            {installedMut.isPending ? 'Saving…' : 'Mark Installed'}
-          </button>
-          {paymentBtn(secondary)}
-          {saveBtn}
-          {trailingRow}
-        </div>
-      );
+      const propose: StageAction = {
+        key: 'install',
+        icon: ICONS.install,
+        label: 'Propose Installation',
+        short: 'Install',
+        onClick: () => setInstallSheetOpen(true),
+      };
+      const markInstalled: StageAction = {
+        key: 'installed',
+        icon: ICONS.installed,
+        label: installedMut.isPending ? 'Saving…' : 'Mark Installed',
+        short: 'Installed',
+        onClick: handleMarkInstalled,
+        disabled: installedMut.isPending,
+        tone: 'text-success',
+      };
+      return { primary: propose, stacked: [markInstalled, payment, save, overview], trailing: [send, download] };
     }
 
     // Installed — payments can still be applied.
     if (status === 'installed') {
+      return { primary: payment, stacked: [save, overview], trailing: [send, download] };
+    }
+
+    // Expired — save (after updating expiry), overview + send/download.
+    return { primary: null, stacked: [save, overview], trailing: [send, download] };
+  };
+
+  /**
+   * Renders the stage's action set for one breakpoint.
+   *
+   * `vertical` (desktop pricing-rail footer): the primary button, then
+   * every stacked secondary full-width, then Send + Download as a 50/50
+   * trailing row — unchanged desktop layout. Otherwise (mobile sticky
+   * bar): the primary action alone on its own full-width row, and ALL
+   * other actions as smaller inline buttons with compact labels, packed
+   * up to three per row, so the bar never exceeds three button rows.
+   */
+  const actions = (vertical: boolean) => {
+    const { primary, stacked, trailing } = stageActions();
+    const shared = 'inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
+    const primaryCls = `${vertical ? 'h-[46px]' : 'h-12'} w-full ${shared} bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700`;
+
+    const fullBtn = (a: StageAction, cls: string) => (
+      <button key={a.key} onClick={a.onClick} disabled={a.disabled} className={`${cls}${a.tone ? ` ${a.tone}` : ''}`}>
+        {a.icon}
+        {a.label}
+      </button>
+    );
+
+    if (vertical) {
+      const secondaryCls = `h-10 w-full ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
+      const halfCls = `h-10 flex-1 ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
       return (
-        <div className={box}>
-          {paymentBtn(primary)}
-          {saveBtn}
-          {trailingRow}
+        <div className="flex flex-col gap-2.5">
+          {primary && fullBtn(primary, primaryCls)}
+          {stacked.map((a) => fullBtn(a, secondaryCls))}
+          {trailing.length > 0 && (
+            <div className="flex gap-2.5">{trailing.map((a) => fullBtn(a, halfCls))}</div>
+          )}
         </div>
       );
     }
 
-    // Expired — send (after updating expiry) + document download.
+    // Mobile: pack secondaries into inline rows of ≤3 (2+2 reads better
+    // than 3+1 when there are exactly four).
+    const inline = [...stacked, ...trailing];
+    const perRow = inline.length === 4 ? 2 : 3;
+    const rows: StageAction[][] = [];
+    for (let i = 0; i < inline.length; i += perRow) rows.push(inline.slice(i, i + perRow));
+    const compactCls =
+      'h-10 min-w-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-sm border border-border-input bg-surface px-1.5 text-[12px] font-medium text-text-secondary disabled:opacity-40';
     return (
-      <div className={box}>
-        {saveBtn}
-        {trailingRow}
+      <div className="flex flex-col gap-2">
+        {primary && fullBtn(primary, primaryCls)}
+        {rows.map((row) => (
+          <div key={row[0].key} className="flex gap-2">
+            {row.map((a) => (
+              <button
+                key={a.key}
+                onClick={a.onClick}
+                disabled={a.disabled}
+                className={`${compactCls}${a.tone ? ` ${a.tone}` : ''}`}
+              >
+                {a.icon}
+                <span className="truncate">{a.short}</span>
+              </button>
+            ))}
+          </div>
+        ))}
       </div>
     );
   };
@@ -1925,6 +1987,112 @@ export default function OrderDetail() {
                 Apply to selected
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Order Overview bottom sheet — read-only itemised listing of the
+          line items with their full details (post-draft stages only). */}
+      {sheet === 'overview' && (
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
+          onClick={() => setSheet('none')}
+        >
+          <div
+            className="max-h-[85vh] w-full overflow-y-auto rounded-t-sm bg-surface p-4 lg:max-w-lg lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-semibold text-text-primary">Order overview</h2>
+              {existing?.order_number && (
+                <span className="font-mono text-[13px] text-text-muted">{existing.order_number}</span>
+              )}
+            </div>
+            {customer && (
+              <p className="mb-3 text-[13px] text-text-muted">
+                {customer.first_name} {customer.last_name}
+              </p>
+            )}
+
+            {items.length === 0 ? (
+              <p className="py-2 text-[13px] text-text-muted">This order has no items.</p>
+            ) : (
+              <ul className="divide-y divide-border border-t border-border">
+                {items.map((it, i) => {
+                  const price =
+                    it.item_type === 'blind' ? blindDraftPrice(it, catalogs) : flatDraftPrice(it);
+
+                  if (it.item_type !== 'blind') {
+                    return (
+                      <li key={it.key} className="flex flex-col gap-1 py-3">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="min-w-0 text-sm font-medium text-text-primary">
+                            {it.description || `Item ${i + 1}`}
+                          </span>
+                          <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                            {price ? `$${price.total.toFixed(2)}` : '—'}
+                          </span>
+                        </div>
+                        <span className="text-[12px] text-text-muted">
+                          {it.item_type === 'preset' ? 'Preset item' : 'Custom item'} · Qty{' '}
+                          {it.quantity || '1'} × ${(Number(it.unit_price) || 0).toFixed(2)}
+                        </span>
+                      </li>
+                    );
+                  }
+
+                  const widths = it.panels.filter(Boolean);
+                  const details: [string, string][] = [
+                    ['Type', it.blinds_type || '—'],
+                    ['Size', widths.length ? `${widths.join(' + ')} × ${it.height_cm || '—'} cm` : '—'],
+                    ['Material', optionName(catalogs.materials, it.material_id)],
+                  ];
+                  if (it.color) details.push(['Colour', it.color]);
+                  details.push(
+                    ['Cassette', optionName(catalogs.cassettes, it.cassette_id)],
+                    ['Control', optionName(catalogs.controls, it.control_id)],
+                    ['Quantity', it.quantity || '1']
+                  );
+                  if (it.note) details.push(['Note', it.note]);
+
+                  return (
+                    <li key={it.key} className="flex flex-col gap-1.5 py-3">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 text-sm font-medium text-text-primary">
+                          {it.room_name || `Blind ${i + 1}`}
+                        </span>
+                        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                          {price ? `$${price.total.toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        {details.map(([label, value]) => (
+                          <div key={label} className="flex gap-3 text-[12px]">
+                            <span className="w-[72px] shrink-0 text-text-muted">{label}</span>
+                            <span className="min-w-0 flex-1 text-text-secondary">{value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            <div className="mt-1 flex items-baseline justify-between border-t border-border pt-3">
+              <span className="text-[13px] text-text-secondary">
+                {items.length} item{items.length !== 1 ? 's' : ''}
+              </span>
+              <span className="font-mono text-sm font-semibold text-text-primary">
+                ${orderTotal.toFixed(2)}
+              </span>
+            </div>
+            <button
+              onClick={() => setSheet('none')}
+              className="mt-3 h-11 w-full rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
