@@ -22,7 +22,8 @@
  * Every post-draft stage additionally offers an Order Overview action
  * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
  * itemised listing of the line items (sizes, options, notes, totals).
- * Save (green), Send (blue) and Download (gray) live in the TOP BAR
+ * Save (green), Send (blue), Download (gray) and Delete (icon-only,
+ * red, saved orders) live in the TOP BAR
  * (PageHeader right slot, icon-only on phones) at every stage; the
  * action areas hold only the stage-specific actions. On mobile the
  * sticky action bar renders the stage's primary action full-width on
@@ -261,6 +262,13 @@ const ICONS = {
     <ActionIcon>
       <path d="M8 6h13M8 12h13M8 18h13" />
       <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </ActionIcon>
+  ),
+  trash: (
+    <ActionIcon>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M10 11v6M14 11v6" />
     </ActionIcon>
   ),
 };
@@ -1269,7 +1277,8 @@ export default function OrderDetail() {
 
   /**
    * Permanent top-bar document actions in the PageHeader's right slot,
-   * colour-coded per the design: Save green, Send blue, Download gray.
+   * colour-coded per the design: Save green, Send blue, Download gray,
+   * Delete red (icon-only, saved orders only).
    * Icon-only on phones (labels appear from sm: up; title/aria-label
    * keep them accessible). Enable rules match the old panel buttons.
    */
@@ -1308,6 +1317,17 @@ export default function OrderDetail() {
         {ICONS.download}
         <span className="hidden sm:inline">Download</span>
       </button>
+      {id && (
+        <button
+          onClick={handleDeleteOrder}
+          disabled={deleteMut.isPending}
+          title={deleteMut.isPending ? 'Deleting…' : 'Delete Order'}
+          aria-label="Delete Order"
+          className={`${headerBtn} border border-border-input bg-surface font-medium text-danger hover:bg-surface-sunken`}
+        >
+          {ICONS.trash}
+        </button>
+      )}
     </div>
   );
 
@@ -1570,17 +1590,6 @@ export default function OrderDetail() {
 
           {/* Payments panel (both breakpoints; confirmed orders) */}
           {paymentsPanel}
-
-          {/* Delete order (outside the disabled fieldset) */}
-          {id && (
-            <button
-              onClick={handleDeleteOrder}
-              disabled={deleteMut.isPending}
-              className="h-11 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
-            >
-              {deleteMut.isPending ? 'Deleting…' : 'Delete Order'}
-            </button>
-          )}
 
           {/* Activity log (very bottom of the page) */}
           {id && (
