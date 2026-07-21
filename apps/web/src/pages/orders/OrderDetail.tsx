@@ -20,10 +20,11 @@
  *                      section's sheet), Mark Installed, Record Payment
  *   installed        → Record Payment, Download Invoice
  * Every post-draft stage additionally offers an Order Overview action
- * that opens a read-only, itemised listing of the line items (sizes,
- * options, notes, totals). On mobile the sticky action bar renders the
- * stage's primary action full-width on its own row and every other
- * action as smaller inline buttons (max three per row, max three rows).
+ * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
+ * itemised listing of the line items (sizes, options, notes, totals).
+ * On mobile the sticky action bar renders the stage's primary action
+ * full-width on its own row and every other action as smaller inline
+ * buttons (max three per row, max three rows).
  *
  * Ready/installed orders also show the Installation panel
  * (`InstallationSection`): the scheduled window, the customer's
@@ -130,16 +131,6 @@ function toDrafts(order: Order): ItemDraft[] {
       unit_price: String(li.unit_price),
     } satisfies FlatDraft;
   });
-}
-
-/**
- * Resolves a catalog option's display name by id for the Order
- * Overview sheet. Returns an em dash when the id is unset or no longer
- * present in the (live) catalog, so the sheet never renders raw ids.
- */
-function optionName(options: { id: string; name: string }[], optionId: string): string {
-  if (!optionId) return '—';
-  return options.find((o) => o.id === optionId)?.name ?? '—';
 }
 
 /** Short label for a draft in the live-pricing rail. */
@@ -327,7 +318,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit' | 'overview'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'editItem' | 'bulkEdit'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -1094,7 +1085,7 @@ export default function OrderDetail() {
    * secondary actions; `trailing` is the ever-present Send + Download
    * pair (Send is dropped in a saved Draft, where sending is already
    * the primary action). The Order Overview action is included at every
-   * post-draft stage and opens the read-only itemised sheet.
+   * post-draft stage and opens `/orders/:id/overview` in a new tab.
    */
   const stageActions = (): {
     primary: StageAction | null;
@@ -1145,7 +1136,7 @@ export default function OrderDetail() {
       icon: ICONS.overview,
       label: 'Order Overview',
       short: 'Overview',
-      onClick: () => setSheet('overview'),
+      onClick: () => window.open(`/orders/${id}/overview`, '_blank', 'noopener'),
     };
     const confirm: StageAction = {
       key: 'confirm',
@@ -1991,111 +1982,6 @@ export default function OrderDetail() {
         </div>
       )}
 
-      {/* Order Overview bottom sheet — read-only itemised listing of the
-          line items with their full details (post-draft stages only). */}
-      {sheet === 'overview' && (
-        <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
-          onClick={() => setSheet('none')}
-        >
-          <div
-            className="max-h-[85vh] w-full overflow-y-auto rounded-t-sm bg-surface p-4 lg:max-w-lg lg:rounded-sm"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-2 flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-semibold text-text-primary">Order overview</h2>
-              {existing?.order_number && (
-                <span className="font-mono text-[13px] text-text-muted">{existing.order_number}</span>
-              )}
-            </div>
-            {customer && (
-              <p className="mb-3 text-[13px] text-text-muted">
-                {customer.first_name} {customer.last_name}
-              </p>
-            )}
-
-            {items.length === 0 ? (
-              <p className="py-2 text-[13px] text-text-muted">This order has no items.</p>
-            ) : (
-              <ul className="divide-y divide-border border-t border-border">
-                {items.map((it, i) => {
-                  const price =
-                    it.item_type === 'blind' ? blindDraftPrice(it, catalogs) : flatDraftPrice(it);
-
-                  if (it.item_type !== 'blind') {
-                    return (
-                      <li key={it.key} className="flex flex-col gap-1 py-3">
-                        <div className="flex items-baseline justify-between gap-3">
-                          <span className="min-w-0 text-sm font-medium text-text-primary">
-                            {it.description || `Item ${i + 1}`}
-                          </span>
-                          <span className="shrink-0 font-mono text-[13px] text-text-primary">
-                            {price ? `$${price.total.toFixed(2)}` : '—'}
-                          </span>
-                        </div>
-                        <span className="text-[12px] text-text-muted">
-                          {it.item_type === 'preset' ? 'Preset item' : 'Custom item'} · Qty{' '}
-                          {it.quantity || '1'} × ${(Number(it.unit_price) || 0).toFixed(2)}
-                        </span>
-                      </li>
-                    );
-                  }
-
-                  const widths = it.panels.filter(Boolean);
-                  const details: [string, string][] = [
-                    ['Type', it.blinds_type || '—'],
-                    ['Size', widths.length ? `${widths.join(' + ')} × ${it.height_cm || '—'} cm` : '—'],
-                    ['Material', optionName(catalogs.materials, it.material_id)],
-                  ];
-                  if (it.color) details.push(['Colour', it.color]);
-                  details.push(
-                    ['Cassette', optionName(catalogs.cassettes, it.cassette_id)],
-                    ['Control', optionName(catalogs.controls, it.control_id)],
-                    ['Quantity', it.quantity || '1']
-                  );
-                  if (it.note) details.push(['Note', it.note]);
-
-                  return (
-                    <li key={it.key} className="flex flex-col gap-1.5 py-3">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <span className="min-w-0 text-sm font-medium text-text-primary">
-                          {it.room_name || `Blind ${i + 1}`}
-                        </span>
-                        <span className="shrink-0 font-mono text-[13px] text-text-primary">
-                          {price ? `$${price.total.toFixed(2)}` : '—'}
-                        </span>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        {details.map(([label, value]) => (
-                          <div key={label} className="flex gap-3 text-[12px]">
-                            <span className="w-[72px] shrink-0 text-text-muted">{label}</span>
-                            <span className="min-w-0 flex-1 text-text-secondary">{value}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-
-            <div className="mt-1 flex items-baseline justify-between border-t border-border pt-3">
-              <span className="text-[13px] text-text-secondary">
-                {items.length} item{items.length !== 1 ? 's' : ''}
-              </span>
-              <span className="font-mono text-sm font-semibold text-text-primary">
-                ${orderTotal.toFixed(2)}
-              </span>
-            </div>
-            <button
-              onClick={() => setSheet('none')}
-              className="mt-3 h-11 w-full rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      )}
     </div>
 
   );
