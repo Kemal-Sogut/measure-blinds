@@ -11,6 +11,8 @@
  *   - bulk line-item inserts use a uniform column set (PostgREST rule)
  *   - /send returns 502 when the email service fails and performs NO
  *     database write afterwards (order left untouched)
+ *   - /payments/:paymentId/receipt guards (404 foreign payment, 400 no
+ *     email) and stamps receipt_sent_at ONLY after a successful send
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -234,8 +236,11 @@ describe('POST /api/orders/:id/send', () => {
       id: 'e9',
       status: 'draft',
       order_number: 'F0307-126',
-      order_date: '2026-07-03',
-      expiry_date: '2026-07-17',
+      order_date: new Date().toISOString().slice(0, 10),
+      // Relative, not hardcoded: the send route 400s on a lapsed
+      // expiry_date, so a fixed date turns this test into a time bomb
+      // (it did fail once the calendar passed the original 2026-07-17).
+      expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
       subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
       public_token: null,
       terms_snapshot: null,
@@ -357,5 +362,129 @@ describe('POST /api/orders/:id/cut-done', () => {
     db.responses['orders.select'] = [];
     const res = await toggle('/nope/cut-done', true);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/orders/:id/payments/:paymentId/receipt', () => {
+  /**
+   * Confirmed order with one recorded payment, ready to receipt. The
+   * public_token is already set so the happy path needs no token mint
+   * (that behavior is pinned by the send-invoice implementation).
+   */
+  const receiptOrder = () => ({
+    id: 'e5',
+    status: 'in_progress',
+    order_number: 'F0307-126',
+    order_date: '2026-07-03',
+    expiry_date: '2026-07-17',
+    subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
+    public_token: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    terms_snapshot: 'T&C',
+    line_items: [],
+    payments: [{ id: 'p1', order_id: 'e5', amount: 50, paid_on: '2026-07-10', note: '' }],
+    customer: { first_name: 'A', last_name: 'B', email: 'a@example.com',
+      phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '',
+      shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true,
+      billing_address_line1: '', billing_address_line2: '', billing_city: '',
+      billing_province: '', billing_postal_code: '' },
+  });
+
+  const COMPANY = {
+    company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '',
+    hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14,
+  };
+
+  /** POSTs the receipt route with an optional JSON body. */
+  const post = (path: string, body?: unknown) =>
+    ordersApp.request(
+      path,
+      body === undefined
+        ? { method: 'POST' }
+        : { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  /**
+   * Intercepts Resend for the duration of `run`, capturing request
+   * bodies; `status`/`reply` script the API's answer (same fetch-level
+   * mock the /send failure test uses — sendEmail is exercised for real).
+   */
+  async function withResend(
+    status: number,
+    reply: unknown,
+    run: () => Promise<void>
+  ): Promise<string[]> {
+    const sent: string[] = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) {
+        sent.push(String(init?.body ?? ''));
+        return new Response(JSON.stringify(reply), { status });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return sent;
+  }
+
+  it('sends the receipt, stamps receipt_sent_at, and logs the activity', async () => {
+    db.responses['orders.select'] = [receiptOrder()];
+    db.responses['company_settings.select'] = [COMPANY];
+
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e5/payments/p1/receipt', { message: 'Thanks!' });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: { amount_paid: number } };
+      expect(body.data.amount_paid).toBe(50);
+      // Success effects: stamp written, activity row inserted.
+      expect(db.calls).toContain('payments.update');
+      const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+      expect(logs?.[0]?.message).toBe('Receipt for $50.00 emailed to a@example.com.');
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('F0307-126');
+    // The token already existed, so no order row write happened.
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('404 when the payment does not belong to the order', async () => {
+    db.responses['orders.select'] = [receiptOrder()];
+    db.responses['company_settings.select'] = [COMPANY];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e5/payments/not-mine/receipt');
+      expect(res.status).toBe(404);
+      expect(((await res.json()) as { error: string }).error).toBe('Payment not found on this order.');
+      expect(db.calls).not.toContain('payments.update');
+    });
+    expect(sent).toHaveLength(0); // nothing emailed
+  });
+
+  it('400 when the customer has no email address', async () => {
+    const order = receiptOrder();
+    order.customer.email = '';
+    db.responses['orders.select'] = [order];
+    db.responses['company_settings.select'] = [COMPANY];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/e5/payments/p1/receipt');
+      expect(res.status).toBe(400);
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('502 on email failure with no receipt_sent_at stamp or log written', async () => {
+    db.responses['orders.select'] = [receiptOrder()];
+    db.responses['company_settings.select'] = [COMPANY];
+    await withResend(401, { message: 'API key is invalid' }, async () => {
+      const res = await post('/e5/payments/p1/receipt');
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { error: string }).error).toBe('API key is invalid');
+      // Failed send → payment row untouched, nothing logged.
+      expect(db.calls).not.toContain('payments.update');
+      expect(db.insertPayloads['order_logs']).toBeUndefined();
+    });
   });
 });

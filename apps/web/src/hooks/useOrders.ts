@@ -8,8 +8,8 @@
  * Create/update send measurements + option IDs only — the Worker
  * computes all money authoritatively and its response becomes the
  * cached detail. Lifecycle mutations (send estimate, confirm, reverse
- * confirmation, record payment, complete) refresh both detail and list
- * caches. `downloadOrderPdf` streams the Estimate/Invoice PDF through
+ * confirmation, record payment, send receipt, complete) refresh both
+ * detail and list caches. `downloadOrderPdf` streams the Estimate/Invoice PDF through
  * the authenticated download helper and triggers a browser save.
  */
 
@@ -330,6 +330,34 @@ export function useDismissEtransfer(): UseMutationResult<{ id: string }, Error, 
         })
       ).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: ETRANSFERS_KEY }),
+  });
+}
+
+/**
+ * Emails the customer a branded receipt for one recorded payment
+ * (POST /api/orders/:orderId/payments/:paymentId/receipt). The Worker
+ * computes all money figures (paid-to-date, balance) itself, stamps
+ * `receipt_sent_at` on the payment only after the email succeeds, and
+ * returns the refreshed order detail, which replaces the cached order.
+ * Fails with 400 when the customer has no email and 502 when the email
+ * service errors — the payment row is unchanged on failure. Resending
+ * is always allowed; a resend simply re-stamps `receipt_sent_at`.
+ */
+export function useSendReceipt(): UseMutationResult<
+  Order,
+  Error,
+  { orderId: string; paymentId: string; message?: string }
+> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ orderId, paymentId, message }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${orderId}/payments/${paymentId}/receipt`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        })
+      ).data,
+    onSuccess: cache,
   });
 }
 

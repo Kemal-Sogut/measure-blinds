@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeHtml,
   buildEstimateEmailHtml,
+  buildReceiptEmailHtml,
   buildConfirmationNoticeHtml,
   buildAppointmentBookedHtml,
   buildAppointmentReminderHtml,
@@ -65,6 +66,70 @@ describe('buildEstimateEmailHtml', () => {
     expect(html).toContain('(613) 699-1837');
     expect(html).toContain('mailto:info@blindsnisa.com');
     expect(html).toContain('Confidentiality notice');
+  });
+});
+
+describe('buildReceiptEmailHtml', () => {
+  const baseInputs = {
+    company: { name: 'Blinds Nisa', email: 'info@blindsnisa.com' },
+    customerFirstName: '<script>alert(1)</script>',
+    orderNumber: 'F2606-<1226>',
+    paymentAmount: 500,
+    paidOnText: 'July 21, 2026',
+    orderTotal: 2148,
+    paidToDate: 500,
+    balance: 1648,
+    viewUrl: 'https://app.example.com/customer/abc-123',
+  };
+
+  it('escapes injected markup in user-supplied strings', () => {
+    const html = buildReceiptEmailHtml(baseInputs);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('F2606-<1226>');
+    expect(html).toContain('F2606-&lt;1226&gt;');
+  });
+
+  it('renders the receipt card rows with formatted amounts', () => {
+    const html = buildReceiptEmailHtml(baseInputs);
+    expect(html).toContain('Payment receipt');
+    expect(html).toContain('$500.00');
+    expect(html).toContain('July 21, 2026');
+    expect(html).toContain('$2,148.00');
+  });
+
+  it('renders "Balance remaining" with the formatted amount when a balance is owed', () => {
+    const html = buildReceiptEmailHtml(baseInputs);
+    expect(html).toContain('Balance remaining');
+    expect(html).toContain('$1,648.00');
+    expect(html).not.toContain('Paid in full');
+  });
+
+  it('renders "Paid in full" and no balance line when the balance is zero or less', () => {
+    const html = buildReceiptEmailHtml({
+      ...baseInputs,
+      paidToDate: 2148,
+      balance: 0,
+    });
+    expect(html).toContain('Paid in full');
+    expect(html).not.toContain('Balance remaining');
+  });
+
+  it('links the CTA button and the fallback line to the view URL', () => {
+    const html = buildReceiptEmailHtml(baseInputs);
+    expect(html).toContain('View your order');
+    const occurrences = html.split('https://app.example.com/customer/abc-123').length - 1;
+    expect(occurrences).toBe(2);
+  });
+
+  it('renders the consultant message when given and omits the block when absent', () => {
+    const withMessage = buildReceiptEmailHtml({
+      ...baseInputs,
+      message: 'Thanks again <Kemal>',
+    });
+    expect(withMessage).toContain('Thanks again &lt;Kemal&gt;');
+    const without = buildReceiptEmailHtml(baseInputs);
+    expect(without).not.toContain('Thanks again');
   });
 });
 

@@ -114,6 +114,13 @@ export interface Payment {
   amount: number;
   paid_on: string;
   note: string;
+  /**
+   * When a receipt email was last sent for this payment (ISO timestamp),
+   * or null if none has ever been sent. Stamped server-side only after a
+   * successful send; drives the "Receipt sent" indicator and the
+   * Send/Resend receipt labeling on the order detail Payments panel.
+   */
+  receipt_sent_at: string | null;
   created_at: string;
 }
 

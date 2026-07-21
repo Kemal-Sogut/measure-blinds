@@ -376,6 +376,70 @@ export function buildInvoiceEmailHtml(i: InvoiceEmailInputs): string {
   return brandedShell(i.company, body);
 }
 
+/** Inputs for the customer-facing payment receipt email template. */
+export interface ReceiptEmailInputs {
+  company: CompanyBrand;
+  customerFirstName: string;
+  orderNumber: string;
+  /** The amount of the specific payment this receipt covers. */
+  paymentAmount: number;
+  /** Human-formatted paid_on date, e.g. "July 21, 2026". */
+  paidOnText: string;
+  /** The order's full total (server-computed, incl. HST). */
+  orderTotal: number;
+  /** Sum of the order's payments ledger, including this payment. */
+  paidToDate: number;
+  /**
+   * orderTotal − paidToDate. Positive renders a "Balance remaining"
+   * total line; zero or negative renders the "Paid in full" treatment
+   * instead (no balance line at all).
+   */
+  balance: number;
+  /** Public order page the CTA button links to. */
+  viewUrl: string;
+  /** Optional personal note from the consultant, shown above the CTA. */
+  message?: string;
+}
+
+/**
+ * Builds the branded payment receipt email, sent manually per payment
+ * row from the order's payments panel (payment-receipt design doc, in
+ * the same "Customer Emails" visual system as the estimate and invoice
+ * templates): greeting, tinted receipt card with the payment amount,
+ * received date, order total, and paid-to-date, then either a
+ * "Balance remaining" total line (balance > 0) or an accent-colored
+ * "Paid in full" headline (balance ≤ 0), an optional consultant note,
+ * and a CTA to the public order page. All dynamic strings are
+ * HTML-escaped; all money figures are server-computed by the caller.
+ */
+export function buildReceiptEmailHtml(i: ReceiptEmailInputs): string {
+  const company = escapeHtml(i.company.name);
+  const name = escapeHtml(i.customerFirstName);
+  const order = escapeHtml(i.orderNumber);
+  const paidOn = escapeHtml(i.paidOnText);
+  const url = escapeHtml(i.viewUrl);
+  const paidInFull = i.balance <= 0;
+  const body = `${headingHtml('We&#39;ve received your payment')}
+    ${introHtml(`Hi ${name} &mdash; thank you for your payment. Here&#39;s your receipt from ${company}, with your order&#39;s updated balance below.`)}
+    ${summaryCardHtml({
+      eyebrow: 'Payment receipt',
+      badge: order,
+      headline: paidInFull ? `<span style="color:${C.accent};">Paid in full</span>` : undefined,
+      rows: [
+        ['Payment', `<span style="font-family:${MONO};">$${formatMoney(i.paymentAmount)}</span>`],
+        ['Received', paidOn],
+        ['Order total', `<span style="font-family:${MONO};">$${formatMoney(i.orderTotal)}</span>`],
+        ['Paid to date', `<span style="font-family:${MONO};">$${formatMoney(i.paidToDate)}</span>`],
+      ],
+      total: paidInFull ? undefined : { label: 'Balance remaining', amount: i.balance },
+    })}
+    ${messageBlockHtml(i.message)}
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View your order')}</div>
+    ${finePrintHtml(`Questions about this payment? Reply to this email &mdash; we&#39;re happy to help.`)}
+    ${linkFallbackHtml(url)}`;
+  return brandedShell(i.company, body);
+}
+
 /** Inputs for the customer-facing installation-time proposal email. */
 export interface InstallationProposalInputs {
   company: CompanyBrand;
