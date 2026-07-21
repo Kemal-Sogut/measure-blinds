@@ -1083,49 +1083,17 @@ export default function OrderDetail() {
   /**
    * Builds the status-aware action set consumed by both layouts.
    *
-   * `primary` is the single key action for the current stage (null for
-   * expired, which has no key action). `stacked` are the stage-specific
-   * secondary actions; `trailing` is the ever-present Send + Download
-   * pair (Send is dropped in a saved Draft, where sending is already
-   * the primary action). The Order Overview action is included at every
-   * post-draft stage and opens `/orders/:id/overview` in a new tab.
+   * `primary` is the single key action for the current stage (null when
+   * the stage has none). `secondary` are the remaining stage-specific
+   * actions. Save, Send and Download are NOT part of this set — they
+   * live permanently in the top bar (see `headerActions`). The Order
+   * Overview action is included at every post-draft stage and opens
+   * `/orders/:id/overview` in a new tab.
    */
   const stageActions = (): {
     primary: StageAction | null;
-    stacked: StageAction[];
-    trailing: StageAction[];
+    secondary: StageAction[];
   } => {
-    const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
-    const sendLabel = isInvoice
-      ? 'Send Invoice'
-      : status === 'sent'
-        ? 'Resend Estimate'
-        : 'Send Estimate';
-
-    const send: StageAction = {
-      key: 'send',
-      icon: ICONS.send,
-      label: sendBusy ? 'Sending…' : sendLabel,
-      short: sendBusy ? 'Sending…' : status === 'sent' ? 'Resend' : 'Send',
-      onClick: openSend,
-      disabled: sendBusy || saving || !customer || (!isInvoice && items.length === 0),
-    };
-    const download: StageAction = {
-      key: 'download',
-      icon: ICONS.download,
-      label: `Download ${docLabel}`,
-      short: 'Download',
-      onClick: handlePdf,
-      disabled: (!id && !customer) || saving,
-    };
-    const save: StageAction = {
-      key: 'save',
-      icon: ICONS.save,
-      label: saving ? 'Saving…' : 'Save as Draft',
-      short: saving ? 'Saving…' : 'Save',
-      onClick: handleSaveDraft,
-      disabled: !canAct,
-    };
     const payment: StageAction = {
       key: 'payment',
       icon: ICONS.payment,
@@ -1150,17 +1118,16 @@ export default function OrderDetail() {
       disabled: !canAct || !customer || items.length === 0 || confirmMut.isPending,
     };
 
-    // Before Draft (unsaved) — save first.
-    if (!id) return { primary: save, stacked: [], trailing: [send, download] };
+    // Before Draft (unsaved) — nothing here; the top-bar Save is the
+    // only available action.
+    if (!id) return { primary: null, secondary: [] };
 
-    // Draft — send the estimate (no Overview yet; it is a post-draft view).
-    if (status === 'draft') {
-      return { primary: send, stacked: [save, { ...confirm, tone: 'text-success' }], trailing: [download] };
-    }
+    // Draft — confirm the order (Send/Save live in the top bar).
+    if (status === 'draft') return { primary: confirm, secondary: [] };
 
     // Sent — confirm the order.
     if (status === 'sent') {
-      return { primary: confirm, stacked: [save, overview], trailing: [send, download] };
+      return { primary: confirm, secondary: [overview] };
     }
 
     // Awaiting payment — record the payment.
@@ -1173,7 +1140,7 @@ export default function OrderDetail() {
         onClick: handleReverse,
         disabled: unconfirmMut.isPending,
       };
-      return { primary: payment, stacked: [reverse, save, overview], trailing: [send, download] };
+      return { primary: payment, secondary: [reverse, overview] };
     }
 
     // In progress — mark the order ready; open the workshop cut sheet.
@@ -1193,7 +1160,7 @@ export default function OrderDetail() {
         short: 'Cut Sheet',
         onClick: () => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener'),
       };
-      return { primary: markReady, stacked: [manufacturer, payment, save, overview], trailing: [send, download] };
+      return { primary: markReady, secondary: [manufacturer, payment, overview] };
     }
 
     // Ready — propose the installation (emails the customer).
@@ -1214,30 +1181,33 @@ export default function OrderDetail() {
         disabled: installedMut.isPending,
         tone: 'text-success',
       };
-      return { primary: propose, stacked: [markInstalled, payment, save, overview], trailing: [send, download] };
+      return { primary: propose, secondary: [markInstalled, payment, overview] };
     }
 
     // Installed — payments can still be applied.
     if (status === 'installed') {
-      return { primary: payment, stacked: [save, overview], trailing: [send, download] };
+      return { primary: payment, secondary: [overview] };
     }
 
-    // Expired — save (after updating expiry), overview + send/download.
-    return { primary: null, stacked: [save, overview], trailing: [send, download] };
+    // Expired — only the Overview remains here (Save/Send/Download are
+    // in the top bar; send after updating the expiry date).
+    return { primary: null, secondary: [overview] };
   };
 
   /**
-   * Renders the stage's action set for one breakpoint.
+   * Renders the stage's action set for one breakpoint. Returns null
+   * when the stage has no panel actions at all (e.g. an unsaved order,
+   * where the only actions are the top-bar Save/Send/Download).
    *
    * `vertical` (desktop pricing-rail footer): the primary button, then
-   * every stacked secondary full-width, then Send + Download as a 50/50
-   * trailing row — unchanged desktop layout. Otherwise (mobile sticky
-   * bar): the primary action alone on its own full-width row, and ALL
-   * other actions as smaller inline buttons with compact labels, packed
-   * up to three per row, so the bar never exceeds three button rows.
+   * every secondary full-width. Otherwise (mobile sticky bar): the
+   * primary action alone on its own full-width row, and the secondaries
+   * as smaller inline buttons with compact labels, packed up to three
+   * per row, so the bar never exceeds three button rows.
    */
   const actions = (vertical: boolean) => {
-    const { primary, stacked, trailing } = stageActions();
+    const { primary, secondary } = stageActions();
+    if (!primary && secondary.length === 0) return null;
     const shared = 'inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
     const primaryCls = `${vertical ? 'h-[46px]' : 'h-12'} w-full ${shared} bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700`;
 
@@ -1250,21 +1220,17 @@ export default function OrderDetail() {
 
     if (vertical) {
       const secondaryCls = `h-10 w-full ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
-      const halfCls = `h-10 flex-1 ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
       return (
         <div className="flex flex-col gap-2.5">
           {primary && fullBtn(primary, primaryCls)}
-          {stacked.map((a) => fullBtn(a, secondaryCls))}
-          {trailing.length > 0 && (
-            <div className="flex gap-2.5">{trailing.map((a) => fullBtn(a, halfCls))}</div>
-          )}
+          {secondary.map((a) => fullBtn(a, secondaryCls))}
         </div>
       );
     }
 
     // Mobile: pack secondaries into inline rows of ≤3 (2+2 reads better
     // than 3+1 when there are exactly four).
-    const inline = [...stacked, ...trailing];
+    const inline = secondary;
     const perRow = inline.length === 4 ? 2 : 3;
     const rows: StageAction[][] = [];
     for (let i = 0; i < inline.length; i += perRow) rows.push(inline.slice(i, i + perRow));
@@ -1292,12 +1258,65 @@ export default function OrderDetail() {
     );
   };
 
+  // Desktop rail footer content (null when the stage has no panel
+  // actions, so the empty bordered strip is not rendered).
+  const railActions = actions(true);
+
+  const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
+  const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
+  const headerBtn =
+    'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold disabled:opacity-40 sm:px-3';
+
+  /**
+   * Permanent top-bar document actions in the PageHeader's right slot,
+   * colour-coded per the design: Save green, Send blue, Download gray.
+   * Icon-only on phones (labels appear from sm: up; title/aria-label
+   * keep them accessible). Enable rules match the old panel buttons.
+   */
+  const headerActions = (
+    <div className="flex items-center gap-1.5">
+      <StatusBadge status={status} />
+      <button
+        onClick={handleSaveDraft}
+        disabled={!canAct}
+        title={saving ? 'Saving…' : 'Save as Draft'}
+        aria-label="Save as Draft"
+        className={`${headerBtn} bg-success text-white hover:bg-success/90`}
+      >
+        {ICONS.save}
+        <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save'}</span>
+      </button>
+      <button
+        onClick={openSend}
+        disabled={sendDisabled}
+        title={isInvoice ? 'Send Invoice' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
+        aria-label={isInvoice ? 'Send Invoice' : 'Send Estimate'}
+        className={`${headerBtn} bg-brand-600 text-white hover:bg-brand-700`}
+      >
+        {ICONS.send}
+        <span className="hidden sm:inline">
+          {sendBusy ? 'Sending…' : status === 'sent' ? 'Resend' : 'Send'}
+        </span>
+      </button>
+      <button
+        onClick={handlePdf}
+        disabled={(!id && !customer) || saving}
+        title={`Download ${docLabel}`}
+        aria-label={`Download ${docLabel}`}
+        className={`${headerBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken`}
+      >
+        {ICONS.download}
+        <span className="hidden sm:inline">Download</span>
+      </button>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-surface-muted pb-40 lg:pb-8">
       <PageHeader
         title={id ? existing?.order_number ?? 'Order' : 'New Order'}
         backTo="/orders"
-        right={<StatusBadge status={status} />}
+        right={headerActions}
       />
 
       <div className="mx-auto max-w-lg lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-0">
@@ -1620,7 +1639,7 @@ export default function OrderDetail() {
               )}
             </div>
           </div>
-          <div className="border-t border-border px-6 py-5">{actions(true)}</div>
+          {railActions && <div className="border-t border-border px-6 py-5">{railActions}</div>}
         </aside>
       </div>
 
