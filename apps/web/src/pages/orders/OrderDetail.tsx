@@ -43,6 +43,11 @@
  * The generated PDF is an Estimate until the first payment is recorded,
  * after which it is an Invoice.
  *
+ * Email invariant: the top-bar Send button is the ONLY control that
+ * emails the customer their "Estimate Ready" mail. The Progress
+ * timeline's advance arrows are bookkeeping only — advancing to "Sent"
+ * calls the status-only `mark-sent` route, never `send`.
+ *
  * All client-side money is a live preview from lib/pricing +
  * lib/totals; the Worker recomputes authoritatively on save.
  */
@@ -61,6 +66,7 @@ import {
   useCreateOrder,
   useUpdateOrder,
   useSendOrder,
+  useMarkSent,
   useSendInvoice,
   useConfirmOrder,
   useUnconfirmOrder,
@@ -314,6 +320,7 @@ export default function OrderDetail() {
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
   const sendMut = useSendOrder();
+  const markSentMut = useMarkSent();
   const sendInvoiceMut = useSendInvoice();
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
@@ -806,6 +813,11 @@ export default function OrderDetail() {
    * Advances the order forward to the given target stage. Any later
    * stage the backend supports may be chosen; skipped stages are simply
    * marked done.
+   *
+   * Advancing is a bookkeeping action and NEVER emails the customer —
+   * the "sent" target uses the status-only `mark-sent` route, not the
+   * emailing `send` route. Emailing the estimate is the exclusive job of
+   * the Send button in the top bar (see `handleSendEstimate`).
    */
   async function handleAdvance(target: OrderStatus) {
     if (!id) return;
@@ -813,7 +825,7 @@ export default function OrderDetail() {
     if (!window.confirm(`Advance this order to "${label}"?`)) return;
     try {
       if (target === 'sent') {
-        await sendMut.mutateAsync({ id });
+        await markSentMut.mutateAsync(id);
       } else if (target === 'awaiting_payment') {
         await confirmMut.mutateAsync(id);
       } else if (target === 'in_progress') {
@@ -1161,7 +1173,8 @@ export default function OrderDetail() {
                   disabled={
                     !canAdvanceTo(stage.key) ||
                     status === 'expired' ||
-                    sendMut.isPending || confirmMut.isPending ||
+                    sendMut.isPending || markSentMut.isPending ||
+                    confirmMut.isPending ||
                     inProgressMut.isPending ||
                     readyMut.isPending || installedMut.isPending
                   }

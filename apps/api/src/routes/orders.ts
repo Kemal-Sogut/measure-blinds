@@ -24,6 +24,7 @@
  *   GET    /:id/logs      activity trail (newest first)
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
  *   POST   /:id/send      email the estimate to the customer (→ sent)
+ *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
  *   POST   /:id/confirm   user confirm (draft/sent → awaiting_payment)
  *   POST   /:id/unconfirm reverse a confirmation (awaiting_payment → sent)
  *   POST   /:id/payments  record a payment (awaiting_payment → in_progress
@@ -757,6 +758,56 @@ app.post('/:id/send', async (c) => {
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
   return c.json({ data: updated });
+});
+
+/**
+ * Marks the estimate as sent WITHOUT emailing anything — a status-only
+ * `draft → sent` transition.
+ *
+ * This backs the Progress-timeline advance control, for estimates handed
+ * over in person, printed, or delivered through some other channel. The
+ * "Estimate Ready" email belongs exclusively to `POST /:id/send`:
+ * advancing the lifecycle stage must never put mail in a customer's
+ * inbox, otherwise a consultant tidying up the pipeline silently emails
+ * people.
+ *
+ * Differences from `/send`, all deliberate: no customer email address is
+ * required (nothing is delivered), and neither `public_token` nor
+ * `terms_snapshot` is written — there is no customer-facing link to keep
+ * alive and no terms to freeze until a document actually goes out. A
+ * later real `/send` mints both lazily, so nothing is lost. The lapsed-
+ * expiry guard mirrors `/send` because `applyDefensiveExpiry` flips a
+ * `sent` order whose validity date has passed straight to `expired` on
+ * the next read, which would make this action look broken.
+ */
+app.post('/:id/mark-sent', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, status, expiry_date')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (!EDITABLE.includes(existing.status)) {
+    return c.json({ error: `A ${existing.status} order cannot be marked as sent.` }, 409);
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  if (existing.expiry_date < today) {
+    return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
+  }
+
+  const { error } = await sb
+    .from('orders')
+    .update({ status: 'sent', sent_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Marked as sent (no email).');
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
 });
 
 /**

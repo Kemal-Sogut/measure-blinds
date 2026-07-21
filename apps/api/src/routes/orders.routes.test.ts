@@ -274,6 +274,78 @@ describe('POST /api/orders/:id/send', () => {
   });
 });
 
+describe('POST /api/orders/:id/mark-sent', () => {
+  /**
+   * Status-only draft → sent. The whole point of this route is that it
+   * NEVER emails, so every case asserts Resend was not called: the
+   * "Estimate Ready" email belongs to /send alone.
+   */
+  const markSentOrder = (over: Record<string, unknown> = {}) => ({
+    id: 'e7',
+    status: 'draft',
+    // Relative, not hardcoded — same time-bomb lesson as the /send test.
+    expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+    ...over,
+  });
+
+  /** Runs `fn` with Resend intercepted; resolves to the calls it made. */
+  async function withResendSpy(fn: () => Promise<void>): Promise<number> {
+    let hits = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) {
+        hits += 1;
+        return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    return hits;
+  }
+
+  it('moves a draft order to sent WITHOUT emailing the customer', async () => {
+    db.responses['orders.select'] = [markSentOrder()];
+    const hits = await withResendSpy(async () => {
+      const res = await ordersApp.request('/e7/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    expect(hits).toBe(0); // no "Estimate Ready" email
+    expect(db.calls).toContain('orders.update');
+    const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+    expect(logs?.[0]?.message).toBe('Marked as sent (no email).');
+  });
+
+  it('409 once the order is confirmed', async () => {
+    db.responses['orders.select'] = [markSentOrder({ status: 'awaiting_payment' })];
+    const hits = await withResendSpy(async () => {
+      const res = await ordersApp.request('/e7/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(409);
+    });
+    expect(hits).toBe(0);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('400 when the estimate validity date has lapsed', async () => {
+    db.responses['orders.select'] = [markSentOrder({ expiry_date: '2020-01-01' })];
+    const hits = await withResendSpy(async () => {
+      const res = await ordersApp.request('/e7/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(400);
+    });
+    expect(hits).toBe(0);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('404 for a missing order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/nope/mark-sent', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('POST /api/orders/:id/revert', () => {
   it('reverts to an earlier stage and writes the update', async () => {
     db.responses['orders.select'] = [{ id: 'e1', status: 'in_progress' }];

@@ -194,6 +194,18 @@ export function useSendOrder(): UseMutationResult<Order, Error, { id: string; me
   });
 }
 
+/**
+ * Marks an estimate as sent WITHOUT emailing it (draft → sent).
+ *
+ * The counterpart to {@link useSendOrder} for estimates delivered in
+ * person, printed, or handed over off-channel. Backs the Progress-
+ * timeline advance control, which must never email a customer — only
+ * the explicit Send action does that.
+ */
+export function useMarkSent() {
+  return useLifecycleMutation((id) => `/api/orders/${id}/mark-sent`);
+}
+
 /** Emails the invoice for a confirmed order — no stage change. */
 export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; message?: string }> {
   const cache = useCacheOrder();
