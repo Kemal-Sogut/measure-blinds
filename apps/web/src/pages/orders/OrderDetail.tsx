@@ -12,13 +12,15 @@
  * save regardless of status.
  *
  * Once confirmed the order also grows a Payments panel (balance = total
- * − payments). Payments can be applied at ANY post-confirmation stage.
+ * − payments). Payments can be applied at ANY post-confirmation stage,
+ * and "Record Payment" lives in that panel's body rather than in the
+ * stage action set — the button sits with the ledger it changes.
  * Stage actions:
- *   awaiting_payment → Record Payment, Reverse Confirmation (user only)
- *   in_progress      → Record Payment, Mark Ready
+ *   awaiting_payment → Reverse Confirmation (user only)
+ *   in_progress      → Mark Ready, Cut Sheet
  *   ready            → Propose Installation (opens the Installation
- *                      section's sheet), Mark Installed, Record Payment
- *   installed        → Record Payment, Download Invoice
+ *                      section's sheet), Mark Installed
+ *   installed        → (none beyond the Overview)
  * Every post-draft stage additionally offers an Order Overview action
  * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
  * itemised listing of the line items (sizes, options, notes, totals).
@@ -950,7 +952,7 @@ export default function OrderDetail() {
         </span>
         <span className="font-mono text-[13px] text-text-primary">${totals.tax_amount.toFixed(2)}</span>
       </div>
-      <div className="flex items-baseline justify-between border-t border-border pt-2.5">
+      <div className="flex items-baseline justify-between border-t border-border-light pt-2.5">
         <span className="text-sm font-semibold text-text-primary">Total</span>
         <span className="font-mono text-xl font-semibold text-text-primary">
           ${totals.total.toFixed(2)}
@@ -959,7 +961,18 @@ export default function OrderDetail() {
     </>
   );
 
-  /** Payments + balance panel (confirmed orders only). */
+  /**
+   * Payments + balance panel (confirmed orders only).
+   *
+   * Lists the ledger the way it is stored — order total, then ONE row
+   * per recorded payment (date · note, amount, delete), then amount
+   * paid and the balance — and owns the "Record Payment" button, which
+   * opens the payment sheet. That button used to live in the sticky
+   * action bar / pricing rail; it sits in the panel body so the action
+   * is next to the numbers it changes. Rendered at every
+   * post-confirmation stage, which is exactly where the old action was
+   * offered, so no stage lost the ability to record a payment.
+   */
   const paymentsPanel = postConfirm && (
     <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
       <div className="mb-1 flex items-center justify-between">
@@ -971,12 +984,12 @@ export default function OrderDetail() {
         <span className="font-mono text-[13px] text-text-primary">${orderTotal.toFixed(2)}</span>
       </div>
       {(existing?.payments ?? []).map((p) => (
-        <div key={p.id} className="flex items-center justify-between text-text-muted">
-          <span className="text-[13px]">
+        <div key={p.id} className="flex items-center justify-between gap-2 text-text-muted">
+          <span className="min-w-0 flex-1 truncate text-[13px]">
             {p.paid_on}
             {p.note ? ` · ${p.note}` : ''}
           </span>
-          <span className="flex items-center gap-1.5">
+          <span className="flex shrink-0 items-center gap-1.5">
             <span className="font-mono text-[13px]">−${Number(p.amount).toFixed(2)}</span>
             <button
               type="button"
@@ -997,7 +1010,7 @@ export default function OrderDetail() {
         <span className="text-[13px] text-text-secondary">Amount paid</span>
         <span className="font-mono text-[13px] text-text-primary">${amountPaid.toFixed(2)}</span>
       </div>
-      <div className="flex items-baseline justify-between border-t border-border pt-2.5">
+      <div className="flex items-baseline justify-between border-t border-border-light pt-2.5">
         <span className="text-sm font-semibold text-text-primary">Balance due</span>
         <span
           className={`font-mono text-xl font-semibold ${balance <= 0 ? 'text-success' : 'text-text-primary'}`}
@@ -1005,6 +1018,15 @@ export default function OrderDetail() {
           ${balance.toFixed(2)}
         </span>
       </div>
+      <button
+        type="button"
+        onClick={openPayment}
+        disabled={paymentMut.isPending}
+        className="mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-sm bg-brand-600 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+      >
+        {ICONS.payment}
+        Record Payment
+      </button>
     </section>
   );
 
@@ -1017,28 +1039,38 @@ export default function OrderDetail() {
         <h2 className="text-sm font-semibold text-text-primary">Progress</h2>
         {status === 'expired' && <StatusBadge status="expired" />}
       </div>
-      <ol className="flex items-start gap-1">
+      {/*
+        Equal-width grid tracks (NOT flex): a flex item's automatic
+        minimum size is its longest word, so on a narrow phone the six
+        stage labels ("Awaiting", "Progress", …) forced this row — and
+        with it the whole page — wider than the screen. `minmax(0, 1fr)`
+        tracks stay inside the card no matter how long a label is.
+      */}
+      <ol
+        className="grid items-start gap-1"
+        style={{ gridTemplateColumns: `repeat(${STAGES.length}, minmax(0, 1fr))` }}
+      >
         {STAGES.map((stage, i) => {
           const done = i < curIdx;
           const current = i === curIdx && status !== 'expired';
           const canRevert = i < curIdx;
           return (
-            <li key={stage.key} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+            <li key={stage.key} className="flex min-w-0 flex-col items-center gap-1.5">
               <div className="flex w-full items-center">
                 <span className={`h-0.5 flex-1 ${i === 0 ? 'invisible' : done || current ? 'bg-brand-600' : 'bg-border'}`} />
                 <span
                   className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${current
-                      ? 'bg-brand-600 text-white'
-                      : done
-                        ? 'bg-brand-100 text-brand-600'
-                        : 'bg-surface-sunken text-text-muted'
+                    ? 'bg-brand-600 text-white'
+                    : done
+                      ? 'bg-brand-100 text-brand-600'
+                      : 'bg-surface-sunken text-text-muted'
                     }`}
                 >
                   {done ? '✓' : i + 1}
                 </span>
                 <span className={`h-0.5 flex-1 ${i === STAGES.length - 1 ? 'invisible' : i < curIdx ? 'bg-brand-600' : 'bg-border'}`} />
               </div>
-              <span className={`text-center text-[10px] leading-tight ${current ? 'font-semibold text-text-primary' : 'text-text-muted'}`}>
+              <span className={`w-full break-words text-center text-[10px] leading-tight ${current ? 'font-semibold text-text-primary' : 'text-text-muted'}`}>
                 {stage.label}
               </span>
               {canRevert ? (
@@ -1094,22 +1126,15 @@ export default function OrderDetail() {
    * `primary` is the single key action for the current stage (null when
    * the stage has none). `secondary` are the remaining stage-specific
    * actions. Save, Send and Download are NOT part of this set — they
-   * live permanently in the top bar (see `headerActions`). The Order
-   * Overview action is included at every post-draft stage and opens
-   * `/orders/:id/overview` in a new tab.
+   * live permanently in the top bar (see `headerActions`), and Record
+   * Payment lives in the Payments panel body (see `paymentsPanel`).
+   * The Order Overview action is included at every post-draft stage and
+   * opens `/orders/:id/overview` in a new tab.
    */
   const stageActions = (): {
     primary: StageAction | null;
     secondary: StageAction[];
   } => {
-    const payment: StageAction = {
-      key: 'payment',
-      icon: ICONS.payment,
-      label: 'Record Payment',
-      short: 'Payment',
-      onClick: openPayment,
-      disabled: paymentMut.isPending,
-    };
     const overview: StageAction = {
       key: 'overview',
       icon: ICONS.overview,
@@ -1138,7 +1163,8 @@ export default function OrderDetail() {
       return { primary: confirm, secondary: [overview] };
     }
 
-    // Awaiting payment — record the payment.
+    // Awaiting payment — the payment itself is recorded from the
+    // Payments panel, so only the step-back remains here.
     if (status === 'awaiting_payment') {
       const reverse: StageAction = {
         key: 'reverse',
@@ -1148,7 +1174,7 @@ export default function OrderDetail() {
         onClick: handleReverse,
         disabled: unconfirmMut.isPending,
       };
-      return { primary: payment, secondary: [reverse, overview] };
+      return { primary: null, secondary: [reverse, overview] };
     }
 
     // In progress — mark the order ready; open the workshop cut sheet.
@@ -1164,11 +1190,11 @@ export default function OrderDetail() {
       const manufacturer: StageAction = {
         key: 'manufacturer',
         icon: ICONS.manufacturer,
-        label: 'See Manufacturer Copy',
+        label: 'Cut Sheet',
         short: 'Cut Sheet',
         onClick: () => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener'),
       };
-      return { primary: markReady, secondary: [manufacturer, payment, overview] };
+      return { primary: markReady, secondary: [manufacturer, overview] };
     }
 
     // Ready — propose the installation (emails the customer).
@@ -1189,12 +1215,13 @@ export default function OrderDetail() {
         disabled: installedMut.isPending,
         tone: 'text-success',
       };
-      return { primary: propose, secondary: [markInstalled, payment, overview] };
+      return { primary: propose, secondary: [markInstalled, overview] };
     }
 
-    // Installed — payments can still be applied.
+    // Installed — nothing left to advance; payments (still allowed) are
+    // recorded from the Payments panel.
     if (status === 'installed') {
-      return { primary: payment, secondary: [overview] };
+      return { primary: null, secondary: [overview] };
     }
 
     // Expired — only the Overview remains here (Save/Send/Download are
@@ -1281,10 +1308,17 @@ export default function OrderDetail() {
    * Delete red (icon-only, saved orders only).
    * Icon-only on phones (labels appear from sm: up; title/aria-label
    * keep them accessible). Enable rules match the old panel buttons.
+   *
+   * The StatusBadge is hidden below sm: — "AWAITING PAYMENT" alone is
+   * ~130px, which pushed this row past a phone's width and made the
+   * whole page scroll sideways. On phones the status is already on the
+   * Progress card (and the Payments panel), so nothing is lost.
    */
   const headerActions = (
     <div className="flex items-center gap-1.5">
-      <StatusBadge status={status} />
+      <span className="hidden sm:inline-flex">
+        <StatusBadge status={status} />
+      </span>
       <button
         onClick={handleSaveDraft}
         disabled={!canAct}
@@ -1332,16 +1366,16 @@ export default function OrderDetail() {
   );
 
   return (
-    <div className="min-h-screen bg-surface-muted pb-40 lg:pb-8">
+    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-40 lg:pb-8">
       <PageHeader
         title={id ? existing?.order_number ?? 'Order' : 'New Order'}
         backTo="/orders"
         right={headerActions}
       />
 
-      <div className="mx-auto max-w-lg lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-0">
+      <div className="mx-auto w-full max-w-lg lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-0">
         {/* ── Form column ── */}
-        <div className="flex min-w-0 flex-col gap-4 p-4 lg:p-8">
+        <div className="flex w-full min-w-0 flex-col gap-4 p-4 lg:p-8">
           {/* Progress timeline (revert lives here — outside the disabled fieldset) */}
           {timelineCard}
 
@@ -1395,7 +1429,7 @@ export default function OrderDetail() {
                   const canBulkEdit = selected.size > 0 && !selectionHasNonBlind;
                   const canBulkDelete = selected.size > 0;
                   return (
-                    <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+                    <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
                       <input
                         type="checkbox"
                         checked={items.length > 0 && selected.size === items.length}
@@ -1447,7 +1481,7 @@ export default function OrderDetail() {
                 {items.length === 0 ? (
                   <p className="p-4 text-[13px] text-text-muted">No items yet — add one below.</p>
                 ) : (
-                  <ul className="divide-y divide-border">
+                  <ul className="divide-y divide-border-light">
                     {items.map((it, i) => {
                       const price =
                         it.item_type === 'blind'
@@ -1467,7 +1501,7 @@ export default function OrderDetail() {
                           : it.description || `Item ${i + 1}`;
 
                       return (
-                        <li key={it.key} className="flex items-center gap-2 px-3 py-2.5">
+                        <li key={it.key} className="flex min-w-0 items-center gap-2 px-3 py-2.5">
                           {/* Checkbox — hidden in read-only */}
                           {!readOnly && (
                             <input
@@ -1602,7 +1636,7 @@ export default function OrderDetail() {
                 <ul className="flex flex-col gap-2.5">
                   {logs.map((log) => (
                     <li key={log.id} className="flex justify-between gap-3 text-[13px]">
-                      <span className="text-text-secondary">{log.message}</span>
+                      <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
                       <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
                         {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
                       </span>
@@ -1633,11 +1667,11 @@ export default function OrderDetail() {
                 </span>
               </div>
             ))}
-            <div className="mt-4 flex flex-col gap-2 border-t border-border pt-3.5">
+            <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
               {discountControl}
               {totalsRows}
               {postConfirm && (
-                <div className="mt-2 flex items-baseline justify-between border-t border-border pt-2.5">
+                <div className="mt-2 flex items-baseline justify-between border-t border-border-light pt-2.5">
                   <span className="text-[13px] text-text-secondary">Balance due</span>
                   <span
                     className={`font-mono text-sm font-semibold ${balance <= 0 ? 'text-success' : 'text-text-primary'}`}
@@ -1653,8 +1687,10 @@ export default function OrderDetail() {
       </div>
 
       {/* ── Mobile sticky action bar ── */}
-      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] lg:hidden">
-        <div className="mx-auto max-w-lg">
+      <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] lg:hidden">
+        {/* Same max-w-lg + 16px gutter as the page body, so the bar's
+            edges line up with the card edges above it. */}
+        <div className="mx-auto w-full max-w-lg px-4">
           <div className="mb-2.5 flex items-baseline justify-between">
             <span className="text-[13px] text-text-secondary">
               {postConfirm ? 'Balance due' : 'Running total'}

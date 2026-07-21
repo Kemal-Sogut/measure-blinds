@@ -30,8 +30,10 @@
   --color-surface-elevated: #ffffff; /* cards */
   --color-surface-muted: #fafafa;    /* page background */
   --color-surface-sunken: #f4f4f5;   /* segmented controls, muted chips */
-  --color-border: #e4e4e7;           /* card hairlines */
-  --color-border-light: #ececee;     /* inner dividers */
+  --color-border: #d4d4d8;           /* card outlines — deliberately a step
+                                        darker than the inner dividers so each
+                                        card reads as one visual group */
+  --color-border-light: #e4e4e7;     /* inner dividers (rows inside a card) */
   --color-border-input: #d4d4d8;     /* input strokes */
   --color-text-primary: #18181b;
   --color-text-secondary: #52525b;
