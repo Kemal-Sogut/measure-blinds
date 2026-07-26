@@ -10,7 +10,10 @@
  * width), runs the pure cut planner in `lib/manufacturing.ts`, and renders:
  *
  *   1. Aluminium cut list — per blind type (Roller / Zebra / Solar), the
- *      6 m bars and the cuts assigned to each, longest-first.
+ *      stock bars and the cuts assigned to each, longest-first. A
+ *      numbers-only "Aluminium bar length" field above the lists re-packs
+ *      them against whatever stock is on the rack (blank = the standard 6 m);
+ *      it is VIEW-ONLY state, never written back to the order.
  *   2. Fabric cut list — per material roll, the full-width "courses" the
  *      cutting machine makes (cut height, the pieces taken across the
  *      width, and the side/top offcuts), plus a utilisation figure.
@@ -23,7 +26,7 @@
  * button, hidden on paper, calls `window.print()`).
  */
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
@@ -31,7 +34,9 @@ import { useOrder, useSetCutDone } from '../../hooks/useOrders';
 import { useCatalogList } from '../../hooks/useSettings';
 import type { Material } from '../../types';
 import {
+  ALUMINUM_STOCK_CM,
   buildManufacturingPlan,
+  resolveAluminumStockCm,
   type AluminumGroup,
   type FabricGroup,
 } from '../../lib/manufacturing';
@@ -45,6 +50,31 @@ function cm(value: number): string {
 /** Formats cm as metres to 2dp (for roll-length / bar totals). */
 function meters(value: number): string {
   return `${(value / 100).toFixed(2)} m`;
+}
+
+/**
+ * Formats a stock bar length as compact metres for labels — `600 → "6 m"`,
+ * `550 → "5.5 m"`. Unlike {@link meters} it drops trailing zeros, because
+ * this appears inline in prose and in the "… bars" stat where "6.00 m bars"
+ * reads as noise.
+ */
+function barLength(value: number): string {
+  return `${Math.round(value) / 100} m`;
+}
+
+/**
+ * Strips everything that is not a digit or a decimal point from typed text
+ * and keeps at most ONE point, so the bar-length field can only ever hold a
+ * non-negative number. Used instead of `<input type="number">` because that
+ * still accepts `e`, `+` and `-` and reports an empty `value` for text the
+ * browser considers invalid, which would silently hide a typo from the
+ * operator. Returning the sanitized string (rather than a number) preserves
+ * in-progress input like `"5."`.
+ */
+function numericOnly(raw: string): string {
+  const cleaned = raw.replace(/[^\d.]/g, '');
+  const [head, ...rest] = cleaned.split('.');
+  return rest.length > 0 ? `${head}.${rest.join('')}` : head;
 }
 
 /** Formats an ISO timestamp as a readable local date + time. */
@@ -72,6 +102,78 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Bar-length override for the aluminium plan — a numbers-only field holding
+ * the length of the stock actually on the rack.
+ *
+ * Blank means "use the standard {@link ALUMINUM_STOCK_CM} bar", so the
+ * operator never has to retype the default to get back to it; anything that
+ * does not resolve to a positive length falls back the same way (the rule
+ * lives in `resolveAluminumStockCm`) and says so rather than failing
+ * silently. Re-packing is live — there is no Apply button, because the whole
+ * point is to compare stock options at a glance.
+ *
+ * Hidden on paper (`print:hidden`): a text box is meaningless on a cut sheet.
+ * The bar length still reaches the printout through the page's meta line and
+ * every "Bar N · X m" heading.
+ *
+ * @param value      Current raw field text (already sanitized by the caller's
+ *                   `onChange`); `''` when blank.
+ * @param onChange   Receives the sanitized text; pass `''` to clear.
+ * @param effectiveCm The length actually being packed against — what the
+ *                   planner resolved `value` to.
+ */
+function AluminumStockField({
+  value,
+  onChange,
+  effectiveCm,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  effectiveCm: number;
+}) {
+  const isOverridden = value !== '';
+  const isUnusable = isOverridden && !(Number(value) > 0);
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-4 print:hidden">
+      <label htmlFor="aluminum-stock" className="block text-sm font-semibold text-text-primary">
+        Aluminium bar length
+      </label>
+      <p className="mt-0.5 text-xs text-text-muted">
+        Numbers only, in cm. Leave blank for the standard {barLength(ALUMINUM_STOCK_CM)} bar — the
+        cut list re-packs as you type.
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          id="aluminum-stock"
+          inputMode="decimal"
+          value={value}
+          onChange={(e) => onChange(numericOnly(e.target.value))}
+          placeholder={String(ALUMINUM_STOCK_CM)}
+          aria-describedby="aluminum-stock-effective"
+          className="h-11 w-28 rounded-lg border border-border bg-surface px-3 text-base"
+        />
+        <span className="text-sm text-text-muted">cm</span>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="h-11 rounded-lg border border-border-input px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      <p id="aluminum-stock-effective" className="mt-2 text-xs text-text-secondary">
+        {isUnusable
+          ? `Not a usable bar length — packing into the default ${cm(effectiveCm)} bars.`
+          : `Packing into ${cm(effectiveCm)} bars.`}
+      </p>
+    </div>
+  );
+}
+
 /** Renders one blind type's aluminium bars. */
 function AluminumSection({ group }: { group: AluminumGroup }) {
   return (
@@ -80,7 +182,7 @@ function AluminumSection({ group }: { group: AluminumGroup }) {
         <h3 className="text-base font-semibold text-text-primary">{group.blindType} — aluminium</h3>
         <div className="flex gap-4">
           <Stat label="Cuts" value={String(group.cutCount)} />
-          <Stat label="6 m bars" value={String(group.barCount)} />
+          <Stat label={`${barLength(group.stockCm)} bars`} value={String(group.barCount)} />
           <Stat label="Used" value={meters(group.usedCm)} />
           <Stat label="Offcut" value={meters(group.wasteCm)} />
         </div>
@@ -89,7 +191,9 @@ function AluminumSection({ group }: { group: AluminumGroup }) {
         {group.result.bars.map((bar) => (
           <li key={bar.index} className="rounded-md border border-border-light bg-surface-muted p-3">
             <div className="mb-1 flex items-center justify-between text-sm font-medium text-text-secondary">
-              <span>Bar {bar.index} · 6 m</span>
+              <span>
+                Bar {bar.index} · {barLength(bar.stock)}
+              </span>
               <span className="text-text-muted">offcut {cm(bar.leftover)}</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -184,6 +288,12 @@ export default function ManufacturerCopy() {
   const cutDone = useSetCutDone();
   const isCutDone = Boolean(order?.cut_done_at);
 
+  // Aluminium bar length override, kept as raw text so the field can hold
+  // in-progress input ("5.") and so blank ≠ 0. View-only state: it re-plans
+  // the cut list on this page and is never persisted to the order.
+  const [stockInput, setStockInput] = useState('');
+  const stockCm = resolveAluminumStockCm(stockInput === '' ? null : Number(stockInput));
+
   /** Flip the cut-done milestone on/off (reversible toggle). */
   function toggleCutDone() {
     if (!id || cutDone.isPending) return;
@@ -205,8 +315,8 @@ export default function ManufacturerCopy() {
   }, [materials]);
 
   const plan = useMemo(
-    () => buildManufacturingPlan(order?.line_items ?? [], widthByMaterialId),
-    [order?.line_items, widthByMaterialId]
+    () => buildManufacturingPlan(order?.line_items ?? [], widthByMaterialId, stockCm),
+    [order?.line_items, widthByMaterialId, stockCm]
   );
 
   const customerName = order?.customer
@@ -252,8 +362,9 @@ export default function ManufacturerCopy() {
             </p>
           )}
           <p className="mt-1 text-xs text-text-muted">
-            Aluminium bars are 6 m. Fabric is cut across the full roll width — each course is cut to
-            its tallest piece, then trimmed down.
+            Aluminium bars are {barLength(stockCm)}
+            {stockCm === ALUMINUM_STOCK_CM ? '' : ' (custom length)'}. Fabric is cut across the full
+            roll width — each course is cut to its tallest piece, then trimmed down.
           </p>
         </div>
 
@@ -280,7 +391,15 @@ export default function ManufacturerCopy() {
               </p>
             )}
 
-            {/* Aluminium */}
+            {/* Aluminium — bar length is re-plannable, so the control sits
+                directly above the lists it re-packs. */}
+            {plan.aluminumGroups.length > 0 && (
+              <AluminumStockField
+                value={stockInput}
+                onChange={setStockInput}
+                effectiveCm={stockCm}
+              />
+            )}
             {plan.aluminumGroups.map((g) => (
               <AluminumSection key={g.blindType} group={g} />
             ))}

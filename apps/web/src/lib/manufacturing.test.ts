@@ -18,6 +18,7 @@ import {
   planAluminumCuts,
   planFabricCuts,
   buildManufacturingPlan,
+  resolveAluminumStockCm,
   ALUMINUM_STOCK_CM,
   DEFAULT_FABRIC_WIDTH_CM,
   type FabricPiece,
@@ -92,6 +93,35 @@ describe('planAluminumCuts', () => {
     const { bars, oversize } = planAluminumCuts([{ length: ALUMINUM_STOCK_CM + 50, label: 'x' }]);
     expect(bars).toHaveLength(0);
     expect(oversize).toHaveLength(1);
+  });
+
+  it('packs against a custom stock length and stamps it on every bar', () => {
+    // The same three 200 cm cuts fit one 600 cm bar but need two 400 cm bars.
+    const cuts = [
+      { length: 200, label: 'a' },
+      { length: 200, label: 'b' },
+      { length: 200, label: 'c' },
+    ];
+    expect(planAluminumCuts(cuts, 600).bars).toHaveLength(1);
+
+    const { bars } = planAluminumCuts(cuts, 400);
+    expect(bars).toHaveLength(2);
+    expect(bars.map((b) => b.stock)).toEqual([400, 400]);
+    expect(bars[0].leftover).toBe(0);
+    expect(bars[1].leftover).toBe(200);
+  });
+});
+
+describe('resolveAluminumStockCm', () => {
+  it('keeps any positive length', () => {
+    expect(resolveAluminumStockCm(450)).toBe(450);
+    expect(resolveAluminumStockCm(0.5)).toBe(0.5);
+  });
+
+  it('falls back to the 6 m default for blank, unparseable, and impossible lengths', () => {
+    for (const bad of [null, undefined, Number.NaN, 0, -300, Number.POSITIVE_INFINITY]) {
+      expect(resolveAluminumStockCm(bad)).toBe(ALUMINUM_STOCK_CM);
+    }
   });
 });
 
@@ -214,6 +244,52 @@ describe('buildManufacturingPlan', () => {
     // 2 panels × quantity 2 = 4 aluminium cuts and 4 fabric pieces.
     expect(plan.aluminumGroups[0].cutCount).toBe(4);
     expect(plan.fabricGroups[0].pieceCount).toBe(4);
+  });
+
+  it('defaults the aluminium bar length to 6 m when none is given', () => {
+    const items = [lineItem({ panels: [150], height_cm: 150 })];
+    const plan = buildManufacturingPlan(items, new Map([['mat-1', 300]]));
+    expect(plan.aluminumGroups[0].stockCm).toBe(ALUMINUM_STOCK_CM);
+    expect(plan.aluminumGroups[0].result.bars[0].stock).toBe(ALUMINUM_STOCK_CM);
+  });
+
+  it('re-packs aluminium against a custom bar length without touching fabric', () => {
+    // 3 × 200 cm panels: one 600 cm bar, or three 250 cm bars.
+    const items = [lineItem({ panels: [200, 200, 200], height_cm: 150, material_id: 'mat-1' })];
+    const widths = new Map<string, number | null>([['mat-1', 300]]);
+
+    const wide = buildManufacturingPlan(items, widths, 600);
+    expect(wide.aluminumGroups[0].barCount).toBe(1);
+    expect(wide.aluminumGroups[0].wasteCm).toBe(0);
+
+    const narrow = buildManufacturingPlan(items, widths, 250);
+    expect(narrow.aluminumGroups[0].stockCm).toBe(250);
+    expect(narrow.aluminumGroups[0].barCount).toBe(3);
+    expect(narrow.aluminumGroups[0].cutCount).toBe(3);
+    expect(narrow.aluminumGroups[0].wasteCm).toBe(150);
+
+    // Fabric is planned from the material's roll width, so it is identical.
+    expect(narrow.fabricGroups).toEqual(wide.fabricGroups);
+  });
+
+  it('falls back to the default bar length when the override is unusable', () => {
+    const items = [lineItem({ panels: [150], height_cm: 150 })];
+    const widths = new Map<string, number | null>([['mat-1', 300]]);
+    for (const bad of [null, 0, -50]) {
+      expect(buildManufacturingPlan(items, widths, bad).aluminumGroups[0].stockCm).toBe(
+        ALUMINUM_STOCK_CM
+      );
+    }
+  });
+
+  it('warns with the custom bar length when a cut no longer fits', () => {
+    const items = [lineItem({ panels: [300], height_cm: 150 })];
+    const widths = new Map<string, number | null>([['mat-1', 300]]);
+    const plan = buildManufacturingPlan(items, widths, 250);
+    expect(plan.aluminumGroups[0].cutCount).toBe(0);
+    expect(plan.aluminumGroups[0].barCount).toBe(0);
+    // The warning must quote the length actually in use, not the 600 default.
+    expect(plan.warnings.join(' ')).toMatch(/300 cm exceeds a 250 cm bar/);
   });
 
   it('warns when an aluminium blind is missing its height', () => {

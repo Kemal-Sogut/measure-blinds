@@ -8,8 +8,8 @@
  *
  * Domain model (per the business):
  *  - Roller, Zebra and Sunscreen/Solar shades are BUILT in-house from a
- *    6 m aluminium bar (tube + bottom rail run the WIDTH of the blind)
- *    plus a length of fabric. Every other blind type — and preset/custom
+ *    stock aluminium bar, normally 6 m (tube + bottom rail run the WIDTH of
+ *    the blind) plus a length of fabric. Every other blind type — and preset/custom
  *    line items — is ordered from the factory AS-IS and only needs to be
  *    listed, not cut.
  *  - A line item may hold several `panels` (each panel is one physical
@@ -18,9 +18,11 @@
  *    piece (panel width × drop height).
  *
  * Two independent 1-D/2-D packing problems are solved:
- *  1. Aluminium — classic 1-D bin packing of required lengths into 6 m
+ *  1. Aluminium — classic 1-D bin packing of required lengths into stock
  *     bars (First-Fit-Decreasing), grouped per blind type since profiles
- *     differ between Roller/Zebra/Solar.
+ *     differ between Roller/Zebra/Solar. The bar length is a VARIABLE
+ *     (default {@link ALUMINUM_STOCK_CM} = 6 m) so the workshop can re-plan
+ *     against whatever stock is actually on the rack.
  *  2. Fabric — the cutting machine can only cut the HEIGHT across the FULL
  *     roll width, so pieces are packed into full-width "courses"/strips
  *     (First-Fit-Decreasing-Height shelf packing). Within a strip the
@@ -36,7 +38,13 @@
 import type { LineItem } from '../types';
 import { normalizeBlindType } from './calculators/registry';
 
-/** Length of one stock aluminium bar, in cm (6 m). */
+/**
+ * Default length of one stock aluminium bar, in cm (6 m) — the bar the
+ * workshop normally buys. It is only a DEFAULT: the Manufacturer Copy page
+ * lets the operator type the length of the stock actually on the rack, which
+ * flows through {@link buildManufacturingPlan} into the packer. Nothing
+ * downstream may assume 600.
+ */
 export const ALUMINUM_STOCK_CM = 600;
 
 /** Fabric roll width assumed when a material has no width set, in cm (3 m). */
@@ -100,6 +108,22 @@ export interface AluminumResult {
   bars: AluminumBar[];
   /** Cuts longer than one stock bar — flagged, never silently dropped. */
   oversize: AluminumCut[];
+}
+
+/**
+ * Normalises a caller-supplied aluminium bar length into a usable stock
+ * length, falling back to {@link ALUMINUM_STOCK_CM} for anything that cannot
+ * be cut from: `null`/`undefined` (nothing entered), `NaN` (unparseable
+ * text), and zero/negative lengths. This is the SINGLE place the fallback
+ * rule lives, so the planner and the UI that displays the effective length
+ * can never disagree.
+ *
+ * @param value Raw override, typically `Number(<text input>)` — pass `null`
+ *              when the field is blank rather than coercing to 0.
+ * @returns A strictly positive bar length in cm.
+ */
+export function resolveAluminumStockCm(value: number | null | undefined): number {
+  return value != null && Number.isFinite(value) && value > 0 ? value : ALUMINUM_STOCK_CM;
 }
 
 /**
@@ -251,7 +275,14 @@ export interface AluminumGroup {
   result: AluminumResult;
   /** Number of cuts (excluding oversize). */
   cutCount: number;
-  /** Number of 6 m bars needed. */
+  /**
+   * Stock bar length this group was packed against, in cm. Carried on the
+   * group (not just on each {@link AluminumBar}) so a display can label the
+   * bar length even when `result.bars` is empty — e.g. every cut was
+   * oversize for the length the operator entered.
+   */
+  stockCm: number;
+  /** Number of stock bars needed at {@link stockCm}. */
   barCount: number;
   /** Total aluminium consumed, in cm. */
   usedCm: number;
@@ -320,12 +351,20 @@ interface FabricBucket {
  *                          {@link DEFAULT_FABRIC_WIDTH_CM}. Widths come from
  *                          the live catalog (line items don't snapshot
  *                          width — it is a manufacturing input, not money).
+ * @param aluminumStockCm   Length of the stock aluminium bar to pack into, in
+ *                          cm. Omit (or pass a blank/zero/negative value) to
+ *                          use the {@link ALUMINUM_STOCK_CM} default — see
+ *                          {@link resolveAluminumStockCm}. Only aluminium is
+ *                          affected; fabric roll widths still come from the
+ *                          material catalog.
  */
 export function buildManufacturingPlan(
   items: LineItem[],
-  widthByMaterialId: Map<string, number | null>
+  widthByMaterialId: Map<string, number | null>,
+  aluminumStockCm: number | null = ALUMINUM_STOCK_CM
 ): ManufacturingPlan {
   const warnings: string[] = [];
+  const stockCm = resolveAluminumStockCm(aluminumStockCm);
 
   // Aluminium cuts grouped by normalised blind type; label kept from the
   // first line item so casing follows the catalog.
@@ -409,14 +448,15 @@ export function buildManufacturingPlan(
   }
 
   const aluminumGroups: AluminumGroup[] = [...aluminumByType.values()].map((g) => {
-    const result = planAluminumCuts(g.cuts);
+    const result = planAluminumCuts(g.cuts, stockCm);
     for (const o of result.oversize) {
-      warnings.push(`${o.label}: ${o.length} cm exceeds a ${ALUMINUM_STOCK_CM} cm bar.`);
+      warnings.push(`${o.label}: ${o.length} cm exceeds a ${stockCm} cm bar.`);
     }
     return {
       blindType: g.label,
       result,
       cutCount: g.cuts.length - result.oversize.length,
+      stockCm,
       barCount: result.bars.length,
       usedCm: result.bars.reduce((s, b) => s + b.used, 0),
       wasteCm: result.bars.reduce((s, b) => s + b.leftover, 0),
