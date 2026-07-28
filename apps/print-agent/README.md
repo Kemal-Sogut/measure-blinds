@@ -43,7 +43,7 @@ Bluetooth, so the browser there queues a job and this process does the printing.
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `API_BASE_URL` | yes | Worker origin, e.g. `https://blinds-nisa-api.workers.dev` |
+| `API_BASE_URL` | yes | Worker origin, no trailing path — `https://blinds-nisa-api.blindsnisa.workers.dev` |
 | `PRINT_AGENT_SECRET` | yes | Must match the Worker secret exactly |
 | `PRINTER_TARGET` | yes | `COM5`, or a share like `\\localhost\LabelCreate` |
 | `POLL_MS` | no | Poll interval, default `30000`, minimum `1000` |
