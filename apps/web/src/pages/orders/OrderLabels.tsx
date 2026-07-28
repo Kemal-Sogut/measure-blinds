@@ -66,7 +66,7 @@ function Label({ fields }: { fields: LabelFields }) {
  */
 export default function OrderLabels() {
   const { id } = useParams<{ id: string }>();
-  const { data: order, isLoading } = useOrder(id);
+  const { data: order, isLoading, error } = useOrder(id);
   const enqueue = useEnqueuePrintLabels();
 
   const labels = useMemo(() => (order ? buildLabels(order) : []), [order]);
@@ -143,8 +143,9 @@ export default function OrderLabels() {
 
       <div className="mx-auto w-full max-w-lg p-4">
         {isLoading && <p className="text-sm text-text-muted">Loading…</p>}
+        {error && <p className="p-4 text-danger">{error.message}</p>}
 
-        {!isLoading && !labels.length && (
+        {!isLoading && !error && !labels.length && (
           <p className="text-sm text-text-muted">
             This order has no blinds to label. Preset and custom lines carry no dimensions, so
             they get no label.
