@@ -32,11 +32,12 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
 /**
  * One label at its true printed proportions.
  *
- * Rows sit at fixed positions rather than flowing, mirroring the TSPL
- * renderer: a blind with no cassette leaves that row blank instead of
- * pulling the rows below it up, so the same fact is always in the same
- * place across a batch. `print:break-after-page` makes each label its
- * own sheet.
+ * Rows are plain block elements in normal flow, NOT fixed positions: an
+ * empty field collapses to zero height and every row below it moves up.
+ * This means vertical position does NOT match the TSPL renderer, which
+ * does use fixed row y-coordinates — an accepted difference, since this
+ * path renders for the shop PC's browser and TSPL renders for the print
+ * agent. `print:break-after-page` makes each label its own sheet.
  */
 function Label({ fields }: { fields: LabelFields }) {
   return (
