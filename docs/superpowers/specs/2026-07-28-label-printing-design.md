@@ -59,7 +59,8 @@ TSPL geometry, 10-dot left margin, 589 dots usable width:
 
 | y | Field | Font | Cell | Height |
 |---|-------|------|------|--------|
-| 6 | `order_number`, and right-aligned `n of m` | `4` / `2` | 24×32 / 12×20 | 32 |
+| 6 | `order_number` | `4` | 24×32 | 32 |
+| 14 | right-aligned `n of m` | `2` | 12×20 | 20 |
 | 42 | rule (`BAR 10,42,589,2`) | — | — | 2 |
 | 50 | Customer name | `3` | 16×24 | 24 |
 | 78 | Room | `3` | 16×24 | 24 |
@@ -149,9 +150,11 @@ Two sanitizers guard every interpolated string, and both are unit-tested:
   command language delimited by newlines. A customer name or room containing
   `\r`, `\n`, or other control characters could otherwise close the `TEXT`
   statement and inject arbitrary printer commands. All control characters are
-  removed, and `"` and `\` are escaped, before any value reaches the stream. This
-  is the same class of rule as `escapeHtml` for email bodies and the PostgREST
-  `or()` sanitizer in AI_GUIDELINES §2.
+  removed, backslashes are removed, and `"` is downgraded to `'`, before any
+  value reaches the stream. Removal is used in preference to escaping because
+  backslash handling varies across TSPL firmware, and an escape the printer does
+  not honour is an injection. This is the same class of rule as `escapeHtml` for
+  email bodies and the PostgREST `or()` sanitizer in AI_GUIDELINES §2.
 - **`foldAscii()`** — TSPL internal bitmap fonts are codepage-limited and will not
   render accented or non-Latin characters. Names like `Émile` or `Şoğut` are
   folded to their closest ASCII form (`Emile`, `Sogut`) rather than printed as
