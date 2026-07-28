@@ -91,6 +91,23 @@ describe('GET /print-jobs/next', () => {
     });
     expect(res.status).toBe(401);
   });
+
+  it('rejects "Bearer undefined" when the secret is unset', async () => {
+    const res = await agentApp.request(
+      '/print-jobs/next',
+      { headers: { Authorization: 'Bearer undefined' } },
+      { ...ENV, PRINT_AGENT_SECRET: undefined }
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('fails closed when the secret is an empty string', async () => {
+    const res = await agentApp.request('/print-jobs/next', { headers: AUTH }, {
+      ...ENV,
+      PRINT_AGENT_SECRET: '',
+    });
+    expect(res.status).toBe(401);
+  });
 });
 
 describe('POST /print-jobs/:id/result', () => {
