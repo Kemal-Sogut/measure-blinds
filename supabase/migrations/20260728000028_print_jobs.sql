@@ -46,8 +46,7 @@ create policy authenticated_full_access on public.print_jobs
 create or replace function public.claim_print_job()
 returns table (id uuid, payload text, label_count int, order_number text)
 language plpgsql
-security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v_id uuid;
