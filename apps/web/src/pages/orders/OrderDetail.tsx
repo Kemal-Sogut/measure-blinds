@@ -278,6 +278,12 @@ const ICONS = {
       <path d="M3 6h.01M3 12h.01M3 18h.01" />
     </ActionIcon>
   ),
+  labels: (
+    <ActionIcon>
+      <path d="M3 7a2 2 0 0 1 2-2h9l6 6-9 9-8-8V7Z" />
+      <path d="M7 9h.01" />
+    </ActionIcon>
+  ),
   trash: (
     <ActionIcon>
       <path d="M3 6h18" />
@@ -1385,7 +1391,14 @@ export default function OrderDetail() {
         short: 'Cut Sheet',
         onClick: () => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener'),
       };
-      return { primary: markReady, secondary: [manufacturer, overview] };
+      const labels: StageAction = {
+        key: 'labels',
+        icon: ICONS.labels,
+        label: 'Labels',
+        short: 'Labels',
+        onClick: () => window.open(`/orders/${id}/labels`, '_blank', 'noopener'),
+      };
+      return { primary: markReady, secondary: [manufacturer, labels, overview] };
     }
 
     // Ready — propose the installation (emails the customer).

@@ -262,6 +262,35 @@ export function useSetCutDone(): UseMutationResult<Order, Error, { id: string; d
 }
 
 /**
+ * Queues an order's production labels for the shop-floor print agent —
+ * the device-independent print path.
+ *
+ * The shop PC can print straight from the browser, but iOS has no Web
+ * Bluetooth, so from an iPad this endpoint is the ONLY way to reach the
+ * label printer. `items` holds 1-based label indexes for reprinting a
+ * damaged label; omit it to print every label on the order.
+ *
+ * Queues only — it does not wait for the printer. The agent polls every
+ * 30 seconds, so a job can sit briefly before it prints. Nothing about
+ * the order changes, so no cache is invalidated.
+ */
+export function useEnqueuePrintLabels(): UseMutationResult<
+  { job_id: string; label_count: number },
+  Error,
+  { id: string; items?: number[] }
+> {
+  return useMutation({
+    mutationFn: async ({ id, items }) =>
+      (
+        await apiFetch<Envelope<{ job_id: string; label_count: number }>>(
+          `/api/orders/${id}/print-label`,
+          { method: 'POST', body: JSON.stringify(items?.length ? { items } : {}) }
+        )
+      ).data,
+  });
+}
+
+/**
  * Answers a customer's cancellation request (the red banner above the
  * order's Progress card).
  *
