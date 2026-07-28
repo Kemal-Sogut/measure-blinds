@@ -2,6 +2,12 @@
 
 Date: 2026-07-28 · Status: approved by user
 
+> **Update (2026-07-28):** at the owner's request, the queued print-agent path
+> described below — the TSPL renderer, the `print_jobs` migration, the API
+> enqueue/agent endpoints, and the `apps/print-agent` workspace — has been
+> removed in favour of browser-only Bluetooth printing. The Shop PC browser
+> path described in this document is what shipped.
+
 ## Goal
 
 Print a production label for every blind on an order. The label is fixed behind

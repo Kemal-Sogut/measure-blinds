@@ -10,13 +10,11 @@
  * declares the stock size and every label box is exactly 3in x 1.5in
  * with zero margin, so one label is one physical label with no scaling.
  *
- * TWO PRINT PATHS, one selection:
- *   - "Print" goes through the browser to a Windows-installed printer.
- *     This is the shop PC. With Chrome started using --kiosk-printing
- *     the dialog is suppressed entirely.
- *   - "Send to printer" queues a job for the shop-floor agent. iOS has
- *     no Web Bluetooth, so from an iPad this is the only path that can
- *     reach the printer at all.
+ * SINGLE PRINT PATH: the "Print" button goes through the browser
+ * (`window.print()`) to a Windows-installed Bluetooth printer on the
+ * shop PC. With Chrome started using --kiosk-printing the dialog is
+ * suppressed entirely. There is no server-side print queue — printing
+ * from any other device is out of scope.
  *
  * Opened in a new tab from the order page, following the Manufacturer
  * Copy / Order Overview pattern.
@@ -24,9 +22,8 @@
 
 import { useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
-import { useOrder, useEnqueuePrintLabels } from '../../hooks/useOrders';
+import { useOrder } from '../../hooks/useOrders';
 import { buildLabels, type LabelFields } from '../../lib/labels';
 
 /**
@@ -34,10 +31,7 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  *
  * Rows are plain block elements in normal flow, NOT fixed positions: an
  * empty field collapses to zero height and every row below it moves up.
- * This means vertical position does NOT match the TSPL renderer, which
- * does use fixed row y-coordinates — an accepted difference, since this
- * path renders for the shop PC's browser and TSPL renders for the print
- * agent. `print:break-after-page` makes each label its own sheet.
+ * `print:break-after-page` makes each label its own sheet.
  */
 function Label({ fields }: { fields: LabelFields }) {
   return (
@@ -68,7 +62,6 @@ function Label({ fields }: { fields: LabelFields }) {
 export default function OrderLabels() {
   const { id } = useParams<{ id: string }>();
   const { data: order, isLoading, error } = useOrder(id);
-  const enqueue = useEnqueuePrintLabels();
 
   const labels = useMemo(() => (order ? buildLabels(order) : []), [order]);
   const [deselected, setDeselected] = useState<Set<number>>(new Set());
@@ -91,20 +84,6 @@ export default function OrderLabels() {
     setDeselected(allSelected ? new Set(labels.map((l) => l.index)) : new Set());
   }
 
-  /** Queues the current selection for the shop-floor agent. */
-  async function handleSend() {
-    if (!id || !selected.length) return;
-    try {
-      const result = await enqueue.mutateAsync({
-        id,
-        items: allSelected ? undefined : selected.map((l) => l.index),
-      });
-      toast.success(`Queued ${result.label_count} label(s) for the printer.`);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not queue the labels.');
-    }
-  }
-
   return (
     <div className="min-h-screen bg-surface-muted print:bg-white">
       {/*
@@ -124,13 +103,6 @@ export default function OrderLabels() {
         backTo={id ? `/orders/${id}` : '/'}
         right={
           <div className="flex items-center gap-2 print:hidden">
-            <button
-              onClick={handleSend}
-              disabled={!selected.length || enqueue.isPending}
-              className="flex h-9 items-center rounded-sm border border-border-input bg-surface px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
-            >
-              {enqueue.isPending ? 'Queueing…' : 'Send to printer'}
-            </button>
             <button
               onClick={() => window.print()}
               disabled={!selected.length}
