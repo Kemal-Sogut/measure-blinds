@@ -30,6 +30,17 @@ interface PrintJob {
   order_number: string;
 }
 
+/**
+ * Per-request timeout for both API calls. Node's global `fetch` has its
+ * own internal timeouts, but they run to minutes — against a 30s poll
+ * cadence, a black-holed connection (packets accepted, never answered;
+ * a real flaky-Wi-Fi failure mode, distinct from a fast ECONNREFUSED)
+ * would otherwise stall a poll cycle for several minutes with no log
+ * output. Must stay well under the poll interval so a stalled request
+ * cannot overlap the next cycle.
+ */
+const FETCH_TIMEOUT_MS = 10_000;
+
 /** Timestamped line so a scheduled-task log is readable after the fact. */
 function log(message: string): void {
   console.log(`[${new Date().toISOString()}] ${message}`);
@@ -39,6 +50,7 @@ function log(message: string): void {
 async function claimJob(config: AgentConfig): Promise<PrintJob | null> {
   const res = await fetch(`${config.apiBaseUrl}/agent/print-jobs/next`, {
     headers: { Authorization: `Bearer ${config.secret}` },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (res.status === 204) return null;
   if (!res.ok) throw new Error(`Claim failed: HTTP ${res.status}`);
@@ -54,14 +66,18 @@ async function reportResult(
   error?: string
 ): Promise<void> {
   try {
-    await fetch(`${config.apiBaseUrl}/agent/print-jobs/${jobId}/result`, {
+    const res = await fetch(`${config.apiBaseUrl}/agent/print-jobs/${jobId}/result`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.secret}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(ok ? { ok } : { ok, error }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
+    if (!res.ok) {
+      log(`Reporting job ${jobId} was rejected: HTTP ${res.status}`);
+    }
   } catch (err) {
     log(`Could not report job ${jobId}: ${String(err)}`);
   }

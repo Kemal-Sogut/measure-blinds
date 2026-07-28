@@ -22,7 +22,18 @@ Bluetooth, so the browser there queues a job and this process does the printing.
    ```
    wrangler secret put PRINT_AGENT_SECRET
    ```
-5. Build and run:
+5. Install dependencies from the repo root (this workspace has no dependencies
+   of its own, but `pnpm` needs to link the monorepo first):
+   ```
+   pnpm install
+   ```
+6. Set the environment variables from the [Environment](#environment) table
+   below — `API_BASE_URL`, `PRINT_AGENT_SECRET`, and `PRINTER_TARGET` are all
+   required, or `loadConfig` throws at startup naming whatever is missing.
+   Set them as **system** environment variables so both an interactive run
+   and the scheduled task in [Running at logon](#running-at-logon) inherit
+   them without further setup.
+7. Build and run:
    ```
    pnpm --filter print-agent build
    pnpm --filter print-agent start
@@ -46,8 +57,8 @@ set to the repo root:
 schtasks /create /tn "Blinds Nisa Print Agent" /tr "node C:\path\to\repo\apps\print-agent\dist\index.js" /sc onlogon
 ```
 
-Set the four environment variables as **system** variables so the task inherits
-them.
+This relies on the environment variables already having been set as **system**
+variables in [Setup](#setup) above, so the task inherits them.
 
 ## If nothing prints
 
