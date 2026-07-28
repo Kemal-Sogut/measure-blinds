@@ -38,6 +38,10 @@
  *                         accept (reverses the confirmation, no email)
  *                         or deny (keeps it, emails the customer)
  *   POST   /:id/ready     goods ready to install (in_progress → ready)
+ *   POST   /:id/print-label
+ *                         queue this order's production labels for the
+ *                         shop-floor print agent; `{ items?: number[] }`
+ *                         reprints a subset without renumbering them
  *   POST   /:id/installed terminal state (ready → installed)
  *   POST   /:id/revert    move an order back to an earlier stage
  *
@@ -62,6 +66,8 @@ import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
+import { buildLabels } from '../lib/labels';
+import { renderLabelsTspl } from '../lib/labelTspl';
 import {
   sendEmail,
   brandFromSettings,
@@ -1374,6 +1380,71 @@ app.post('/:id/cut-done', async (c) => {
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
+});
+
+/**
+ * Body for POST /:id/print-label. `items` holds 1-based label indexes
+ * in the order `buildLabels` produces; omitted or empty means every
+ * label. Strict, so a client cannot smuggle in a copy count or a
+ * pre-rendered payload.
+ */
+const printLabelSchema = z
+  .object({ items: z.array(z.number().int().positive()).optional() })
+  .strict();
+
+/**
+ * Queues this order's production labels for the shop-floor print agent.
+ *
+ * Labels are rendered to TSPL HERE, not by the agent — the Worker has
+ * the test suite, and the agent stays a dumb pipe that needs no
+ * knowledge of the label layout. One request produces exactly one
+ * `print_jobs` row holding the whole batch.
+ *
+ * `items` selects a subset for reprinting a damaged label. Selection
+ * happens AFTER numbering, so a reprint of label 3 still prints
+ * "3 of 7" and the operator can match it to the unit on the bench.
+ *
+ * This is the device-independent path: an iPad cannot reach a Bluetooth
+ * printer at all, so for anything but the shop PC this endpoint is the
+ * only way to print.
+ */
+app.post('/:id/print-label', async (c) => {
+  const parsed = printLabelSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: 'Body must be { items?: number[] }.' }, 400);
+
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: order } = await readDetail(sb, id);
+  if (!order) return c.json({ error: 'Order not found' }, 404);
+
+  const all = buildLabels(order);
+  if (!all.length) return c.json({ error: 'This order has no blinds to label.' }, 400);
+
+  const wanted = parsed.data.items?.length ? parsed.data.items : null;
+  if (wanted) {
+    const missing = wanted.find((n) => n > all.length);
+    if (missing !== undefined) {
+      return c.json({ error: `Label ${missing} does not exist on this order.` }, 400);
+    }
+  }
+  const chosen = wanted ? all.filter((l) => wanted.includes(l.index)) : all;
+
+  const { data: job, error } = await sb
+    .from('print_jobs')
+    .insert({
+      order_id: id,
+      payload: renderLabelsTspl(chosen),
+      label_count: chosen.length,
+      // The route group runs behind requireAuth in production; the `?.`
+      // keeps route-level tests, which mount this app directly, working.
+      requested_by: c.get('user')?.email ?? '',
+    })
+    .select('id')
+    .single();
+  if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, `Queued ${chosen.length} label(s) for printing.`);
+  return c.json({ data: { job_id: job.id, label_count: chosen.length } }, 202);
 });
 
 /** Marks a ready order installed — the terminal state (user action). */
