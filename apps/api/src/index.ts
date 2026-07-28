@@ -22,7 +22,6 @@ import appointmentsRoutes from './routes/appointments';
 import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
-import printAgentRoutes from './routes/printAgent';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
 
@@ -39,8 +38,6 @@ export interface Env {
   ENVIRONMENT: string;
   /** Shared secret the e-Transfer Apps Script sends as a Bearer token. */
   ETRANSFER_WEBHOOK_SECRET?: string;
-  /** Shared secret the shop-floor print agent sends as a Bearer token. */
-  PRINT_AGENT_SECRET?: string;
 }
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -93,13 +90,6 @@ app.get('/api/health', (c) => {
  * by the Gmail Apps Script.
  */
 app.route('/webhooks', webhookRoutes);
-
-/**
- * Print agent — like /webhooks, intentionally OUTSIDE /api/* so it
- * skips JWT auth; the agent is a headless process with no Supabase
- * session and authenticates with a shared bearer secret instead.
- */
-app.route('/agent', printAgentRoutes);
 
 /**
  * JWT verification on every /api/* route registered below this point.

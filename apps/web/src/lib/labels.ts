@@ -5,12 +5,11 @@
  * Production-label field extraction — the shared source of truth for
  * WHAT goes on a label, independent of how it is drawn.
  *
- * TWIN MODULE: `apps/api/src/lib/labels.ts` is a line-for-line twin of
- * this file, exactly like the pricing.ts/totals.ts pair. The two print
- * paths render differently (browser CSS vs TSPL) but must always carry
- * the same words in the same order, so the extraction is duplicated
- * rather than shared. Change one side and you change BOTH, along with
- * both mirrored test suites.
+ * This is the single implementation used by the labels page
+ * (`pages/orders/OrderLabels.tsx`), which renders these fields to the
+ * browser DOM and prints them via `window.print()` to a
+ * Windows-installed Bluetooth printer on the shop PC. There is no
+ * server-side counterpart — printing is browser-only.
  *
  * A label is fixed behind a blind's cassette before it ships, so the
  * unit is one physical installed blind: one label per line item per

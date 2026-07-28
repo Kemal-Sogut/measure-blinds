@@ -22,4 +22,3 @@ ENVIRONMENT = "development"
 # RESEND_FROM       (e.g. "Blinds Nisa <estimates@blindsnisa.com>")
 # RESEND_REPLY_TO   (e.g. "info@blindsnisa.com")
 # ETRANSFER_WEBHOOK_SECRET  (shared with the Gmail Apps Script)
-# PRINT_AGENT_SECRET        (shared with apps/print-agent on the shop PC)
