@@ -32,12 +32,18 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  * Rows are plain block elements in normal flow, NOT fixed positions: an
  * empty field collapses to zero height and every row below it moves up.
  * `print:break-after-page` makes each label its own sheet.
+ *
+ * Cassette and control share ONE row, joined with the same " · " the
+ * field builder uses for material and colour: they are two halves of the
+ * same hardware spec and the freed row keeps the stock from crowding.
+ * The join drops a blank side so a unit missing one still reads clean.
  */
 function Label({ fields }: { fields: LabelFields }) {
+  const hardware = [fields.cassette, fields.control].filter(Boolean).join(' · ');
   return (
     <div className="h-[1.5in] w-[3in] shrink-0 overflow-hidden border border-border bg-white p-[0.06in] font-sans text-black print:break-after-page print:border-0">
       <div className="flex items-baseline justify-between">
-        <span className="text-[15pt] font-bold leading-none">{fields.orderNumber}</span>
+        <span className="text-[11pt] font-bold leading-none">{fields.orderNumber}</span>
         <span className="text-[7pt] leading-none">
           {fields.index} of {fields.total}
         </span>
@@ -45,11 +51,10 @@ function Label({ fields }: { fields: LabelFields }) {
       <div className="my-[0.03in] border-t border-black" />
       <div className="truncate text-[10pt] leading-tight">{fields.customer}</div>
       <div className="truncate text-[10pt] leading-tight">{fields.room}</div>
-      <div className="truncate text-[15pt] font-bold leading-tight">{fields.dimensions}</div>
+      <div className="truncate text-[11pt] font-bold leading-tight">{fields.dimensions}</div>
       <div className="my-[0.03in] border-t border-black" />
       <div className="truncate text-[10pt] leading-tight">{fields.material}</div>
-      <div className="truncate text-[10pt] leading-tight">{fields.cassette}</div>
-      <div className="truncate text-[10pt] leading-tight">{fields.control}</div>
+      <div className="truncate text-[10pt] leading-tight">{hardware}</div>
     </div>
   );
 }
