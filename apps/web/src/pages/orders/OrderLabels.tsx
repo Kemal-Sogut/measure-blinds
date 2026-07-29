@@ -31,17 +31,26 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  *
  * Rows are plain block elements in normal flow, NOT fixed positions: an
  * empty field collapses to zero height and every row below it moves up.
- * `print:break-after-page` makes each label its own sheet.
  *
  * Cassette and control share ONE row, joined with the same " · " the
  * field builder uses for material and colour: they are two halves of the
  * same hardware spec and the freed row keeps the stock from crowding.
  * The join drops a blank side so a unit missing one still reads clean.
+ *
+ * @param fields One label's worth of already-formatted text.
+ * @param pageBreak Whether to force a page break AFTER this label. The
+ *   caller sets it on every printed label except the last one: a break
+ *   after the final label opens a page nothing then fills, which the
+ *   printer still feeds as a blank die-cut label.
  */
-function Label({ fields }: { fields: LabelFields }) {
+function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean }) {
   const hardware = [fields.cassette, fields.control].filter(Boolean).join(' · ');
   return (
-    <div className="h-[1.5in] w-[3in] shrink-0 overflow-hidden border border-border bg-white p-[0.06in] font-sans text-black print:break-after-page print:border-0">
+    <div
+      className={`h-[1.5in] w-[3in] shrink-0 overflow-hidden border border-border bg-white p-[0.06in] font-sans text-black print:border-0 ${
+        pageBreak ? 'print:break-after-page' : ''
+      }`}
+    >
       <div className="flex items-baseline justify-between">
         <span className="text-[11pt] font-bold leading-none">{fields.orderNumber}</span>
         <span className="text-[7pt] leading-none">
@@ -73,6 +82,12 @@ export default function OrderLabels() {
 
   const selected = labels.filter((l) => !deselected.has(l.index));
   const allSelected = deselected.size === 0;
+  /**
+   * The label the printer stops after. Page breaks go BETWEEN labels, so
+   * the last printed one must not carry one — and "last printed" is not
+   * the last in the DOM, because any trailing label can be deselected.
+   */
+  const lastPrinted = selected.length ? selected[selected.length - 1].index : 0;
 
   /** Flips one label's checkbox. */
   function toggle(index: number) {
@@ -155,7 +170,7 @@ export default function OrderLabels() {
                       <input type="checkbox" checked={isOn} onChange={() => toggle(fields.index)} />
                       Label {fields.index}
                     </label>
-                    <Label fields={fields} />
+                    <Label fields={fields} pageBreak={isOn && fields.index !== lastPrinted} />
                   </div>
                 );
               })}
