@@ -51,9 +51,12 @@ function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean 
         pageBreak ? 'print:break-after-page' : ''
       }`}
     >
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11pt] font-bold leading-none">{fields.orderNumber}</span>
-        <span className="text-[7pt] leading-none">
+      <div className="flex items-baseline justify-between gap-[0.05in]">
+        <span className="flex min-w-0 items-baseline gap-[0.05in]">
+          <span className="text-[11pt] font-bold leading-none">{fields.orderNumber}</span>
+          <span className="truncate text-[10pt] leading-none">{fields.orderDate}</span>
+        </span>
+        <span className="shrink-0 text-[7pt] leading-none">
           {fields.index} of {fields.total}
         </span>
       </div>

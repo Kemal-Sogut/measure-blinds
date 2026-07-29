@@ -15,6 +15,7 @@ import { buildLabels, type LabelLineItem, type LabelOrder } from './labels';
 function order(overrides: Partial<LabelOrder> = {}): LabelOrder {
   return {
     order_number: 'T0408-126',
+    order_date: '2026-07-21',
     customer: { first_name: 'Ada', last_name: 'Lovelace' },
     line_items: [],
     ...overrides,
@@ -124,6 +125,24 @@ describe('buildLabels', () => {
     expect(label.room).toBe('Den');
     expect(label.customer).toBe('');
     expect(label.orderNumber).toBe('T0408-126');
+  });
+
+  it('prints the order date as month and day, with no year', () => {
+    const [label] = buildLabels(order({ line_items: [blind()] }));
+    expect(label.orderDate).toBe('Jul 21');
+  });
+
+  it('reads the order date as local, not UTC, and blanks a malformed one', () => {
+    // Parsed as a string this would be UTC midnight and render as Dec 31
+    // in every North American zone.
+    const [newYear] = buildLabels(order({ order_date: '2026-01-01', line_items: [blind()] }));
+    expect(newYear.orderDate).toBe('Jan 1');
+
+    const [missing] = buildLabels(order({ order_date: '', line_items: [blind()] }));
+    expect(missing.orderDate).toBe('');
+
+    const [junk] = buildLabels(order({ order_date: 'not-a-date', line_items: [blind()] }));
+    expect(junk.orderDate).toBe('');
   });
 
   it('passes cassette and control through, blanking nulls', () => {

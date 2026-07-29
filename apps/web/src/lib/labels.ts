@@ -35,6 +35,8 @@ export interface LabelLineItem {
 /** The subset of an order this module reads. */
 export interface LabelOrder {
   order_number: string;
+  /** `YYYY-MM-DD` — the `orders.order_date` column, not a timestamp. */
+  order_date: string;
   customer?: { first_name: string; last_name: string } | null;
   line_items?: LabelLineItem[] | null;
 }
@@ -48,6 +50,13 @@ export interface LabelOrder {
 export interface LabelFields {
   /** Order number, e.g. "T0408-126". */
   orderNumber: string;
+  /**
+   * Month and day of the order date, e.g. "Jul 21"; `''` when the date
+   * is missing or malformed. The year is deliberately dropped — the
+   * stock is 3in wide and the shop only ever needs the day to tell two
+   * in-flight orders apart.
+   */
+  orderDate: string;
   /** 1-based position across the whole order (the `n` in `n of m`). */
   index: number;
   /** Total labels the order produces (the `m` in `n of m`). */
@@ -66,6 +75,19 @@ export interface LabelFields {
 /** Trims a possibly-null value to a plain string. */
 function text(value: string | null | undefined): string {
   return (value ?? '').trim();
+}
+
+/**
+ * "Jul 21" from a `YYYY-MM-DD` order date. The parts are split and fed
+ * to the Date constructor rather than parsed from the string, which
+ * would be read as UTC and print the previous day west of Greenwich —
+ * the same guard `CustomerView`'s receipt date uses. Anything that is
+ * not three numeric parts yields `''` so a bad row still prints a label.
+ */
+function shortDate(iso: string): string {
+  const [y, m, d] = text(iso).split('-').map(Number);
+  if (!y || !m || !d) return '';
+  return new Date(y, m - 1, d).toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
 }
 
 /**
@@ -109,6 +131,7 @@ export function buildLabels(order: LabelOrder): LabelFields[] {
     for (let copy = 0; copy < Math.max(1, item.quantity); copy++) {
       labels.push({
         orderNumber: text(order.order_number),
+        orderDate: shortDate(order.order_date),
         index: labels.length + 1,
         total,
         customer,
