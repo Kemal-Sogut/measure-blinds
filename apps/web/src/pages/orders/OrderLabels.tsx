@@ -90,11 +90,16 @@ export default function OrderLabels() {
         Print rules live in the page rather than the global stylesheet:
         the 3in x 1.5in page size must not leak onto any other printable
         view (the cut sheet and the order overview are both Letter).
+
+        The page header is dropped on paper: it is shared with every
+        other page and takes no print classes, so without this it lands
+        on the first label and pushes the fields off the stock.
       */}
       <style>{`
         @media print {
           @page { size: 3in 1.5in; margin: 0 }
           html, body { margin: 0; padding: 0; background: #fff }
+          header { display: none !important }
         }
       `}</style>
 
@@ -114,7 +119,7 @@ export default function OrderLabels() {
         }
       />
 
-      <div className="mx-auto w-full max-w-lg p-4">
+      <div className="mx-auto w-full max-w-lg p-4 print:p-0">
         {isLoading && <p className="text-sm text-text-muted">Loading…</p>}
         {error && <p className="p-4 text-danger">{error.message}</p>}
 
