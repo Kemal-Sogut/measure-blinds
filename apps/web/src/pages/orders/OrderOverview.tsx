@@ -12,7 +12,8 @@
  * `blinds_type`), plus one "Other Items" table for preset/custom lines:
  *
  *   - Blind tables: Room | Width (cm) | Height (cm) | Material |
- *     Colour | Cassette | Control | Qty | Unit | Total | Note.
+ *     Colour | Cassette | Bottom rail |
+ *     Control | Qty | Unit | Total | Note.
  *   - Other Items: Type | Description | Qty | Unit | Total.
  *
  * All names and money come from the SERVER row — the snapshotted
