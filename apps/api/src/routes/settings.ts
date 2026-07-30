@@ -3,9 +3,10 @@
 
 /**
  * Settings route group — company info, catalog entities (cassette
- * options, control options, preset line items, blind types), Materials
- * (a catalog with many-to-many blind-type links), and the company logo
- * upload. Mounted at `/api/settings` behind `requireAuth`.
+ * options, bottom rail options, control options, preset line items,
+ * blind types), Materials (a catalog with many-to-many blind-type
+ * links), and the company logo upload. Mounted at `/api/settings`
+ * behind `requireAuth`.
  *
  * Every write is Zod-validated before touching the database. The simple
  * catalog entities share one route factory since they differ only in
@@ -140,7 +141,8 @@ app.post('/company/logo', async (c) => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Catalog entities (cassettes / controls / presets / blind types)     */
+/* Catalog entities (cassettes / bottom rails / controls / presets /   */
+/* blind types)                                                        */
 /* ------------------------------------------------------------------ */
 
 /** Configuration for one catalog entity handled by the route factory. */
@@ -165,6 +167,13 @@ const catalogs: CatalogConfig[] = [
   {
     path: 'cassette-options',
     table: 'cassette_options',
+    schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
+    orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+  },
+  {
+    // Priced per linear metre of width, the same basis as the cassette.
+    path: 'bottom-rail-options',
+    table: 'bottom_rail_options',
     schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
   },

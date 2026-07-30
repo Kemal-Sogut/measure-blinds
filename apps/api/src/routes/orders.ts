@@ -47,10 +47,11 @@
  *   DELETE /:id           delete an order (+ line items + payments)
  *
  * AUTHORITATIVE PRICING: clients send measurements and option IDs only.
- * The Worker fetches material/cassette/control prices from the catalog,
- * snapshots names + prices onto each line item, and computes unit
- * prices, line totals, and order totals with lib/pricing + lib/totals.
- * Client-computed money values are never trusted or persisted.
+ * The Worker fetches material/cassette/bottom-rail/control prices from
+ * the catalog, snapshots names + prices onto each line item, and
+ * computes unit prices, line totals, and order totals with lib/pricing
+ * + lib/totals. Client-computed money values are never trusted or
+ * persisted.
  */
 
 import { Hono } from 'hono';
@@ -96,6 +97,7 @@ const blindItemSchema = z
     height_cm: z.number().positive().max(1000),
     material_id: z.string().uuid(),
     cassette_id: z.string().uuid(),
+    bottom_rail_id: z.string().uuid(),
     control_id: z.string().uuid(),
     color: z.string().max(100).default(''),
     note: z.string().max(1000).default(''),
@@ -187,12 +189,14 @@ async function resolveLineItems(
   const ids = {
     materials: new Set<string>(),
     cassette_options: new Set<string>(),
+    bottom_rail_options: new Set<string>(),
     control_options: new Set<string>(),
   };
   for (const it of items) {
     if (it.item_type === 'blind') {
       ids.materials.add(it.material_id);
       ids.cassette_options.add(it.cassette_id);
+      ids.bottom_rail_options.add(it.bottom_rail_id);
       ids.control_options.add(it.control_id);
     }
   }
@@ -213,9 +217,10 @@ async function resolveLineItems(
     );
   }
 
-  const [materials, cassettes, controls] = await Promise.all([
+  const [materials, cassettes, bottomRails, controls] = await Promise.all([
     lookup('materials', ids.materials, 'price_per_sqm'),
     lookup('cassette_options', ids.cassette_options, 'price_per_m'),
+    lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
     lookup('control_options', ids.control_options, 'price_per_item'),
   ]);
 
@@ -239,6 +244,9 @@ async function resolveLineItems(
         cassette_id: null,
         cassette_name: null,
         cassette_price_per_m: null,
+        bottom_rail_id: null,
+        bottom_rail_name: null,
+        bottom_rail_price_per_m: null,
         control_id: null,
         control_name: null,
         control_price_per_item: null,
@@ -252,9 +260,11 @@ async function resolveLineItems(
     }
     const material = materials.get(it.material_id);
     const cassette = cassettes.get(it.cassette_id);
+    const bottomRail = bottomRails.get(it.bottom_rail_id);
     const control = controls.get(it.control_id);
     if (!material) throw new Error('Selected material no longer exists.');
     if (!cassette) throw new Error('Selected cassette option no longer exists.');
+    if (!bottomRail) throw new Error('Selected bottom rail option no longer exists.');
     if (!control) throw new Error('Selected control option no longer exists.');
 
     // Dispatch to the blind type's own calculator (falls back to the
@@ -264,6 +274,7 @@ async function resolveLineItems(
       height_cm: it.height_cm,
       material_price_per_sqm: material.price,
       cassette_price_per_m: cassette.price,
+      bottom_rail_price_per_m: bottomRail.price,
       control_price_per_item: control.price,
     });
     return {
@@ -279,6 +290,9 @@ async function resolveLineItems(
       cassette_id: it.cassette_id,
       cassette_name: cassette.name,
       cassette_price_per_m: cassette.price,
+      bottom_rail_id: it.bottom_rail_id,
+      bottom_rail_name: bottomRail.name,
+      bottom_rail_price_per_m: bottomRail.price,
       control_id: it.control_id,
       control_name: control.name,
       control_price_per_item: control.price,

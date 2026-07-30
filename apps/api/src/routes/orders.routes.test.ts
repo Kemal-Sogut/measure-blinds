@@ -99,6 +99,9 @@ const ENV = {
 const MATERIAL = { id: '11111111-1111-4111-8111-111111111111', name: 'Blackout White', price_per_sqm: 55 };
 const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price_per_m: 20 };
 const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price_per_item: 0 };
+// Priced at 0, mirroring the production seed, so every pre-existing money
+// assertion in this file still holds. The priced case is exercised below.
+const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price_per_m: 0 };
 
 /** Valid create payload used across tests. */
 function payload() {
@@ -117,6 +120,7 @@ function payload() {
         height_cm: 200,
         material_id: MATERIAL.id,
         cassette_id: CASSETTE.id,
+        bottom_rail_id: BOTTOM_RAIL.id,
         control_id: CONTROL.id,
         quantity: 2,
       },
@@ -132,6 +136,7 @@ beforeEach(() => {
   db.responses = {
     'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
+    'bottom_rail_options.select': [BOTTOM_RAIL],
     'control_options.select': [CONTROL],
     'company_settings.select': [{ default_expiry_days: 14 }],
     'orders.count': [0],
@@ -227,6 +232,80 @@ describe('POST /api/orders', () => {
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(400);
+  });
+
+  it('snapshots the bottom rail name and price onto the line item', async () => {
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    const blind = rows.find((r) => r.item_type === 'blind')!;
+    expect(blind.bottom_rail_id).toBe(BOTTOM_RAIL.id);
+    expect(blind.bottom_rail_name).toBe('Regular');
+    expect(blind.bottom_rail_price_per_m).toBe(0);
+    // Preset rows must carry the SAME column set with null values — a
+    // missing key here lets PostgREST NULL-fill and break the insert.
+    const preset = rows.find((r) => r.item_type === 'preset')!;
+    expect(preset).toHaveProperty('bottom_rail_id', null);
+    expect(preset).toHaveProperty('bottom_rail_name', null);
+    expect(preset).toHaveProperty('bottom_rail_price_per_m', null);
+  });
+
+  it('adds the bottom rail to the unit price at its catalog rate', async () => {
+    // 140cm of width at $15/m = $21 per blind, ×2 blinds = $42 over the
+    // 389 baseline asserted above.
+    db.responses['bottom_rail_options.select'] = [{ ...BOTTOM_RAIL, price_per_m: 15 }];
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const orderRow = db.insertPayloads['orders']?.[0] as Record<string, number>;
+    expect(orderRow.subtotal).toBe(431);
+  });
+
+  it('rejects a client-supplied bottom rail price with 400 and inserts nothing', async () => {
+    const bad = payload();
+    (bad.line_items[0] as Record<string, unknown>).bottom_rail_price_per_m = 0;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(bad),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('line_items.insert');
+  });
+
+  it('rejects a blind with no bottom rail chosen', async () => {
+    const bad = payload();
+    delete (bad.line_items[0] as Record<string, unknown>).bottom_rail_id;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(bad),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('line_items.insert');
+  });
+
+  it('fails clearly when the chosen bottom rail was deleted mid-edit', async () => {
+    db.responses['bottom_rail_options.select'] = [];
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Selected bottom rail option no longer exists.',
+    });
   });
 });
 
