@@ -103,7 +103,7 @@ import {
   type Catalogs,
   type BulkEditState,
 } from './LineItemEditor';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
 
 /** Formats a Date as the API's YYYY-MM-DD. */
 function toIso(d: Date): string {
@@ -135,6 +135,7 @@ function toDrafts(order: Order): ItemDraft[] {
         height_cm: String(li.height_cm ?? ''),
         material_id: li.material_id ?? '',
         cassette_id: li.cassette_id ?? '',
+        bottom_rail_id: li.bottom_rail_id ?? '',
         control_id: li.control_id ?? '',
         color: li.color ?? '',
         note: li.note ?? '',
@@ -327,6 +328,7 @@ export default function OrderDetail() {
 
   const materialsQ = useCatalogList<Material>('materials');
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
+  const bottomRailsQ = useCatalogList<BottomRailOption>('bottom-rail-options');
   const controlsQ = useCatalogList<ControlOption>('control-options');
   const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
@@ -369,7 +371,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', control_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -430,10 +432,11 @@ export default function OrderDetail() {
     () => ({
       materials: materialsQ.data ?? [],
       cassettes: cassettesQ.data ?? [],
+      bottomRails: bottomRailsQ.data ?? [],
       controls: controlsQ.data ?? [],
       blindTypes: blindTypesQ.data ?? [],
     }),
-    [materialsQ.data, cassettesQ.data, controlsQ.data, blindTypesQ.data]
+    [materialsQ.data, cassettesQ.data, bottomRailsQ.data, controlsQ.data, blindTypesQ.data]
   );
 
   // ── Live totals (client preview; server recomputes on save) ────
@@ -504,6 +507,7 @@ export default function OrderDetail() {
       material_id: '',
       // Sensible defaults from the catalog (fall back to unset if absent).
       cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
+      bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
       control_id: findOptionIdByName(catalogs.controls, 'Chain'),
       color: '',
       note: '',
@@ -597,9 +601,9 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  // ── Bulk edit (material / cassette / control only) ────────────────
+  // ── Bulk edit (material / cassette / bottom rail / control only) ──
   function openBulkEdit() {
-    setBulkState({ material_id: '', cassette_id: '', control_id: '' });
+    setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '' });
     setSheet('bulkEdit');
   }
 
@@ -610,6 +614,7 @@ export default function OrderDetail() {
         const patch: Partial<BlindDraft> = {};
         if (bulkState.material_id) patch.material_id = bulkState.material_id;
         if (bulkState.cassette_id) patch.cassette_id = bulkState.cassette_id;
+        if (bulkState.bottom_rail_id) patch.bottom_rail_id = bulkState.bottom_rail_id;
         if (bulkState.control_id) patch.control_id = bulkState.control_id;
         return { ...it, ...patch };
       })
@@ -634,8 +639,8 @@ export default function OrderDetail() {
         if (panels.some((p) => p === null) || !panels.length)
           return `Item ${i + 1}: enter every panel width.`;
         if (!height) return `Item ${i + 1}: enter a height.`;
-        if (!it.material_id || !it.cassette_id || !it.control_id)
-          return `Item ${i + 1}: choose material, cassette, and control.`;
+        if (!it.material_id || !it.cassette_id || !it.bottom_rail_id || !it.control_id)
+          return `Item ${i + 1}: choose material, cassette, bottom rail, and control.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
         line_items.push({
           item_type: 'blind',
@@ -645,6 +650,7 @@ export default function OrderDetail() {
           height_cm: height,
           material_id: it.material_id,
           cassette_id: it.cassette_id,
+          bottom_rail_id: it.bottom_rail_id,
           control_id: it.control_id,
           color: it.color.trim(),
           note: it.note.trim(),
@@ -1671,7 +1677,7 @@ export default function OrderDetail() {
                             ? 'Select blind items to bulk edit'
                             : selectionHasNonBlind
                               ? 'Bulk edit is only available for blind items'
-                              : 'Edit material, cassette and control for selected items'
+                              : 'Edit material, cassette, bottom rail and control for selected items'
                         }
                         className="flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                       >
@@ -2344,7 +2350,7 @@ export default function OrderDetail() {
         );
       })()}
 
-      {/* Bulk edit popup (material / cassette / control only) */}
+      {/* Bulk edit popup (material / cassette / bottom rail / control only) */}
       {sheet === 'bulkEdit' && (
         <div
           className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
@@ -2372,7 +2378,7 @@ export default function OrderDetail() {
               </button>
               <button
                 onClick={applyBulkEdit}
-                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.control_id}
+                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id}
                 className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 Apply to selected
