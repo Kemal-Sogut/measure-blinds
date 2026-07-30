@@ -173,7 +173,7 @@ Run from the repo root:
 node -e "const s=require('fs').readFileSync('supabase/migrations/20260729000028_bottom_rail_options.sql','utf8');const ins=s.match(/insert into public\.line_items \(([\s\S]*?)\)/)[1].split(',').map(x=>x.trim()).filter(x=>x&&!x.startsWith('--'));const rec=s.match(/as i\(([\s\S]*?)\);/)[1].split(',').map(x=>x.trim().split(/\s+/)[0]).filter(Boolean);const missing=ins.filter(c=>c!=='order_id'&&!rec.includes(c));console.log('insert cols:',ins.length,'recordset cols:',rec.length);console.log('in insert but not recordset:',missing);"
 ```
 
-Expected: `insert cols: 26 recordset cols: 25` and `in insert but not recordset: []`. The one-column difference is `order_id`, which comes from the function parameter rather than the JSON — that is correct. Any other name in the `missing` list is a bug: fix it before continuing.
+Expected: `insert cols: 25 recordset cols: 24` and `in insert but not recordset: []`. The one-column difference is `order_id`, which comes from the function parameter rather than the JSON — that is correct. Any other name in the `missing` list is a bug: fix it before continuing.
 
 - [ ] **Step 3: Confirm the three columns appear in all five required places**
 
@@ -181,7 +181,7 @@ Expected: `insert cols: 26 recordset cols: 25` and `in insert but not recordset:
 grep -o "bottom_rail_id\|bottom_rail_name\|bottom_rail_price_per_m" supabase/migrations/20260729000028_bottom_rail_options.sql | wc -l
 ```
 
-Expected: `15` — three columns × five sites: the `alter table`, the backfill `update`, the RPC's insert list, the RPC's `select`, and the `jsonb_to_recordset` signature. Count occurrences (`grep -o`), not matching lines (`grep -c`) — several of these sites put all three names on one line.
+Expected: `16` — three columns × five code sites (the `alter table`, the backfill `update`, the RPC's insert list, the RPC's `select`, and the `jsonb_to_recordset` signature) = 15, plus one incidental mention of `bottom_rail_id` in the migration's own header comment. Confirm the split with `grep "^--" <file> | grep -o … | wc -l`, which must be `1`. Count occurrences (`grep -o`), not matching lines (`grep -c`) — several of these sites put all three names on one line.
 
 The table name `bottom_rail_options` does not match any of the three patterns, so the `create table`, the seed `insert`, and the FK reference are correctly excluded from the count.
 
