@@ -441,7 +441,10 @@ Then add these tests inside `describe('POST /api/orders')`:
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(201);
-    const rows = db.insertPayloads['line_items'] as Record<string, unknown>[];
+    // insertPayloads[table] is an array of per-CALL payloads (the fake does
+    // `push(args[0])` at line 44), so [0] is the first insert call's row
+    // array. Same shape as the existing `insertPayloads['orders']?.[0]` use.
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
     const blind = rows.find((r) => r.item_type === 'blind')!;
     expect(blind.bottom_rail_id).toBe(BOTTOM_RAIL.id);
     expect(blind.bottom_rail_name).toBe('Regular');
