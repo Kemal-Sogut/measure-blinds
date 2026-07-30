@@ -45,6 +45,13 @@ select * from (values
 ) as v(name, price_per_m, sort_order)
 where not exists (select 1 from public.cassette_options);
 
+insert into public.bottom_rail_options (name, price_per_m, sort_order)
+select * from (values
+  ('Regular', 0.00::numeric, 1),
+  ('Pear',    0.00::numeric, 2)
+) as v(name, price_per_m, sort_order)
+where not exists (select 1 from public.bottom_rail_options);
+
 insert into public.control_options (name, price_per_item, sort_order)
 select * from (values
   ('Chain Control',  0.00::numeric, 1),

@@ -21,11 +21,17 @@
 -- Preset and custom rows keep NULL, exactly as they already do for
 -- cassette and control.
 --
--- update_order_with_items() is rebuilt because the atomic edit path
--- inserts an explicit column list: BOTH the insert list AND the
--- jsonb_to_recordset signature must name the new columns or the field is
--- silently dropped on every edit. Body copied from migration 23 with the
--- three bottom-rail columns added after cassette.
+-- update_order_with_items() is rebuilt to keep it in sync even though no
+-- application code currently calls it — it is unreferenced today. The
+-- live edit path is the PostgREST delete-then-insert in
+-- apps/api/src/routes/orders.ts, using the same resolveLineItems output
+-- the create path uses, which is why editing an order already carries the
+-- bottom rail correctly. This function is kept correct anyway, on the
+-- principle that an existing database object should not silently fall out
+-- of sync with the table it writes: BOTH the insert column list AND the
+-- jsonb_to_recordset signature must name the new columns, so the function
+-- stays correct if anything ever calls it again. Body copied from
+-- migration 23 with the three bottom-rail columns added after cassette.
 
 create table public.bottom_rail_options (
   id uuid primary key default gen_random_uuid(),

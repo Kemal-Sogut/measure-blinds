@@ -11,18 +11,16 @@
  * blind type (Roller, Zebra, …, grouped by the snapshotted
  * `blinds_type`), plus one "Other Items" table for preset/custom lines:
  *
- *   - Blind tables: Room | Width (cm) | Height (cm) | Material |
- *     Colour | Cassette | Bottom rail |
- *     Control | Qty | Unit | Total | Note.
+ *   - Blind tables: Room | Width (cm) | Height (cm) | Material | Colour |
+ *     Cassette | Bottom rail | Control | Qty | Unit | Total | Note.
  *   - Other Items: Type | Description | Qty | Unit | Total.
  *
  * All names and money come from the SERVER row — the snapshotted
- * `material_name` / `cassette_name` / `bottom_rail_name` /
- * `control_name` and the stored
- * `unit_price` / `line_total` / totals — so the page reflects exactly
- * what was priced, independent of later catalog changes and of any
- * unsaved edits on the detail page. Tables scroll horizontally on
- * narrow screens; a Print button (hidden on paper) calls
+ * `material_name` / `cassette_name` / `bottom_rail_name` / `control_name`
+ * and the stored `unit_price` / `line_total` / totals — so the page
+ * reflects exactly what was priced, independent of later catalog changes
+ * and of any unsaved edits on the detail page. Tables scroll horizontally
+ * on narrow screens; a Print button (hidden on paper) calls
  * `window.print()`.
  */
 

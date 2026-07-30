@@ -12,8 +12,9 @@
  * `applyHeightMinimum`), or the whole `calculateUnitPrice` — whichever is
  * the smallest correct change.
  *
- * AUTHORITATIVE: this server class is the twin of the server-side
- * `apps/api/src/lib/calculators/base.ts` used for live keystroke
+ * This client class is the twin of the AUTHORITATIVE server-side
+ * `apps/api/src/lib/calculators/base.ts`, which recalculates and
+ * finalizes pricing on save; this web class only powers live keystroke
  * previews. The two MUST stay in sync; `pricing.test.ts` on both sides
  * encodes the same expected values so any drift fails a suite.
  *
