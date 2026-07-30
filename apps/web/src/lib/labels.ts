@@ -28,6 +28,7 @@ export interface LabelLineItem {
   material_name: string | null;
   color: string;
   cassette_name: string | null;
+  bottom_rail_name: string | null;
   control_name: string | null;
   quantity: number;
 }
@@ -69,6 +70,8 @@ export interface LabelFields {
   /** Material and colour joined with " · "; either side may be absent. */
   material: string;
   cassette: string;
+  /** Bottom-rail name, e.g. "Regular"; `''` when the row has none. */
+  bottomRail: string;
   control: string;
 }
 
@@ -139,6 +142,7 @@ export function buildLabels(order: LabelOrder): LabelFields[] {
         dimensions: dimensionsOf(item),
         material,
         cassette: text(item.cassette_name),
+        bottomRail: text(item.bottom_rail_name),
         control: text(item.control_name),
       });
     }

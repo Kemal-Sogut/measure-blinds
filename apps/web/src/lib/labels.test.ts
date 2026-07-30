@@ -2,10 +2,9 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Unit tests for the web-side label field extraction. This suite is the
- * MIRROR of apps/api/src/lib/labels.test.ts — the two modules are twins
- * (the same convention as pricing.ts/totals.ts) and must be changed
- * together. Any case added here is added there.
+ * Unit tests for the web-side label field extraction. This is the only
+ * implementation — printing is browser-only, so there is no server-side
+ * twin to keep in step (the api copy went with the print-agent removal).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -33,6 +32,7 @@ function blind(overrides: Partial<LabelLineItem> = {}): LabelLineItem {
     material_name: 'Blackout White',
     color: 'Ivory',
     cassette_name: 'Standard',
+    bottom_rail_name: 'Regular',
     control_name: 'Chain Left',
     quantity: 1,
     ...overrides,
@@ -145,15 +145,28 @@ describe('buildLabels', () => {
     expect(junk.orderDate).toBe('');
   });
 
-  it('passes cassette and control through, blanking nulls', () => {
+  it('passes cassette, bottom rail and control through, blanking nulls', () => {
     const [full] = buildLabels(order({ line_items: [blind()] }));
     expect(full.cassette).toBe('Standard');
+    expect(full.bottomRail).toBe('Regular');
     expect(full.control).toBe('Chain Left');
 
     const [bare] = buildLabels(
-      order({ line_items: [blind({ cassette_name: null, control_name: null })] })
+      order({
+        line_items: [
+          blind({ cassette_name: null, bottom_rail_name: null, control_name: null }),
+        ],
+      })
     );
     expect(bare.cassette).toBe('');
+    expect(bare.bottomRail).toBe('');
     expect(bare.control).toBe('');
+  });
+
+  it('trims the bottom rail name, so a padded catalog entry still fits', () => {
+    const [label] = buildLabels(
+      order({ line_items: [blind({ bottom_rail_name: '  Pear  ' })] })
+    );
+    expect(label.bottomRail).toBe('Pear');
   });
 });
