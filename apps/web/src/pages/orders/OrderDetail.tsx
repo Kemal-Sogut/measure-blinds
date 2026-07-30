@@ -2309,6 +2309,24 @@ export default function OrderDetail() {
         const title = isBlind
           ? `Edit Blind — ${(editDraft as BlindDraft).room_name || 'Item'}`
           : `Edit ${editDraft.item_type === 'preset' ? 'Preset' : 'Custom'} Item`;
+        // Blind forms render these inside their own "Details" section (via
+        // the `footer` prop); flat forms keep them under the whole form.
+        const actions = (
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={cancelEdit}
+              className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={saveEdit}
+              className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700"
+            >
+              Save changes
+            </button>
+          </div>
+        );
         return (
           <div
             className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
@@ -2324,27 +2342,17 @@ export default function OrderDetail() {
                   draft={editDraft as BlindDraft}
                   catalogs={catalogs}
                   onChange={(next) => setEditDraft(next)}
+                  footer={actions}
                 />
               ) : (
-                <FlatEditForm
-                  draft={editDraft as FlatDraft}
-                  onChange={(next) => setEditDraft(next)}
-                />
+                <>
+                  <FlatEditForm
+                    draft={editDraft as FlatDraft}
+                    onChange={(next) => setEditDraft(next)}
+                  />
+                  {actions}
+                </>
               )}
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={cancelEdit}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveEdit}
-                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700"
-                >
-                  Save changes
-                </button>
-              </div>
             </div>
           </div>
         );
