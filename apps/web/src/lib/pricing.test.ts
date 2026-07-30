@@ -29,6 +29,7 @@ function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
     height_cm: 200,
     material_price_per_sqm: 50,
     cassette_price_per_m: 0,
+    bottom_rail_price_per_m: 0,
     control_price_per_item: 0,
     quantity: 1,
     ...overrides,
@@ -137,5 +138,20 @@ describe('calculateBlindLineTotal', () => {
       blind({ material_price_per_sqm: 33.33, quantity: 7 })
     );
     expect(Number.isInteger(Math.round(total * 100))).toBe(true);
+  });
+});
+
+describe('bottomRailCost', () => {
+  it('charges the bottom rail per metre of the minimised width, like the cassette', () => {
+    // 140cm wide → 1.4m. A $15/m rail adds $21 on top of the $140 material.
+    expect(calculateBlindUnitPrice(blind({ bottom_rail_price_per_m: 15 }))).toBe(161);
+    // The width MINIMUM applies first: 60cm is charged as 100cm = 1m.
+    expect(
+      calculateBlindUnitPrice(
+        blind({ panels: [60], material_price_per_sqm: 0, bottom_rail_price_per_m: 15 })
+      )
+    ).toBe(15);
+    // A zero-priced rail (the seeded default) must not move the price.
+    expect(calculateBlindUnitPrice(blind({ bottom_rail_price_per_m: 0 }))).toBe(140);
   });
 });

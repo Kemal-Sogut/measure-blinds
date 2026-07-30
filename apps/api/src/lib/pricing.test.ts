@@ -29,6 +29,7 @@ describe('pricing (server)', () => {
         height_cm: 200,
         material_price_per_sqm: 50,
         cassette_price_per_m: 0,
+        bottom_rail_price_per_m: 0,
         control_price_per_item: 0,
       })
     ).toBe(140);
@@ -46,9 +47,33 @@ describe('pricing (server)', () => {
       height_cm: 200,
       material_price_per_sqm: 50,
       cassette_price_per_m: 20,
+      bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
     });
     expect(price).toBe(140 + 28 + 20);
+  });
+
+  it('charges the bottom rail per metre of the minimised width, like the cassette', () => {
+    const base = {
+      panels: [70, 70],
+      height_cm: 200,
+      material_price_per_sqm: 50,
+      cassette_price_per_m: 0,
+      control_price_per_item: 0,
+    };
+    // 140cm wide → 1.4m. A $15/m rail adds $21 on top of the $140 material.
+    expect(calculateBlindUnitPrice({ ...base, bottom_rail_price_per_m: 15 })).toBe(161);
+    // The width MINIMUM applies first: 60cm is charged as 100cm = 1m.
+    expect(
+      calculateBlindUnitPrice({
+        ...base,
+        panels: [60],
+        material_price_per_sqm: 0,
+        bottom_rail_price_per_m: 15,
+      })
+    ).toBe(15);
+    // A zero-priced rail (the seeded default) must not move the price.
+    expect(calculateBlindUnitPrice({ ...base, bottom_rail_price_per_m: 0 })).toBe(140);
   });
 });
 
@@ -81,6 +106,7 @@ describe('blind-type calculator registry', () => {
       height_cm: 200,
       material_price_per_sqm: 50,
       cassette_price_per_m: 20,
+      bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
     };
     const expected = calculateBlindUnitPrice(inputs);
