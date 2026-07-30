@@ -1285,10 +1285,12 @@ Note this file uses `''` for omitted attrs and filters with `.filter(Boolean)`, 
 The four surfaces must state the same fact in the same position. Confirm each shows the bottom rail immediately after the cassette and before the control:
 
 ```bash
-grep -n "Bottom rail\|bottom_rail_name" apps/api/src/lib/pdf.ts apps/web/src/pages/customer-view/CustomerView.tsx apps/web/src/pages/orders/OrderOverview.tsx apps/web/src/pages/orders/OrderLabels.tsx apps/web/src/lib/labels.ts
+grep -n "Bottom rail\|bottom_rail_name\|bottomRail" apps/api/src/lib/pdf.ts apps/web/src/pages/customer-view/CustomerView.tsx apps/web/src/pages/orders/OrderOverview.tsx apps/web/src/pages/orders/OrderLabels.tsx apps/web/src/lib/labels.ts
 ```
 
 Expected: a hit in each file, and in `pdf.ts` / `CustomerView.tsx` the `Bottom rail:` line must sit between the `Cassette:` and `Control:` lines.
+
+The `bottomRail` alternative in the pattern is required: `OrderLabels.tsx` carries no literal "Bottom rail" text at all. Its hardware row is an unlabelled `' · '`-joined string, so the only token there is the camelCase field name `fields.bottomRail`. Its position is verified by the join order, not by a label.
 
 - [ ] **Step 4: Type-check, test, lint**
 
