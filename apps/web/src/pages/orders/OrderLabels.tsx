@@ -32,16 +32,12 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  * Rows are plain block elements in normal flow, NOT fixed positions: an
  * empty field collapses to zero height and every row below it moves up.
  *
- * Cassette, bottom rail and control share ONE row, joined with the same
- * " · " the field builder uses for material and colour: they are three
- * parts of the same hardware spec and the freed rows keep the stock from
- * crowding. The join drops any blank part, so a unit missing one still
- * reads clean with no dangling separator.
- *
- * That row is `truncate`d at 10pt on 3in stock — roughly 40 characters.
- * Three long catalog names can exceed it and clip the control. If the
- * first physical print shows that, the fix is to give the bottom rail its
- * own row (there is vertical slack), NOT to shrink the type.
+ * Cassette, bottom rail and control share ONE row (`fields.hardware`),
+ * already joined and captioned by the field builder: they are three parts
+ * of the same hardware spec and the freed rows keep the stock from
+ * crowding. Every part is a one- or two-letter code, which is what keeps
+ * that row inside the ~40 characters 10pt fits on 3in stock — the full
+ * catalog names did not fit and clipped the control.
  *
  * @param fields One label's worth of already-formatted text.
  * @param pageBreak Whether to force a page break AFTER this label. The
@@ -50,9 +46,6 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  *   printer still feeds as a blank die-cut label.
  */
 function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean }) {
-  const hardware = [fields.cassette, fields.bottomRail, fields.control]
-    .filter(Boolean)
-    .join(' · ');
   return (
     <div
       className={`h-[1.5in] w-[3in] shrink-0 overflow-hidden border border-border bg-white p-[0.06in] font-sans text-black print:border-0 ${
@@ -74,7 +67,7 @@ function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean 
       <div className="truncate text-[11pt] font-bold leading-tight">{fields.dimensions}</div>
       <div className="my-[0.03in] border-t border-black" />
       <div className="truncate text-[10pt] leading-tight">{fields.material}</div>
-      <div className="truncate text-[10pt] leading-tight">{hardware}</div>
+      <div className="truncate text-[10pt] leading-tight">{fields.hardware}</div>
     </div>
   );
 }

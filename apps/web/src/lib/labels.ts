@@ -69,10 +69,18 @@ export interface LabelFields {
   dimensions: string;
   /** Material and colour joined with " · "; either side may be absent. */
   material: string;
-  cassette: string;
-  /** Bottom-rail name, e.g. "Regular"; `''` when the row has none. */
-  bottomRail: string;
-  control: string;
+  /**
+   * The hardware spec as shop shorthand, e.g.
+   * `"Cassette: R · Bottom Rail: P · Control: MB"`.
+   *
+   * Catalog names are printed as one- or two-letter CODES because three
+   * full names ("Fabric Wrapped", "Regular", "Motorized (Bluetooth)")
+   * overflow a 3in label and clip the control. A part whose name is
+   * missing drops its whole `Label: code` segment, so a half-specced row
+   * still reads clean with no dangling separator; `''` when no part is
+   * known at all.
+   */
+  hardware: string;
 }
 
 /** Trims a possibly-null value to a plain string. */
@@ -109,6 +117,84 @@ function dimensionsOf(item: LabelLineItem): string {
 }
 
 /**
+ * A name-pattern table: the FIRST matching pattern wins, so entries are
+ * ordered most-specific first. Patterns match the snapshotted catalog
+ * name on the line item — never the option id — because a label must
+ * keep printing what the order was sold as after the catalog is renamed.
+ */
+type CodeTable = readonly (readonly [RegExp, string])[];
+
+/**
+ * Cassette codes. "No Cassette" prints "-" rather than a letter or a
+ * dropped segment: the shop needs to see the question was ANSWERED, not
+ * left blank, before the unit is assembled.
+ */
+const CASSETTE_CODES: CodeTable = [
+  [/\bno\b/i, '-'],
+  [/wrap/i, 'W'],
+  [/square/i, 'S'],
+  [/regular/i, 'R'],
+];
+
+/** Bottom-rail codes — the catalog ships exactly Regular and Pear. */
+const BOTTOM_RAIL_CODES: CodeTable = [
+  [/pear/i, 'P'],
+  [/regular/i, 'R'],
+];
+
+/**
+ * Control codes. Chain is "R" (the shop's word for it is the regular
+ * control), and the two motor variants are told apart because they are
+ * different parts to pick: "MB" is Bluetooth, plain "M" is not. The
+ * non-Bluetooth pattern MUST stay above the Bluetooth one — its name
+ * contains the word.
+ */
+const CONTROL_CODES: CodeTable = [
+  [/chain/i, 'R'],
+  [/cordless/i, 'C'],
+  [/wand/i, 'SW'],
+  [/non[\s-]?bluetooth/i, 'M'],
+  [/bluetooth/i, 'MB'],
+  [/motor/i, 'M'],
+];
+
+/**
+ * Reduces a catalog name to its label code. An unmapped name — an option
+ * the shop adds in Settings after this table was written — degrades to
+ * its first character uppercased rather than printing nothing, so a new
+ * option is still distinguishable on the bench instead of vanishing.
+ *
+ * @param name Snapshotted catalog name, possibly null or padded.
+ * @param table Ordered patterns for that part.
+ * @returns The code, or `''` when the row carries no name.
+ */
+function codeOf(name: string | null | undefined, table: CodeTable): string {
+  const value = text(name);
+  if (!value) return '';
+  for (const [pattern, code] of table) {
+    if (pattern.test(value)) return code;
+  }
+  return value[0].toUpperCase();
+}
+
+/**
+ * Builds the hardware line, dropping any part the row does not carry.
+ * The captions are spelled out ("Cassette: R") because the codes alone
+ * are ambiguous across parts — "R" is Regular on a cassette and Chain on
+ * a control — and the shop reads the label by caption, not by position.
+ */
+function hardwareOf(item: LabelLineItem): string {
+  return [
+    ['Cassette', codeOf(item.cassette_name, CASSETTE_CODES)],
+    ['Bottom Rail', codeOf(item.bottom_rail_name, BOTTOM_RAIL_CODES)],
+    ['Control', codeOf(item.control_name, CONTROL_CODES)],
+  ]
+    .filter(([, code]) => code)
+    .map(([caption, code]) => `${caption}: ${code}`)
+    .join(' · ');
+}
+
+/**
  * Expands an order into its labels, ordered by line-item `position` and
  * then by copy index. Numbering runs across the WHOLE order — label 3
  * of 7 is unambiguous on a bench holding several units — which is why
@@ -141,9 +227,7 @@ export function buildLabels(order: LabelOrder): LabelFields[] {
         room: text(item.room_name),
         dimensions: dimensionsOf(item),
         material,
-        cassette: text(item.cassette_name),
-        bottomRail: text(item.bottom_rail_name),
-        control: text(item.control_name),
+        hardware: hardwareOf(item),
       });
     }
   }

@@ -31,9 +31,9 @@ function blind(overrides: Partial<LabelLineItem> = {}): LabelLineItem {
     height_cm: 210,
     material_name: 'Blackout White',
     color: 'Ivory',
-    cassette_name: 'Standard',
+    cassette_name: 'Regular Cassette',
     bottom_rail_name: 'Regular',
-    control_name: 'Chain Left',
+    control_name: 'Chain Control',
     quantity: 1,
     ...overrides,
   };
@@ -145,11 +145,48 @@ describe('buildLabels', () => {
     expect(junk.orderDate).toBe('');
   });
 
-  it('passes cassette, bottom rail and control through, blanking nulls', () => {
+  it('captions the hardware row and codes every live catalog name', () => {
     const [full] = buildLabels(order({ line_items: [blind()] }));
-    expect(full.cassette).toBe('Standard');
-    expect(full.bottomRail).toBe('Regular');
-    expect(full.control).toBe('Chain Left');
+    expect(full.hardware).toBe('Cassette: R · Bottom Rail: R · Control: R');
+
+    /** Every name currently in the catalog, with the code it must print. */
+    const cassettes: [string, string][] = [
+      ['Regular Cassette', 'R'],
+      ['Fabric Wrapped', 'W'],
+      ['Square Cassette', 'S'],
+      ['No Cassette', '-'],
+    ];
+    for (const [name, code] of cassettes) {
+      const [label] = buildLabels(order({ line_items: [blind({ cassette_name: name })] }));
+      expect(label.hardware).toBe(`Cassette: ${code} · Bottom Rail: R · Control: R`);
+    }
+
+    const rails: [string, string][] = [
+      ['Regular', 'R'],
+      ['Pear', 'P'],
+    ];
+    for (const [name, code] of rails) {
+      const [label] = buildLabels(order({ line_items: [blind({ bottom_rail_name: name })] }));
+      expect(label.hardware).toBe(`Cassette: R · Bottom Rail: ${code} · Control: R`);
+    }
+
+    const controls: [string, string][] = [
+      ['Chain Control', 'R'],
+      ['Cordless', 'C'],
+      ['Safety-Wand Control', 'SW'],
+      ['Motorized (Bluetooth)', 'MB'],
+      // The name contains "Bluetooth", so only pattern order keeps this M.
+      ['Motorized (Non-Bluetooth)', 'M'],
+    ];
+    for (const [name, code] of controls) {
+      const [label] = buildLabels(order({ line_items: [blind({ control_name: name })] }));
+      expect(label.hardware).toBe(`Cassette: R · Bottom Rail: R · Control: ${code}`);
+    }
+  });
+
+  it('drops the segment of any part the row does not carry', () => {
+    const [noRail] = buildLabels(order({ line_items: [blind({ bottom_rail_name: null })] }));
+    expect(noRail.hardware).toBe('Cassette: R · Control: R');
 
     const [bare] = buildLabels(
       order({
@@ -158,15 +195,19 @@ describe('buildLabels', () => {
         ],
       })
     );
-    expect(bare.cassette).toBe('');
-    expect(bare.bottomRail).toBe('');
-    expect(bare.control).toBe('');
+    expect(bare.hardware).toBe('');
   });
 
-  it('trims the bottom rail name, so a padded catalog entry still fits', () => {
-    const [label] = buildLabels(
+  it('trims a padded catalog name and codes an unmapped one by its initial', () => {
+    const [padded] = buildLabels(
       order({ line_items: [blind({ bottom_rail_name: '  Pear  ' })] })
     );
-    expect(label.bottomRail).toBe('Pear');
+    expect(padded.hardware).toBe('Cassette: R · Bottom Rail: P · Control: R');
+
+    // An option added in Settings after the code table was written.
+    const [novel] = buildLabels(
+      order({ line_items: [blind({ control_name: 'Tilt Rod' })] })
+    );
+    expect(novel.hardware).toBe('Cassette: R · Bottom Rail: R · Control: T');
   });
 });
