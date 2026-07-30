@@ -311,6 +311,14 @@ type StageAction = {
   tone?: string;
 };
 
+/**
+ * How many activity-log rows the collapsed trail shows. The log grows
+ * unbounded over an order's life (every lifecycle mutation appends a row),
+ * so the newest slice is rendered by default and the rest stays behind the
+ * "Show more" toggle to keep the bottom of the page short.
+ */
+const LOG_PREVIEW_COUNT = 10;
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -385,6 +393,10 @@ export default function OrderDetail() {
   // Optional explanation emailed to the customer when DENYING their
   // cancellation request (accepting sends nothing).
   const [cancelDenyMessage, setCancelDenyMessage] = useState('');
+
+  // Activity-log trail: collapsed to the newest LOG_PREVIEW_COUNT rows
+  // until the reader expands it.
+  const [logsExpanded, setLogsExpanded] = useState(false);
 
   // Installation propose/change sheet (lives in InstallationSection;
   // lifted here so the ready-status actions panel can open it too).
@@ -1840,16 +1852,30 @@ export default function OrderDetail() {
                 <p className="text-[13px] text-text-muted">No activity recorded yet.</p>
               )}
               {logs && logs.length > 0 && (
-                <ul className="flex flex-col gap-2.5">
-                  {logs.map((log) => (
-                    <li key={log.id} className="flex justify-between gap-3 text-[13px]">
-                      <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
-                      <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
-                        {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <ul className="flex flex-col gap-2.5">
+                    {(logsExpanded ? logs : logs.slice(0, LOG_PREVIEW_COUNT)).map((log) => (
+                      <li key={log.id} className="flex justify-between gap-3 text-[13px]">
+                        <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
+                        <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
+                          {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {logs.length > LOG_PREVIEW_COUNT && (
+                    <button
+                      type="button"
+                      onClick={() => setLogsExpanded((v) => !v)}
+                      aria-expanded={logsExpanded}
+                      className="mt-0.5 self-start py-1 text-[13px] font-medium text-brand-600 hover:underline"
+                    >
+                      {logsExpanded
+                        ? 'Show less'
+                        : `Show ${logs.length - LOG_PREVIEW_COUNT} more`}
+                    </button>
+                  )}
+                </>
               )}
             </section>
           )}
