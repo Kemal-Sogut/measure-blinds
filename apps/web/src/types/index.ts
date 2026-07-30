@@ -231,6 +231,9 @@ export interface LineItem {
   cassette_id: string | null;
   cassette_name: string | null;
   cassette_price_per_m: number | null;
+  bottom_rail_id: string | null;
+  bottom_rail_name: string | null;
+  bottom_rail_price_per_m: number | null;
   control_id: string | null;
   control_name: string | null;
   control_price_per_item: number | null;
@@ -270,6 +273,19 @@ export interface Material {
 
 /** Cassette option from settings — price per linear meter (width). */
 export interface CassetteOption {
+  id: string;
+  name: string;
+  price_per_m: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/**
+ * Bottom-rail option from settings — the weighted bar at the foot of a
+ * blind, priced per linear meter of width on the same basis as the
+ * cassette. Shipped options are Regular and Pear.
+ */
+export interface BottomRailOption {
   id: string;
   name: string;
   price_per_m: number;

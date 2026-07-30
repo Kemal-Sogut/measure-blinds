@@ -11,16 +11,16 @@
  * blind type (Roller, Zebra, …, grouped by the snapshotted
  * `blinds_type`), plus one "Other Items" table for preset/custom lines:
  *
- *   - Blind tables: Room | Width (cm) | Height (cm) | Material |
- *     Colour | Cassette | Control | Qty | Unit | Total | Note.
+ *   - Blind tables: Room | Width (cm) | Height (cm) | Material | Colour |
+ *     Cassette | Bottom rail | Control | Qty | Unit | Total | Note.
  *   - Other Items: Type | Description | Qty | Unit | Total.
  *
  * All names and money come from the SERVER row — the snapshotted
- * `material_name` / `cassette_name` / `control_name` and the stored
- * `unit_price` / `line_total` / totals — so the page reflects exactly
- * what was priced, independent of later catalog changes and of any
- * unsaved edits on the detail page. Tables scroll horizontally on
- * narrow screens; a Print button (hidden on paper) calls
+ * `material_name` / `cassette_name` / `bottom_rail_name` / `control_name`
+ * and the stored `unit_price` / `line_total` / totals — so the page
+ * reflects exactly what was priced, independent of later catalog changes
+ * and of any unsaved edits on the detail page. Tables scroll horizontally
+ * on narrow screens; a Print button (hidden on paper) calls
  * `window.print()`.
  */
 
@@ -113,7 +113,7 @@ function TableCard({
 function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) {
   return (
     <TableCard title={title} items={items}>
-      <table className="w-full min-w-[820px] border-collapse">
+      <table className="w-full min-w-[900px] border-collapse">
         <thead>
           <tr className="border-b border-border bg-surface-muted">
             <Th>Room</Th>
@@ -122,6 +122,7 @@ function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) 
             <Th>Material</Th>
             <Th>Colour</Th>
             <Th>Cassette</Th>
+            <Th>Bottom rail</Th>
             <Th>Control</Th>
             <Th right>Qty</Th>
             <Th right>Unit</Th>
@@ -144,6 +145,7 @@ function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) 
                 <Td>{item.material_name ?? '—'}</Td>
                 <Td>{item.color || '—'}</Td>
                 <Td>{item.cassette_name ?? '—'}</Td>
+                <Td>{item.bottom_rail_name ?? '—'}</Td>
                 <Td>{item.control_name ?? '—'}</Td>
                 <Td right mono>
                   {item.quantity}

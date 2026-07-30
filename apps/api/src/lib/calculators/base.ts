@@ -7,9 +7,10 @@
  * own calculator module (`apps/api/src/lib/calculators/<type>.ts`) that
  * EXTENDS this class; for now they all inherit the default formula
  * unchanged. A subclass diverges by overriding one of the granular cost
- * hooks (`materialCost` / `cassetteCost` / `controlCost`), the minimum
- * rules (`applyWidthMinimum` / `applyHeightMinimum`), or the whole
- * `calculateUnitPrice` — whichever is the smallest correct change.
+ * hooks (`materialCost` / `cassetteCost` / `bottomRailCost` /
+ * `controlCost`), the minimum rules (`applyWidthMinimum` /
+ * `applyHeightMinimum`), or the whole `calculateUnitPrice` — whichever is
+ * the smallest correct change.
  *
  * AUTHORITATIVE: this server class is the twin of the web-side
  * `apps/web/src/lib/calculators/base.ts` used for live keystroke
@@ -17,9 +18,10 @@
  * encodes the same expected values so any drift fails a suite.
  *
  * Formula (IMPLEMENTATION.md §5), all costs summed then rounded to 2dp:
- *   material = W × H × price_per_sqm / 10000   (cm² → m²)
- *   cassette = W / 100 × price_per_m           (per linear metre of width)
- *   control  = panelCount × price_per_item     (per panel)
+ *   material   = W × H × price_per_sqm / 10000   (cm² → m²)
+ *   cassette   = W / 100 × price_per_m           (per linear metre of width)
+ *   bottomRail = W / 100 × price_per_m           (per linear metre of width)
+ *   control    = panelCount × price_per_item     (per panel)
  * with the width minimum (raise <100cm to 100cm) and the tiered height
  * minimum (<100→100, 100–199→200, ≥200→actual) applied first.
  */
@@ -34,6 +36,14 @@ export interface BlindPricingInputs {
   material_price_per_sqm: number;
   /** Cassette cost per linear metre of width (server-fetched snapshot). */
   cassette_price_per_m: number;
+  /**
+   * Bottom-rail cost per linear metre of width (server-fetched snapshot).
+   * REQUIRED, not optional: every blind row carries a rail (migration 28
+   * backfilled the historical ones to Regular at 0), so an absent value
+   * would mean a caller forgot to pass it rather than "no rail fitted" —
+   * and a silent 0 there would under-price the blind.
+   */
+  bottom_rail_price_per_m: number;
   /** Control cost per panel (server-fetched snapshot). */
   control_price_per_item: number;
 }
@@ -77,14 +87,24 @@ export class BaseBlindCalculator {
     return (widthCm / 100) * pricePerM;
   }
 
+  /**
+   * Bottom-rail cost, charged per linear metre of the effective width —
+   * the same basis as the cassette, because both are cut to the blind's
+   * width. Kept as its own hook rather than folded into `cassetteCost` so
+   * a blind type can diverge on one without touching the other.
+   */
+  protected bottomRailCost(widthCm: number, pricePerM: number): number {
+    return (widthCm / 100) * pricePerM;
+  }
+
   /** Control cost, charged per panel. */
   protected controlCost(panelCount: number, pricePerItem: number): number {
     return panelCount * pricePerItem;
   }
 
   /**
-   * Unit price of one blind: material + cassette + control with the
-   * width/height minimums applied first, rounded to 2 decimals.
+   * Unit price of one blind: material + cassette + bottom rail + control
+   * with the width/height minimums applied first, rounded to 2 decimals.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
     const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
@@ -92,6 +112,7 @@ export class BaseBlindCalculator {
     const total =
       this.materialCost(width, height, item.material_price_per_sqm) +
       this.cassetteCost(width, item.cassette_price_per_m) +
+      this.bottomRailCost(width, item.bottom_rail_price_per_m) +
       this.controlCost(item.panels.length, item.control_price_per_item);
     return Math.round(total * 100) / 100;
   }

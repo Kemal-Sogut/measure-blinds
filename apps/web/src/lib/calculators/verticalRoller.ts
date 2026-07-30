@@ -5,7 +5,8 @@
  * Vertical Roller blind pricing calculator.
  *
  * Currently inherits the shared default calculation from BaseBlindCalculator.
- * Override the cost hooks (materialCost / cassetteCost / controlCost) or the
+ * Override the cost hooks (materialCost / cassetteCost / bottomRailCost /
+ * controlCost) or the
  * minimum rules here to give this blind type its own formula.
  */
 

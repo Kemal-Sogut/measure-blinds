@@ -7,8 +7,8 @@
  * The old inline BlindItemCard / FlatItemCard have been replaced by
  * BlindEditForm and FlatEditForm which live inside popup modals rather
  * than expanded inline in the page.  BulkEditForm lets the user change
- * only material, cassette, and control across all selected blind items
- * without touching any measurement or quantity fields.
+ * only material, cassette, bottom rail, and control across all selected
+ * blind items without touching any measurement or quantity fields.
  *
  * Drafts hold every numeric field as a string so partially-typed values
  * ("12.", "") never fight the keyboard; parsing happens in the pricing
@@ -16,7 +16,7 @@
  */
 
 import { calculateBlindUnitPriceForType } from '../../lib/pricing';
-import type { Material, CassetteOption, ControlOption, BlindType } from '../../types';
+import type { Material, CassetteOption, BottomRailOption, ControlOption, BlindType } from '../../types';
 
 /* ------------------------------------------------------------------ */
 /* Draft models                                                        */
@@ -32,6 +32,7 @@ export interface BlindDraft {
   height_cm: string;
   material_id: string;
   cassette_id: string;
+  bottom_rail_id: string;
   control_id: string;
   color: string;
   note: string;
@@ -53,6 +54,7 @@ export type ItemDraft = BlindDraft | FlatDraft;
 export interface Catalogs {
   materials: Material[];
   cassettes: CassetteOption[];
+  bottomRails: BottomRailOption[];
   controls: ControlOption[];
   blindTypes: BlindType[];
 }
@@ -78,7 +80,7 @@ export function parsePositive(value: string): number | null {
 
 /**
  * Live price preview for a blind draft. Returns null until every
- * required field (panels, height, all three options) is filled.
+ * required field (panels, height, all four options) is filled.
  */
 export function blindDraftPrice(
   draft: BlindDraft,
@@ -89,9 +91,10 @@ export function blindDraftPrice(
   const qty = parsePositive(draft.quantity);
   const material = catalogs.materials.find((m) => m.id === draft.material_id);
   const cassette = catalogs.cassettes.find((x) => x.id === draft.cassette_id);
+  const bottomRail = catalogs.bottomRails.find((x) => x.id === draft.bottom_rail_id);
   const control = catalogs.controls.find((x) => x.id === draft.control_id);
   if (panels.some((p) => p === null) || panels.length === 0) return null;
-  if (!height || !qty || !material || !cassette || !control) return null;
+  if (!height || !qty || !material || !cassette || !bottomRail || !control) return null;
 
   // Dispatch to the selected blind type's calculator (default fallback).
   const unit = calculateBlindUnitPriceForType(draft.blinds_type, {
@@ -99,6 +102,7 @@ export function blindDraftPrice(
     height_cm: height,
     material_price_per_sqm: Number(material.price_per_sqm),
     cassette_price_per_m: Number(cassette.price_per_m),
+    bottom_rail_price_per_m: Number(bottomRail.price_per_m),
     control_price_per_item: Number(control.price_per_item),
     quantity: qty,
   });
@@ -159,9 +163,9 @@ export function OptionSelect({
 
 /**
  * Full blind editing form — all fields: room, type, panels, height,
- * quantity, material, cassette, control + live pricing footer.
- * Designed to be embedded inside a modal; does not include its own
- * save/cancel buttons.
+ * quantity, material, cassette, bottom rail, control + live pricing
+ * footer. Designed to be embedded inside a modal; does not include its
+ * own save/cancel buttons.
  */
 export function BlindEditForm({
   draft,
@@ -292,8 +296,8 @@ export function BlindEditForm({
         />
       </label>
 
-      {/* Material / Cassette / Control */}
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+      {/* Material / Cassette / Bottom rail / Control */}
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <OptionSelect
           label="Material"
           value={draft.material_id}
@@ -306,6 +310,12 @@ export function BlindEditForm({
           value={draft.cassette_id}
           onChange={(id) => onChange({ ...draft, cassette_id: id })}
           options={catalogs.cassettes}
+        />
+        <OptionSelect
+          label="Bottom rail"
+          value={draft.bottom_rail_id}
+          onChange={(id) => onChange({ ...draft, bottom_rail_id: id })}
+          options={catalogs.bottomRails}
         />
         <OptionSelect
           label="Control"
@@ -432,15 +442,16 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — only material, cassette and control are exposed.
- * Each starts as "" (no change); only non-empty selections are applied
- * by the parent when the user clicks Apply. The Material list is not
- * type-filtered here because a bulk selection may span several blind
+ * Bulk-edit form — only material, cassette, bottom rail and control are
+ * exposed. Each starts as "" (no change); only non-empty selections are
+ * applied by the parent when the user clicks Apply. The Material list is
+ * not type-filtered here because a bulk selection may span several blind
  * types; every Material is offered.
  */
 export interface BulkEditState {
   material_id: string;
   cassette_id: string;
+  bottom_rail_id: string;
   control_id: string;
 }
 
@@ -459,7 +470,7 @@ export function BulkEditForm({
         Only the selected options will be changed. Leave a field on "No change" to keep each
         item's current value.
       </p>
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <OptionSelect
           label="Material"
           value={state.material_id}
@@ -472,6 +483,13 @@ export function BulkEditForm({
           value={state.cassette_id}
           onChange={(id) => onChange({ ...state, cassette_id: id })}
           options={catalogs.cassettes}
+          placeholder="No change"
+        />
+        <OptionSelect
+          label="Bottom rail"
+          value={state.bottom_rail_id}
+          onChange={(id) => onChange({ ...state, bottom_rail_id: id })}
+          options={catalogs.bottomRails}
           placeholder="No change"
         />
         <OptionSelect

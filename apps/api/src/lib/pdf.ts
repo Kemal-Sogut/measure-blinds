@@ -60,6 +60,7 @@ export interface PdfDocumentData {
     height_cm: number | null;
     material_name: string | null;
     cassette_name: string | null;
+    bottom_rail_name: string | null;
     control_name: string | null;
     color?: string | null;
     description: string | null;
@@ -132,11 +133,12 @@ function addressLines(a: {
  * Human title + indented attribute lines for one line item.
  *
  * Blind rows get a "Room — Type" title and the attribute lines in a
- * fixed print order: Panels, Material, Color, Cassette, Control, Note.
- * Any attribute that is missing — including a color that is empty or
- * only whitespace — is dropped rather than printed blank, so the block
- * never shows a dangling label. Non-blind rows (presets, custom lines)
- * print their description alone with no attributes.
+ * fixed print order: Panels, Material, Color, Cassette, Bottom rail,
+ * Control, Note. Any attribute that is missing — including a color
+ * that is empty or only whitespace — is dropped rather than printed
+ * blank, so the block never shows a dangling label. Non-blind rows
+ * (presets, custom lines) print their description alone with no
+ * attributes.
  *
  * Exported for unit tests, which assert the attribute order and the
  * omission rules without having to parse rendered PDF bytes.
@@ -154,6 +156,7 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.material_name ? `Material: ${li.material_name}` : null,
       li.color?.trim() ? `Color: ${li.color.trim()}` : null,
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
+      li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
       li.note?.trim() ? `Note: ${li.note.trim()}` : null,
     ].filter((x): x is string => Boolean(x));

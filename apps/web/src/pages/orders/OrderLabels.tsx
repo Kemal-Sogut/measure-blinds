@@ -32,10 +32,16 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  * Rows are plain block elements in normal flow, NOT fixed positions: an
  * empty field collapses to zero height and every row below it moves up.
  *
- * Cassette and control share ONE row, joined with the same " · " the
- * field builder uses for material and colour: they are two halves of the
- * same hardware spec and the freed row keeps the stock from crowding.
- * The join drops a blank side so a unit missing one still reads clean.
+ * Cassette, bottom rail and control share ONE row, joined with the same
+ * " · " the field builder uses for material and colour: they are three
+ * parts of the same hardware spec and the freed rows keep the stock from
+ * crowding. The join drops any blank part, so a unit missing one still
+ * reads clean with no dangling separator.
+ *
+ * That row is `truncate`d at 10pt on 3in stock — roughly 40 characters.
+ * Three long catalog names can exceed it and clip the control. If the
+ * first physical print shows that, the fix is to give the bottom rail its
+ * own row (there is vertical slack), NOT to shrink the type.
  *
  * @param fields One label's worth of already-formatted text.
  * @param pageBreak Whether to force a page break AFTER this label. The
@@ -44,7 +50,9 @@ import { buildLabels, type LabelFields } from '../../lib/labels';
  *   printer still feeds as a blank die-cut label.
  */
 function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean }) {
-  const hardware = [fields.cassette, fields.control].filter(Boolean).join(' · ');
+  const hardware = [fields.cassette, fields.bottomRail, fields.control]
+    .filter(Boolean)
+    .join(' · ');
   return (
     <div
       className={`h-[1.5in] w-[3in] shrink-0 overflow-hidden border border-border bg-white p-[0.06in] font-sans text-black print:border-0 ${
