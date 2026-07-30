@@ -40,6 +40,7 @@ const SAMPLE: PdfDocumentData = {
       height_cm: 200,
       material_name: 'Blackout White',
       cassette_name: 'Standard Cassette',
+      bottom_rail_name: 'Regular Rail',
       control_name: 'Chain Control',
       color: 'White',
       description: '',
@@ -55,6 +56,7 @@ const SAMPLE: PdfDocumentData = {
       height_cm: null,
       material_name: null,
       cassette_name: null,
+      bottom_rail_name: null,
       control_name: null,
       description: 'Installation — Professional installation per blind',
       quantity: 1,
@@ -139,6 +141,7 @@ describe('itemContent color', () => {
     height_cm: 200,
     material_name: 'Blackout White',
     cassette_name: 'Standard Cassette',
+    bottom_rail_name: 'Regular Rail',
     control_name: 'Chain Control',
     color: 'White 02',
     note: 'Inside mount',
@@ -163,9 +166,27 @@ describe('itemContent color', () => {
       'Material: Blackout White',
       'Color: White 02',
       'Cassette: Standard Cassette',
+      'Bottom rail: Regular Rail',
       'Control: Chain Control',
       'Note: Inside mount',
     ]);
+  });
+
+  it('places the Bottom rail line between Cassette and Control', () => {
+    const { attrs } = itemContent(blind);
+    const cassetteIdx = attrs.findIndex((a) => a.startsWith('Cassette:'));
+    const railIdx = attrs.findIndex((a) => a === 'Bottom rail: Regular Rail');
+    const controlIdx = attrs.findIndex((a) => a.startsWith('Control:'));
+    expect(railIdx).toBeGreaterThan(cassetteIdx);
+    expect(controlIdx).toBeGreaterThan(railIdx);
+  });
+
+  it('omits the Bottom rail line when null, so a legacy row prints clean', () => {
+    const { attrs } = itemContent({ ...blind, bottom_rail_name: null });
+    expect(attrs.some((a) => a.startsWith('Bottom rail:'))).toBe(false);
+    // The neighbouring lines must still be present and adjacent.
+    expect(attrs).toContain('Cassette: Standard Cassette');
+    expect(attrs).toContain('Control: Chain Control');
   });
 
   it('trims surrounding whitespace from the color', () => {
