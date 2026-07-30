@@ -16,10 +16,10 @@
 -- and only orders saved after that pick them up.
 --
 -- Existing blind rows are backfilled to Regular. Without that, the
--- REQUIRED bottom_rail_id would make every historical order unsavable
--- until an operator picked a rail for each of its blinds. Preset and
--- custom rows keep NULL, exactly as they already do for cassette and
--- control.
+-- API's required bottom_rail_id would make every historical order
+-- unsavable until an operator picked a rail for each of its blinds.
+-- Preset and custom rows keep NULL, exactly as they already do for
+-- cassette and control.
 --
 -- update_order_with_items() is rebuilt because the atomic edit path
 -- inserts an explicit column list: BOTH the insert list AND the
@@ -30,7 +30,7 @@
 create table public.bottom_rail_options (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  price_per_m numeric(10,2) not null default 0,
+  price_per_m numeric(10,2) not null check (price_per_m >= 0),
   active boolean not null default true,
   sort_order int not null default 0,
   created_at timestamptz not null default now(),
