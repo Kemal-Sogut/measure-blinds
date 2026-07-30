@@ -216,7 +216,7 @@ export function buildLabels(order: LabelOrder): LabelFields[] {
 
   const labels: LabelFields[] = [];
   for (const item of blinds) {
-    const material = [text(item.material_name), text(item.color)].filter(Boolean).join(' · ');
+    const material = [text(item.material_name), text(item.color)].filter(Boolean).join(' — ');
     for (let copy = 0; copy < Math.max(1, item.quantity); copy++) {
       labels.push({
         orderNumber: text(order.order_number),
