@@ -50,6 +50,7 @@ interface PublicLineItem {
   height_cm: number | null;
   material_name: string | null;
   cassette_name: string | null;
+  bottom_rail_name: string | null;
   control_name: string | null;
   color: string | null;
   description: string | null;
@@ -138,6 +139,7 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
         li.material_name ? `Material: ${li.material_name}` : '',
         li.color?.trim() ? `Color: ${li.color.trim()}` : '',
         li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
+        li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : '',
         li.control_name ? `Control: ${li.control_name}` : '',
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',
       ].filter(Boolean),
