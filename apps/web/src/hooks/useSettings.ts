@@ -38,10 +38,11 @@ export interface CatalogRow {
   active: boolean;
 }
 
-/** URL segments for the four catalog entities under /api/settings. */
+/** URL segments for the catalog entities managed under /api/settings. */
 export type CatalogPath =
   | 'materials'
   | 'cassette-options'
+  | 'bottom-rail-options'
   | 'control-options'
   | 'presets'
   | 'blind-types';

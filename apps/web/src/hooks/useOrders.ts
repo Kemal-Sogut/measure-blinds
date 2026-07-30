@@ -49,6 +49,7 @@ export interface BlindItemInput {
   height_cm: number;
   material_id: string;
   cassette_id: string;
+  bottom_rail_id: string;
   control_id: string;
   color: string;
   note: string;
