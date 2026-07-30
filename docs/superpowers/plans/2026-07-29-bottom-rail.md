@@ -203,8 +203,10 @@ Note: `-f` is required because `.gitignore:15` ignores all of `supabase/`. This 
 - Modify: `apps/web/src/lib/calculators/base.ts` (identical changes)
 - Modify: `apps/api/src/lib/pricing.test.ts`
 - Modify: `apps/web/src/lib/pricing.test.ts`
-- Modify: all 10 subclasses in `apps/api/src/lib/calculators/` (`roller.ts`, `zebra.ts`, `roman.ts`, `sunscreen.ts`, `honeycomb.ts`, `shutter.ts`, `verticalSheer.ts`, `verticalPanel.ts`, `verticalRoller.ts`, `curtains.ts`) — one doc line each
-- Modify: the same 10 files in `apps/web/src/lib/calculators/`
+- Modify: the SEVEN subclasses in `apps/api/src/lib/calculators/` that enumerate the cost hooks in their header (`roller.ts`, `zebra.ts`, `roman.ts`, `sunscreen.ts`, `verticalSheer.ts`, `verticalPanel.ts`, `verticalRoller.ts`) — one doc line each
+- Modify: the same seven files in `apps/web/src/lib/calculators/`
+- Do NOT modify `honeycomb.ts`, `shutter.ts` or `curtains.ts` in either app. Their headers say "by overriding the cost hooks" without enumerating them, so nothing in them goes stale. Adding the new hook name there would be inventing doc changes outside this task's scope.
+- Total: 18 files (2 × `base.ts`, 14 subclasses, 2 × `pricing.test.ts`).
 
 **Interfaces:**
 - Consumes: nothing from Task 1 (pricing never touches the DB).
@@ -353,15 +355,15 @@ diff <(sed -n '/^export interface BlindPricingInputs/,$p' apps/api/src/lib/calcu
 
 Expected: no output. Everything from the interface down must be byte-identical.
 
-- [ ] **Step 6: Update the stale hook list in all 20 subclass files**
+- [ ] **Step 6: Update the stale hook list in the 14 subclass files that have one**
 
-Each of the 10 subclasses in each app carries this line in its header:
+SEVEN subclasses in each app (`roller`, `zebra`, `roman`, `sunscreen`, `verticalSheer`, `verticalPanel`, `verticalRoller`) carry this line in their header — 14 files in total. The other three (`honeycomb`, `shutter`, `curtains`) say "by overriding the cost hooks" without listing them, so they have nothing stale and MUST be left alone.
 
 ```
  * Override the cost hooks (materialCost / cassetteCost / controlCost) or the
 ```
 
-Replace it in all 20 files with:
+Replace it in those 14 files with:
 
 ```
  * Override the cost hooks (materialCost / cassetteCost / bottomRailCost /
