@@ -27,7 +27,7 @@ const BUSINESS: Row[] = [
   { to: '/settings/company', label: 'Company Info', d: 'M2 7h20v14H2z M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16' },
   { to: '/settings/materials', label: 'Materials', d: 'M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5' },
   { to: '/settings/cassette', label: 'Cassette Options', d: 'M3 3h7v7H3z M14 3h7v7h-7z M14 14h7v7h-7z M3 14h7v7H3z' },
-  { to: '/settings/bottom-rail', label: 'Bottom Rail Options', d: 'M3 4h18 M3 12h18 M3 20h18M7 20v-4M17 20v-4' },
+  { to: '/settings/bottom-rail', label: 'Bottom Rail Options', d: 'M3 4h18 M3 12h18 M3 20h18 M7 20v-4 M17 20v-4' },
   { to: '/settings/controls', label: 'Control Options', d: 'M4 21v-7 M4 10V3 M12 21v-9 M12 8V3 M20 21v-5 M20 12V3 M1 14h6 M9 8h6 M17 16h6' },
   { to: '/settings/presets', label: 'Preset Line Items', d: 'M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01' },
   { to: '/settings/terms', label: 'Terms & Conditions', d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8' },
