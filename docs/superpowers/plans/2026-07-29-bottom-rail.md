@@ -737,6 +737,7 @@ git commit -m "feat(api): show the bottom rail on the estimate PDF and public vi
 - Create: `apps/web/src/pages/settings/BottomRailOptions.tsx`
 - Modify: `apps/web/src/App.tsx` (lazy import + route)
 - Modify: `apps/web/src/pages/settings/SettingsIndex.tsx` (`BUSINESS` row)
+- Modify: `apps/web/src/lib/manufacturing.test.ts` — its `lineItem()` fixture builds a full `LineItem`, so the three new required fields must be added there (all `null`, between the cassette and control triples) or `tsc` fails. This is the ONLY test fixture in `apps/web` that constructs a `LineItem`; every other consumer only reads one.
 
 **Interfaces:**
 - Consumes: the `bottom-rail-options` route from Task 3.
@@ -857,6 +858,16 @@ cd apps/web && npx tsc -b --noEmit
 ```
 
 Expected: errors ONLY in `LineItemEditor.tsx` / `OrderDetail.tsx` about the missing `bottom_rail_id` on blind drafts and payloads, and about `Catalogs` lacking `bottomRails`. Those are Task 6's work. No errors in the files this task touched.
+
+If `src/lib/manufacturing.test.ts` also errors, its `lineItem()` fixture has not been updated — that fixture is part of THIS task's scope (see the file list above), not Task 6's. Fix it here.
+
+Then confirm the suite and lint are unmoved:
+
+```bash
+cd apps/web && npx vitest run && pnpm lint
+```
+
+Expected: 59/59 passing, and exactly the 4 pre-existing `LineItemEditor.tsx` warnings.
 
 - [ ] **Step 8: Commit**
 
