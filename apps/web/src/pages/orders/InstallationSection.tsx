@@ -154,11 +154,27 @@ export default function InstallationSection({
 
   const response = appt ? RESPONSE_LABEL[appt.status] : undefined;
   const smallBtn =
-    'h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium disabled:opacity-40';
+    'h-10 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium disabled:opacity-40';
 
   const panel = (
-    <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-      <h2 className="mb-1 text-sm font-semibold text-text-primary">Installation</h2>
+    <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+      <div className="mb-1 flex items-center gap-2.5">
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-scheduled-tint text-scheduled"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M3 10h18M8 2v4M16 2v4M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+        <h2 className="text-[15px] font-bold text-text-primary">Installation</h2>
+      </div>
       {!appt && (
         <>
           <p className="text-[13px] text-text-muted">
@@ -169,7 +185,7 @@ export default function InstallationSection({
           {orderStatus === 'ready' && (
             <button
               onClick={onOpenSheet}
-              className="mt-1 h-10 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+              className="mt-1 h-10 rounded-md border border-border-input bg-surface text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
             >
               Propose Installation
             </button>
@@ -251,7 +267,7 @@ export default function InstallationSection({
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
-              className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 font-mono text-sm"
+              className="h-11 w-full rounded-md border border-border-input bg-surface px-3 font-mono text-sm"
             />
           </label>
           <p className="text-[13px] text-text-secondary">
@@ -268,13 +284,13 @@ export default function InstallationSection({
               maxLength={1000}
               rows={3}
               placeholder="e.g. Please clear the window areas before we arrive. Call if the time doesn't work."
-              className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+              className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
             />
           </label>
           <div className="mt-1 flex gap-2">
             <button
               onClick={onCloseSheet}
-              className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
             >
               Cancel
             </button>

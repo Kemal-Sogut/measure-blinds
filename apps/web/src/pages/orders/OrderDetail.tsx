@@ -60,6 +60,7 @@ import PageHeader from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import type { CardAccent } from '../../components/ui';
 import { calculateTotals } from '../../lib/totals';
 import {
   useOrder,
@@ -104,6 +105,53 @@ import {
   type BulkEditState,
 } from './LineItemEditor';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
+
+/** Icon-badge tint + ink per accent, mirroring `ui/Card`'s CardHeader. */
+const SECTION_ACCENTS: Record<CardAccent, string> = {
+  brand: 'bg-info-tint text-info',
+  success: 'bg-success-tint text-success',
+  warning: 'bg-warning-tint text-warning',
+  danger: 'bg-danger-tint text-danger',
+  scheduled: 'bg-scheduled-tint text-scheduled',
+  neutral: 'bg-surface-sunken text-text-secondary',
+};
+
+/**
+ * Hued icon badge for this screen's section headings.
+ *
+ * The sections here are hand-rolled `<section>` wrappers rather than the
+ * `ui/Card` composition, because converting them would mean
+ * restructuring the most complex screen in the app — a refactor the
+ * redesign does not authorize. This reproduces CardHeader's badge alone
+ * so the headings still read in the same semantic language as every
+ * other card in the app.
+ *
+ * @param accent Semantic hue; must match what the section means
+ *   elsewhere (warning for money owed, scheduled for installation).
+ * @param d Space-`M`-separated SVG path data, split the same way the
+ *   nav components split theirs.
+ */
+function SectionIcon({ accent, d }: { accent: CardAccent; d: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${SECTION_ACCENTS[accent]}`}
+    >
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+        {d.split(' M').map((seg, i) => (
+          <path
+            key={i}
+            d={(i === 0 ? '' : 'M') + seg}
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ))}
+      </svg>
+    </span>
+  );
+}
 
 /** Formats a Date as the API's YYYY-MM-DD. */
 function toIso(d: Date): string {
@@ -1063,7 +1111,7 @@ export default function OrderDetail() {
           value={discountValue}
           onChange={(e) => setDiscountValue(e.target.value)}
           placeholder="0"
-          className="h-9 min-h-9 w-20 rounded-sm border border-border-input bg-surface px-2 text-right font-mono text-[13px]"
+          className="h-9 min-h-9 w-20 rounded-md border border-border-input bg-surface px-2 text-right font-mono text-[13px]"
           aria-label="Discount value"
         />
       </span>
@@ -1123,9 +1171,13 @@ export default function OrderDetail() {
    * offered, so no stage lost the ability to record a payment.
    */
   const paymentsPanel = postConfirm && (
-    <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-      <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary">Payments</h2>
+    <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+      <div className="mb-1 flex items-center gap-2.5">
+        <SectionIcon
+          accent={status === 'awaiting_payment' ? 'warning' : 'success'}
+          d="M2 8h20 M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2z M6 15h4"
+        />
+        <h2 className="flex-1 text-[15px] font-bold text-text-primary">Payments</h2>
         <StatusBadge status={status} />
       </div>
       <div className="flex justify-between">
@@ -1209,10 +1261,13 @@ export default function OrderDetail() {
    * customer. Both are disabled together while either call is in flight.
    */
   const cancelRequestBanner = existing?.cancel_requested_at && (
-    <section className="rounded-sm border border-danger bg-danger/10 p-4">
-      <div className="mb-1 flex items-center gap-2">
-        <span aria-hidden="true">⚠️</span>
-        <h2 className="text-sm font-semibold text-danger">Cancellation requested</h2>
+    <section className="rounded-xl border border-danger/30 bg-danger-tint p-4 shadow-md">
+      <div className="mb-1 flex items-center gap-2.5">
+        <SectionIcon
+          accent="danger"
+          d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z M12 9v4 M12 17h.01"
+        />
+        <h2 className="text-[15px] font-bold text-danger">Cancellation requested</h2>
       </div>
       <p className="text-[13px] text-text-secondary">
         The customer asked to cancel their confirmation on{' '}
@@ -1236,7 +1291,7 @@ export default function OrderDetail() {
           type="button"
           onClick={openCancelDeny}
           disabled={resolveCancelMut.isPending}
-          className="h-10 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
+          className="h-10 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
         >
           Deny
         </button>
@@ -1248,9 +1303,13 @@ export default function OrderDetail() {
   const stageIndex = STAGES.findIndex((s) => s.key === status);
   const curIdx = status === 'expired' ? 2 : stageIndex;
   const timelineCard = id && existing && (
-    <section className="rounded-sm border border-border bg-surface p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-text-primary">Progress</h2>
+    <section className="rounded-xl border border-border-light bg-surface p-4 shadow-md">
+      <div className="mb-3 flex items-center gap-2.5">
+        <SectionIcon
+          accent={status === 'expired' ? 'danger' : 'scheduled'}
+          d="M12 22a10 10 0 100-20 10 10 0 000 20z M12 6v6l4 2"
+        />
+        <h2 className="flex-1 text-[15px] font-bold text-text-primary">Progress</h2>
         {status === 'expired' && <StatusBadge status="expired" />}
       </div>
       {/*
@@ -1492,7 +1551,7 @@ export default function OrderDetail() {
     const rows: StageAction[][] = [];
     for (let i = 0; i < inline.length; i += perRow) rows.push(inline.slice(i, i + perRow));
     const compactCls =
-      'h-10 min-w-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-sm border border-border-input bg-surface px-1.5 text-[12px] font-medium text-text-secondary disabled:opacity-40';
+      'h-10 min-w-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-1.5 text-[12px] font-medium text-text-secondary disabled:opacity-40';
     return (
       <div className="flex flex-col gap-2">
         {primary && fullBtn(primary, primaryCls)}
@@ -1606,13 +1665,13 @@ export default function OrderDetail() {
 
           <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
             {/* Header card: customer + dates */}
-            <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
+            <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
               <div>
                 <span className="mb-1.5 block text-xs font-medium text-text-secondary">Customer</span>
                 <button
                   type="button"
                   onClick={() => !readOnly && setSheet('customer')}
-                  className="flex h-11 w-full items-center justify-between rounded-sm border border-border-input bg-surface px-3 text-left"
+                  className="flex h-11 w-full items-center justify-between rounded-md border border-border-input bg-surface px-3 text-left"
                 >
                   <span className={`text-sm ${customer ? 'text-text-primary' : 'text-text-muted'}`}>
                     {customer ? `${customer.first_name} ${customer.last_name}` : 'Select customer…'}
@@ -1645,7 +1704,7 @@ export default function OrderDetail() {
 
             {/* Line items summary table */}
             {(items.length > 0 || !readOnly) && (
-              <section className="rounded-sm border border-border bg-surface">
+              <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
                 {/* Bulk toolbar — only in edit mode */}
                 {!readOnly && items.length > 0 && (() => {
                   const selectionHasNonBlind = [...selected].some(
@@ -1679,7 +1738,7 @@ export default function OrderDetail() {
                               ? 'Bulk edit is only available for blind items'
                               : 'Edit material, cassette, bottom rail and control for selected items'
                         }
-                        className="flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                           <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1691,7 +1750,7 @@ export default function OrderDetail() {
                         type="button"
                         onClick={handleBulkDelete}
                         disabled={!canBulkDelete}
-                        className="flex h-8 items-center gap-1.5 rounded-sm border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                        className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                           <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1829,7 +1888,7 @@ export default function OrderDetail() {
 
 
             {/* Mobile totals card (rail shows this on desktop) */}
-            <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4 lg:hidden">
+            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md lg:hidden">
               {discountControl}
               {totalsRows}
             </section>
@@ -1852,8 +1911,14 @@ export default function OrderDetail() {
 
           {/* Activity log (very bottom of the page) */}
           {id && (
-            <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-              <h2 className="mb-1 text-sm font-semibold text-text-primary">Activity Log</h2>
+            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+              <div className="mb-2 flex items-center gap-2.5">
+                <SectionIcon
+                  accent="neutral"
+                  d="M12 22a10 10 0 100-20 10 10 0 000 20z M12 6v6l4 2"
+                />
+                <h2 className="text-[15px] font-bold text-text-primary">Activity Log</h2>
+              </div>
               {logs && logs.length === 0 && (
                 <p className="text-[13px] text-text-muted">No activity recorded yet.</p>
               )}
@@ -1956,11 +2021,11 @@ export default function OrderDetail() {
                 placeholder="Search customers…"
                 value={customerTerm}
                 onChange={(e) => setCustomerTerm(e.target.value)}
-                className="h-11 min-w-0 flex-1 rounded-sm border border-border-input bg-surface px-3 text-sm"
+                className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-sm"
               />
               <button
                 onClick={() => setAddingCustomer(true)}
-                className="h-11 shrink-0 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
               >
                 + Add customer
               </button>
@@ -2052,7 +2117,7 @@ export default function OrderDetail() {
 
             {/* Unmatched e-Transfers — tap one to autofill the form below */}
             {(pendingEtransfersQ.data?.length ?? 0) > 0 && (
-              <div className="mb-3 rounded-sm border border-border bg-surface-muted p-2.5">
+              <div className="mb-3 rounded-md border border-border-light bg-surface-sunken p-2.5">
                 <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
                   Received e-Transfers ({pendingEtransfersQ.data!.length})
                 </p>
@@ -2117,7 +2182,7 @@ export default function OrderDetail() {
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value)}
                   placeholder="0.00"
-                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-right font-mono text-sm"
+                  className="h-11 w-full rounded-md border border-border-input bg-surface px-3 text-right font-mono text-sm"
                 />
               </label>
               <DatePicker label="Payment date" value={payDate} onChange={(d) => d && setPayDate(d)} />
@@ -2129,13 +2194,13 @@ export default function OrderDetail() {
                   value={payNote}
                   onChange={(e) => setPayNote(e.target.value)}
                   placeholder="e.g. e-Transfer deposit"
-                  className="h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm"
+                  className="h-11 w-full rounded-md border border-border-input bg-surface px-3 text-sm"
                 />
               </label>
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -2179,13 +2244,13 @@ export default function OrderDetail() {
                   maxLength={1000}
                   rows={4}
                   placeholder="e.g. Your blinds are already in production, so we're unable to cancel at this stage."
-                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
                 />
               </label>
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -2228,13 +2293,13 @@ export default function OrderDetail() {
                   maxLength={1000}
                   rows={4}
                   placeholder="e.g. Thanks for your time today — let me know if you have any questions."
-                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
                 />
               </label>
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -2280,13 +2345,13 @@ export default function OrderDetail() {
                   maxLength={1000}
                   rows={4}
                   placeholder="e.g. Thank you for your payment — we'll be in touch about next steps."
-                  className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm"
+                  className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
                 />
               </label>
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -2315,7 +2380,7 @@ export default function OrderDetail() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={cancelEdit}
-              className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
             >
               Cancel
             </button>
@@ -2380,7 +2445,7 @@ export default function OrderDetail() {
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setSheet('none')}
-                className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
               >
                 Cancel
               </button>

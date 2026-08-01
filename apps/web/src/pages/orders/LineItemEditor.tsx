@@ -124,7 +124,7 @@ export function flatDraftPrice(draft: FlatDraft): { unit: number; total: number 
 /* ------------------------------------------------------------------ */
 
 const INPUT =
-  'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
+  'h-11 w-full rounded-md border border-border-input bg-surface px-3 text-sm text-text-primary';
 const LABEL = 'mb-1.5 block text-xs font-medium text-text-secondary';
 
 /** Native select bound to active catalog options. */
@@ -230,7 +230,7 @@ export function BlindEditForm({
 
   const qty = parsePositive(draft.quantity) ?? 1;
   const stepBtn =
-    'flex h-11 w-11 shrink-0 items-center justify-center rounded-sm border border-border-input bg-surface text-lg font-semibold text-text-secondary hover:bg-surface-sunken';
+    'flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border-input bg-surface text-lg font-semibold text-text-secondary hover:bg-surface-sunken';
 
   // Blind types the dropdown offers: active ones, plus the current
   // value if it is inactive or a legacy free-text entry not in the list.
@@ -298,7 +298,7 @@ export function BlindEditForm({
                     inputMode="decimal"
                     value={p}
                     onChange={(e) => setPanel(i, e.target.value)}
-                    className="h-11 w-full rounded-sm border border-border-input bg-surface px-2 text-center font-mono text-sm"
+                    className="h-11 w-full rounded-md border border-border-input bg-surface px-2 text-center font-mono text-sm"
                     aria-label={`Panel ${i + 1} width`}
                   />
                   {draft.panels.length > 1 && (
@@ -400,7 +400,7 @@ export function BlindEditForm({
             maxLength={1000}
             rows={2}
             placeholder="e.g. Inside mount, motor on the left"
-            className="w-full rounded-sm border border-border-input bg-surface px-3 py-2 text-sm text-text-primary"
+            className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm text-text-primary"
           />
         </label>
 
@@ -421,7 +421,7 @@ export function BlindEditForm({
               value={draft.quantity}
               onChange={(e) => onChange({ ...draft, quantity: e.target.value })}
               aria-label="Quantity"
-              className="h-11 w-16 rounded-sm border border-border-input bg-surface px-2 text-center font-mono text-sm"
+              className="h-11 w-16 rounded-md border border-border-input bg-surface px-2 text-center font-mono text-sm"
             />
             <button
               type="button"
