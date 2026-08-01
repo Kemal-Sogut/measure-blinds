@@ -43,6 +43,7 @@ import { Hono } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
+import { displayName } from '../lib/customerName';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -166,8 +167,7 @@ async function notifyCancellationRequest(
       .eq('id', 1)
       .single();
     if (!company?.email) return;
-    const customerName =
-      `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim();
+    const customerName = displayName(order.customer);
     await sendEmail(env, {
       to: company.email,
       subject: withdrawn
@@ -363,7 +363,7 @@ app.post('/estimate/:token/confirm', async (c) => {
         subject: `✅ Estimate ${updated.order_number} confirmed`,
         html: buildConfirmationNoticeHtml({
           orderNumber: updated.order_number,
-          customerName: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
+          customerName: displayName(order.customer),
           total: Number(updated.total),
         }),
       });
@@ -516,8 +516,7 @@ async function notifyAppointmentResponse(
       .eq('id', 1)
       .single();
     if (!company?.email) return;
-    const customerName =
-      `${appt.customer?.first_name ?? ''} ${appt.customer?.last_name ?? ''}`.trim();
+    const customerName = displayName(appt.customer);
     const isInstall = appt.kind === 'installation';
     const label = isInstall
       ? `order ${appt.order?.order_number ?? ''}`.trim()

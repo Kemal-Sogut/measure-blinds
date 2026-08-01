@@ -24,6 +24,7 @@
  */
 
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { displayName } from './customerName';
 
 /** A single recorded payment, printed on invoices. */
 export interface PdfPayment {
@@ -372,7 +373,7 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
       province: data.customer.billing_province,
       postal: data.customer.billing_postal_code,
     });
-  const customerName = `${data.customer.first_name} ${data.customer.last_name}`;
+  const customerName = displayName(data.customer);
   const colX = [MARGIN, MARGIN + CONTENT_W / 2];
   const blockTop = cur.y;
   for (const [i, [title, lines]] of ([['BILL TO', bill], ['SHIP TO', ship]] as const).entries()) {

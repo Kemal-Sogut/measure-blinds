@@ -42,6 +42,7 @@ import {
   buildInstallationProposalHtml,
 } from '../lib/email';
 import { scheduleWindow, customerLocation } from '../lib/timeText';
+import { displayName, greetingName } from '../lib/customerName';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -156,15 +157,14 @@ async function sendProposalEmail(
 ): Promise<void> {
   const win = scheduleWindow(opts.dateIso, opts.time);
   const viewUrl = `${env.APP_URL}/appointment/${opts.token}`;
-  const fullName =
-    `${opts.customer.first_name ?? ''} ${opts.customer.last_name ?? ''}`.trim();
+  const fullName = displayName(opts.customer);
   if (opts.kind === 'installation') {
     await sendEmail(env, {
       to: opts.customer.email,
       subject: `Installation time for order ${opts.orderNumber}`,
       html: buildInstallationProposalHtml({
         company: brandFromSettings(opts.company),
-        customerFirstName: opts.customer.first_name,
+        customerFirstName: greetingName(opts.customer),
         orderNumber: opts.orderNumber ?? '',
         dateText: win.dateText,
         startText: win.startText,
@@ -179,7 +179,7 @@ async function sendProposalEmail(
       subject: 'Your estimate appointment is booked',
       html: buildAppointmentBookedHtml({
         company: brandFromSettings(opts.company),
-        customerFirstName: opts.customer.first_name,
+        customerFirstName: greetingName(opts.customer),
         customerFullName: fullName,
         dateText: win.dateText,
         startText: win.startText,

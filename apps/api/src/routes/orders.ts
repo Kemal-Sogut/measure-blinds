@@ -67,6 +67,7 @@ import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
+import { greetingName } from '../lib/customerName';
 import {
   sendEmail,
   brandFromSettings,
@@ -768,7 +769,7 @@ app.post('/:id/send', async (c) => {
       subject: `Your estimate ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildEstimateEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         total: Number(order.total),
         message,
@@ -935,7 +936,7 @@ app.post('/:id/send-invoice', async (c) => {
       subject: `Your invoice ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildInvoiceEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         total: Number(order.total),
         viewUrl,
@@ -1172,7 +1173,7 @@ app.post('/:id/payments/:paymentId/receipt', async (c) => {
       subject: `Your payment receipt ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildReceiptEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         paymentAmount: Number(payment.amount),
         paidOnText: formatDateLong(payment.paid_on),
@@ -1298,7 +1299,7 @@ app.post('/:id/cancel-request/resolve', async (c) => {
         subject: `About your cancellation request — ${order.order_number}`,
         html: buildCancellationDeniedHtml({
           company: brandFromSettings(company),
-          customerFirstName: order.customer.first_name,
+          customerFirstName: greetingName(order.customer),
           orderNumber: order.order_number,
           total: Number(order.total),
           viewUrl,
