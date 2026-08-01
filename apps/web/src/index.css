@@ -4,69 +4,105 @@
    Blinds Nisa Design System — Base Styles
    ============================================================
 
-   Implements the "Blinds Nisa Redesign" (design/project/*.dc.html):
-   calm, precise, SHARP-CORNERED (2px universal radius) system on
-   IBM Plex Sans, with IBM Plex Mono for money and order numbers.
-   Indigo #2A4FCF brand; white cards with #E4E4E7 hairlines on a
-   #FAFAFA page. Existing utility classes (rounded-*, bg-brand-*,
-   text-text-*) keep working — the tokens themselves changed.
+   Implements the soft dashboard redesign
+   (docs/superpowers/specs/2026-07-31-ui-redesign-design.md):
+   white 16px-radius cards carrying both a soft two-layer shadow and a
+   hairline border, floating on a #F6F7F9 page, set in Plus Jakarta
+   Sans with IBM Plex Mono retained for money and order numbers.
+   Brand blue #2563EB.
+
+   Colour is semantic, never decorative — hue encodes state (blue=info
+   /sent, violet=scheduled/in progress, amber=payment owed,
+   emerald=ready/paid, rose=expired/destructive, slate=draft). The
+   OrderStatus mapping onto these lives in src/lib/statusStyles.ts.
+
+   Every token name from the previous sharp-cornered system is
+   preserved, only its value changed. Pages that this redesign never
+   opens still reference bg-brand-600, text-text-primary,
+   bg-surface-sunken, border-border and rounded-sm — deleting a name
+   would break them silently. `rounded-sm` in particular is the
+   propagation lever: the old system flattened every radius token to
+   2px, so the codebase says rounded-sm almost everywhere, and
+   retokenizing reshapes the whole app without touching markup.
    ============================================================ */
 
 @theme {
-  /* ── Brand (indigo, anchored on #2A4FCF) ── */
-  --color-brand-50: #f5f7fd;
-  --color-brand-100: #eef1fc;   /* tint backgrounds: badges, active nav */
-  --color-brand-200: #e1e7fa;   /* focus ring */
-  --color-brand-300: #b3c0f0;
-  --color-brand-400: #7d93e4;
-  --color-brand-500: #4a67d8;
-  --color-brand-600: #2a4fcf;   /* primary actions */
-  --color-brand-700: #2343b2;
-  --color-brand-800: #1d3894;
-  --color-brand-900: #182e7a;
+  /* ── Brand (blue, anchored on #2563EB) ──
+     Same token names as the previous indigo scale, so every existing
+     `bg-brand-600` / `text-brand-600` / `bg-brand-100` usage picks up
+     the new hue with no markup change. */
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;   /* tint backgrounds: badges, active nav */
+  --color-brand-200: #bfdbfe;   /* focus ring halo */
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;   /* primary actions */
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
 
-  /* ── Neutral Palette ── */
-  --color-surface: #ffffff;          /* inputs + cards */
+  /* ── Neutral Palette ──
+     Cooler than the previous zinc ramp so the tinted status hues sit on
+     a neutral that shares their blue undertone. */
+  --color-surface: #ffffff;          /* cards + inputs */
   --color-surface-elevated: #ffffff; /* cards */
-  --color-surface-muted: #fafafa;    /* page background */
-  --color-surface-sunken: #f4f4f5;   /* segmented controls, muted chips */
-  --color-border: #d4d4d8;           /* card outlines — deliberately a step
-                                        darker than the inner dividers so each
-                                        card reads as one visual group */
-  --color-border-light: #e4e4e7;     /* inner dividers (rows inside a card) */
-  --color-border-input: #d4d4d8;     /* input strokes */
-  --color-text-primary: #18181b;
-  --color-text-secondary: #52525b;
-  --color-text-muted: #8a8a93;
+  --color-surface-muted: #f6f7f9;    /* page background */
+  --color-surface-sunken: #f1f2f5;   /* segmented controls, muted chips */
+  --color-border: #e4e6ec;           /* card outlines */
+  --color-border-light: #edeef2;     /* inner dividers (rows inside a card) */
+  --color-border-input: #d8dbe3;     /* input strokes — a step darker than
+                                        card hairlines so fields read as
+                                        interactive */
+  --color-text-primary: #101828;
+  --color-text-secondary: #475467;
+  --color-text-muted: #8a93a6;
 
-  /* ── Status Colors (with tint backgrounds for badges) ── */
-  --color-success: #1f8a5b;
-  --color-success-tint: #e8f5ee;
-  --color-warning: #b4600a;
-  --color-warning-tint: #f9efe2;
-  --color-danger: #c4342a;
-  --color-danger-tint: #fbeae8;
-  --color-info: #2a4fcf;
+  /* ── Semantic Status Colours ──
+     Hue encodes state, never decoration. Each pairs an ink (text/icon)
+     with a tint (chip background). See statusStyles.ts for the mapping
+     from OrderStatus onto these. */
+  --color-success: #047857;          /* ready, paid */
+  --color-success-tint: #ecfdf5;
+  --color-success-strong: #059669;   /* filled emerald: `installed` */
+  --color-warning: #b45309;          /* awaiting payment, action needed */
+  --color-warning-tint: #fffbeb;
+  --color-danger: #b91c1c;           /* expired, overdue, destructive */
+  --color-danger-tint: #fef2f2;
+  --color-info: #2563eb;             /* sent, informational */
+  --color-info-tint: #eff6ff;
+  --color-scheduled: #6d28d9;        /* scheduled, in progress */
+  --color-scheduled-tint: #f5f3ff;
 
   /* ── Spacing ── */
   --spacing-page: 1rem;
 
-  /* ── Typography ── */
-  --font-sans: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  /* ── Typography ──
+     Plus Jakarta Sans for UI: geometric and friendly, but with enough
+     x-height and narrow enough bowls to stay legible at the 12–13px
+     sizes used in the orders table and OrderDetail. IBM Plex Mono is
+     retained for money and order numbers so figures stay tabular and
+     columns align. */
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  /* ── Shadows (near-flat; hairlines carry the structure) ── */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 2px 6px rgba(0, 0, 0, 0.08);
+  /* ── Shadows ──
+     Two-layer: a tight contact shadow plus a wide diffuse one, so card
+     boundaries stay visible on low-contrast phone screens outdoors. */
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 2px 4px -1px rgba(16, 24, 40, 0.06),
+               0 4px 8px -2px rgba(16, 24, 40, 0.08);
+  --shadow-lg: 0 4px 6px -2px rgba(16, 24, 40, 0.05),
+               0 12px 16px -4px rgba(16, 24, 40, 0.1);
 
-  /* ── Border Radius — 2px universal per the redesign ── */
-  --radius-sm: 2px;
-  --radius-md: 2px;
-  --radius-lg: 2px;
-  --radius-xl: 2px;
-  --radius-2xl: 2px;
-  --radius-full: 2px;
+  /* ── Border Radius ── */
+  --radius-sm: 8px;      /* what existing `rounded-sm` markup resolves to */
+  --radius-md: 10px;     /* buttons, inputs */
+  --radius-lg: 14px;
+  --radius-xl: 16px;     /* cards */
+  --radius-2xl: 20px;    /* bottom sheets, modal shells */
+  --radius-pill: 9999px; /* chips, status badges, active nav pill */
+  --radius-full: 9999px;
 }
 
 /* ── Base Layer ── */
@@ -109,6 +145,14 @@
     outline: none;
     border-color: var(--color-brand-600);
     box-shadow: 0 0 0 3px var(--color-brand-200);
+  }
+
+  /* Keyboard focus on interactive non-inputs */
+  button:focus-visible,
+  a:focus-visible,
+  [role="button"]:focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
   }
 
   /* Remove default number input spinners for cleaner numeric inputs */

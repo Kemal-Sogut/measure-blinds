@@ -52,7 +52,7 @@ export default function PaymentSection({
   if (!payToEmail) return null;
 
   return (
-    <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-left">
+    <section className="mb-4 rounded-xl border border-border-light bg-surface p-4 text-left shadow-md">
       <h2 className="mb-2 text-xs font-semibold text-text-muted">HOW TO PAY</h2>
       {depositDue !== undefined && (
         <div className="mb-3 rounded-xl bg-brand-100 px-3 py-2.5 text-center">

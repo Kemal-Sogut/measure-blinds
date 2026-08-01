@@ -9,7 +9,9 @@
  * an icon + label and a ≥44px tap area (`flex-1` keeps each tab ~25%
  * of a 380px viewport wide, comfortably above the 44px minimum).
  * Orders is the app's home screen and lives at "/".
- * The active tab is derived from the current location prefix.
+ * The active tab is derived from the current location prefix and reads
+ * as a tinted rounded pill, echoing the desktop sidebar's filled pill
+ * so "where am I" looks the same on both form factors.
  * Rendered only by `Layout`, which wraps section-level pages;
  * detail/form pages omit it to maximize space for their sticky action
  * bars.
@@ -55,7 +57,7 @@ export default function BottomNav() {
   return (
     <nav
       aria-label="Primary"
-      className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface-elevated pb-[env(safe-area-inset-bottom)]"
+      className="fixed inset-x-0 bottom-0 z-20 border-t border-border-light bg-surface pb-[env(safe-area-inset-bottom)] shadow-[0_-2px_8px_rgba(16,24,40,0.06)]"
     >
       <ul className="mx-auto flex max-w-lg">
         {TABS.map((tab) => (
@@ -64,8 +66,8 @@ export default function BottomNav() {
               to={tab.to}
               end={tab.end}
               className={({ isActive }) =>
-                `flex min-h-14 flex-col items-center justify-center gap-0.5 text-[10px] font-medium ${
-                  isActive ? 'font-semibold text-brand-600' : 'text-text-muted'
+                `mx-1 my-1.5 flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-md text-[11px] transition-colors ${
+                  isActive ? 'bg-brand-50 font-bold text-brand-600' : 'font-medium text-text-muted'
                 }`
               }
             >

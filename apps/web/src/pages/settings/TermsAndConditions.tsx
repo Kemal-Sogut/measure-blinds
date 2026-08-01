@@ -67,7 +67,7 @@ export default function TermsAndConditions() {
                 setDirty(true);
               }}
               placeholder="Terms shown at the bottom of every estimate and PDF…"
-              className="w-full rounded-xl border border-border bg-surface-elevated p-4 text-base text-text-primary"
+              className="w-full rounded-xl border border-border-light bg-surface shadow-md p-4 text-base text-text-primary"
             />
           </>
         )}

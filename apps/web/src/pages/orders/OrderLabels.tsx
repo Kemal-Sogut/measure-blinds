@@ -135,7 +135,7 @@ export default function OrderLabels() {
             <button
               onClick={() => window.print()}
               disabled={!selected.length}
-              className="flex h-9 items-center rounded-sm bg-brand-600 px-3 text-sm font-medium text-white disabled:opacity-50"
+              className="flex h-9 items-center rounded-md shadow-sm bg-brand-600 px-3 text-sm font-medium text-white disabled:opacity-50"
             >
               Print
             </button>

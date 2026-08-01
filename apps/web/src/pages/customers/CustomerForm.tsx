@@ -17,6 +17,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import AddressAutocomplete from '../../components/AddressAutocomplete';
+import { inputClass } from '../../components/ui';
 import type { AddressSuggestion } from '../../lib/addressSearch';
 import type { Customer } from '../../types';
 import {
@@ -90,8 +91,12 @@ function toFormState(row: Customer): FormState {
   };
 }
 
-const INPUT_CLS =
-  'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
+/**
+ * This form's control treatment. Composed from the shared `inputClass`
+ * so it cannot drift from every other input in the app, plus the fixed
+ * height this form's grid relies on.
+ */
+const INPUT_CLS = `h-11 ${inputClass}`;
 
 /** Labeled text input bound to one FormState key. */
 function Field({
@@ -109,7 +114,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-text-secondary">{label}</span>
+      <span className="mb-1.5 block text-xs font-semibold text-text-secondary">{label}</span>
       <input
         type={type}
         inputMode={inputMode}
@@ -239,8 +244,8 @@ export default function CustomerForm() {
       <PageHeader title={isEdit ? 'Edit Customer' : 'New Customer'} backTo="/customers" />
       <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:p-8">
         {/* Contact */}
-        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
-          <h2 className="text-sm font-semibold text-text-primary">Contact</h2>
+        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+          <h2 className="text-[15px] font-bold text-text-primary">Contact</h2>
           <div className="grid grid-cols-2 gap-3.5">
             <Field label="First Name" value={form.first_name} onChange={(v) => set('first_name', v)} />
             <Field label="Last Name" value={form.last_name} onChange={(v) => set('last_name', v)} />
@@ -250,8 +255,8 @@ export default function CustomerForm() {
         </section>
 
         {/* Shipping address */}
-        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
-          <h2 className="text-sm font-semibold text-text-primary">Shipping Address</h2>
+        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+          <h2 className="text-[15px] font-bold text-text-primary">Shipping Address</h2>
           <AddressAutocomplete
             label="Address Line 1"
             value={form.shipping_address_line1}
@@ -267,7 +272,7 @@ export default function CustomerForm() {
         </section>
 
         {/* Billing address */}
-        <section className="flex flex-col gap-3.5 rounded-sm border border-border bg-surface p-4">
+        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
           <label className="flex min-h-11 items-center gap-3">
             <input
               type="checkbox"
@@ -299,7 +304,7 @@ export default function CustomerForm() {
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
-            className="h-11 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
+            className="h-11 rounded-md border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
           >
             {remove.isPending ? 'Deleting…' : 'Delete Customer'}
           </button>
@@ -311,7 +316,7 @@ export default function CustomerForm() {
         <button
           onClick={handleSave}
           disabled={pending}
-          className="mx-auto flex h-12 w-full max-w-lg items-center justify-center rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+          className="mx-auto flex h-12 w-full max-w-lg items-center justify-center rounded-md shadow-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
         >
           {pending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer'}
         </button>

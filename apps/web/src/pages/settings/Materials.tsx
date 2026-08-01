@@ -83,20 +83,20 @@ export default function Materials() {
         </p>
 
         {/* Add blind type */}
-        <div className="mb-6 rounded-xl border border-border bg-surface-elevated p-4">
-          <h2 className="mb-3 text-sm font-semibold text-text-secondary">Add blind type</h2>
+        <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
+          <h2 className="mb-3 text-[15px] font-bold text-text-primary">Add blind type</h2>
           <div className="flex gap-2">
             <input
               placeholder="e.g. Roller"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-              className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+              className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
             />
             <button
               onClick={handleAdd}
               disabled={create.isPending}
-              className="h-11 rounded-lg bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              className="h-11 rounded-md shadow-sm bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
             >
               Add
             </button>
@@ -113,25 +113,25 @@ export default function Materials() {
           {types?.map((type) => (
             <li
               key={type.id}
-              className={`rounded-xl border border-border bg-surface-elevated ${type.active ? '' : 'opacity-60'}`}
+              className={`rounded-xl border border-border-light bg-surface shadow-md ${type.active ? '' : 'opacity-60'}`}
             >
               {editingId === type.id ? (
                 <div className="flex flex-col gap-2 p-3">
                   <input
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
+                    className="h-11 rounded-md border border-border-input bg-surface px-3 text-base"
                   />
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleSaveEdit(type.id)}
-                      className="h-11 flex-1 rounded-lg bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
+                      className="h-11 flex-1 rounded-md shadow-sm bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
                     >
                       Save
                     </button>
                     <button
                       onClick={() => setEditingId(null)}
-                      className="h-11 rounded-lg border border-border px-4 text-text-secondary"
+                      className="h-11 rounded-md border border-border-input px-4 text-text-secondary"
                     >
                       Cancel
                     </button>
@@ -141,7 +141,7 @@ export default function Materials() {
                 <div className="flex items-center gap-1 p-1.5">
                   <Link
                     to={`/settings/materials/${type.id}`}
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 hover:bg-surface-muted"
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 hover:bg-surface-muted"
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium text-text-primary">{type.name}</span>
@@ -166,7 +166,7 @@ export default function Materials() {
                       setEditingId(type.id);
                       setEditName(type.name);
                     }}
-                    className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-muted"
+                    className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-surface-muted"
                   >
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path
@@ -193,7 +193,7 @@ export default function Materials() {
                         { onError: (e) => toast.error(e.message) }
                       )
                     }
-                    className={`h-11 rounded-lg px-3 text-sm font-medium ${
+                    className={`h-11 rounded-md px-3 text-sm font-medium ${
                       type.active ? 'bg-surface-muted text-text-secondary' : 'bg-brand-100 text-brand-800'
                     }`}
                   >
@@ -202,7 +202,7 @@ export default function Materials() {
                   <button
                     aria-label="Delete"
                     onClick={() => handleDelete(type)}
-                    className="flex h-11 w-11 items-center justify-center rounded-lg text-danger hover:bg-red-50"
+                    className="flex h-11 w-11 items-center justify-center rounded-md text-danger hover:bg-danger-tint"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path

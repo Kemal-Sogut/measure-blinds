@@ -67,7 +67,14 @@ export interface LabelFields {
   room: string;
   /** Pre-joined, e.g. "120 + 90 x 210 cm"; `''` when nothing is known. */
   dimensions: string;
-  /** Material and colour joined with " · "; either side may be absent. */
+  /**
+   * Material and colour joined with " — "; either side may be absent.
+   * The wide dash is deliberate here and NOT shared with `hardware`
+   * below, which joins with " · ": the material line is two prose names
+   * that need the extra breathing room to read as separate values,
+   * while the hardware line is three short captioned codes that a wide
+   * dash would push past the 3in stock's usable width.
+   */
   material: string;
   /**
    * The hardware spec as shop shorthand, e.g.

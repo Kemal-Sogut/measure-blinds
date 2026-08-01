@@ -158,11 +158,11 @@ export default function AppointmentWizard({
       aria-label={title}
     >
       <div
-        className="max-h-[85vh] w-full overflow-y-auto rounded-t-sm bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:max-w-md sm:rounded-sm"
+        className="max-h-[85vh] w-full overflow-y-auto rounded-t-2xl bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:max-w-md sm:rounded-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-primary">
+          <h2 className="text-[15px] font-bold text-text-primary">
             {title} — Step {stepIdx + 1} of {steps.length}
           </h2>
           <button
@@ -206,7 +206,7 @@ export default function AppointmentWizard({
                 key={opt.value}
                 type="button"
                 onClick={() => setKind(opt.value)}
-                className={`rounded-sm border p-3 text-left ${
+                className={`rounded-lg border p-3 text-left ${
                   kind === opt.value
                     ? 'border-brand-600 bg-brand-100'
                     : 'border-border-input bg-surface hover:bg-surface-muted'
@@ -238,7 +238,7 @@ export default function AppointmentWizard({
                   key={t}
                   type="button"
                   onClick={() => setTime(t)}
-                  className={`h-11 rounded-sm border text-[13px] font-medium ${
+                  className={`h-11 rounded-md border text-[13px] font-medium ${
                     time === t
                       ? 'border-brand-600 bg-brand-100 text-brand-600'
                       : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'
@@ -266,12 +266,12 @@ export default function AppointmentWizard({
                 value={term}
                 onChange={(e) => setTerm(e.target.value)}
                 placeholder="Search customers…"
-                className="h-11 min-w-0 flex-1 rounded-sm border border-border-input bg-surface px-3 text-sm"
+                className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-sm"
               />
               <button
                 type="button"
                 onClick={() => setAddingCustomer(true)}
-                className="h-11 shrink-0 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
               >
                 + Add customer
               </button>
@@ -292,7 +292,7 @@ export default function AppointmentWizard({
                     disabled={!hasEmail}
                     onClick={() => setCustomer(cust)}
                     title={hasEmail ? undefined : 'This customer has no email address.'}
-                    className={`rounded-sm border p-3 text-left disabled:opacity-40 ${
+                    className={`rounded-lg border p-3 text-left disabled:opacity-40 ${
                       customer?.id === cust.id
                         ? 'border-brand-600 bg-brand-100'
                         : 'border-border-input bg-surface hover:bg-surface-muted'
@@ -326,7 +326,7 @@ export default function AppointmentWizard({
                   key={o.id}
                   type="button"
                   onClick={() => setOrderId(o.id)}
-                  className={`rounded-sm border p-3 text-left ${
+                  className={`rounded-lg border p-3 text-left ${
                     orderId === o.id
                       ? 'border-brand-600 bg-brand-100'
                       : 'border-border-input bg-surface hover:bg-surface-muted'
@@ -354,7 +354,7 @@ export default function AppointmentWizard({
             <button
               type="button"
               onClick={() => setStepIdx((i) => i - 1)}
-              className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
             >
               Back
             </button>
@@ -364,7 +364,7 @@ export default function AppointmentWizard({
               type="button"
               onClick={() => setStepIdx((i) => i + 1)}
               disabled={!stepValid}
-              className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+              className="h-11 flex-[2] rounded-md shadow-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
             >
               Next
             </button>
@@ -373,7 +373,7 @@ export default function AppointmentWizard({
               type="button"
               onClick={submit}
               disabled={!stepValid || busy}
-              className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+              className="h-11 flex-[2] rounded-md shadow-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
             >
               {busy ? 'Sending…' : kind === 'estimate' ? 'Book' : 'Propose'}
             </button>

@@ -63,7 +63,7 @@ function Row({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full flex-col gap-1 rounded-sm border border-border-light bg-surface p-3 text-left hover:bg-surface-muted"
+      className="flex w-full flex-col gap-1 rounded-xl border border-border-light bg-surface p-3 shadow-sm text-left hover:bg-surface-muted"
     >
       <span className="flex items-baseline justify-between gap-2">
         <span className="truncate text-sm font-medium text-text-primary">
@@ -79,8 +79,8 @@ function Row({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) {
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span
-            className={`rounded-sm px-1.5 py-0.5 text-[11px] font-medium ${
-              isInstall ? 'bg-brand-100 text-brand-600' : 'bg-success-tint text-success'
+            className={`rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
+              isInstall ? 'bg-scheduled-tint text-scheduled' : 'bg-success-tint text-success'
             }`}
           >
             {isInstall ? 'Installation' : 'Estimate'}
@@ -122,7 +122,7 @@ export default function AppointmentsList() {
               key={f.value}
               type="button"
               onClick={() => selectKind(f.value)}
-              className={`h-9 rounded-sm border px-3 text-[13px] font-medium ${
+              className={`h-9 rounded-md border px-3 text-[13px] font-medium ${
                 kind === f.value
                   ? 'border-brand-600 bg-brand-100 text-brand-600'
                   : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'
@@ -139,7 +139,7 @@ export default function AppointmentsList() {
         {!isLoading && !error && (
           <>
             {events.length === 0 ? (
-              <p className="rounded-sm border border-border bg-surface p-6 text-center text-[13px] text-text-muted">
+              <p className="rounded-xl border border-border-light bg-surface p-6 shadow-sm text-center text-[13px] text-text-muted">
                 No appointments{kind === 'all' ? '' : ` of this type`} yet.
               </p>
             ) : (
@@ -165,7 +165,7 @@ export default function AppointmentsList() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="h-9 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
                 >
                   ‹ Previous
                 </button>
@@ -176,7 +176,7 @@ export default function AppointmentsList() {
                   type="button"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="h-9 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
                 >
                   Next ›
                 </button>

@@ -2,12 +2,17 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Desktop sidebar navigation (design screen 07): fixed 220px rail
- * with the brand mark, the four sections — Orders (the home screen at
- * "/"), Customers, Calendar, Settings — (active item gets a brand
- * tint + 2px left border), and the signed-in user pinned to the
- * bottom. Rendered by Layout on lg+ screens only — mobile keeps the
+ * Desktop sidebar navigation: a fixed 248px white rail carrying the
+ * brand mark, the four sections — Orders (the home screen at "/"),
+ * Customers, Calendar, Settings — and the signed-in user pinned to the
+ * bottom. Rendered by Layout on lg+ screens only; mobile keeps the
  * bottom nav.
+ *
+ * The active section is a filled brand pill rather than the previous
+ * tint-plus-left-border: at a glance across a wide screen a solid shape
+ * is found faster than an edge marker, and it matches the redesign's
+ * rule that brand blue marks the current context. Layout's `lg:pl-`
+ * offset MUST equal this rail's width — the two are a pair.
  */
 
 import { NavLink } from 'react-router-dom';
@@ -43,29 +48,33 @@ export default function Sidebar() {
   const email = useAuth((s) => s.session?.user.email);
 
   return (
-    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[220px] flex-col border-r border-border bg-surface-muted py-5 lg:flex">
-      <div className="flex items-center gap-2 px-5 pb-5">
+    <aside className="fixed inset-y-0 left-0 z-20 hidden w-[248px] flex-col border-r border-border-light bg-surface p-3 lg:flex">
+      <div className="flex items-center gap-2.5 px-2 pb-5 pt-2">
         {company?.logo_url ? (
-          <img src={company.logo_url} alt="" className="h-6 w-6 rounded-sm object-contain" />
+          <img
+            src={company.logo_url}
+            alt=""
+            className="h-9 w-9 rounded-md border border-border-light object-contain"
+          />
         ) : (
-          <div className="h-6 w-6 rounded-sm bg-brand-600" />
+          <div className="h-9 w-9 rounded-md bg-brand-600" />
         )}
-        <span className="truncate text-sm font-semibold text-text-primary">
+        <span className="truncate text-[15px] font-bold text-text-primary">
           {company?.company_name || 'Blinds Nisa'}
         </span>
       </div>
 
-      <nav className="flex flex-col">
+      <nav className="flex flex-col gap-1">
         {ITEMS.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
             className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2.5 border-l-2 px-5 py-2.5 text-sm ${
+              `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors ${
                 isActive
-                  ? 'border-brand-600 bg-brand-100 font-semibold text-brand-600'
-                  : 'border-transparent text-text-muted hover:text-text-secondary'
+                  ? 'bg-brand-600 font-bold text-white shadow-sm'
+                  : 'font-medium text-text-secondary hover:bg-surface-sunken'
               }`
             }
           >
@@ -86,8 +95,13 @@ export default function Sidebar() {
         ))}
       </nav>
 
-      <div className="mt-auto flex items-center gap-2.5 border-t border-border px-5 pt-3.5">
-        <div className="h-7 w-7 rounded-sm bg-border-input" />
+      <div className="mt-auto flex items-center gap-2.5 rounded-md bg-surface-sunken p-2.5">
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[13px] font-bold text-brand-700"
+        >
+          {(email?.[0] ?? '?').toUpperCase()}
+        </span>
         <span className="truncate text-[13px] text-text-secondary">{email ?? 'Signed in'}</span>
       </div>
     </aside>

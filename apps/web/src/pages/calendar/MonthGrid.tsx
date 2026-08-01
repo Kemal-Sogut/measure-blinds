@@ -63,8 +63,8 @@ export default function MonthGrid({
   }
 
   return (
-    <div className="overflow-hidden rounded-sm border border-border bg-surface">
-      <div className="grid grid-cols-7 border-b border-border bg-surface-muted">
+    <div className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
+      <div className="grid grid-cols-7 border-b border-border-light bg-surface-sunken">
         {WEEKDAY_LABELS.map((label) => (
           <div
             key={label}
@@ -92,12 +92,12 @@ export default function MonthGrid({
                   onDayTap(day);
                 }
               }}
-              className={`flex min-h-[64px] cursor-pointer flex-col items-stretch gap-0.5 border-b border-r border-border-light p-1 text-left last:border-r-0 sm:min-h-[88px] ${
-                inMonth ? 'bg-surface' : 'bg-surface-muted'
-              }`}
+              className={`flex min-h-[64px] cursor-pointer flex-col items-stretch gap-0.5 border-b border-r border-border-light p-1 text-left transition-colors last:border-r-0 hover:bg-brand-50 sm:min-h-[88px] ${
+                inMonth ? 'bg-surface' : 'bg-surface-sunken'
+              } ${today ? 'bg-brand-50' : ''}`}
             >
               <span
-                className={`self-start rounded-sm px-1 text-[11px] font-medium ${
+                className={`self-start rounded-pill px-1.5 text-[11px] font-semibold ${
                   today
                     ? 'bg-brand-600 text-white'
                     : inMonth

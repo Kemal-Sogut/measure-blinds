@@ -114,7 +114,7 @@ export default function ScheduleSections({
           <button
             type="button"
             onClick={() => navigate(`/orders/${event.order_id}`)}
-            className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
           >
             View order
           </button>
@@ -124,7 +124,7 @@ export default function ScheduleSections({
             type="button"
             onClick={() => confirm(event)}
             disabled={confirmMut.isPending}
-            className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
+            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
           >
             Confirm
           </button>
@@ -132,7 +132,7 @@ export default function ScheduleSections({
         <button
           type="button"
           onClick={() => onChange(event)}
-          className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
         >
           Change
         </button>
@@ -140,7 +140,7 @@ export default function ScheduleSections({
           type="button"
           onClick={() => remove(event)}
           disabled={deleteMut.isPending}
-          className="h-9 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
+          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
         >
           Remove
         </button>
@@ -148,18 +148,50 @@ export default function ScheduleSections({
     );
   }
 
-  const sectionCls = 'rounded-sm border border-border bg-surface p-4';
+  const sectionCls = 'rounded-xl border border-border-light bg-surface p-4 shadow-md';
   const emptyCls = 'text-[13px] text-text-muted';
+
+  /**
+   * Heading badge for the two schedule sections. The hue matches what
+   * the kind means everywhere else — emerald for estimate visits,
+   * violet for installations — so the section header, its rows, and the
+   * chips in the grid above never disagree about what colour a kind is.
+   */
+  const heading = (title: string, tone: 'success' | 'scheduled', d: string) => (
+    <div className="mb-3 flex items-center gap-2.5">
+      <span
+        aria-hidden="true"
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+          tone === 'success' ? 'bg-success-tint text-success' : 'bg-scheduled-tint text-scheduled'
+        }`}
+      >
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+          <path
+            d={d}
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </span>
+      <h2 className="text-[15px] font-bold text-text-primary">{title}</h2>
+    </div>
+  );
 
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
       {/* Estimate appointments (left) */}
       <section className={sectionCls} aria-label="Estimate appointments">
-        <h2 className="mb-3 text-sm font-semibold text-text-primary">Estimate appointments</h2>
+        {heading(
+          'Estimate appointments',
+          'success',
+          'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'
+        )}
         {estimates.length === 0 && <p className={emptyCls}>No estimate appointments this month.</p>}
         <div className="flex flex-col gap-2">
           {estimates.map((ev) => (
-            <div key={ev.id} className="rounded-sm border border-border-light bg-surface p-3">
+            <div key={ev.id} className="rounded-xl border border-border-light bg-surface p-3 shadow-sm">
               <button
                 type="button"
                 onClick={() => navigate(`/appointments/${ev.id}`)}
@@ -176,11 +208,15 @@ export default function ScheduleSections({
 
       {/* Installation appointments (right) */}
       <section className={sectionCls} aria-label="Installation appointments">
-        <h2 className="mb-3 text-sm font-semibold text-text-primary">Installation appointments</h2>
+        {heading(
+          'Installation appointments',
+          'scheduled',
+          'M3 10h18M8 2v4M16 2v4M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'
+        )}
         {installs.length === 0 && <p className={emptyCls}>No installations this month.</p>}
         <div className="flex flex-col gap-2">
           {installs.map((ev) => (
-            <div key={ev.id} className="rounded-sm border border-border-light bg-surface p-3">
+            <div key={ev.id} className="rounded-xl border border-border-light bg-surface p-3 shadow-sm">
               <button
                 type="button"
                 onClick={() => navigate(`/appointments/${ev.id}`)}

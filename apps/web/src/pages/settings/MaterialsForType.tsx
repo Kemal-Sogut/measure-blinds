@@ -270,14 +270,14 @@ export default function MaterialsForType() {
         </p>
 
         {/* Add material (linked to this type) */}
-        <div className="mb-6 rounded-xl border border-border bg-surface-elevated p-4">
-          <h2 className="mb-3 text-sm font-semibold text-text-secondary">Add material</h2>
+        <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
+          <h2 className="mb-3 text-[15px] font-bold text-text-primary">Add material</h2>
           <div className="flex flex-col gap-2">
             <input
               placeholder="Name"
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
+              className="h-11 rounded-md border border-border-input bg-surface px-3 text-base"
             />
             <div className="flex gap-2">
               <input
@@ -285,7 +285,7 @@ export default function MaterialsForType() {
                 inputMode="decimal"
                 value={draft.price}
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
-                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
               />
               <input
                 placeholder="Width cm"
@@ -293,12 +293,12 @@ export default function MaterialsForType() {
                 value={draft.width}
                 onChange={(e) => setDraft({ ...draft, width: e.target.value })}
                 title="Fabric roll width in cm — leave blank to assume 3 m (300 cm)"
-                className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
               />
               <button
                 onClick={handleAdd}
                 disabled={create.isPending}
-                className="h-11 rounded-lg bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+                className="h-11 rounded-md shadow-sm bg-brand-600 px-5 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 Add
               </button>
@@ -314,7 +314,7 @@ export default function MaterialsForType() {
                 <span className="font-mono">Blackout White, 55, 250</span>)
               </span>
               <label
-                className={`flex h-9 shrink-0 cursor-pointer items-center rounded-lg border border-border px-3 text-sm font-medium text-text-secondary hover:bg-surface-muted ${
+                className={`flex h-9 shrink-0 cursor-pointer items-center rounded-md border border-border-input px-3 text-sm font-medium text-text-secondary hover:bg-surface-muted ${
                   importing ? 'pointer-events-none opacity-50' : ''
                 }`}
               >
@@ -343,14 +343,14 @@ export default function MaterialsForType() {
           {scoped.map((material) => (
             <li
               key={material.id}
-              className={`rounded-xl border border-border bg-surface-elevated p-3 ${material.active ? '' : 'opacity-60'}`}
+              className={`rounded-xl border border-border-light bg-surface shadow-md p-3 ${material.active ? '' : 'opacity-60'}`}
             >
               {editingId === material.id ? (
                 <div className="flex flex-col gap-2">
                   <input
                     value={editDraft.name}
                     onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
-                    className="h-11 rounded-lg border border-border bg-surface px-3 text-base"
+                    className="h-11 rounded-md border border-border-input bg-surface px-3 text-base"
                   />
                   <div className="flex gap-2">
                     <input
@@ -358,7 +358,7 @@ export default function MaterialsForType() {
                       value={editDraft.price}
                       onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
                       placeholder="Price / m²"
-                      className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                      className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
                     />
                     <input
                       inputMode="decimal"
@@ -366,17 +366,17 @@ export default function MaterialsForType() {
                       onChange={(e) => setEditDraft({ ...editDraft, width: e.target.value })}
                       placeholder="Width cm"
                       title="Fabric roll width in cm — leave blank to assume 3 m (300 cm)"
-                      className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 text-base"
+                      className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
                     />
                     <button
                       onClick={() => handleSaveEdit(material.id)}
-                      className="h-11 rounded-lg bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
+                      className="h-11 rounded-md shadow-sm bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700"
                     >
                       Save
                     </button>
                     <button
                       onClick={() => setEditingId(null)}
-                      className="h-11 rounded-lg border border-border px-4 text-text-secondary"
+                      className="h-11 rounded-md border border-border-input px-4 text-text-secondary"
                     >
                       Cancel
                     </button>
@@ -405,7 +405,7 @@ export default function MaterialsForType() {
                         { onError: (e) => toast.error(e.message) }
                       )
                     }
-                    className={`h-11 rounded-lg px-3 text-sm font-medium ${
+                    className={`h-11 rounded-md px-3 text-sm font-medium ${
                       material.active
                         ? 'bg-surface-muted text-text-secondary'
                         : 'bg-brand-100 text-brand-800'
@@ -416,7 +416,7 @@ export default function MaterialsForType() {
                   <button
                     aria-label="Delete"
                     onClick={() => handleDelete(material)}
-                    className="flex h-11 w-11 items-center justify-center rounded-lg text-danger hover:bg-red-50"
+                    className="flex h-11 w-11 items-center justify-center rounded-md text-danger hover:bg-danger-tint"
                   >
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path
