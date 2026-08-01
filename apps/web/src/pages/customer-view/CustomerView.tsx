@@ -50,7 +50,7 @@
  * really does show the customer an expiry card, so a preview must too.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
@@ -267,6 +267,73 @@ function LineItemRow({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Terms & conditions, clamped to five lines behind a "Show more" toggle.
+ *
+ * The shop's terms run to several paragraphs, which pushed the
+ * cancellation block and the confirm button off the bottom of a phone
+ * screen — fine print was crowding out the things the customer came to
+ * act on. Clamping keeps the terms present and readable without letting
+ * them dominate the page.
+ *
+ * The toggle is shown only when the text ACTUALLY overflows, measured
+ * against the rendered element rather than guessed from a character
+ * count: how many lines a given string occupies depends on the viewport
+ * width, and a "Show more" that reveals nothing is worse than no toggle.
+ * A `ResizeObserver` re-measures on rotation and window resize.
+ *
+ * Measurement is skipped while expanded (where `scrollHeight` always
+ * equals `clientHeight`, which would read as "not overflowing" and hide
+ * the control the customer needs to collapse it again); the flag from the
+ * last collapsed measurement stands until the text is collapsed anew.
+ */
+function TermsSection({ terms }: { terms: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+  const bodyRef = useRef<HTMLParagraphElement>(null);
+
+  // Layout effect, not a passive one: measuring after paint would show a
+  // frame of clamped terms with no toggle beneath them.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || expanded) return;
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [terms, expanded]);
+
+  return (
+    <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
+      <h2 className="mb-1 text-xs font-semibold text-text-muted">TERMS &amp; CONDITIONS</h2>
+      <p
+        ref={bodyRef}
+        id="terms-body"
+        // `line-clamp-5` is written out literally, never composed from a
+        // constant: Tailwind v4 scans the source for whole class names, so
+        // an interpolated one would simply not be emitted.
+        className={`whitespace-pre-wrap text-xs text-text-secondary ${
+          expanded ? '' : 'line-clamp-5'
+        }`}
+      >
+        {terms}
+      </p>
+      {(overflowing || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-controls="terms-body"
+          className="mt-1.5 py-1 text-xs font-medium text-brand-600 hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -609,13 +676,8 @@ export default function CustomerView() {
           </section>
         )}
 
-        {/* Terms */}
-        {estimate.terms && (
-          <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
-            <h2 className="mb-1 text-xs font-semibold text-text-muted">TERMS & CONDITIONS</h2>
-            <p className="whitespace-pre-wrap text-xs text-text-secondary">{estimate.terms}</p>
-          </section>
-        )}
+        {/* Terms — clamped to 5 lines behind a "Show more" toggle */}
+        {estimate.terms && <TermsSection terms={estimate.terms} />}
 
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
