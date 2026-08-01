@@ -86,14 +86,14 @@ export default function CalendarPage() {
             <div className="flex items-center gap-2">
               <Link
                 to="/appointments"
-                className="flex h-9 items-center rounded-sm border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+                className="flex h-9 items-center rounded-md border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
               >
                 See All
               </Link>
               <button
                 type="button"
                 onClick={() => setWizard({ day: new Date() })}
-                className="h-9 rounded-sm bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
+                className="h-9 rounded-md shadow-sm bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
               >
                 + New Appointment
               </button>
@@ -103,7 +103,7 @@ export default function CalendarPage() {
                 type="button"
                 onClick={() => setMonth((m) => addMonths(m, -1))}
                 aria-label="Previous month"
-                className="flex h-9 w-9 items-center justify-center rounded-sm border border-border-input text-text-secondary hover:bg-surface-muted"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-border-input text-text-secondary hover:bg-surface-muted"
               >
                 ‹
               </button>
@@ -114,14 +114,14 @@ export default function CalendarPage() {
                 type="button"
                 onClick={() => setMonth((m) => addMonths(m, 1))}
                 aria-label="Next month"
-                className="flex h-9 w-9 items-center justify-center rounded-sm border border-border-input text-text-secondary hover:bg-surface-muted"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-border-input text-text-secondary hover:bg-surface-muted"
               >
                 ›
               </button>
               <button
                 type="button"
                 onClick={() => setMonth(new Date())}
-                className="ml-1 h-9 rounded-sm border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+                className="ml-1 h-9 rounded-md border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
               >
                 Today
               </button>

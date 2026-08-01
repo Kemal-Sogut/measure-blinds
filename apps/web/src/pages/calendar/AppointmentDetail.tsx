@@ -118,8 +118,8 @@ export default function AppointmentDetail() {
 
       <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:p-8">
         {/* Visit */}
-        <section className="flex flex-col gap-1 rounded-sm border border-border bg-surface p-4">
-          <h2 className="text-sm font-semibold text-text-primary">Visit</h2>
+        <section className="flex flex-col gap-1 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+          <h2 className="text-[15px] font-bold text-text-primary">Visit</h2>
           <p className="text-sm text-text-secondary">
             {whenLabel(appt.appointment_date, appt.appointment_time)}
           </p>
@@ -131,8 +131,8 @@ export default function AppointmentDetail() {
         </section>
 
         {/* Customer */}
-        <section className="flex flex-col rounded-sm border border-border bg-surface p-4">
-          <h2 className="mb-2 text-sm font-semibold text-text-primary">Customer</h2>
+        <section className="flex flex-col rounded-xl border border-border-light bg-surface p-4 shadow-md">
+          <h2 className="mb-2 text-[15px] font-bold text-text-primary">Customer</h2>
           <InfoRow label="Name">{fullName}</InfoRow>
           <InfoRow label="Email">
             {customer?.email ? (
@@ -171,7 +171,7 @@ export default function AppointmentDetail() {
             <div className="mt-3 flex flex-wrap gap-2">
               <Link
                 to={`/customers/${customer.id}`}
-                className="h-9 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+                className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
               >
                 View customer
               </Link>
@@ -180,7 +180,7 @@ export default function AppointmentDetail() {
                   href={mapsUrl(address)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="h-9 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
                 >
                   Open in Google Maps
                 </a>
@@ -191,15 +191,15 @@ export default function AppointmentDetail() {
 
         {/* Order (installations only) */}
         {isInstall && appt.order && (
-          <section className="flex flex-col gap-2 rounded-sm border border-border bg-surface p-4">
-            <h2 className="text-sm font-semibold text-text-primary">Order</h2>
+          <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+            <h2 className="text-[15px] font-bold text-text-primary">Order</h2>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm text-text-primary">{appt.order.order_number}</span>
               <span className="text-[13px] text-text-muted capitalize">{appt.order.status}</span>
             </div>
             <Link
               to={`/orders/${appt.order.id}`}
-              className="h-9 rounded-sm border border-border-input bg-surface px-3 text-center text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-center text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
             >
               View order
             </Link>
