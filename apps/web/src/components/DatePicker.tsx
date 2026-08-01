@@ -32,11 +32,11 @@ export default function DatePicker({
 
   return (
     <div>
-      <span className="block text-sm font-medium text-text-secondary">{label}</span>
+      <span className="block text-xs font-semibold text-text-secondary">{label}</span>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-1 flex h-11 w-full items-center justify-between rounded-lg border border-border bg-surface px-3 text-base text-text-primary"
+        className="mt-1 flex h-11 w-full items-center justify-between rounded-md border border-border-input bg-surface px-3 text-base text-text-primary"
       >
         {value ? format(value, 'MMM d, yyyy') : 'Select date'}
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -66,7 +66,7 @@ export default function DatePicker({
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface-muted"
+                className="flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-surface-sunken"
                 aria-label="Close"
               >
                 ✕
@@ -81,6 +81,12 @@ export default function DatePicker({
                   onChange(d);
                   setOpen(false);
                 }
+              }}
+              classNames={{
+                day: 'rounded-md',
+                today: 'font-bold text-brand-600',
+                selected: 'bg-brand-600 text-white rounded-md',
+                chevron: 'fill-text-secondary',
               }}
             />
           </div>
