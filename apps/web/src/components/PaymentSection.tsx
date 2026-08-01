@@ -24,6 +24,15 @@
  * configured, in which case it renders nothing rather than showing an
  * empty box the customer cannot act on.
  *
+ * Colour: the whole block is amber (`warning` / `warning-tint`), not the
+ * neutral surface the other cards use. That is the design system's own
+ * meaning for this token — "awaiting payment, action needed"
+ * (`index.css`) — and this section EXISTS only while money is owed, so
+ * the warning hue is a property of the block, not a state it toggles
+ * into. Amber rather than red on purpose: `danger` is reserved for
+ * expired/overdue/destructive, and a customer who confirmed an hour ago
+ * is not late.
+ *
  * Online card payment is out of scope; when it lands, this is the single
  * place to add it without touching the confirmation flow.
  */
@@ -52,12 +61,12 @@ export default function PaymentSection({
   if (!payToEmail) return null;
 
   return (
-    <section className="mb-4 rounded-xl border border-border-light bg-surface p-4 text-left shadow-md">
-      <h2 className="mb-2 text-xs font-semibold text-text-muted">HOW TO PAY</h2>
+    <section className="mb-4 rounded-xl border border-warning/30 bg-warning-tint p-4 text-left shadow-md">
+      <h2 className="mb-2 text-xs font-semibold text-warning">⚠ HOW TO PAY</h2>
       {depositDue !== undefined && (
-        <div className="mb-3 rounded-xl bg-brand-100 px-3 py-2.5 text-center">
-          <p className="text-xs font-medium text-brand-700">Deposit due now (50% of total)</p>
-          <p className="font-mono text-xl font-semibold text-text-primary">
+        <div className="mb-3 rounded-xl border border-warning/40 bg-surface px-3 py-2.5 text-center">
+          <p className="text-xs font-medium text-warning">Deposit due now (50% of total)</p>
+          <p className="font-mono text-xl font-semibold text-warning">
             ${depositDue.toFixed(2)}
           </p>
         </div>
@@ -67,7 +76,12 @@ export default function PaymentSection({
           ? 'Please send this deposit by Interac e-Transfer to:'
           : 'Please send your payment by Interac e-Transfer to:'}
       </p>
-      <p className="mb-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-center font-medium break-all text-text-primary">
+      {/*
+        White, not `surface-sunken`: a sunken grey reads as recessed on
+        the amber tint, and this line is the one thing the customer has
+        to copy.
+      */}
+      <p className="mb-3 rounded-xl border border-warning/20 bg-surface px-3 py-2.5 text-center font-medium break-all text-text-primary">
         {payToEmail}
       </p>
 

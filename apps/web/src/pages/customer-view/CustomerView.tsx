@@ -13,9 +13,15 @@
  *   not found / draft → generic error card
  *   expired           → "contact us for a new quote" card
  *   sent              → summary + Confirm button (the estimate)
- *   confirmed         → summary + progress tracker + e-Transfer details
- *                       (with the 50% deposit quoted while the order is
- *                       awaiting its first payment) + cancellation block
+ *   confirmed         → e-Transfer details FIRST (with the 50% deposit
+ *                       quoted while the order awaits its first payment)
+ *                       + progress tracker + summary + cancellation block
+ *
+ * Confirming shows NO success banner. The banner used to sit directly
+ * under the header and say "thank you"; that slot now holds the payment
+ * instructions, because the confirmation itself is already evident from
+ * the page (tracker, "Order" wording, no Confirm button) while the
+ * amount and the address are the only things the customer still needs.
  *
  * Because the tracker is always live here, the app sends customers NO
  * status-update emails.
@@ -156,6 +162,98 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
   return { title: li.description || 'Item', attrs: [] };
 }
 
+/**
+ * One collapsible line item in the customer's summary.
+ *
+ * The header row (title, quantity, line total) is always visible; the
+ * attribute lines produced by `itemContent` — panels, material, color,
+ * note — live behind a disclosure so a long order reads as a scannable
+ * price list instead of a wall of specs. The first item is rendered
+ * open (`defaultOpen`) so the pattern is self-evident without the
+ * customer having to discover the arrow.
+ *
+ * Rows are independent, not a single-open accordion: customers compare
+ * two windows side by side more often than they read one at a time.
+ *
+ * Items with no attributes (services, `item_type !== 'blind'`) have
+ * nothing to disclose, so they render as a plain row with no arrow and
+ * no tap target — an arrow that opens an empty panel is worse than no
+ * arrow at all.
+ *
+ * Local state is safe here because the list is never reordered or
+ * filtered on this page; it is rendered once per fetched payload.
+ */
+function LineItemRow({
+  item,
+  defaultOpen,
+  id,
+}: {
+  item: PublicLineItem;
+  defaultOpen: boolean;
+  id: string;
+}) {
+  const { title, attrs } = itemContent(item);
+  const [open, setOpen] = useState(defaultOpen);
+  const expandable = attrs.length > 0;
+
+  const summary = (
+    <>
+      <span className="min-w-0 flex-1 text-left font-medium text-text-primary">{title}</span>
+      <span className="whitespace-nowrap text-text-muted">× {item.quantity}</span>
+      <span className="w-20 text-right font-mono font-medium text-text-primary">
+        ${Number(item.line_total).toFixed(2)}
+      </span>
+    </>
+  );
+
+  return (
+    <div>
+      {expandable ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls={id}
+          className="flex w-full items-center gap-2 py-1 text-sm"
+        >
+          {summary}
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+            className={`shrink-0 text-text-muted transition-transform duration-150 ${
+              open ? 'rotate-180' : ''
+            }`}
+          >
+            <path
+              d="M6 9l6 6 6-6"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      ) : (
+        // 18px glyph + 8px gap kept as dead space so non-expandable
+        // rows keep their totals in the same column as the rest.
+        <div className="flex w-full items-center gap-2 py-1 pr-[26px] text-sm">{summary}</div>
+      )}
+      {expandable && (
+        <div id={id} hidden={!open} className="mt-1">
+          {attrs.map((a, j) => (
+            <p key={j} className="ml-3 text-xs text-text-muted">
+              {a}
+            </p>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Centered message card used by the terminal states. */
 function Message({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
@@ -174,7 +272,6 @@ export default function CustomerView() {
   const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [justConfirmed, setJustConfirmed] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -198,17 +295,21 @@ export default function CustomerView() {
     void load();
   }, [load]);
 
-  /** POSTs the one-shot confirm; 409 means someone already did it. */
+  /**
+   * POSTs the one-shot confirm. Success and 409 ("already confirmed")
+   * are treated identically — both mean the confirmation exists, so the
+   * page simply re-reads the server's version of the truth and the
+   * reload flips it into the confirmed layout. There is no success
+   * banner: the payment instructions now occupy that slot, which is
+   * what the customer needs next.
+   */
   async function handleConfirm() {
     setConfirming(true);
     setActionError(null);
     try {
       const res = await fetch(`${API_URL}/public/estimate/${token}/confirm`, { method: 'POST' });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) {
-        setJustConfirmed(true);
-        await load();
-      } else if (res.status === 409) {
+      if (res.ok || res.status === 409) {
         await load();
       } else {
         setActionError(body?.error ?? 'Confirmation failed. Please try again.');
@@ -312,15 +413,21 @@ export default function CustomerView() {
           </div>
         </header>
 
-        {/* One-time success banner, shown only on the confirming visit */}
-        {justConfirmed && (
-          <div className="mb-4 rounded-2xl bg-success/10 p-4 text-center">
-            <div className="mb-1 text-3xl">✅</div>
-            <h2 className="mb-1 font-semibold text-text-primary">Order confirmed!</h2>
-            <p className="text-sm text-text-secondary">
-              Thank you — we&apos;ve been notified and will be in touch shortly.
-            </p>
-          </div>
+        {/*
+          How to pay — first thing after the header, in the slot the
+          one-time "Order confirmed!" banner used to occupy. A customer
+          arriving straight from the confirm button lands on the amount
+          and the e-Transfer address instead of on a thank-you, and a
+          customer returning later still finds it without scrolling.
+          Only mounted once something is actually owed.
+        */}
+        {confirmed && estimate.balance > 0 && (
+          <PaymentSection
+            payToEmail={c?.etransfer_email ?? ''}
+            instructions={c?.etransfer_instructions}
+            orderNumber={estimate.order_number}
+            depositDue={showDeposit ? estimate.deposit_due : undefined}
+          />
         )}
 
         {/* Live status — only meaningful once confirmed */}
@@ -345,27 +452,13 @@ export default function CustomerView() {
           )}
         </section>
 
-        {/* Line items — same structure as the PDF */}
+        {/* Line items — collapsible; details behind the arrow */}
         <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
-          {estimate.line_items.map((li, i) => {
-            const { title, attrs } = itemContent(li);
-            return (
-              <div key={i} className={i > 0 ? 'mt-3 border-t border-border-light pt-3' : ''}>
-                <div className="flex items-baseline justify-between gap-2 text-sm">
-                  <span className="font-medium text-text-primary">{title}</span>
-                  <span className="whitespace-nowrap text-text-muted">× {li.quantity}</span>
-                  <span className="w-20 text-right font-mono font-medium text-text-primary">
-                    ${Number(li.line_total).toFixed(2)}
-                  </span>
-                </div>
-                {attrs.map((a, j) => (
-                  <p key={j} className="ml-3 text-xs text-text-muted">
-                    {a}
-                  </p>
-                ))}
-              </div>
-            );
-          })}
+          {estimate.line_items.map((li, i) => (
+            <div key={i} className={i > 0 ? 'mt-3 border-t border-border-light pt-3' : ''}>
+              <LineItemRow item={li} defaultOpen={i === 0} id={`line-item-${i}`} />
+            </div>
+          ))}
         </section>
 
         {/* Totals */}
@@ -435,16 +528,6 @@ export default function CustomerView() {
             </>
           )}
         </section>
-
-        {/* How to pay — only once something is actually owed */}
-        {confirmed && estimate.balance > 0 && (
-          <PaymentSection
-            payToEmail={c?.etransfer_email ?? ''}
-            instructions={c?.etransfer_instructions}
-            orderNumber={estimate.order_number}
-            depositDue={showDeposit ? estimate.deposit_due : undefined}
-          />
-        )}
 
         {confirmed && estimate.balance <= 0 && (
           <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-center text-sm font-medium text-success">
