@@ -216,7 +216,6 @@ function LineItemRow({
           aria-controls={id}
           className="flex w-full items-center gap-2 py-1 text-sm"
         >
-          {summary}
           <svg
             width="18"
             height="18"
@@ -224,27 +223,30 @@ function LineItemRow({
             fill="none"
             aria-hidden="true"
             className={`shrink-0 text-text-muted transition-transform duration-150 ${
-              open ? 'rotate-180' : ''
+              open ? 'rotate-90' : ''
             }`}
           >
             <path
-              d="M6 9l6 6 6-6"
+              d="M9 6l6 6-6 6"
               stroke="currentColor"
               strokeWidth="1.9"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           </svg>
+          {summary}
         </button>
       ) : (
         // 18px glyph + 8px gap kept as dead space so non-expandable
-        // rows keep their totals in the same column as the rest.
-        <div className="flex w-full items-center gap-2 py-1 pr-[26px] text-sm">{summary}</div>
+        // rows keep their titles and totals in the same columns as the rest.
+        <div className="flex w-full items-center gap-2 py-1 pl-[26px] text-sm">{summary}</div>
       )}
       {expandable && (
         <div id={id} hidden={!open} className="mt-1">
           {attrs.map((a, j) => (
-            <p key={j} className="ml-3 text-xs text-text-muted">
+            // Indented past the chevron column so the details hang under
+            // the title rather than under the arrow.
+            <p key={j} className="ml-[26px] text-xs text-text-muted">
               {a}
             </p>
           ))}
