@@ -270,6 +270,71 @@ function LineItemRow({
   );
 }
 
+/**
+ * Terms & conditions, fully collapsed behind a disclosure arrow.
+ *
+ * The shop's terms run to several paragraphs (~6,200 characters), which
+ * on a phone pushed the cancellation block and the confirm button off
+ * the bottom of the page — fine print crowding out the things the
+ * customer actually came to act on. Collapsed by default: nothing but
+ * the heading row shows until the customer asks for it.
+ *
+ * Deliberately NOT a partial preview. A few visible lines of legal text
+ * are no more useful than none, and a clamped preview still costs the
+ * vertical space this exists to reclaim.
+ *
+ * The chevron, its `rotate-90` open state and the row's shape mirror
+ * `LineItemRow` above, so both disclosures on this page read as the same
+ * control rather than two different ideas about expanding.
+ */
+function TermsSection({ terms }: { terms: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="terms-body"
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+          className={`shrink-0 text-text-muted transition-transform duration-150 ${
+            open ? 'rotate-90' : ''
+          }`}
+        >
+          <path
+            d="M9 6l6 6-6 6"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <h2 className="text-xs font-semibold text-text-muted">TERMS &amp; CONDITIONS</h2>
+      </button>
+      {/*
+        `hidden` rather than unmounting, matching LineItemRow: the panel
+        keeps its identity so `aria-controls` always points at a real
+        element, whichever state the disclosure is in.
+      */}
+      <p
+        id="terms-body"
+        hidden={!open}
+        className="ml-[26px] mt-2 whitespace-pre-wrap text-xs text-text-secondary"
+      >
+        {terms}
+      </p>
+    </section>
+  );
+}
+
 /** Centered message card used by the terminal states. */
 function Message({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
@@ -609,13 +674,8 @@ export default function CustomerView() {
           </section>
         )}
 
-        {/* Terms */}
-        {estimate.terms && (
-          <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
-            <h2 className="mb-1 text-xs font-semibold text-text-muted">TERMS & CONDITIONS</h2>
-            <p className="whitespace-pre-wrap text-xs text-text-secondary">{estimate.terms}</p>
-          </section>
-        )}
+        {/* Terms — clamped to 5 lines behind a "Show more" toggle */}
+        {estimate.terms && <TermsSection terms={estimate.terms} />}
 
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
