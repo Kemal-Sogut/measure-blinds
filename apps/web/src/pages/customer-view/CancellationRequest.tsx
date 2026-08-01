@@ -38,6 +38,16 @@ interface CancellationRequestProps {
   onWithdraw: () => void;
   /** Disables both actions while a call is in flight. */
   busy: boolean;
+  /**
+   * Renders the block inert without claiming anything is in flight.
+   *
+   * Set by the staff preview (`?preview=1`), where the page must look
+   * exactly like the customer's but must not be able to open or withdraw
+   * a real request. Kept separate from `busy` on purpose: `busy` also
+   * swaps the button labels to "Working…"/"Sending…", which would read
+   * as a stuck request rather than a disabled one.
+   */
+  disabled?: boolean;
 }
 
 export default function CancellationRequest({
@@ -45,7 +55,9 @@ export default function CancellationRequest({
   onRequest,
   onWithdraw,
   busy,
+  disabled = false,
 }: CancellationRequestProps) {
+  const inert = busy || disabled;
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState('');
 
@@ -62,7 +74,7 @@ export default function CancellationRequest({
         <button
           type="button"
           onClick={onWithdraw}
-          disabled={busy}
+          disabled={inert}
           className="h-11 w-full rounded-xl border border-border bg-surface px-4 text-sm font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
         >
           {busy ? 'Working…' : 'Never mind, keep my order'}
@@ -119,7 +131,7 @@ export default function CancellationRequest({
         <button
           type="button"
           onClick={() => onRequest(note.trim())}
-          disabled={busy}
+          disabled={inert}
           className="h-11 flex-1 rounded-xl bg-danger text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
         >
           {busy ? 'Sending…' : 'Send request'}

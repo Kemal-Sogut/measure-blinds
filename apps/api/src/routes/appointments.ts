@@ -42,6 +42,7 @@ import {
   buildInstallationProposalHtml,
 } from '../lib/email';
 import { scheduleWindow, customerLocation } from '../lib/timeText';
+import { displayName, greetingName } from '../lib/customerName';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -113,10 +114,22 @@ const APPT_SELECT =
   'id, kind, order_id, appointment_date, appointment_time, status, response_note, public_token, ' +
   'customer:customers(*), order:orders(id, order_number, status)';
 
-/** Best-effort activity-trail entry on an installation's order. */
-async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+/**
+ * Best-effort activity-trail entry on an installation's order.
+ *
+ * `source` marks who caused the entry: 'staff' (the default, so all
+ * existing call sites are unchanged) or 'customer' for anything driven
+ * from the token'd public page. The web trail renders customer rows on
+ * a light-blue background.
+ */
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string,
+  source: 'staff' | 'customer' = 'staff'
+): Promise<void> {
   try {
-    await sb.from('order_logs').insert({ order_id: orderId, message });
+    await sb.from('order_logs').insert({ order_id: orderId, message, source });
   } catch {
     // Logging is diagnostic only — never block the caller's mutation.
   }
@@ -144,15 +157,14 @@ async function sendProposalEmail(
 ): Promise<void> {
   const win = scheduleWindow(opts.dateIso, opts.time);
   const viewUrl = `${env.APP_URL}/appointment/${opts.token}`;
-  const fullName =
-    `${opts.customer.first_name ?? ''} ${opts.customer.last_name ?? ''}`.trim();
+  const fullName = displayName(opts.customer);
   if (opts.kind === 'installation') {
     await sendEmail(env, {
       to: opts.customer.email,
       subject: `Installation time for order ${opts.orderNumber}`,
       html: buildInstallationProposalHtml({
         company: brandFromSettings(opts.company),
-        customerFirstName: opts.customer.first_name,
+        customerFirstName: greetingName(opts.customer),
         orderNumber: opts.orderNumber ?? '',
         dateText: win.dateText,
         startText: win.startText,
@@ -167,7 +179,7 @@ async function sendProposalEmail(
       subject: 'Your estimate appointment is booked',
       html: buildAppointmentBookedHtml({
         company: brandFromSettings(opts.company),
-        customerFirstName: opts.customer.first_name,
+        customerFirstName: greetingName(opts.customer),
         customerFullName: fullName,
         dateText: win.dateText,
         startText: win.startText,
@@ -217,7 +229,10 @@ app.get('/', async (c) => {
     .from('appointments')
     .select(
       'id, kind, order_id, appointment_date, appointment_time, status, ' +
-        'order:orders(order_number), customer:customers(first_name, last_name)',
+        // email/phone are here only so the calendar and the visit list
+        // can label a customer who has no name at all (see the shared
+        // `displayName` fallback chain) — neither is displayed as such.
+        'order:orders(order_number), customer:customers(first_name, last_name, email, phone)',
       { count: 'exact' }
     )
     .order('appointment_date', { ascending: false })
@@ -266,7 +281,10 @@ app.get('/calendar', async (c) => {
     .from('appointments')
     .select(
       'id, kind, order_id, appointment_date, appointment_time, status, ' +
-        'order:orders(order_number), customer:customers(first_name, last_name)'
+        // email/phone are here only so the calendar and the visit list
+        // can label a customer who has no name at all (see the shared
+        // `displayName` fallback chain) — neither is displayed as such.
+        'order:orders(order_number), customer:customers(first_name, last_name, email, phone)'
     )
     .gte('appointment_date', from)
     .lte('appointment_date', to)

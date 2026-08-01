@@ -18,6 +18,8 @@
  * no labels.
  */
 
+import { displayName } from './customerName';
+
 /** The subset of a line-item row this module reads. */
 export interface LabelLineItem {
   item_type: string;
@@ -38,7 +40,17 @@ export interface LabelOrder {
   order_number: string;
   /** `YYYY-MM-DD` — the `orders.order_date` column, not a timestamp. */
   order_date: string;
-  customer?: { first_name: string; last_name: string } | null;
+  /**
+   * Email and phone are optional here but read by `displayName` when the
+   * customer has no name — a label with a blank addressee is useless on
+   * a workshop bench.
+   */
+  customer?: {
+    first_name: string;
+    last_name: string;
+    email?: string | null;
+    phone?: string | null;
+  } | null;
   line_items?: LabelLineItem[] | null;
 }
 
@@ -217,9 +229,7 @@ export function buildLabels(order: LabelOrder): LabelFields[] {
     .sort((a, b) => a.position - b.position);
 
   const total = blinds.reduce((sum, li) => sum + Math.max(1, li.quantity), 0);
-  const customer = order.customer
-    ? `${text(order.customer.first_name)} ${text(order.customer.last_name)}`.trim()
-    : '';
+  const customer = order.customer ? text(displayName(order.customer)) : '';
 
   const labels: LabelFields[] = [];
   for (const item of blinds) {

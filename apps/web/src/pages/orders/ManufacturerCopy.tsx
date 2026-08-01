@@ -32,6 +32,7 @@ import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import { useOrder, useSetCutDone } from '../../hooks/useOrders';
 import { useCatalogList } from '../../hooks/useSettings';
+import { displayName } from '../../lib/customerName';
 import type { Material } from '../../types';
 import {
   ALUMINUM_STOCK_CM,
@@ -320,7 +321,7 @@ export default function ManufacturerCopy() {
   );
 
   const customerName = order?.customer
-    ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+    ? displayName(order.customer)
     : '';
 
   const nothingToBuild =

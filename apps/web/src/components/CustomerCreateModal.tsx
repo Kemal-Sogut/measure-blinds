@@ -26,6 +26,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { useCreateCustomer } from '../hooks/useCustomers';
 import AddressAutocomplete from './AddressAutocomplete';
+import { displayName } from '../lib/customerName';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import { inputClass } from './ui/Field';
@@ -93,8 +94,10 @@ export default function CustomerCreateModal({
   const [postal, setPostal] = useState('');
 
   async function submit() {
-    if (!firstName.trim() || !lastName.trim()) {
-      return toast.error('First and last name are required.');
+    // Names are optional; a wholly anonymous customer is not. Mirrors
+    // the server's create refinement in `routes/customers.ts`.
+    if (!firstName.trim() && !lastName.trim() && !email.trim() && !phone.trim()) {
+      return toast.error('Enter a name, email or phone number.');
     }
     if (requireEmail && !email.trim()) {
       return toast.error('An email address is required to send the proposal.');
@@ -112,7 +115,7 @@ export default function CustomerCreateModal({
         shipping_postal_code: postal.trim(),
         billing_same_as_shipping: true,
       });
-      toast.success(`Customer ${created.first_name} ${created.last_name} added.`);
+      toast.success(`Customer ${displayName(created)} added.`);
       onCreated(created);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not create the customer.');
@@ -143,8 +146,9 @@ export default function CustomerCreateModal({
     >
       <div className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-2">
-          <Field label="First name" value={firstName} onChange={setFirstName} required autoFocus />
-          <Field label="Last name" value={lastName} onChange={setLastName} required />
+          {/* Neither name is required — see `submit`'s at-least-one rule. */}
+          <Field label="First name" value={firstName} onChange={setFirstName} autoFocus />
+          <Field label="Last name" value={lastName} onChange={setLastName} />
         </div>
         <Field label="Email" type="email" value={email} onChange={setEmail} required={requireEmail} />
         <Field label="Phone" type="tel" value={phone} onChange={setPhone} />

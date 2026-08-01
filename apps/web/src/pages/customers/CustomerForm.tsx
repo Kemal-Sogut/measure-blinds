@@ -183,8 +183,18 @@ export default function CustomerForm() {
 
   /** Validates and saves; navigates back to the list on success. */
   function handleSave() {
-    if (!form.first_name.trim()) return toast.error('First name is required.');
-    if (!form.last_name.trim()) return toast.error('Last name is required.');
+    // Names are optional (a customer met on site is often nothing but a
+    // phone number), but a wholly anonymous record would be unsearchable
+    // and un-emailable, so at least one identifying field is required.
+    // Mirrors the server's create refinement in `routes/customers.ts`.
+    if (
+      !form.first_name.trim() &&
+      !form.last_name.trim() &&
+      !form.email.trim() &&
+      !form.phone.trim()
+    ) {
+      return toast.error('Enter a name, email or phone number.');
+    }
     if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) {
       return toast.error('Enter a valid email or leave it empty.');
     }

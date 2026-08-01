@@ -35,6 +35,7 @@ import {
 } from '../../hooks/useCalendar';
 import { useOrderList } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
+import { displayName } from '../../lib/customerName';
 import type { AppointmentKind, Customer } from '../../types';
 
 /** Builds "08:00".."17:30" in 30-minute increments. */
@@ -299,7 +300,7 @@ export default function AppointmentWizard({
                     }`}
                   >
                     <span className="block text-sm font-semibold text-text-primary">
-                      {cust.first_name} {cust.last_name}
+                      {displayName(cust)}
                     </span>
                     <span className="mt-0.5 block text-[13px] text-text-secondary">
                       {hasEmail ? cust.email : 'No email — cannot be emailed the booking'}
@@ -341,7 +342,7 @@ export default function AppointmentWizard({
                     </span>
                   </span>
                   <span className="mt-0.5 block text-[13px] text-text-secondary">
-                    {o.customer ? `${o.customer.first_name} ${o.customer.last_name}` : '—'}
+                    {o.customer ? displayName(o.customer) : '—'}
                   </span>
                 </button>
               ))}
@@ -387,7 +388,13 @@ export default function AppointmentWizard({
             onClose={() => setAddingCustomer(false)}
             onCreated={(created) => {
               setCustomer(created);
-              setTerm(`${created.first_name} ${created.last_name}`);
+              // Seed the picker's search box with something that will
+              // actually match the new customer. `displayName` can
+              // return the "Unnamed customer" placeholder, which matches
+              // nothing — in that case clear the term and let the recent
+              // list show instead of stranding the user on 0 results.
+              const label = displayName(created);
+              setTerm(label === 'Unnamed customer' ? '' : label);
               setAddingCustomer(false);
             }}
           />

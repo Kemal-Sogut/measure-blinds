@@ -24,6 +24,7 @@ import {
   useAppointmentsList,
   type AppointmentKindFilter,
 } from '../../hooks/useCalendar';
+import { displayName } from '../../lib/customerName';
 import type { CalendarEvent } from '../../types';
 
 /** Schedule-status → display label + Tailwind ink class. */
@@ -56,7 +57,7 @@ function whenLabel(dateIso: string, time: string): string {
 
 /** One appointment row — the whole card is a button into the details page. */
 function Row({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) {
-  const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+  const customerName = displayName(event.customer);
   const status = STATUS_LABEL[event.schedule_status];
   const isInstall = event.kind === 'installation';
   return (

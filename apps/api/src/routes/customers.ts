@@ -43,8 +43,8 @@ const addressFields = {
 /** Full customer payload schema; PUT uses `.partial()` of this. */
 const customerSchema = z
   .object({
-    first_name: z.string().min(1, 'First name is required').max(100),
-    last_name: z.string().min(1, 'Last name is required').max(100),
+    first_name: z.string().max(100),
+    last_name: z.string().max(100),
     email: z.string().email().or(z.literal('')),
     phone: z.string().max(50),
     shipping_address_line1: addressFields.address_line1,
@@ -62,8 +62,24 @@ const customerSchema = z
   .partial()
   .strict();
 
-/** Create requires the two name fields; everything else is optional. */
-const createSchema = customerSchema.required({ first_name: true, last_name: true });
+/**
+ * Create requires no single field, but refuses a wholly anonymous row:
+ * at least one of name / email / phone must be present, or the customer
+ * is unsearchable, un-emailable, and indistinguishable from every other
+ * blank record in the list.
+ *
+ * Names became optional on 2026-08-01 — a customer met on site is often
+ * just a phone number, and inventing a placeholder name to satisfy the
+ * form made those rows harder to find later, not easier.
+ *
+ * The UPDATE schema (`customerSchema` itself, already `.partial()`) is
+ * deliberately NOT refined: an address-only PATCH must not be forced to
+ * restate an identifier it is not touching.
+ */
+const createSchema = customerSchema.refine(
+  (v) => Boolean(v.first_name?.trim() || v.last_name?.trim() || v.email?.trim() || v.phone?.trim()),
+  { message: 'Enter a name, email or phone number.' }
+);
 
 /**
  * Strips characters that have structural meaning inside a PostgREST
@@ -161,10 +177,20 @@ app.delete('/:id', async (c) => {
   return c.json({ data: { id: data.id } });
 });
 
-/** Extracts the first user-relevant message from a ZodError. */
+/**
+ * Extracts the first user-relevant message from a ZodError.
+ *
+ * Field issues are prefixed with the field name, which is what makes a
+ * 400 actionable. Whole-object refinements (see `createSchema`) carry an
+ * EMPTY path, and their messages are already written as complete
+ * sentences for the user — prefixing those with a synthetic "payload:"
+ * would only add noise, so they are returned verbatim.
+ */
 function firstZodIssue(error: z.ZodError): string {
   const issue = error.issues[0];
-  return issue ? `${issue.path.join('.') || 'payload'}: ${issue.message}` : 'Invalid payload';
+  if (!issue) return 'Invalid payload';
+  const path = issue.path.join('.');
+  return path ? `${path}: ${issue.message}` : issue.message;
 }
 
 export default app;
