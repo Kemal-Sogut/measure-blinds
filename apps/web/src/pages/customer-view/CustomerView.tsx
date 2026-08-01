@@ -37,8 +37,8 @@
  * apart from their own local form drafts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
@@ -271,6 +271,16 @@ function Message({ icon, title, body }: { icon: string; title: string; body: str
 
 export default function CustomerView() {
   const { token } = useParams<{ token: string }>();
+  const [searchParams] = useSearchParams();
+  // Staff opened this from the order page's "Customer View" button. The
+  // page renders identically, but nothing here may mutate the order or
+  // pollute the activity trail with an office visit.
+  const preview = searchParams.get('preview') === '1';
+
+  // One-shot guard for the view ping. React StrictMode mounts effects
+  // twice in development, and the ping must not fire twice.
+  const pinged = useRef(false);
+
   const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -296,6 +306,33 @@ export default function CustomerView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Tells the Worker the customer opened this page, exactly once.
+   *
+   * Three independent guards, because a false "customer opened it" entry
+   * would mislead staff into thinking the estimate was read:
+   *   - `preview` — a staff preview is not a customer open;
+   *   - `pinged` — StrictMode's double mount fires one effect twice;
+   *   - `localStorage` — a refresh, or the reload after confirming, is
+   *     the same visit and must not re-ping. This also keeps the page to
+   *     one extra request per device against the /public rate limit.
+   * The server refuses a second log regardless (`customer_viewed_at`),
+   * so these are courtesy, not correctness.
+   *
+   * Fire-and-forget: no state, no error surface. Telemetry must never be
+   * why a customer sees something break.
+   */
+  useEffect(() => {
+    if (preview || pinged.current || !token) return;
+    const key = `viewed:${token}`;
+    if (localStorage.getItem(key)) return;
+    pinged.current = true;
+    localStorage.setItem(key, '1');
+    void fetch(`${API_URL}/public/estimate/${token}/view`, { method: 'POST' }).catch(() => {
+      // Offline or rate-limited — the next visit records it instead.
+    });
+  }, [preview, token]);
 
   /**
    * POSTs the one-shot confirm. Success and 409 ("already confirmed")

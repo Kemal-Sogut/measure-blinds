@@ -1924,9 +1924,21 @@ export default function OrderDetail() {
               )}
               {logs && logs.length > 0 && (
                 <>
+                  {/*
+                    Customer-sourced rows (page opened, estimate confirmed,
+                    cancellation asked for or withdrawn) sit on the light-blue
+                    info tint so staff can pick out what the customer did from
+                    what the office did. Padding is applied to every row, not
+                    just tinted ones, so the column alignment never shifts.
+                  */}
                   <ul className="flex flex-col gap-2.5">
                     {(logsExpanded ? logs : logs.slice(0, LOG_PREVIEW_COUNT)).map((log) => (
-                      <li key={log.id} className="flex justify-between gap-3 text-[13px]">
+                      <li
+                        key={log.id}
+                        className={`flex justify-between gap-3 rounded-md px-2 py-1 text-[13px] ${
+                          log.source === 'customer' ? 'bg-info-tint' : ''
+                        }`}
+                      >
                         <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
                         <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
                           {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}

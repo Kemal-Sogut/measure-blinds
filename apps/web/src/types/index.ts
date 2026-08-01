@@ -183,6 +183,12 @@ export interface OrderLog {
   order_id: string;
   message: string;
   created_at: string;
+  /**
+   * Who caused this entry. Optional on the wire on purpose: if the web
+   * app deploys ahead of the Worker, older rows arrive without it and
+   * must render as staff rather than crash or mis-colour.
+   */
+  source?: 'staff' | 'customer';
 }
 
 /**
