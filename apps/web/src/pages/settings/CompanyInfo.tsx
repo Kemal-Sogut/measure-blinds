@@ -35,7 +35,7 @@ interface FormState {
 }
 
 const INPUT_CLS =
-  'h-11 w-full rounded-lg border border-border bg-surface px-3 text-base text-text-primary';
+  'h-11 w-full rounded-md border border-border-input bg-surface px-3 text-base text-text-primary';
 
 export default function CompanyInfo() {
   const { data, isLoading, error } = useCompanySettings();
@@ -127,15 +127,15 @@ export default function CompanyInfo() {
       <PageHeader title="Company Info" backTo="/settings" />
       <div className="mx-auto max-w-lg p-4">
         {/* Logo */}
-        <div className="mb-6 flex items-center gap-4 rounded-xl border border-border bg-surface-elevated p-4">
+        <div className="mb-6 flex items-center gap-4 rounded-xl border border-border-light bg-surface shadow-md p-4">
           {data?.logo_url ? (
             <img
               src={data.logo_url}
               alt="Company logo"
-              className="h-16 w-16 rounded-lg border border-border-light object-contain"
+              className="h-16 w-16 rounded-md border border-border-input-light object-contain"
             />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-lg bg-surface-muted text-xs text-text-muted">
+            <div className="flex h-16 w-16 items-center justify-center rounded-md bg-surface-muted text-xs text-text-muted">
               No logo
             </div>
           )}
@@ -143,7 +143,7 @@ export default function CompanyInfo() {
             <button
               onClick={() => fileInput.current?.click()}
               disabled={uploadLogo.isPending}
-              className="h-11 rounded-lg border border-border px-4 font-medium text-text-primary hover:bg-surface disabled:opacity-50"
+              className="h-11 rounded-md border border-border-input px-4 font-medium text-text-primary hover:bg-surface disabled:opacity-50"
             >
               {uploadLogo.isPending ? 'Uploading…' : 'Upload Logo'}
             </button>
@@ -159,7 +159,7 @@ export default function CompanyInfo() {
         </div>
 
         {/* Fields */}
-        <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface-elevated p-4">
+        <div className="flex flex-col gap-4 rounded-xl border border-border-light bg-surface shadow-md p-4">
           <label className="text-sm font-medium text-text-secondary">
             Company Name
             <input
@@ -192,7 +192,7 @@ export default function CompanyInfo() {
             Address
             <textarea
               rows={3}
-              className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text-primary"
+              className="mt-1 w-full rounded-md border border-border-input bg-surface px-3 py-2 text-base text-text-primary"
               value={form.address}
               onChange={(e) => set('address', e.target.value)}
             />
@@ -249,7 +249,7 @@ export default function CompanyInfo() {
             <textarea
               rows={3}
               placeholder="e.g. A 50% deposit is due before production begins."
-              className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-base text-text-primary"
+              className="mt-1 w-full rounded-md border border-border-input bg-surface px-3 py-2 text-base text-text-primary"
               value={form.etransfer_instructions}
               onChange={(e) => set('etransfer_instructions', e.target.value)}
             />
@@ -260,7 +260,7 @@ export default function CompanyInfo() {
           <button
             onClick={handleSave}
             disabled={update.isPending}
-            className="h-12 rounded-lg bg-brand-600 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+            className="h-12 rounded-md shadow-sm bg-brand-600 font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
             {update.isPending ? 'Saving…' : 'Save'}
           </button>

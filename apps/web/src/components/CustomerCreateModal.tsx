@@ -12,18 +12,27 @@
  * "same as shipping"). The created customer is handed back to the
  * caller through `onCreated` so it can be selected immediately.
  *
- * Rendered at z-50 so it stacks above the z-40 sheets/wizards that
- * open it.
+ * Rendered at z-50 (by the `Modal` primitive) so it stacks above the
+ * z-40 sheets and wizards that open it.
+ *
+ * Callers mount it conditionally rather than toggling a prop, so it
+ * passes `open` as a constant `true` and keeps its own props unchanged.
+ * Escape handling, backdrop dismissal, body scroll lock and focus all
+ * come from `Modal` — this file must not add its own, or the close
+ * handler would fire twice.
  */
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { useCreateCustomer } from '../hooks/useCustomers';
 import AddressAutocomplete from './AddressAutocomplete';
+import Modal from './ui/Modal';
+import Button from './ui/Button';
+import { inputClass } from './ui/Field';
 import type { Customer } from '../types';
 
-const INPUT_CLS =
-  'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
+/** This modal's control treatment: the shared input plus a fixed height. */
+const INPUT_CLS = `h-11 ${inputClass}`;
 
 /** Small labelled input used by every field in the form. */
 function Field({
@@ -43,7 +52,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-text-secondary">
+      <span className="mb-1 block text-xs font-semibold text-text-secondary">
         {label}
         {required && <span className="text-danger"> *</span>}
       </span>
@@ -111,72 +120,52 @@ export default function CustomerCreateModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
-      onClick={onClose}
-      role="dialog"
-      aria-label="Add customer"
-    >
-      <div
-        className="max-h-[85vh] w-full overflow-y-auto rounded-t-sm bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:max-w-md sm:rounded-sm"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-primary">Add customer</h2>
-          <button
+    <Modal
+      open
+      onClose={onClose}
+      title="Add customer"
+      subtitle="Billing defaults to the shipping address"
+      footer={
+        <>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
             type="button"
-            onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-sm text-text-muted hover:bg-surface-muted"
-            aria-label="Close"
+            variant="primary"
+            onClick={submit}
+            loading={createMut.isPending}
           >
-            ✕
-          </button>
+            {createMut.isPending ? 'Saving…' : 'Add Customer'}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="First name" value={firstName} onChange={setFirstName} required autoFocus />
+          <Field label="Last name" value={lastName} onChange={setLastName} required />
         </div>
-
-        <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="First name" value={firstName} onChange={setFirstName} required autoFocus />
-            <Field label="Last name" value={lastName} onChange={setLastName} required />
-          </div>
-          <Field label="Email" type="email" value={email} onChange={setEmail} required={requireEmail} />
-          <Field label="Phone" type="tel" value={phone} onChange={setPhone} />
-          <AddressAutocomplete
-            label="Address line 1"
-            value={line1}
-            onChange={setLine1}
-            onSelect={(s) => {
-              setLine1(s.line1);
-              if (s.city) setCity(s.city);
-              if (s.province) setProvince(s.province);
-              if (s.postal_code) setPostal(s.postal_code);
-            }}
-          />
-          <Field label="Address line 2" value={line2} onChange={setLine2} />
-          <div className="grid grid-cols-[1fr_5rem_7rem] gap-2">
-            <Field label="City" value={city} onChange={setCity} />
-            <Field label="Province" value={province} onChange={setProvince} />
-            <Field label="Postal code" value={postal} onChange={setPostal} />
-          </div>
-
-          <div className="mt-1 flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-11 flex-1 rounded-sm border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={submit}
-              disabled={createMut.isPending}
-              className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-            >
-              {createMut.isPending ? 'Saving…' : 'Add Customer'}
-            </button>
-          </div>
+        <Field label="Email" type="email" value={email} onChange={setEmail} required={requireEmail} />
+        <Field label="Phone" type="tel" value={phone} onChange={setPhone} />
+        <AddressAutocomplete
+          label="Address line 1"
+          value={line1}
+          onChange={setLine1}
+          onSelect={(s) => {
+            setLine1(s.line1);
+            if (s.city) setCity(s.city);
+            if (s.province) setProvince(s.province);
+            if (s.postal_code) setPostal(s.postal_code);
+          }}
+        />
+        <Field label="Address line 2" value={line2} onChange={setLine2} />
+        <div className="grid grid-cols-[1fr_5rem_7rem] gap-2">
+          <Field label="City" value={city} onChange={setCity} />
+          <Field label="Province" value={province} onChange={setProvince} />
+          <Field label="Postal code" value={postal} onChange={setPostal} />
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -89,9 +89,9 @@ describe('buildLabels', () => {
     expect(buildLabels(order({ line_items: null }))).toEqual([]);
   });
 
-  it('joins material and colour with a middle dot, dropping either side when blank', () => {
+  it('joins material and colour with an em dash, dropping either side when blank', () => {
     const [both] = buildLabels(order({ line_items: [blind()] }));
-    expect(both.material).toBe('Blackout White · Ivory');
+    expect(both.material).toBe('Blackout White — Ivory');
 
     const [noColor] = buildLabels(order({ line_items: [blind({ color: '   ' })] }));
     expect(noColor.material).toBe('Blackout White');

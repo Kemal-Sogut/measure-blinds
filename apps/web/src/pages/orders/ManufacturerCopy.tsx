@@ -86,7 +86,7 @@ function formatStamp(ts: string): string {
 /** Card wrapper shared by every section. */
 function Card({ children }: { children: ReactNode }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
+    <section className="rounded-xl border border-border-light bg-surface p-4 shadow-md print:break-inside-avoid">
       {children}
     </section>
   );
@@ -136,7 +136,7 @@ function AluminumStockField({
   const isUnusable = isOverridden && !(Number(value) > 0);
 
   return (
-    <div className="rounded-lg border border-border bg-surface p-4 print:hidden">
+    <div className="rounded-xl border border-border-light bg-surface p-4 shadow-md print:hidden">
       <label htmlFor="aluminum-stock" className="block text-sm font-semibold text-text-primary">
         Aluminium bar length
       </label>
@@ -152,14 +152,14 @@ function AluminumStockField({
           onChange={(e) => onChange(numericOnly(e.target.value))}
           placeholder={String(ALUMINUM_STOCK_CM)}
           aria-describedby="aluminum-stock-effective"
-          className="h-11 w-28 rounded-lg border border-border bg-surface px-3 text-base"
+          className="h-11 w-28 rounded-md border border-border-input bg-surface px-3 text-base"
         />
         <span className="text-sm text-text-muted">cm</span>
         {isOverridden && (
           <button
             type="button"
             onClick={() => onChange('')}
-            className="h-11 rounded-lg border border-border-input px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken"
+            className="h-11 rounded-md border border-border-input px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken"
           >
             Reset
           </button>
@@ -200,7 +200,7 @@ function AluminumSection({ group }: { group: AluminumGroup }) {
               {bar.cuts.map((c, i) => (
                 <span
                   key={i}
-                  className="rounded-sm border border-border bg-surface px-2 py-1 text-xs text-text-primary"
+                  className="rounded-md border border-border-input bg-surface px-2 py-1 text-xs text-text-primary"
                   title={c.label}
                 >
                   {cm(c.length)}
@@ -251,7 +251,7 @@ function FabricSection({ group }: { group: FabricGroup }) {
               {strip.pieces.map((p, i) => (
                 <span
                   key={i}
-                  className="rounded-sm border border-border bg-surface px-2 py-1 text-xs text-text-primary"
+                  className="rounded-md border border-border-input bg-surface px-2 py-1 text-xs text-text-primary"
                   title={p.label}
                 >
                   {cm(p.width)} × {cm(p.height)}
@@ -339,7 +339,7 @@ export default function ManufacturerCopy() {
         right={
           <button
             onClick={() => window.print()}
-            className="flex h-9 items-center gap-1.5 rounded-sm border border-border-input bg-surface px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken print:hidden"
+            className="flex h-9 items-center gap-1.5 rounded-md border border-border-input bg-surface px-3 text-sm font-medium text-text-secondary hover:bg-surface-sunken print:hidden"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
@@ -375,7 +375,7 @@ export default function ManufacturerCopy() {
           <div className="flex flex-col gap-4">
             {/* Warnings */}
             {plan.warnings.length > 0 && (
-              <div className="rounded-lg border border-warning bg-warning-tint p-3 text-sm text-text-secondary">
+              <div className="rounded-xl border border-warning/40 bg-warning-tint p-3 text-sm text-text-secondary">
                 <p className="mb-1 font-semibold">Check these before cutting:</p>
                 <ul className="list-disc pl-5">
                   {plan.warnings.map((w, i) => (
@@ -386,7 +386,7 @@ export default function ManufacturerCopy() {
             )}
 
             {nothingToBuild && (
-              <p className="rounded-lg border border-border bg-surface p-4 text-text-muted">
+              <p className="rounded-xl border border-border-light bg-surface p-4 shadow-md text-text-muted">
                 This order has no line items to manufacture yet.
               </p>
             )}
@@ -435,7 +435,7 @@ export default function ManufacturerCopy() {
 
             {/* Cut-done milestone — reversible toggle; state persists on re-entry. */}
             {hasCutWork && (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-light bg-surface p-4 shadow-md print:break-inside-avoid">
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-text-primary">Cut done</p>
                   <p className="text-xs text-text-muted">

@@ -2,20 +2,25 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Login page (redesign screen 01) — centered form on the page
- * background: brand square with the blinds mark, email/password
- * fields with the design focus ring, and the "provisioned by your
- * admin" note (public self-registration is disabled project-side).
- * On success the auth store flips to 'authenticated' and the router
- * returns to the originally requested page.
+ * Login page — a centered card on the tinted page: the brand tile with
+ * the blinds mark, email/password fields with the design focus ring,
+ * and the "provisioned by your admin" note (public self-registration is
+ * disabled project-side). On success the auth store flips to
+ * 'authenticated' and the router returns to the originally requested
+ * page.
+ *
+ * This is the first screen anyone sees, so it carries the full card
+ * language rather than a bare centered form — it is the app's
+ * introduction to its own visual system.
  */
 
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks';
+import { Card, Button, inputClass } from '../components/ui';
 
-const INPUT_CLS =
-  'block h-[46px] w-full rounded-sm border border-border-input bg-surface px-3 text-[15px] text-text-primary';
+/** This page's control treatment: the shared input plus a fixed height. */
+const INPUT_CLS = `block h-12 ${inputClass}`;
 
 export default function Login() {
   const { status, signIn } = useAuth();
@@ -47,19 +52,19 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-muted px-6">
-      <div className="w-full max-w-[320px]">
-        <div className="mx-auto mb-5 flex h-11 w-11 items-center justify-center rounded-sm bg-brand-600">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <div className="flex min-h-screen items-center justify-center bg-surface-muted px-6 py-10">
+      <Card className="w-full max-w-[380px] p-6 sm:p-8">
+        <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-md bg-brand-600 shadow-sm">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="3" y="4" width="18" height="16" rx="1" stroke="#fff" strokeWidth="1.75" />
             <path d="M3 9h18M8 4v5M16 4v5" stroke="#fff" strokeWidth="1.75" strokeLinecap="round" />
           </svg>
         </div>
-        <h1 className="mb-1 text-center text-[22px] font-semibold text-text-primary">Blinds Nisa</h1>
+        <h1 className="mb-1 text-center text-[22px] font-bold text-text-primary">Blinds Nisa</h1>
         <p className="mb-7 text-center text-sm text-text-muted">Sign in to your estimator account</p>
 
         <form onSubmit={handleSubmit} noValidate>
-          <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="email">
+          <label className="mb-1.5 block text-xs font-semibold text-text-secondary" htmlFor="email">
             Email
           </label>
           <input
@@ -73,7 +78,7 @@ export default function Login() {
             className={`${INPUT_CLS} mb-3.5`}
           />
 
-          <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="password">
+          <label className="mb-1.5 block text-xs font-semibold text-text-secondary" htmlFor="password">
             Password
           </label>
           <input
@@ -87,24 +92,30 @@ export default function Login() {
           />
 
           {error && (
-            <p role="alert" className="mb-4 rounded-sm bg-danger-tint px-3 py-2 text-sm text-danger">
+            <p
+              role="alert"
+              className="mb-4 rounded-md border border-danger/20 bg-danger-tint px-3 py-2 text-[13px] text-danger"
+            >
               {error}
             </p>
           )}
 
-          <button
+          <Button
             type="submit"
-            disabled={pending || !email || !password}
-            className="h-[46px] w-full rounded-sm bg-brand-600 text-[15px] font-semibold text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            variant="primary"
+            size="lg"
+            block
+            loading={pending}
+            disabled={!email || !password}
           >
             {pending ? 'Signing in…' : 'Sign In'}
-          </button>
+          </Button>
         </form>
 
         <p className="mt-4 text-center text-xs text-text-muted">
           Field access is provisioned by your admin — no self sign-up.
         </p>
-      </div>
+      </Card>
     </div>
   );
 }

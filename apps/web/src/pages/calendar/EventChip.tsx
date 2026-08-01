@@ -5,12 +5,19 @@
  * EventChip — a single schedule marker rendered inside a `MonthGrid`
  * day cell, covering both event kinds.
  *
- * Visual language (plan §6, no new Tailwind tokens):
- *   - Installations: `confirmed` → solid brand (`brand-600`);
- *     `proposed` / `change_requested` → the `warning` tint/ink pair.
+ * Visual language, following the redesign's rule that hue encodes
+ * state. Kind picks the hue; confirmation picks fill vs tint:
+ *   - Installations: `confirmed` → solid `scheduled` (violet, the same
+ *     hue the order page's Installation section carries);
+ *     `proposed` / `change_requested` → the `warning` tint/ink pair,
+ *     because an unanswered proposal is something someone must act on.
  *   - Estimate appointments: `confirmed` → solid `success`;
  *     `proposed` / `change_requested` → the `success` tint/ink pair,
  *     so the two schedules are distinguishable at a glance.
+ *
+ * It is deliberately NOT built on the `Pill` primitive: a pill is a
+ * non-interactive span, while a chip is a full-width navigating button
+ * that must truncate inside a day cell.
  *
  * Tapping ANY chip (either kind) navigates to that appointment's
  * details page (`/appointments/:id`), where the customer block, the
@@ -39,11 +46,11 @@ export default function EventChip({ event }: { event: CalendarEvent }) {
 
   const cls = isEstimate
     ? isConfirmed
-      ? 'bg-success text-white'
-      : 'border border-success bg-success-tint text-success'
+      ? 'bg-success-strong text-white'
+      : 'border border-success/40 bg-success-tint text-success'
     : isConfirmed
-      ? 'bg-brand-600 text-white'
-      : 'border border-warning bg-warning-tint text-warning';
+      ? 'bg-scheduled text-white'
+      : 'border border-warning/40 bg-warning-tint text-warning';
 
   return (
     <button
@@ -55,7 +62,7 @@ export default function EventChip({ event }: { event: CalendarEvent }) {
         navigate(`/appointments/${event.id}`);
       }}
       title={`${event.order_number || customerName || 'Customer'} — ${customerName || 'Customer'} (${kindLabel}, ${event.schedule_status})`}
-      className={`block w-full truncate rounded-sm px-1 py-0.5 text-left text-[10px] font-medium leading-tight ${cls}`}
+      className={`block w-full truncate rounded-md px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight ${cls}`}
     >
       {shortTime(event.time)} {customerName || event.order_number}
     </button>
