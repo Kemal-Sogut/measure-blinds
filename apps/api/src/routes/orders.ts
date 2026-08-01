@@ -336,10 +336,20 @@ function formatDateLong(dateIso: string): string {
  * Appends one row to the order's activity trail. Best-effort: a logging
  * failure must never fail the request it is describing, so errors are
  * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
+ *
+ * `source` marks who caused the entry: 'staff' (the default, so all
+ * existing call sites are unchanged) or 'customer' for anything driven
+ * from the token'd public page. The web trail renders customer rows on
+ * a light-blue background.
  */
-async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string,
+  source: 'staff' | 'customer' = 'staff'
+): Promise<void> {
   try {
-    await sb.from('order_logs').insert({ order_id: orderId, message });
+    await sb.from('order_logs').insert({ order_id: orderId, message, source });
   } catch {
     // Logging is diagnostic only — never block the caller's mutation.
   }

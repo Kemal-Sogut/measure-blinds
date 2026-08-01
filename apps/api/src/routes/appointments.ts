@@ -113,10 +113,22 @@ const APPT_SELECT =
   'id, kind, order_id, appointment_date, appointment_time, status, response_note, public_token, ' +
   'customer:customers(*), order:orders(id, order_number, status)';
 
-/** Best-effort activity-trail entry on an installation's order. */
-async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+/**
+ * Best-effort activity-trail entry on an installation's order.
+ *
+ * `source` marks who caused the entry: 'staff' (the default, so all
+ * existing call sites are unchanged) or 'customer' for anything driven
+ * from the token'd public page. The web trail renders customer rows on
+ * a light-blue background.
+ */
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string,
+  source: 'staff' | 'customer' = 'staff'
+): Promise<void> {
   try {
-    await sb.from('order_logs').insert({ order_id: orderId, message });
+    await sb.from('order_logs').insert({ order_id: orderId, message, source });
   } catch {
     // Logging is diagnostic only — never block the caller's mutation.
   }
