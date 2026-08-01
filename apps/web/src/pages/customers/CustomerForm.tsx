@@ -18,6 +18,7 @@ import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import AddressAutocomplete from '../../components/AddressAutocomplete';
 import type { AddressSuggestion } from '../../lib/addressSearch';
+import type { Customer } from '../../types';
 import {
   useCustomer,
   useCreateCustomer,
@@ -62,6 +63,32 @@ const EMPTY: FormState = {
   billing_province: '',
   billing_postal_code: '',
 };
+
+/**
+ * Copies just the editable fields off a server row. The row also carries
+ * `id` and the timestamp columns, and the update schema is strict, so
+ * spreading it wholesale into form state would make every save 400.
+ * Nullable text columns fall back to '' to keep inputs controlled.
+ */
+function toFormState(row: Customer): FormState {
+  return {
+    first_name: row.first_name ?? '',
+    last_name: row.last_name ?? '',
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    shipping_address_line1: row.shipping_address_line1 ?? '',
+    shipping_address_line2: row.shipping_address_line2 ?? '',
+    shipping_city: row.shipping_city ?? '',
+    shipping_province: row.shipping_province ?? EMPTY.shipping_province,
+    shipping_postal_code: row.shipping_postal_code ?? '',
+    billing_same_as_shipping: row.billing_same_as_shipping ?? true,
+    billing_address_line1: row.billing_address_line1 ?? '',
+    billing_address_line2: row.billing_address_line2 ?? '',
+    billing_city: row.billing_city ?? '',
+    billing_province: row.billing_province ?? '',
+    billing_postal_code: row.billing_postal_code ?? '',
+  };
+}
 
 const INPUT_CLS =
   'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
@@ -110,7 +137,7 @@ export default function CustomerForm() {
   // Populate once when editing an existing customer.
   useEffect(() => {
     if (isEdit && existing && !loaded) {
-      setForm({ ...EMPTY, ...existing });
+      setForm(toFormState(existing));
       setLoaded(true);
     }
   }, [isEdit, existing, loaded]);
