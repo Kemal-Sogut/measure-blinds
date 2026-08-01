@@ -88,6 +88,18 @@ function sumPayments(payments: Array<{ amount: number | string }> | null | undef
   return (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
 }
 
+/**
+ * The standard up-front deposit: half the order total, rounded to the
+ * cent. This is the SAME 50% rule the incoming e-Transfer matcher uses
+ * to recognise a deposit payment (`lib/etransferMatch.ts`) — the two
+ * must agree, otherwise the figure quoted to the customer would not be
+ * auto-matched when it arrives. Computed here rather than in the browser
+ * so no money figure originates client-side (AI_GUIDELINES rule 1).
+ */
+function depositDue(total: number | string): number {
+  return Math.round((Number(total) / 2) * 100) / 100;
+}
+
 /** One receipt line on the customer's payment history. */
 interface PublicPayment {
   amount: number;
@@ -203,6 +215,9 @@ app.get('/estimate/:token', async (c) => {
       total: order.total,
       amount_paid: amountPaid,
       balance: Number(order.total) - amountPaid,
+      // Quoted to the customer while the order sits in awaiting_payment;
+      // always served so the page never has to derive money itself.
+      deposit_due: depositDue(order.total),
       payments: publicPayments(order.payments),
       terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,

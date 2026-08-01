@@ -14,7 +14,8 @@
  *   expired           → "contact us for a new quote" card
  *   sent              → summary + Confirm button (the estimate)
  *   confirmed         → summary + progress tracker + e-Transfer details
- *                       + cancellation-request block
+ *                       (with the 50% deposit quoted while the order is
+ *                       awaiting its first payment) + cancellation block
  *
  * Because the tracker is always live here, the app sends customers NO
  * status-update emails.
@@ -81,6 +82,13 @@ interface PublicEstimate {
   amount_paid: number;
   /** Server-computed `total − amount_paid`. */
   balance: number;
+  /**
+   * Server-computed 50% up-front deposit. Optional because a Worker
+   * predating this field still serves the rest of the payload; the page
+   * then simply omits the deposit figure rather than deriving money of
+   * its own (AI_GUIDELINES rule 1).
+   */
+  deposit_due?: number;
   /**
    * The customer's own receipt history, oldest-first. Amount + date
    * only — the server withholds the ledger's internal columns. Optional
@@ -277,6 +285,14 @@ export default function CustomerView() {
   // it is only offered in exactly that window — never shown when the
   // server would refuse it.
   const canRequestCancel = estimate.status === 'awaiting_payment' && estimate.amount_paid === 0;
+  // The deposit is quoted only in the window it means something: the
+  // order is on the "Awaiting Payment" step and nothing has arrived yet.
+  // Once a payment lands, the amount to send is the balance, which the
+  // totals block already states.
+  const showDeposit =
+    estimate.status === 'awaiting_payment' &&
+    estimate.amount_paid === 0 &&
+    estimate.deposit_due !== undefined;
   const c = estimate.company;
   const cust = estimate.customer;
 
@@ -426,6 +442,7 @@ export default function CustomerView() {
             payToEmail={c?.etransfer_email ?? ''}
             instructions={c?.etransfer_instructions}
             orderNumber={estimate.order_number}
+            depositDue={showDeposit ? estimate.deposit_due : undefined}
           />
         )}
 

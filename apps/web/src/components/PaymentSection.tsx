@@ -9,15 +9,20 @@
  * `/public/estimate/:token`) — they used to be a literal in this file,
  * which meant changing where customers send money required a redeploy.
  *
- * Instructions only — no money. The receipt history, paid-to-date and
- * balance due all live in the totals block on the customer page so they
- * stay visible once an order is paid in full (at which point this
- * section is unmounted), and so no figure is stated in two places.
+ * Instructions, plus ONE optional figure: the up-front deposit to send
+ * now. The receipt history, paid-to-date and balance due all live in the
+ * totals block on the customer page so they stay visible once an order
+ * is paid in full (at which point this section is unmounted), and so no
+ * figure is stated in two places. `depositDue` is not an exception to
+ * that — it is the amount to transfer, which appears nowhere else, and
+ * it is computed by the Worker (`deposit_due`), never here.
  *
  * The caller decides when to mount it — the rule is "confirmed, and
- * still owing" — so this renders unconditionally EXCEPT when no
- * e-Transfer address is configured, in which case it renders nothing
- * rather than showing an empty box the customer cannot act on.
+ * still owing" — and separately decides whether the deposit applies (the
+ * order is awaiting payment and nothing has been received yet). This
+ * renders unconditionally EXCEPT when no e-Transfer address is
+ * configured, in which case it renders nothing rather than showing an
+ * empty box the customer cannot act on.
  *
  * Online card payment is out of scope; when it lands, this is the single
  * place to add it without touching the confirmation flow.
@@ -30,20 +35,37 @@ interface PaymentSectionProps {
   instructions?: string;
   /** Shown so the customer can quote it in the transfer message. */
   orderNumber: string;
+  /**
+   * Server-computed 50% deposit (`deposit_due`). Passed only while the
+   * order is awaiting its first payment; omitted afterwards, when the
+   * amount to send is the balance shown in the totals block instead.
+   */
+  depositDue?: number;
 }
 
 export default function PaymentSection({
   payToEmail,
   instructions,
   orderNumber,
+  depositDue,
 }: PaymentSectionProps) {
   if (!payToEmail) return null;
 
   return (
     <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-left">
       <h2 className="mb-2 text-xs font-semibold text-text-muted">HOW TO PAY</h2>
+      {depositDue !== undefined && (
+        <div className="mb-3 rounded-xl bg-brand-100 px-3 py-2.5 text-center">
+          <p className="text-xs font-medium text-brand-700">Deposit due now (50% of total)</p>
+          <p className="font-mono text-xl font-semibold text-text-primary">
+            ${depositDue.toFixed(2)}
+          </p>
+        </div>
+      )}
       <p className="mb-3 text-sm text-text-secondary">
-        Please send your payment by Interac e-Transfer to:
+        {depositDue !== undefined
+          ? 'Please send this deposit by Interac e-Transfer to:'
+          : 'Please send your payment by Interac e-Transfer to:'}
       </p>
       <p className="mb-3 rounded-xl bg-surface-sunken px-3 py-2.5 text-center font-medium break-all text-text-primary">
         {payToEmail}

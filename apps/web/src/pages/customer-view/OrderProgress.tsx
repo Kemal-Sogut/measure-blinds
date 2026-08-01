@@ -4,7 +4,7 @@
 /**
  * Customer-facing order progress tracker for the public order summary.
  *
- * Pure presentational: it takes an order status and renders four steps.
+ * Pure presentational: it takes an order status and renders five steps.
  * It owns no fetching, no state and no actions — `CustomerView.tsx`
  * decides whether to mount it at all.
  *
@@ -12,11 +12,14 @@
  * customers: the same token'd link they confirmed through keeps working
  * as a live view of where their order stands.
  *
- * The four steps are deliberately NOT the internal statuses. Internal
- * names (`draft`, `sent`, `awaiting_payment`) are never shown to a
- * customer — `awaiting_payment` in particular would read as a demand
- * rather than a milestone, so it maps to "Confirmed" and the money
- * question is handled separately by the payment block.
+ * The five steps are deliberately NOT the internal statuses — internal
+ * names (`draft`, `sent`, `in_progress`) are never shown to a customer.
+ * "Confirmed" matches no status at all: confirming is an EVENT, and the
+ * status it produces is `awaiting_payment`, so the first step is a
+ * milestone that is complete for every status this tracker can see.
+ * `awaiting_payment` then owns its own visible step ("Awaiting Payment")
+ * instead of hiding behind "Confirmed"; the amount and the e-Transfer
+ * details for it stay in the payment block, so this file states no money.
  *
  * Only mounted once an order is confirmed, so `draft`/`sent`/`expired`
  * never reach it (an expired order is caught by a terminal message card
@@ -33,9 +36,14 @@ interface Step {
 /**
  * Milestones in order. `installed` is terminal, so reaching it marks
  * every step complete rather than leaving the last one "current".
+ *
+ * "Confirmed" carries an empty `match` on purpose: no status maps to it,
+ * so it never becomes the current step and — being index 0 — always
+ * renders as done behind whatever step the order is actually on.
  */
 const STEPS: Step[] = [
-  { match: ['awaiting_payment'], label: 'Confirmed' },
+  { match: [], label: 'Confirmed' },
+  { match: ['awaiting_payment'], label: 'Awaiting Payment' },
   { match: ['in_progress'], label: 'In Production' },
   { match: ['ready'], label: 'Ready' },
   { match: ['installed'], label: 'Installed' },
@@ -44,15 +52,15 @@ const STEPS: Step[] = [
 /**
  * Renders the tracker for `status`.
  *
- * An unrecognised status yields index 0 rather than -1, so an order in
- * an unexpected state still renders sensibly instead of showing every
- * step as incomplete.
+ * An unrecognised status falls back to index 1 ("Awaiting Payment", the
+ * earliest state a confirmed order can be in) rather than -1, so an
+ * order in an unexpected state still renders sensibly instead of showing
+ * every step as incomplete — and never lands on the matchless
+ * "Confirmed" step, which must always read as already done.
  */
 export default function OrderProgress({ status }: { status: string }) {
-  const idx = Math.max(
-    0,
-    STEPS.findIndex((s) => s.match.includes(status))
-  );
+  const found = STEPS.findIndex((s) => s.match.includes(status));
+  const idx = found === -1 ? 1 : found;
   const allDone = status === 'installed';
 
   return (

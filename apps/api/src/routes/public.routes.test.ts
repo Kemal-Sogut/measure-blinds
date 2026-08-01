@@ -258,6 +258,20 @@ describe('GET /public/estimate/:token — order summary payload', () => {
     expect(body.data.balance).toBe(50);
   });
 
+  it('serves the 50% deposit, rounded to the cent, from the total', async () => {
+    // 113 / 2 = 56.5 exactly; an odd-cent total must not leak a third
+    // decimal into the figure quoted to the customer.
+    db.order = awaitingOrder({ payments: [] });
+    let res = await req(`/estimate/${TOKEN}`);
+    let body = (await res.json()) as { data: { deposit_due: number } };
+    expect(body.data.deposit_due).toBe(56.5);
+
+    db.order = awaitingOrder({ total: '113.55', payments: [] });
+    res = await req(`/estimate/${TOKEN}`);
+    body = (await res.json()) as { data: { deposit_due: number } };
+    expect(body.data.deposit_due).toBe(56.78);
+  });
+
   it('returns the receipt history as amount + date, oldest-first', async () => {
     db.order = awaitingOrder({
       payments: [
