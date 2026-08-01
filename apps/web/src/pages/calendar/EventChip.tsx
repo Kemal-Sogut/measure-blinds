@@ -27,6 +27,7 @@
  */
 
 import { useNavigate } from 'react-router-dom';
+import { displayName } from '../../lib/customerName';
 import type { CalendarEvent } from '../../types';
 
 /** Formats "HH:MM" (24h) as a compact "9:00a" style label for chips. */
@@ -41,7 +42,7 @@ export default function EventChip({ event }: { event: CalendarEvent }) {
   const navigate = useNavigate();
   const isConfirmed = event.schedule_status === 'confirmed';
   const isEstimate = event.kind === 'estimate';
-  const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+  const customerName = displayName(event.customer);
   const kindLabel = isEstimate ? 'estimate' : 'installation';
 
   const cls = isEstimate

@@ -55,6 +55,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
+import { displayName } from '../../lib/customerName';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -511,7 +512,12 @@ export default function CustomerView() {
             <span className="whitespace-nowrap text-text-muted">{estimate.order_date}</span>
           </div>
           <p className="mt-1 text-text-secondary">
-            For {cust.first_name} {cust.last_name}
+            {/*
+              The public payload carries no email or phone by design, so
+              a nameless customer falls through to the placeholder rather
+              than seeing their own contact details printed as a name.
+            */}
+            For {displayName(cust)}
             {cust.shipping_address_line1 &&
               ` · ${cust.shipping_address_line1}, ${cust.shipping_city}`}
           </p>

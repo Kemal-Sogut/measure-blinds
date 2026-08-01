@@ -229,7 +229,10 @@ app.get('/', async (c) => {
     .from('appointments')
     .select(
       'id, kind, order_id, appointment_date, appointment_time, status, ' +
-        'order:orders(order_number), customer:customers(first_name, last_name)',
+        // email/phone are here only so the calendar and the visit list
+        // can label a customer who has no name at all (see the shared
+        // `displayName` fallback chain) — neither is displayed as such.
+        'order:orders(order_number), customer:customers(first_name, last_name, email, phone)',
       { count: 'exact' }
     )
     .order('appointment_date', { ascending: false })
@@ -278,7 +281,10 @@ app.get('/calendar', async (c) => {
     .from('appointments')
     .select(
       'id, kind, order_id, appointment_date, appointment_time, status, ' +
-        'order:orders(order_number), customer:customers(first_name, last_name)'
+        // email/phone are here only so the calendar and the visit list
+        // can label a customer who has no name at all (see the shared
+        // `displayName` fallback chain) — neither is displayed as such.
+        'order:orders(order_number), customer:customers(first_name, last_name, email, phone)'
     )
     .gte('appointment_date', from)
     .lte('appointment_date', to)

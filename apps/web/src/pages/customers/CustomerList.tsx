@@ -15,17 +15,26 @@ import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody } from '../../components/ui';
 import { useCustomerSearch } from '../../hooks/useCustomers';
+import { displayName } from '../../lib/customerName';
+import type { Customer } from '../../types';
 
 /**
  * Up to two initials for the row avatar. Falls back to a single letter
- * when only one name is recorded and to "?" when neither is, so a
- * partially-filled record still renders a stable circle rather than
- * collapsing the row's leading column.
+ * when only one name is recorded, then to the first character of the
+ * customer's display name (email or phone) when no name exists at all,
+ * and finally to "?" — so every record renders a stable circle rather
+ * than collapsing the row's leading column.
  */
-function initials(first?: string | null, last?: string | null): string {
-  const a = first?.trim()[0] ?? '';
-  const b = last?.trim()[0] ?? '';
-  return (a + b).toUpperCase() || '?';
+function initials(cust: Customer): string {
+  const a = cust.first_name?.trim()[0] ?? '';
+  const b = cust.last_name?.trim()[0] ?? '';
+  const fromName = (a + b).toUpperCase();
+  if (fromName) return fromName;
+  // No name at all: take the first character of whatever identifies
+  // them instead (email, then phone), so the avatar matches the label
+  // beside it rather than showing a bare "?" next to "a@b.com".
+  const fallback = displayName(cust).trim()[0] ?? '';
+  return fallback.toUpperCase() || '?';
 }
 
 export default function CustomerList() {
@@ -98,11 +107,11 @@ export default function CustomerList() {
                     aria-hidden="true"
                     className="flex h-10 w-10 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[13px] font-bold text-brand-700"
                   >
-                    {initials(cust.first_name, cust.last_name)}
+                    {initials(cust)}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[15px] font-bold text-text-primary">
-                      {cust.first_name} {cust.last_name}
+                      {displayName(cust)}
                     </span>
                     <span className="block truncate text-[13px] text-text-secondary">
                       {[cust.phone, cust.email].filter(Boolean).join(' · ') || 'No contact info'}
@@ -143,10 +152,10 @@ export default function CustomerList() {
                         aria-hidden="true"
                         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[11px] font-bold text-brand-700"
                       >
-                        {initials(cust.first_name, cust.last_name)}
+                        {initials(cust)}
                       </span>
                       <span className="truncate text-[13px] font-semibold text-text-primary">
-                        {cust.first_name} {cust.last_name}
+                        {displayName(cust)}
                       </span>
                     </span>
                     <span className="font-mono text-[13px] text-text-secondary">

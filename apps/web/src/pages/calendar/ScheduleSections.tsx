@@ -21,6 +21,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import { useConfirmAppointment, useDeleteAppointment } from '../../hooks/useCalendar';
+import { displayName } from '../../lib/customerName';
 import type { CalendarEvent } from '../../types';
 
 /** Formats "HH:MM[:SS]" (24h) as a 12-hour label, e.g. "2:00 PM". */
@@ -46,7 +47,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
 };
 
 function EventMeta({ event }: { event: CalendarEvent }) {
-  const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+  const customerName = displayName(event.customer);
   const status = STATUS_LABEL[event.schedule_status];
   return (
     <>
@@ -95,7 +96,7 @@ export default function ScheduleSections({
   }
 
   async function remove(event: CalendarEvent) {
-    const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+    const customerName = displayName(event.customer);
     const label = event.kind === 'installation' ? event.order_number : customerName;
     if (!window.confirm(`Remove the ${event.kind} appointment for ${label || 'this customer'}?`))
       return;

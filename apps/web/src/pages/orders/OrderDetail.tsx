@@ -90,6 +90,7 @@ import {
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
+import { displayName } from '../../lib/customerName';
 import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
 import InstallationSection from './InstallationSection';
 import {
@@ -1722,7 +1723,7 @@ export default function OrderDetail() {
                   className="flex h-11 w-full items-center justify-between rounded-md border border-border-input bg-surface px-3 text-left"
                 >
                   <span className={`text-sm ${customer ? 'text-text-primary' : 'text-text-muted'}`}>
-                    {customer ? `${customer.first_name} ${customer.last_name}` : 'Select customer…'}
+                    {customer ? displayName(customer) : 'Select customer…'}
                   </span>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted" />
@@ -2101,7 +2102,7 @@ export default function OrderDetail() {
                     className="w-full rounded-sm p-3 text-left hover:bg-surface-sunken"
                   >
                     <span className="block text-sm font-medium text-text-primary">
-                      {cust.first_name} {cust.last_name}
+                      {displayName(cust)}
                     </span>
                     <span className="block text-[13px] text-text-muted">
                       {[cust.phone, cust.email].filter(Boolean).join(' · ')}
