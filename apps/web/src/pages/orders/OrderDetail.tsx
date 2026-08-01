@@ -83,6 +83,7 @@ import {
   useUnmatchedEtransfers,
   useDismissEtransfer,
   useOrderLogs,
+  useOrderPublicToken,
   downloadOrderPdf,
   type OrderInput,
   type LineItemInput,
@@ -315,6 +316,12 @@ const ICONS = {
       <path d="M12 15V3" />
     </ActionIcon>
   ),
+  customerView: (
+    <ActionIcon>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </ActionIcon>
+  ),
   manufacturer: (
     <ActionIcon>
       <path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
@@ -400,6 +407,7 @@ export default function OrderDetail() {
   const deletePaymentMut = useDeletePayment();
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
+  const publicTokenMut = useOrderPublicToken();
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -1070,6 +1078,31 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Opens the customer's own page in a new tab, exactly as they see it.
+   *
+   * The tab is opened SYNCHRONOUSLY and filled in afterwards: popup
+   * blockers reject a `window.open` that happens after an `await`, and
+   * the token may still need minting. `?preview=1` tells `CustomerView`
+   * to render a draft, disable every mutating control, and skip the
+   * "customer opened this" ping.
+   */
+  async function handleCustomerView() {
+    if (!id) return;
+    const tab = window.open('', '_blank');
+    try {
+      const { public_token } = await publicTokenMut.mutateAsync(id);
+      const url = `/customer/${public_token}?preview=1`;
+      if (tab) tab.location.href = url;
+      // Blocker refused the tab — fall back to a fresh open rather than
+      // leaving the click with no visible effect.
+      else window.open(url, '_blank');
+    } catch (e) {
+      tab?.close();
+      toast.error(e instanceof Error ? e.message : 'Could not open the customer view.');
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────
   if (id && loadingExisting) {
     return (
@@ -1586,9 +1619,14 @@ export default function OrderDetail() {
   /**
    * Permanent top-bar document actions in the PageHeader's right slot,
    * colour-coded per the design: Save green, Send blue, Download gray,
-   * Delete red (icon-only, saved orders only).
+   * Customer View gray, Delete red (icon-only, saved orders only).
    * Icon-only on phones (labels appear from sm: up; title/aria-label
    * keep them accessible). Enable rules match the old panel buttons.
+   *
+   * Customer View is deliberately neutral-styled like Download, so the
+   * bar keeps exactly two coloured actions and the eye does not compete
+   * with Save/Send for attention. It is disabled until the order is
+   * saved: minting the capability token needs a row to mint against.
    *
    * The StatusBadge is hidden below sm: — "AWAITING PAYMENT" alone is
    * ~130px, which pushed this row past a phone's width and made the
@@ -1631,6 +1669,16 @@ export default function OrderDetail() {
       >
         {ICONS.download}
         <span className="hidden sm:inline">Download</span>
+      </button>
+      <button
+        onClick={() => void handleCustomerView()}
+        disabled={!id || saving || publicTokenMut.isPending}
+        title="Open the page the customer sees"
+        aria-label="Customer View"
+        className={`${headerBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken`}
+      >
+        {ICONS.customerView}
+        <span className="hidden sm:inline">Customer View</span>
       </button>
       {id && (
         <button

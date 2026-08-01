@@ -35,6 +35,19 @@
  * concerns are delegated: `OrderProgress` (tracker) and
  * `CancellationRequest` (request/withdraw), both pure and stateless
  * apart from their own local form drafts.
+ *
+ * STAFF PREVIEW (`?preview=1`) — the URL the order page's "Customer
+ * View" button opens. The page is otherwise identical to the customer's,
+ * which is the point, but four things change:
+ *   - a draft renders instead of the "link isn't ready yet" card, since
+ *     previewing BEFORE sending is the whole reason the button exists;
+ *   - Confirm and the cancellation controls are inert, so a staff member
+ *     cannot confirm an order on the customer's behalf just by looking;
+ *   - the "customer opened their page" ping never fires, so an office
+ *     visit is never mistaken for the customer reading their estimate;
+ *   - a banner says so, because none of the above is visible otherwise.
+ * The `expired` guard is deliberately NOT skipped: an expired estimate
+ * really does show the customer an expiry card, so a preview must too.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -406,7 +419,12 @@ export default function CustomerView() {
   // A draft was never sent to anyone; if a token somehow resolves to one
   // (a receipt send can mint a token without sending an estimate), say
   // nothing about it.
-  if (estimate.status === 'draft') {
+  //
+  // A staff preview is the one case that MAY render a draft — previewing
+  // before sending is the entire point of the "Customer View" button. The
+  // guard stays live for everyone else, so a leaked draft token still
+  // says nothing.
+  if (estimate.status === 'draft' && !preview) {
     return (
       <Message
         icon="🔍"
@@ -438,6 +456,17 @@ export default function CustomerView() {
 
   return (
     <div className={`min-h-screen bg-surface-muted ${confirmed ? 'pb-8' : 'pb-28'}`}>
+      {/*
+        Staff preview marker. This page is otherwise byte-identical to
+        the customer's, which is exactly why the banner is required:
+        without it a staff member has no way to tell that the Confirm
+        button in front of them is inert.
+      */}
+      {preview && (
+        <div className="bg-info-tint px-4 py-2 text-center text-xs font-medium text-info">
+          Staff preview — this is the page the customer sees. Actions are disabled.
+        </div>
+      )}
       <div className="mx-auto max-w-lg p-4">
         {/* Company header */}
         <header className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-elevated p-4">
@@ -589,6 +618,7 @@ export default function CustomerView() {
           <CancellationRequest
             pending={Boolean(estimate.cancel_requested_at)}
             busy={cancelBusy}
+            disabled={preview}
             onRequest={(note) => void handleCancelAction('cancel-request', note)}
             onWithdraw={() => void handleCancelAction('cancel-withdraw')}
           />
@@ -600,10 +630,14 @@ export default function CustomerView() {
         <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={handleConfirm}
-            disabled={confirming}
+            disabled={confirming || preview}
             className="mx-auto flex h-14 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
-            {confirming ? 'Confirming…' : 'Confirm Estimate'}
+            {/*
+              The label never says "Confirming…" in preview: nothing is
+              in flight, the button is simply inert.
+            */}
+            {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
           </button>
         </div>
       )}

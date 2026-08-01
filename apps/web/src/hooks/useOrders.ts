@@ -130,6 +130,30 @@ export function useOrderLogs(id: string | undefined): UseQueryResult<OrderLog[]>
   });
 }
 
+/**
+ * Fetches the order's public capability token, minting one server-side
+ * if it has none. Backs the "Customer View" button, which must work on
+ * a draft that was never sent (and therefore has no token yet).
+ *
+ * A mutation rather than a query because the call can create state. It
+ * is idempotent, so retrying is always safe, and it invalidates the
+ * order's log cache since a first mint appends a trail entry.
+ */
+export function useOrderPublicToken(): UseMutationResult<{ public_token: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (
+        await apiFetch<Envelope<{ public_token: string }>>(`/api/orders/${id}/public-token`, {
+          method: 'POST',
+        })
+      ).data,
+    onSuccess: (_data, id) => {
+      void qc.invalidateQueries({ queryKey: ['orders', 'logs', id] });
+    },
+  });
+}
+
 /** Shared onSuccess: cache the server's authoritative order. */
 function useCacheOrder() {
   const qc = useQueryClient();
