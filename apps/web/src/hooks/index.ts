@@ -27,3 +27,4 @@ export {
   type CustomerInput,
 } from './useCustomers';
 export { useDebouncedValue } from './useDebouncedValue';
+export { useKeyboardOpen, isKeyboardOpen, KEYBOARD_MIN_SHRINK_PX } from './useKeyboardOpen';

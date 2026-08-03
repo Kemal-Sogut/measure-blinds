@@ -21,6 +21,14 @@
  * Callers that migrate onto this MUST delete their own backdrop,
  * Escape-key and scroll-lock handling — duplicates would double-fire
  * the close handler.
+ *
+ * Height is capped in `dvh`, not `vh`: iOS Safari resolves `vh` against
+ * the LARGE viewport (toolbar hidden), so a `90vh` sheet is taller than
+ * what is actually on screen and its last rows sit behind the toolbar.
+ * `dvh` tracks the toolbar as it collapses. The bottom safe-area inset
+ * is carried by the footer when there is one and by the scroll body when
+ * there is not, so no presentation leaves content under the home
+ * indicator.
  */
 
 import { useEffect, useRef } from 'react';
@@ -86,17 +94,17 @@ export default function Modal({
         aria-label={title}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className={`flex max-h-[90vh] w-full flex-col rounded-t-2xl bg-surface shadow-lg outline-none lg:rounded-2xl ${SIZES[size]}`}
+        className={`flex max-h-[92dvh] w-full flex-col rounded-t-2xl bg-surface shadow-lg outline-none lg:rounded-2xl ${SIZES[size]}`}
       >
         <div
           aria-hidden="true"
           className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-pill bg-border-input lg:hidden"
         />
 
-        <header className="flex items-start gap-3 px-5 pb-3 pt-4">
+        <header className="flex items-start gap-3 px-4 pb-3 pt-4 lg:px-5">
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-[17px] font-bold text-text-primary">{title}</h2>
-            {subtitle && <p className="truncate text-[13px] text-text-muted">{subtitle}</p>}
+            <h2 className="break-words text-[17px] font-bold text-text-primary">{title}</h2>
+            {subtitle && <p className="break-words text-[13px] text-text-muted">{subtitle}</p>}
           </div>
           <button
             type="button"
@@ -115,10 +123,16 @@ export default function Modal({
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">{children}</div>
+        <div
+          className={`min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 lg:px-5 ${
+            footer ? 'pb-4' : 'pb-[calc(1rem+env(safe-area-inset-bottom))] lg:pb-4'
+          }`}
+        >
+          {children}
+        </div>
 
         {footer && (
-          <footer className="flex items-center justify-end gap-2 border-t border-border-light px-5 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:pb-3">
+          <footer className="flex items-center justify-end gap-2 border-t border-border-light px-4 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] lg:px-5 lg:pb-3">
             {footer}
           </footer>
         )}

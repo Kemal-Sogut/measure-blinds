@@ -166,3 +166,26 @@
     -moz-appearance: textfield;
   }
 }
+
+/* ── Mobile form controls: 16px, unlayered ──
+   iOS Safari zooms the viewport whenever a focused form control renders
+   below 16px, which throws the user out of the layout mid-measurement.
+   The design's 14–15px control type is kept from `lg` up, where no such
+   behaviour exists.
+
+   Deliberately NOT inside `@layer base`: Tailwind's utilities layer wins
+   over base, so a base rule would lose to every `text-sm` / `text-[15px]`
+   on an input. Unlayered declarations outrank all layered ones, so this
+   one rule covers every form in the app — including the ones that set
+   their own size — without touching their markup.
+
+   The alternative fix, `maximum-scale=1` in the viewport meta, is
+   rejected: it disables pinch-zoom app-wide, which this app cannot
+   afford as a field tool used outdoors. */
+@media (max-width: 1023px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}

@@ -13,6 +13,14 @@
  * Drafts hold every numeric field as a string so partially-typed values
  * ("12.", "") never fight the keyboard; parsing happens in the pricing
  * helpers and at save time.
+ *
+ * Every container and control here carries `min-w-0`, deliberately. A
+ * `<select>`'s min-content width is the width of its LONGEST option, and
+ * grid/flex children default to `min-width: auto` — so one catalog entry
+ * named "Blackout Premium Charcoal 3000" is enough to push a column, and
+ * then the whole popup, past the edge of a phone screen. `min-w-0` lets
+ * the control shrink and clip its own label instead. Do not remove it
+ * when editing these forms.
  */
 
 import type { ReactNode } from 'react';
@@ -124,7 +132,7 @@ export function flatDraftPrice(draft: FlatDraft): { unit: number; total: number 
 /* ------------------------------------------------------------------ */
 
 const INPUT =
-  'h-11 w-full rounded-md border border-border-input bg-surface px-3 text-sm text-text-primary';
+  'h-11 w-full min-w-0 rounded-md border border-border-input bg-surface px-3 text-sm text-text-primary';
 const LABEL = 'mb-1.5 block text-xs font-medium text-text-secondary';
 
 /** Native select bound to active catalog options. */
@@ -168,7 +176,7 @@ export function OptionSelect({
  */
 function FormSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="flex flex-col gap-3.5">
+    <section className="flex min-w-0 flex-col gap-3.5">
       <h3 className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
         {title}
       </h3>
@@ -237,11 +245,11 @@ export function BlindEditForm({
   const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-w-0 flex-col gap-4">
       {/* ── 1. Basics ───────────────────────────────────────────────── */}
       <FormSection title="Basics">
         {/* Blind type (dropdown) */}
-        <label>
+        <label className="block min-w-0">
           <span className={LABEL}>Blind type</span>
           <select
             value={draft.blinds_type}
@@ -344,7 +352,7 @@ export function BlindEditForm({
       <FormSection title="Options">
         {/* Material + Color (color is free text and has no price effect;
             it is shown on the item, the PDF and the customer view) */}
-        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2">
           <OptionSelect
             label="Material"
             value={draft.material_id}
@@ -365,7 +373,7 @@ export function BlindEditForm({
         </div>
 
         {/* Cassette / Control / Bottom rail */}
-        <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
+        <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-3">
           <OptionSelect
             label="Cassette"
             value={draft.cassette_id}
@@ -459,8 +467,8 @@ export function FlatEditForm({
 }) {
   const price = flatDraftPrice(draft);
   return (
-    <div className="flex flex-col gap-3.5">
-      <label>
+    <div className="flex min-w-0 flex-col gap-3.5">
+      <label className="block min-w-0">
         <span className={LABEL}>Description</span>
         <input
           placeholder="Description"
@@ -469,7 +477,7 @@ export function FlatEditForm({
           className={INPUT}
         />
       </label>
-      <div className="grid grid-cols-2 gap-3.5">
+      <div className="grid min-w-0 grid-cols-2 gap-3.5">
         <label className="min-w-0">
           <span className={LABEL}>Quantity</span>
           <input
@@ -522,12 +530,12 @@ export function BulkEditForm({
   onChange: (next: BulkEditState) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3.5">
+    <div className="flex min-w-0 flex-col gap-3.5">
       <p className="text-[13px] text-text-muted">
         Only the selected options will be changed. Leave a field on "No change" to keep each
         item's current value.
       </p>
-      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <OptionSelect
           label="Material"
           value={state.material_id}

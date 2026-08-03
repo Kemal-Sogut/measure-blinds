@@ -246,8 +246,12 @@ export default function InstallationSection({
       role="dialog"
       aria-label="Propose installation time"
     >
+      {/* Same sheet treatment as the order screen's other sheets: `dvh`
+          rather than `vh`, so iOS's collapsing URL toolbar cannot hide
+          the footer buttons, plus the home-indicator inset. See
+          SHEET_PANEL in OrderDetail.tsx for the full reasoning. */}
       <div
-        className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+        className="max-h-[92dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:max-w-md lg:rounded-2xl lg:pb-4"
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-1 text-sm font-semibold text-text-primary">
