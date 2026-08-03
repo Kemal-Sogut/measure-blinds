@@ -86,37 +86,37 @@ export default function App() {
 
             {/* Customers */}
             <Route path="/customers" element={guard(<Layout><CustomerList /></Layout>)} />
-            <Route path="/customers/new" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
-            <Route path="/customers/:id" element={guard(<Layout nav={false}><CustomerForm /></Layout>)} />
+            <Route path="/customers/new" element={guard(<Layout><CustomerForm /></Layout>)} />
+            <Route path="/customers/:id" element={guard(<Layout><CustomerForm /></Layout>)} />
 
             {/* Orders — the list itself lives at "/", so /orders folds into it */}
             <Route path="/orders" element={<Navigate to="/" replace />} />
-            <Route path="/orders/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
-            <Route path="/orders/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
-            <Route path="/orders/:id/manufacturer" element={guard(<Layout nav={false}><ManufacturerCopy /></Layout>)} />
-            <Route path="/orders/:id/overview" element={guard(<Layout nav={false}><OrderOverview /></Layout>)} />
-            <Route path="/orders/:id/labels" element={guard(<Layout nav={false}><OrderLabels /></Layout>)} />
+            <Route path="/orders/new" element={guard(<Layout><OrderDetail /></Layout>)} />
+            <Route path="/orders/:id" element={guard(<Layout><OrderDetail /></Layout>)} />
+            <Route path="/orders/:id/manufacturer" element={guard(<Layout><ManufacturerCopy /></Layout>)} />
+            <Route path="/orders/:id/overview" element={guard(<Layout><OrderOverview /></Layout>)} />
+            <Route path="/orders/:id/labels" element={guard(<Layout><OrderLabels /></Layout>)} />
 
             {/* Calendar */}
             <Route path="/calendar" element={guard(<Layout><CalendarPage /></Layout>)} />
-            <Route path="/appointments" element={guard(<Layout nav={false}><AppointmentsList /></Layout>)} />
-            <Route path="/appointments/:id" element={guard(<Layout nav={false}><AppointmentDetail /></Layout>)} />
+            <Route path="/appointments" element={guard(<Layout><AppointmentsList /></Layout>)} />
+            <Route path="/appointments/:id" element={guard(<Layout><AppointmentDetail /></Layout>)} />
 
             {/* Legacy /estimates paths map onto the order screens */}
             <Route path="/estimates" element={<Navigate to="/" replace />} />
-            <Route path="/estimates/new" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
-            <Route path="/estimates/:id" element={guard(<Layout nav={false}><OrderDetail /></Layout>)} />
+            <Route path="/estimates/new" element={guard(<Layout><OrderDetail /></Layout>)} />
+            <Route path="/estimates/:id" element={guard(<Layout><OrderDetail /></Layout>)} />
 
             {/* Settings */}
             <Route path="/settings" element={guard(<Layout><SettingsIndex /></Layout>)} />
-            <Route path="/settings/company" element={guard(<Layout nav={false}><CompanyInfo /></Layout>)} />
-            <Route path="/settings/materials" element={guard(<Layout nav={false}><Materials /></Layout>)} />
-            <Route path="/settings/materials/:blindTypeId" element={guard(<Layout nav={false}><MaterialsForType /></Layout>)} />
-            <Route path="/settings/cassette" element={guard(<Layout nav={false}><CassetteOptions /></Layout>)} />
-            <Route path="/settings/bottom-rail" element={guard(<Layout nav={false}><BottomRailOptions /></Layout>)} />
-            <Route path="/settings/controls" element={guard(<Layout nav={false}><ControlOptions /></Layout>)} />
-            <Route path="/settings/presets" element={guard(<Layout nav={false}><PresetLineItems /></Layout>)} />
-            <Route path="/settings/terms" element={guard(<Layout nav={false}><TermsAndConditions /></Layout>)} />
+            <Route path="/settings/company" element={guard(<Layout><CompanyInfo /></Layout>)} />
+            <Route path="/settings/materials" element={guard(<Layout><Materials /></Layout>)} />
+            <Route path="/settings/materials/:blindTypeId" element={guard(<Layout><MaterialsForType /></Layout>)} />
+            <Route path="/settings/cassette" element={guard(<Layout><CassetteOptions /></Layout>)} />
+            <Route path="/settings/bottom-rail" element={guard(<Layout><BottomRailOptions /></Layout>)} />
+            <Route path="/settings/controls" element={guard(<Layout><ControlOptions /></Layout>)} />
+            <Route path="/settings/presets" element={guard(<Layout><PresetLineItems /></Layout>)} />
+            <Route path="/settings/terms" element={guard(<Layout><TermsAndConditions /></Layout>)} />
 
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />

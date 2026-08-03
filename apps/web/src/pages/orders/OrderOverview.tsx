@@ -253,7 +253,7 @@ export default function OrderOverview() {
 
       {/* Wide container — the many-column tables need the room to stay
           readable without horizontal scrolling on desktop. */}
-      <div className="mx-auto max-w-6xl p-4 lg:p-8">
+      <div className="page-container py-4 md:py-6 lg:py-8">
         {isLoading && <p className="p-4 text-text-muted">Loading…</p>}
         {error && <p className="p-4 text-danger">{error.message}</p>}
 

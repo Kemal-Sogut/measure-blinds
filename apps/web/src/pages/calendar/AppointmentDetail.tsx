@@ -115,7 +115,7 @@ export default function AppointmentDetail() {
         }
       />
 
-      <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:p-8">
+      <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
         {/* Visit */}
         <section className="flex flex-col gap-1 rounded-xl border border-border-light bg-surface p-4 shadow-md">
           <h2 className="text-[15px] font-bold text-text-primary">Visit</h2>

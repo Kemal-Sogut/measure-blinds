@@ -137,7 +137,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
   if (error) return <p className="p-4 text-danger">{error.message}</p>;
 
   return (
-    <div className="mx-auto max-w-lg p-4">
+    <div className="page-container py-4 md:py-6 [--page-max:48rem]">
       {/* Add form */}
       <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
         <h2 className="mb-3 text-[15px] font-bold text-text-primary">

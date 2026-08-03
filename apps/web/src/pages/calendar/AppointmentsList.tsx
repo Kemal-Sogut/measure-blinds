@@ -115,7 +115,7 @@ export default function AppointmentsList() {
     <div className="min-h-screen bg-surface-muted pb-16">
       <PageHeader title="All Appointments" backTo="/calendar" />
 
-      <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:max-w-3xl lg:p-8">
+      <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:56rem]">
         {/* Filter chips */}
         <div className="flex gap-2">
           {FILTERS.map((f) => (

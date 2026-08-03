@@ -125,7 +125,7 @@ export default function CompanyInfo() {
   return (
     <div className="min-h-screen bg-surface-muted">
       <PageHeader title="Company Info" backTo="/settings" />
-      <div className="mx-auto max-w-lg p-4">
+      <div className="page-container py-4 md:py-6 [--page-max:48rem]">
         {/* Logo */}
         <div className="mb-6 flex items-center gap-4 rounded-xl border border-border-light bg-surface shadow-md p-4">
           {data?.logo_url ? (

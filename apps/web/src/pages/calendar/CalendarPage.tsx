@@ -80,7 +80,7 @@ export default function CalendarPage() {
         <PageHeader title="Calendar" backTo="/" />
       </div>
 
-      <div className="mx-auto max-w-lg p-4 lg:max-w-5xl lg:p-8">
+      <div className="page-container py-4 md:py-6 lg:py-8">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h1 className="hidden text-[22px] font-semibold text-text-primary lg:block">Calendar</h1>
           <div className="flex flex-1 flex-wrap items-center justify-between gap-2 lg:flex-none lg:justify-end">

@@ -351,7 +351,7 @@ export default function ManufacturerCopy() {
         }
       />
 
-      <div className="mx-auto max-w-3xl p-4 lg:p-8">
+      <div className="page-container py-4 md:py-6 lg:py-8 [--page-max:56rem]">
         {/* Order meta */}
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-text-primary">

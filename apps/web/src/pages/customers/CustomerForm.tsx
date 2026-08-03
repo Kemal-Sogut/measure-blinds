@@ -252,7 +252,7 @@ export default function CustomerForm() {
   return (
     <div className="min-h-screen bg-surface-muted pb-28">
       <PageHeader title={isEdit ? 'Edit Customer' : 'New Customer'} backTo="/customers" />
-      <div className="mx-auto flex max-w-lg flex-col gap-4 p-4 lg:p-8">
+      <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
         {/* Contact */}
         <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
           <h2 className="text-[15px] font-bold text-text-primary">Contact</h2>

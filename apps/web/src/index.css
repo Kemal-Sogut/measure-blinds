@@ -189,3 +189,107 @@
     font-size: 16px;
   }
 }
+
+/* ============================================================
+   App Shell — sidebar width as a single source of truth
+   ============================================================
+
+   The nav rail's width used to be written twice: once as Sidebar's
+   `w-[248px]` and once as Layout's `lg:pl-[248px]`. Two copies of one
+   measurement can only ever agree by luck, and when they disagreed the
+   result was either a dead gutter beside the rail or content sliding
+   underneath it. Both copies are gone. The rail's width now lives in
+   `--sidebar-w` alone: `Sidebar` sets its own `width` from it and
+   `Layout` sets the content column's `padding-inline-start` from it,
+   so the two literally cannot drift.
+
+   `--sidebar-w` is a function of exactly two inputs:
+
+     breakpoint          state              --sidebar-w
+     ------------------  -----------------  -----------
+     < 768px  (phone)    (n/a)              0
+     >= 768px (md+)      data-rail=icons    4.5rem  (72px)
+     >= 768px (md+)      data-rail=expanded 15.5rem (248px)
+
+   Below `md` the rail is not in the layout at all — it opens as a
+   full-screen overlay from the hamburger — so the offset is zero and
+   `Sidebar` positions itself as a fixed overlay instead of a rail.
+
+   `data-rail` is stamped on `.app-shell` by `Layout` from
+   `useSidebar().collapsed`. Driving the width from an attribute rather
+   than from two Tailwind class sets means the transition below applies
+   to BOTH the rail and the content offset from one declaration, and
+   they stay frame-locked while animating.
+
+   `padding-inline-start` (not `padding-left`) so an RTL locale mirrors
+   the shell without a second rule.
+   ============================================================ */
+
+.app-shell {
+  --sidebar-w: 0px;
+}
+
+@media (min-width: 768px) {
+  .app-shell {
+    --sidebar-w: 4.5rem;
+  }
+
+  .app-shell[data-rail='expanded'] {
+    --sidebar-w: 15.5rem;
+  }
+}
+
+.app-shell-rail {
+  width: var(--sidebar-w);
+}
+
+.app-shell-main {
+  padding-inline-start: var(--sidebar-w);
+}
+
+/* Collapsing the rail is a deliberate, user-initiated change of layout,
+   so it is worth animating — an instant jump of 176px reads as a glitch.
+   Suppressed under reduced-motion, where the same jump is the point. */
+@media (prefers-reduced-motion: no-preference) {
+  .app-shell-rail,
+  .app-shell-main {
+    transition: width 200ms ease, padding-inline-start 200ms ease;
+  }
+}
+
+/* ── Page container ──
+   The single horizontal track every page header and page body sits on:
+   full width, gutters that step 16 → 24 → 32px, centred once it hits its
+   cap. Pages previously each declared their own `mx-auto max-w-lg p-4
+   lg:p-8`, which is how the header ended up on a different track from
+   the body it sat above, and how a 768px tablet ended up rendering a
+   512px column between two 128px dead gutters.
+
+   The cap is `--page-max` rather than a fixed value so a page can narrow
+   its own body without a second, conflicting `max-w-*` utility on the
+   same element — two max-width utilities in one class list resolve by
+   Tailwind's internal sort order, not by the order they are written, so
+   which one wins is not something the markup can express. A settings
+   form narrows itself with `[--page-max:48rem]`; the order editor,
+   which wants the room, leaves the default.
+
+   1600px is a line-length limit, not a stylistic one: past it, label and
+   field in a two-up row end up far enough apart to need a saccade. */
+.page-container {
+  width: 100%;
+  max-width: var(--page-max, 1600px);
+  margin-inline: auto;
+  padding-inline: 1rem;
+}
+
+@media (min-width: 768px) {
+  .page-container {
+    padding-inline: 1.5rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .page-container {
+    padding-inline: 2rem;
+  }
+}

@@ -48,7 +48,7 @@ export default function CustomerList() {
         <PageHeader title="Customers" backTo="/" />
       </div>
 
-      <div className="mx-auto max-w-lg p-4 lg:max-w-5xl lg:p-8">
+      <div className="page-container py-4 md:py-6 lg:py-8">
         {/* Desktop header row */}
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-[22px] font-bold text-text-primary">Customers</h1>
@@ -176,10 +176,10 @@ export default function CustomerList() {
       </div>
 
       {/* Mobile sticky new-customer action */}
-      <div className="fixed inset-x-0 bottom-14 z-10 bg-surface-muted p-3 pb-2 lg:hidden">
+      <div className="app-shell-main fixed inset-x-0 bottom-0 z-10 bg-surface-muted p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] lg:hidden">
         <Link
           to="/customers/new"
-          className="mx-auto flex h-12 max-w-lg items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
+          className="page-container flex h-12 items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
         >
           + New Customer
         </Link>

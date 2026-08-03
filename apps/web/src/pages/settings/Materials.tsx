@@ -77,7 +77,7 @@ export default function Materials() {
   return (
     <div className="min-h-screen bg-surface-muted">
       <PageHeader title="Materials" backTo="/settings" />
-      <div className="mx-auto max-w-lg p-4">
+      <div className="page-container py-4 md:py-6 [--page-max:48rem]">
         <p className="mb-4 text-sm text-text-muted">
           Choose a blind type to manage its materials, or add a new type below.
         </p>

@@ -53,7 +53,7 @@ export default function TermsAndConditions() {
   return (
     <div className="min-h-screen bg-surface-muted">
       <PageHeader title="Terms & Conditions" backTo="/settings" />
-      <div className="mx-auto max-w-lg p-4">
+      <div className="page-container py-4 md:py-6 [--page-max:48rem]">
         {isLoading || text === null ? (
           <p className="text-text-muted">{error ? error.message : 'Loading…'}</p>
         ) : (

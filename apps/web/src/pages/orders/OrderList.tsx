@@ -21,6 +21,8 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import StatusBadge from '../../components/StatusBadge';
+import SidebarToggle from '../../components/SidebarToggle';
+import { PAGE_CONTAINER } from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody, StatTile } from '../../components/ui';
@@ -95,17 +97,26 @@ export default function OrderList() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-surface-muted pb-24 lg:pb-8">
-      <div className="mx-auto max-w-lg p-4 lg:max-w-5xl lg:p-8">
-        {/* Mobile title — no back chevron; this is the home screen */}
-        <h1 className="mb-4 text-[22px] font-bold text-text-primary lg:hidden">Orders</h1>
-
-        {/* Desktop header row */}
-        <div className="mb-5 hidden items-center justify-between lg:flex">
-          <h1 className="text-[22px] font-bold text-text-primary">Orders</h1>
+    <div className="min-h-screen bg-surface-muted pb-24 sm:pb-8">
+      <div className={`${PAGE_CONTAINER} py-4 md:py-6 lg:py-8`}>
+        {/*
+          Header row. This is the home screen, so there is no back
+          chevron — but below `md` the hamburger is the ONLY route to
+          the other sections now that the bottom tab bar is gone, so it
+          must be here. One row at every width (the old split of a
+          mobile-only <h1> plus a separate `lg:flex` desktop row meant
+          the "New Order" button simply did not exist on a tablet).
+        */}
+        <div className="mb-5 flex items-center gap-2">
+          <SidebarToggle />
+          <h1 className="min-w-0 flex-1 truncate text-[22px] font-bold text-text-primary">
+            Orders
+          </h1>
+          {/* Hidden below `sm`, where the sticky bottom bar carries the
+              same action at full width. */}
           <Link
             to="/orders/new"
-            className="flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-brand-700"
+            className="hidden h-11 shrink-0 items-center gap-2 rounded-md bg-brand-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-brand-700 sm:flex"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
@@ -114,9 +125,12 @@ export default function OrderList() {
           </Link>
         </div>
 
-        {/* Desktop summary — unfiltered view only; see the module header */}
+        {/* Status summary — unfiltered view only; see the module header.
+            Two-up from `sm` (where four tiles would each be ~140px and
+            unreadable), four-up from `lg`. It used to be `lg:grid` only,
+            so a tablet saw nothing at all. */}
         {orders && tab === 'all' && !term.trim() && (
-          <div className="mb-4 hidden grid-cols-4 gap-3 lg:grid">
+          <div className="mb-4 hidden grid-cols-2 gap-3 sm:grid lg:grid-cols-4">
             {SUMMARY.map((s) => (
               <StatTile
                 key={s.status}
@@ -269,11 +283,16 @@ export default function OrderList() {
         )}
       </div>
 
-      {/* Mobile sticky new-order action */}
-      <div className="fixed inset-x-0 bottom-14 z-10 bg-surface-muted p-3 pb-2 lg:hidden">
+      {/* Sticky new-order action, phones only — from `sm` up the same
+          action sits in the header row. `bottom-0` (it used to be
+          `bottom-14`, clearing the bottom tab bar that no longer
+          exists) with the safe-area inset so it clears the iOS home
+          indicator. `app-shell-main` is a no-op at this width but keeps
+          it honest if the breakpoint ever moves above `md`. */}
+      <div className="app-shell-main fixed inset-x-0 bottom-0 z-10 bg-surface-muted p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden">
         <Link
           to="/orders/new"
-          className="mx-auto flex h-12 max-w-lg items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700"
+          className={`${PAGE_CONTAINER} flex h-12 items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700`}
         >
           + New Order
         </Link>

@@ -145,7 +145,7 @@ export default function SettingsIndex() {
       <div className="lg:hidden">
         <PageHeader title="Settings" backTo="/" />
       </div>
-      <div className="mx-auto max-w-lg p-4 lg:max-w-5xl lg:p-8">
+      <div className="page-container py-4 md:py-6 lg:py-8">
         <h1 className="mb-5 hidden text-[22px] font-bold text-text-primary lg:block">Settings</h1>
 
         <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-muted">

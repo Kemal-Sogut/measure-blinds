@@ -66,7 +66,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
-import PageHeader from '../../components/PageHeader';
+import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
@@ -490,6 +490,30 @@ export default function OrderDetail() {
       root.style.removeProperty('--action-bar-h');
     };
   }, [actionBar]);
+
+  // ── Sticky head geometry ────────────────────────────────────────
+  // The page header and the document-action toolbar pin together as one
+  // block. The summary rail must stick directly below it, and the
+  // block's height is not a constant: it grows when the document
+  // actions wrap to a second row, and again at `lg` where the title
+  // steps up a size. Measured and published as `--order-head-h` for the
+  // same reason `--action-bar-h` exists — a hard-coded offset here was
+  // already wrong at most widths.
+  const [stickyHead, setStickyHead] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!stickyHead) return;
+    const root = document.documentElement;
+    const publish = () =>
+      root.style.setProperty('--order-head-h', `${stickyHead.offsetHeight}px`);
+    publish();
+    const observer = new ResizeObserver(publish);
+    observer.observe(stickyHead);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty('--order-head-h');
+    };
+  }, [stickyHead]);
 
   // Payment entry form state (used by the Record Payment sheet).
   const [payAmount, setPayAmount] = useState('');
@@ -1671,37 +1695,43 @@ export default function OrderDetail() {
 
   const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
   const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
-  const headerBtn =
-    'inline-flex h-9 items-center justify-center gap-1.5 rounded-sm px-2.5 text-[13px] font-semibold disabled:opacity-40 sm:px-3';
+  const docBtn =
+    'inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold disabled:opacity-40';
 
   /**
-   * Permanent top-bar document actions in the PageHeader's right slot,
-   * colour-coded per the design: Save green, Send blue, Download gray,
-   * Customer View gray, Delete red (icon-only, saved orders only).
-   * Icon-only on phones (labels appear from sm: up; title/aria-label
-   * keep them accessible). Enable rules match the old panel buttons.
+   * Document actions — Save, Send, Download, Customer View, Delete —
+   * colour-coded per the design: Save green, Send blue, the rest
+   * neutral, Delete red. Customer View is deliberately neutral like
+   * Download so the toolbar keeps exactly two coloured actions and the
+   * eye does not compete with Save/Send. It is disabled until the order
+   * is saved: minting the capability token needs a row to mint against.
    *
-   * Customer View is deliberately neutral-styled like Download, so the
-   * bar keeps exactly two coloured actions and the eye does not compete
-   * with Save/Send for attention. It is disabled until the order is
-   * saved: minting the capability token needs a row to mint against.
+   * These live in a toolbar at the top of the page BODY, not in
+   * `PageHeader`'s right slot. In the header they were five buttons in
+   * a `shrink-0` container: once labels appeared at `sm` they measured
+   * roughly 470px inside a row that was itself capped at 512px, so the
+   * last actions were pushed past the edge and silently swallowed by
+   * the page's `overflow-x-clip` guard. Delete was the first to go —
+   * the least recoverable action, made invisible by a layout accident.
    *
-   * The StatusBadge is hidden below sm: — "AWAITING PAYMENT" alone is
-   * ~130px, which pushed this row past a phone's width and made the
-   * whole page scroll sideways. On phones the status is already on the
-   * Progress card (and the Payments panel), so nothing is lost.
+   * In the body they get the full content width and are free to WRAP
+   * onto a second line instead of overflowing, which is why the row is
+   * `flex-wrap` with no fixed widths. Labels still collapse below `sm`
+   * (title/aria-label keep them accessible), so on a phone the set is
+   * five ~44px icon buttons that fit one row at 320px.
+   *
+   * The row is rendered inside the page's sticky head block (see
+   * `stickyHead` below), so on `md+` it stays reachable on a long
+   * order without scrolling back to the top.
    */
-  const headerActions = (
-    <div className="flex items-center gap-1.5">
-      <span className="hidden sm:inline-flex">
-        <StatusBadge status={status} />
-      </span>
+  const docActions = (
+    <div className={`${PAGE_CONTAINER} flex flex-wrap items-center gap-2 py-2.5`}>
       <button
         onClick={handleSaveDraft}
         disabled={!canAct}
         title={saving ? 'Saving…' : 'Save as Draft'}
         aria-label="Save as Draft"
-        className={`${headerBtn} bg-success text-white hover:bg-success/90`}
+        className={`${docBtn} bg-success text-white hover:bg-success/90 max-sm:w-11 max-sm:px-0`}
       >
         {ICONS.save}
         <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save'}</span>
@@ -1711,7 +1741,7 @@ export default function OrderDetail() {
         disabled={sendDisabled}
         title={isInvoice ? 'Send Invoice' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
         aria-label={isInvoice ? 'Send Invoice' : 'Send Estimate'}
-        className={`${headerBtn} bg-brand-600 text-white hover:bg-brand-700`}
+        className={`${docBtn} bg-brand-600 text-white hover:bg-brand-700 max-sm:w-11 max-sm:px-0`}
       >
         {ICONS.send}
         <span className="hidden sm:inline">
@@ -1723,7 +1753,7 @@ export default function OrderDetail() {
         disabled={(!id && !customer) || saving}
         title={`Download ${docLabel}`}
         aria-label={`Download ${docLabel}`}
-        className={`${headerBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken`}
+        className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
       >
         {ICONS.download}
         <span className="hidden sm:inline">Download</span>
@@ -1733,7 +1763,7 @@ export default function OrderDetail() {
         disabled={!id || saving || publicTokenMut.isPending}
         title="Open the page the customer sees"
         aria-label="Customer View"
-        className={`${headerBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken`}
+        className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
       >
         {ICONS.customerView}
         <span className="hidden sm:inline">Customer View</span>
@@ -1744,9 +1774,10 @@ export default function OrderDetail() {
           disabled={deleteMut.isPending}
           title={deleteMut.isPending ? 'Deleting…' : 'Delete Order'}
           aria-label="Delete Order"
-          className={`${headerBtn} border border-border-input bg-surface font-medium text-danger hover:bg-surface-sunken`}
+          className={`${docBtn} border border-border-input bg-surface font-medium text-danger hover:bg-surface-sunken max-sm:w-11 max-sm:px-0 sm:ml-auto`}
         >
           {ICONS.trash}
+          <span className="hidden sm:inline">Delete</span>
         </button>
       )}
     </div>
@@ -1758,16 +1789,65 @@ export default function OrderDetail() {
     // the first measurement lands. `overflow-x-clip` is a guard against
     // a future child overflowing, not a fix for one — nothing here is
     // supposed to exceed the viewport.
-    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] lg:pb-8">
-      <PageHeader
-        title={id ? existing?.order_number ?? 'Order' : 'New Order'}
-        backTo="/"
-        right={headerActions}
-      />
+    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] xl:pb-8">
+      {/*
+        Sticky head: the page header and the document-action toolbar pin
+        as ONE block, so the second never needs to know the first's
+        height. Sticky only from `md` up — on a phone this block plus the
+        bottom action bar would claim roughly a third of the screen, so
+        there only `PageHeader`'s own `sticky top-0` applies and the
+        toolbar scrolls away with the page.
 
-      <div className="mx-auto w-full max-w-lg lg:grid lg:max-w-6xl lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-0">
+        Its measured height is published as `--order-head-h` (same
+        ResizeObserver pattern as `--action-bar-h`) because the summary
+        rail has to stick BELOW it. Hard-coding that offset is how the
+        old `top-[57px]` came to be wrong: the header's real height
+        changes with the title's line count and with the `lg` type step.
+      */}
+      <div
+        ref={setStickyHead}
+        className="z-20 bg-surface-muted md:sticky md:top-0"
+      >
+        <PageHeader
+          title={id ? existing?.order_number ?? 'Order' : 'New Order'}
+          backTo="/"
+          right={
+            <span className="hidden sm:inline-flex">
+              <StatusBadge status={status} />
+            </span>
+          }
+        />
+        <div className="border-b border-border-light bg-surface-muted">{docActions}</div>
+      </div>
+
+      {/*
+        Two fluid columns from `xl` (1280px) up, one below.
+
+        The page body used to be pinned to `max-w-lg` (512px) below `lg`
+        and `max-w-6xl` above, which meant it never tracked the window:
+        on a 768px tablet it rendered a 512px column between two 128px
+        dead gutters. It now uses the shared `PAGE_CONTAINER` track —
+        fluid, capped at 1600px — so main grows and shrinks with the
+        window at every width, inside whatever space the nav rail leaves.
+
+        `xl` rather than `lg` is where the summary rail appears because
+        the rail is a THIRD column: at 1024px the shell is already
+        spending up to 248px on navigation, and splitting the remaining
+        ~776px into a form column plus a 360px rail leaves the form too
+        narrow for its two-up date fields. `minmax(0,1fr)` on the form
+        track is what allows it to shrink below its content's intrinsic
+        width — without it a long line item name would push the grid
+        wider than the viewport, which is the class of bug that made the
+        cards run off the screen.
+      */}
+      <div
+        className={`${PAGE_CONTAINER} pb-4 pt-4 md:pb-6 md:pt-6 xl:grid xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start xl:gap-8 xl:pb-8 xl:pt-8`}
+      >
         {/* ── Form column ── */}
-        <div className="flex w-full min-w-0 flex-col gap-4 p-4 lg:p-8">
+        <div className="flex w-full min-w-0 flex-col gap-4">
+          {/* Document actions (Save / Send / Download / Customer View / Delete) */}
+          {docActions}
+
           {/* Open cancellation request — needs an answer before anything else */}
           {cancelRequestBanner}
 
@@ -1898,10 +1978,10 @@ export default function OrderDetail() {
                       return (
                         <li
                           key={it.key}
-                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
+                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-start sm:gap-2"
                         >
                           {/* Line 1 on phones: checkbox, badge, name. */}
-                          <div className="flex min-w-0 flex-1 items-center gap-2">
+                          <div className="flex min-w-0 flex-1 items-start gap-2 sm:py-1.5">
                             {/* Checkbox — hidden in read-only */}
                             {!readOnly && (
                               <input
@@ -1909,17 +1989,34 @@ export default function OrderDetail() {
                                 checked={selected.has(it.key)}
                                 onChange={() => toggleSelect(it.key)}
                                 aria-label={`Select ${name}`}
-                                className="h-4 w-4 shrink-0 rounded-sm accent-brand-600"
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm accent-brand-600"
                               />
                             )}
 
                             {/* Type badge */}
-                            <span className="w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                            <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                               {typeBadge}
                             </span>
 
-                            {/* Name */}
-                            <span className="min-w-0 flex-1 truncate text-[13px] text-text-primary">
+                            {/*
+                              Name WRAPS; it does not truncate. A custom
+                              item's description is free text and is
+                              routinely longer than a phone is wide, and
+                              truncating it hid the one field that tells
+                              two similar lines apart.
+
+                              `wrap-anywhere` (overflow-wrap: anywhere),
+                              not `break-words`: `break-words` only
+                              breaks INSIDE an over-long word, and — the
+                              part that matters here — leaves the box's
+                              min-content width equal to that word. A
+                              60-character unbroken description would
+                              still have forced the row, the card and
+                              the grid wider than the viewport. `anywhere`
+                              lets the intrinsic width collapse, so the
+                              card can never exceed its column.
+                            */}
+                            <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
                               {name}
                             </span>
                           </div>
@@ -2013,8 +2110,9 @@ export default function OrderDetail() {
             )}
 
 
-            {/* Mobile totals card (rail shows this on desktop) */}
-            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md lg:hidden">
+            {/* Totals card for every width below `xl`, where the summary
+                rail is not rendered. Same content, different container. */}
+            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md xl:hidden">
               {discountControl}
               {totalsRows}
             </section>
@@ -2089,21 +2187,35 @@ export default function OrderDetail() {
           )}
         </div>
 
-        {/* ── Desktop live pricing rail ── */}
-        <aside className="sticky top-[57px] hidden h-[calc(100vh-57px)] flex-col border-l border-border bg-surface-muted lg:flex">
-          <div className="border-b border-border px-6 py-5">
+        {/*
+          ── Summary rail (xl+) ──
+          A card in the grid's second track rather than a full-bleed
+          panel welded to the viewport edge: the grid now has a real
+          gutter, and a bare `border-l` floating in that gutter read as
+          a stray rule. `max-h` + `overflow-y-auto` on the body keep a
+          40-item order's list scrollable inside the card while the
+          totals and actions below it stay pinned.
+        */}
+        <aside className="sticky top-[calc(var(--order-head-h,7rem)+2rem)] hidden max-h-[calc(100dvh-var(--order-head-h,7rem)-4rem)] flex-col overflow-hidden rounded-xl border border-border-light bg-surface shadow-md xl:flex">
+          <div className="border-b border-border-light px-5 py-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">
               {postConfirm ? 'Order Summary' : 'Live Pricing'}
             </p>
           </div>
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             {items.length === 0 && (
               <p className="text-[13px] text-text-muted">Add a line item to see pricing.</p>
             )}
             {items.map((it, i) => (
               <div key={it.key} className="mb-2.5 flex justify-between gap-3">
-                <span className="truncate text-[13px] text-text-secondary">{draftLabel(it, i)}</span>
-                <span className="font-mono text-[13px] text-text-primary">
+                {/* Wraps rather than truncates, for the same reason the
+                    item rows do — the label is how two similar lines are
+                    told apart. `wrap-anywhere` keeps the rail's own
+                    intrinsic width from growing with the longest label. */}
+                <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
+                  {draftLabel(it, i)}
+                </span>
+                <span className="shrink-0 font-mono text-[13px] text-text-primary">
                   {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
                 </span>
               </div>
@@ -2123,22 +2235,33 @@ export default function OrderDetail() {
               )}
             </div>
           </div>
-          {railActions && <div className="border-t border-border px-6 py-5">{railActions}</div>}
+          {railActions && (
+            <div className="border-t border-border-light px-5 py-4">{railActions}</div>
+          )}
         </aside>
       </div>
 
-      {/* ── Mobile sticky action bar ──
-          Slides out of the way while the keyboard is up (see
-          `keyboardOpen`), and reports its own height so the page above
-          can reserve the right amount of room for it. */}
+      {/* ── Sticky action bar, below `xl` ──
+          Carries the running total and the stage's actions at every
+          width where the summary rail is absent — phones AND tablets,
+          which previously got neither (the bar was `lg:hidden`, so a
+          768–1023px tablet had a rail-less page and a hidden bar).
+
+          `app-shell-main` gives it the same `--sidebar-w` inline-start
+          padding as the page content, so on a tablet the bar starts
+          where the nav rail ends instead of sliding underneath it. It
+          is `fixed` rather than `sticky` because it must stay put while
+          the page scrolls; it slides out of the way while the keyboard
+          is up (see `keyboardOpen`) and reports its own height so the
+          page above can reserve exactly that much room. */}
       <div
         ref={setActionBar}
-        className={`fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] transition-transform duration-200 lg:hidden ${keyboardOpen ? 'pointer-events-none translate-y-full' : ''
+        className={`app-shell-main fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] transition-transform duration-200 xl:hidden ${keyboardOpen ? 'pointer-events-none translate-y-full' : ''
           }`}
       >
-        {/* Same max-w-lg + 16px gutter as the page body, so the bar's
-            edges line up with the card edges above it. */}
-        <div className="mx-auto w-full max-w-lg px-4">
+        {/* Same container track as the page body, so the bar's edges
+            line up with the card edges above it at every width. */}
+        <div className={PAGE_CONTAINER}>
           <div className="mb-2.5 flex items-baseline justify-between">
             <span className="text-[13px] text-text-secondary">
               {postConfirm ? 'Balance due' : 'Running total'}
