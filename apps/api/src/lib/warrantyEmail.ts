@@ -11,6 +11,14 @@
  * balance reaching zero is what triggered it, but a warranty is about
  * cover, not payment — the receipt email already reports the money.
  *
+ * SCOPE: this is a PARTS warranty, and the email must not read as more
+ * than that. Every checklist line names a part being replaced rather
+ * than a repair being performed, and the parts-only limit — labour
+ * excluded, service fee on every visit — is stated immediately under the
+ * checklist rather than left to the attached certificate. A customer who
+ * reads the email and never opens the PDF must still know a call-out
+ * costs them money.
+ *
  * Rendered with the shared building blocks exported by `email.ts`, so it
  * sits in the same branded card as every other customer email. It lives
  * in its own module because `email.ts` is already past the 800-line
@@ -83,10 +91,15 @@ export function buildWarrantyEmailHtml(i: WarrantyEmailInputs): string {
   ];
   if (i.hasMotorised) rows.push(['Motorised parts', motor]);
 
+  // Parts only. Every line here names a PART being replaced, never a
+  // repair being performed — a tick beside "workmanship" would promise
+  // labour this warranty does not cover.
   const covered = [
-    `${WARRANTY_YEARS_STANDARD} years on blinds, fabric and hardware`,
-    ...(i.hasMotorised ? [`${WARRANTY_YEARS_MOTOR} years on motors and motorised parts`] : []),
-    'Manufacturing defects in materials and workmanship under normal residential use',
+    `Replacement parts for ${WARRANTY_YEARS_STANDARD} years on blinds, fabric and hardware`,
+    ...(i.hasMotorised
+      ? [`Replacement parts for ${WARRANTY_YEARS_MOTOR} years on motors and motorised parts`]
+      : []),
+    'Defective components supplied free of charge within those periods',
   ];
 
   const body = `${headingHtml('Your warranty certificate')}
@@ -97,6 +110,8 @@ export function buildWarrantyEmailHtml(i: WarrantyEmailInputs): string {
       rows,
     })}
     ${checklistHtml("What&#39;s covered", covered)}
+    ${finePrintHtml(`<strong>Parts only.</strong> Workmanship and labour are not covered &mdash; our standard service fee applies to every visit, including one where the replacement part itself is free under this warranty.`)}
+    <div style="height:20px;"></div>
     ${messageBlockHtml(i.message)}
     <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View your order')}</div>
     ${finePrintHtml(`To make a claim, reply to this email or contact ${company} quoting order ${order}. Full terms are set out on the attached certificate.`)}

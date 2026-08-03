@@ -57,6 +57,24 @@ describe('buildWarrantyEmailHtml', () => {
     expect(html).toContain('10 years on blinds, fabric and hardware');
   });
 
+  it('states the parts-only limit and the service fee in the email itself', () => {
+    const html = buildWarrantyEmailHtml(BASE);
+    // A customer who never opens the attached PDF must still learn that
+    // a call-out costs them money.
+    expect(html).toContain('Parts only.');
+    expect(html).toContain('Workmanship and labour are not covered');
+    expect(html).toContain('service fee applies to every visit');
+  });
+
+  it('never ticks workmanship as covered', () => {
+    const html = buildWarrantyEmailHtml(BASE);
+    // The checklist renders accent check marks; a "workmanship" line
+    // inside it would promise free labour for a decade.
+    const checklist = html.slice(html.indexOf('What&#39;s covered'), html.indexOf('Parts only.'));
+    expect(checklist).not.toMatch(/workmanship/i);
+    expect(checklist).toContain('Replacement parts for 10 years');
+  });
+
   it('escapes a customer name that contains markup', () => {
     const html = buildWarrantyEmailHtml({
       ...BASE,

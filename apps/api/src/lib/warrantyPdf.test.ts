@@ -6,8 +6,14 @@
  * real pdf-lib pipeline and asserts a non-trivial, well-formed byte
  * stream. The rendered bytes are opaque, so these tests exist to catch
  * layout and cursor mistakes (a section that overruns a page, a missing
- * field that throws) rather than to assert wording; the wording rules
- * live in `warranty.test.ts`, which asserts on strings.
+ * field that throws) rather than to assert wording; the term rules live
+ * in `warranty.test.ts`, which asserts on strings.
+ *
+ * The ONE piece of wording pinned here is the parts-only limit. It is
+ * the promise the shop is legally exposed on — "workmanship" creeping
+ * back into the terms would commit them to free labour for a decade —
+ * and it cannot be read out of the rendered bytes, so the constants are
+ * exported and asserted directly.
  *
  * Kept separate from `pdf.test.ts` because it exercises a different
  * module: `pdf.ts` renders the estimate/invoice, `warrantyPdf.ts` the
@@ -16,7 +22,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildWarrantyCoverage, type WarrantyItemSource } from './warranty';
-import { buildWarrantyPdf, type WarrantyPdfData } from './warrantyPdf';
+import {
+  PARTS_ONLY_BANNER,
+  WARRANTY_TERMS,
+  buildWarrantyPdf,
+  type WarrantyPdfData,
+} from './warrantyPdf';
 
 const MOTOR_BLIND: WarrantyItemSource = {
   item_type: 'blind',
@@ -65,6 +76,33 @@ const SAMPLE: WarrantyPdfData = {
   issuedOn: '2026-08-20',
   logo: null,
 };
+
+describe('parts-only scope', () => {
+  it('never promises workmanship or labour cover', () => {
+    const all = `${PARTS_ONLY_BANNER}\n${WARRANTY_TERMS}`.toLowerCase();
+    // The words may appear only as an EXCLUSION. Any sentence that has
+    // one of them without a negation nearby is a promise of free labour.
+    for (const sentence of all.split(/\n|(?<=\.)\s+/)) {
+      if (/workmanship|labour/.test(sentence)) {
+        expect(sentence).toMatch(/not covered|does not cover|excluded/);
+      }
+    }
+  });
+
+  it('states that a service fee applies to every visit', () => {
+    expect(PARTS_ONLY_BANNER.toLowerCase()).toContain('service fee');
+    expect(WARRANTY_TERMS.toLowerCase()).toContain('service fee applies to every');
+  });
+
+  it('states that parts themselves are supplied free', () => {
+    expect(WARRANTY_TERMS.toLowerCase()).toContain('free of charge');
+    expect(WARRANTY_TERMS).toContain('PARTS ONLY');
+  });
+
+  it('quotes no figure for the service fee — it is a live price', () => {
+    expect(`${PARTS_ONLY_BANNER}${WARRANTY_TERMS}`).not.toMatch(/\$\s*\d/);
+  });
+});
 
 describe('buildWarrantyPdf', () => {
   it('renders a well-formed certificate byte stream', async () => {

@@ -7,12 +7,19 @@
  *
  * Layout, top to bottom: company header with the certificate title and
  * order number, a buyer-information block, a coverage summary (start
- * date and both expiry dates), the ten-year product list, a two-year
- * motorised-parts section that appears only when the order contains a
- * motor, the warranty terms, and how to claim.
+ * date, both expiry dates, and the parts-only banner), the ten-year
+ * product list, a two-year motorised-parts section that appears only
+ * when the order contains a motor, the warranty terms, and how to claim.
  *
- * It deliberately prints NO money. A warranty states what is covered and
- * until when; prices, payments and balances belong on the invoice.
+ * SCOPE: this is a PARTS warranty. The shop replaces defective
+ * components free within the stated periods; workmanship and labour are
+ * excluded and the standard service fee applies to every visit. Nothing
+ * on this document may imply otherwise.
+ *
+ * It deliberately prints NO money — the service fee is stated as a fact,
+ * never as a figure, because it is a live price the certificate must not
+ * freeze years in advance. Order prices, payments and balances belong on
+ * the invoice.
  *
  * Built on the shared primitives exported by `pdf.ts` (page geometry,
  * palette, `Cursor`, `drawRight`, `addressLines`) so the certificate and
@@ -41,16 +48,36 @@ import { WARRANTY_YEARS_MOTOR, WARRANTY_YEARS_STANDARD, type WarrantyCoverage } 
 /**
  * The certificate's standing terms.
  *
+ * PARTS ONLY. Within the stated periods the shop supplies the defective
+ * component or a replacement free of charge; workmanship and labour are
+ * NOT covered, and the standard service fee is payable on every visit —
+ * including a visit where the part itself is free under this warranty.
+ *
+ * That limit is stated three times on the certificate (the banner under
+ * the coverage summary, the first term here, and again in the
+ * exclusions) because it is the single most likely thing a customer will
+ * dispute at the door, and "my warranty covers this" is much harder to
+ * argue against a document they were emailed the day they paid.
+ *
  * Held as a constant rather than a `company_settings` field for now:
  * this is legal wording the shop changes rarely and should review before
  * it changes, so a deploy is an acceptable gate. Making it editable in
  * Settings is a deliberate follow-up, not an oversight.
  */
-const WARRANTY_TERMS = [
-  'This warranty covers defects in materials and workmanship under normal residential use, for the periods stated above, measured from the coverage start date.',
+export const WARRANTY_TERMS = [
+  'This warranty covers PARTS ONLY. Within the periods stated above, measured from the coverage start date, we supply the defective component or its replacement free of charge.',
+  'Workmanship and labour are NOT covered. Our standard service fee applies to every call-out, inspection, removal, refitting and re-installation visit — including visits where the part itself is supplied free under this warranty.',
   'It does not cover accidental damage, misuse, improper cleaning, alterations or repairs not carried out by us, normal fading or wear of fabric, damage caused by exceeding the recommended operating conditions, or installations in commercial premises.',
   'The warranty applies to the original purchaser at the installation address shown above and is not transferable.',
 ].join('\n');
+
+/**
+ * One-line statement of the parts-only limit, printed directly under the
+ * coverage summary so it is read before the expiry dates rather than
+ * discovered in the small print after a service call.
+ */
+export const PARTS_ONLY_BANNER =
+  'Parts and replacements only — workmanship and labour are not covered, and our standard service fee applies to every visit.';
 
 /** Everything the certificate needs, pre-fetched by the caller. */
 export interface WarrantyPdfData {
@@ -207,6 +234,12 @@ export async function buildWarrantyPdf(data: WarrantyPdfData): Promise<Uint8Arra
     );
   }
 
+  // The parts-only limit sits with the dates, not in the small print:
+  // a customer who reads only the coverage block must still learn that a
+  // service fee is coming before they call.
+  cur.gap(6);
+  cur.wrapped(PARTS_ONLY_BANNER, MARGIN, CONTENT_W, bold, 9, INK);
+
   /* ── Ten-year product list ────────────────────────────────────── */
   sectionHeading(cur, `COVERED PRODUCTS — ${WARRANTY_YEARS_STANDARD} YEARS`, bold, 16);
   for (const item of data.coverage.standardItems) {
@@ -241,7 +274,7 @@ export async function buildWarrantyPdf(data: WarrantyPdfData): Promise<Uint8Arra
   }
 
   /* ── Terms ────────────────────────────────────────────────────── */
-  sectionHeading(cur, 'WHAT THIS WARRANTY COVERS', bold, 30);
+  sectionHeading(cur, 'WHAT THIS WARRANTY COVERS — AND WHAT IT DOES NOT', bold, 30);
   cur.wrapped(WARRANTY_TERMS, MARGIN, CONTENT_W, font, 9, SOFT);
 
   /* ── How to claim ─────────────────────────────────────────────── */
