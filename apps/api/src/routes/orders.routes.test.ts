@@ -13,6 +13,11 @@
  *     database write afterwards (order left untouched)
  *   - /payments/:paymentId/receipt guards (404 foreign payment, 400 no
  *     email) and stamps receipt_sent_at ONLY after a successful send
+ *   - the warranty certificate is emailed automatically when a payment
+ *     clears the balance, exactly once, and a failed warranty send never
+ *     turns the recorded payment into a failed request
+ *   - /warranty (manual resend) guards: 409 while money is owed, 400 no
+ *     email, 502 on provider rejection, resend allowed once stamped
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -834,5 +839,209 @@ describe('POST /api/orders/:id/public-token', () => {
     db.responses['orders.select'] = [];
     const res = await post('/nope/public-token');
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * Intercepts Resend for the duration of `run`, capturing every request
+ * body sent. `status`/`reply` script the API's answer, so `sendEmail` is
+ * exercised for real rather than stubbed.
+ */
+async function withResend(
+  status: number,
+  reply: unknown,
+  run: () => Promise<void>
+): Promise<string[]> {
+  const sent: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (String(url).includes('api.resend.com')) {
+      sent.push(String(init?.body ?? ''));
+      return new Response(JSON.stringify(reply), { status });
+    }
+    return realFetch(url as never, init as never);
+  }) as typeof fetch;
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  return sent;
+}
+
+/** Company settings row shared by the warranty suites. */
+const WARRANTY_COMPANY = {
+  company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '',
+  hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14,
+};
+
+/** Customer with everything the certificate prints. */
+const WARRANTY_CUSTOMER = {
+  first_name: 'A', last_name: 'B', email: 'a@example.com',
+  phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '',
+  shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true,
+  billing_address_line1: '', billing_address_line2: '', billing_city: '',
+  billing_province: '', billing_postal_code: '',
+};
+
+/** Messages written to the activity trail during a test. */
+const logMessages = () =>
+  ((db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>).map((l) => l.message);
+
+describe('warranty issue on paid-in-full', () => {
+  /**
+   * A confirmed order whose ledger ALREADY settles the total — the state
+   * the fake DB reports back after the payment insert, which is what the
+   * warranty issuer reads. Overrides let each test vary the stamp, the
+   * customer's email, or the amount still owed.
+   */
+  const paidOrder = (over: Record<string, unknown> = {}) => ({
+    id: 'w1',
+    status: 'in_progress',
+    order_number: 'F0307-126',
+    order_date: '2026-07-03',
+    expiry_date: '2026-07-17',
+    subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
+    public_token: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    warranty_sent_at: null,
+    warranty_starts_on: null,
+    line_items: [
+      {
+        item_type: 'blind', room_name: 'Living Room', blinds_type: 'Roller',
+        control_name: 'Motorized (Bluetooth)', quantity: 2,
+      },
+    ],
+    payments: [{ id: 'p1', order_id: 'w1', amount: 113, paid_on: '2026-07-10', note: '' }],
+    customer: { ...WARRANTY_CUSTOMER },
+    ...over,
+  });
+
+  const post = (path: string, body: unknown) =>
+    ordersApp.request(
+      path,
+      { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  beforeEach(() => {
+    db.responses['company_settings.select'] = [WARRANTY_COMPANY];
+    db.responses['payments.insert'] = [{ id: 'p9' }];
+  });
+
+  it('emails the certificate when a payment clears the balance', async () => {
+    db.responses['orders.select'] = [paidOrder()];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w1/payments', { amount: 113 });
+      expect(res.status).toBe(201);
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('F0307-126-warranty.pdf');
+    expect(logMessages()).toContain('Warranty certificate emailed to a@example.com.');
+  });
+
+  it('does not email while money is still owed', async () => {
+    db.responses['orders.select'] = [
+      paidOrder({
+        payments: [{ id: 'p1', order_id: 'w1', amount: 50, paid_on: '2026-07-10', note: '' }],
+      }),
+    ];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w1/payments', { amount: 50 });
+      expect(res.status).toBe(201);
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('does not email twice — the stamp is the idempotency guard', async () => {
+    db.responses['orders.select'] = [paidOrder({ warranty_sent_at: '2026-07-10T12:00:00.000Z' })];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w1/payments', { amount: 113 });
+      expect(res.status).toBe(201);
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('still records the payment (201) when the warranty email fails', async () => {
+    db.responses['orders.select'] = [paidOrder()];
+    await withResend(401, { message: 'API key is invalid' }, async () => {
+      const res = await post('/w1/payments', { amount: 113 });
+      expect(res.status).toBe(201);
+    });
+    expect(logMessages()).toContain('Warranty email failed: API key is invalid');
+  });
+
+  it('skips the send, with a reason logged, when the customer has no email', async () => {
+    db.responses['orders.select'] = [
+      paidOrder({ customer: { ...WARRANTY_CUSTOMER, email: '' } }),
+    ];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w1/payments', { amount: 113 });
+      expect(res.status).toBe(201);
+    });
+    expect(sent).toHaveLength(0);
+    expect(logMessages()).toContain('Warranty not emailed — no email address on file.');
+  });
+});
+
+describe('POST /api/orders/:id/warranty', () => {
+  const order = (over: Record<string, unknown> = {}) => ({
+    id: 'w2',
+    status: 'in_progress',
+    order_number: 'F0307-127',
+    order_date: '2026-07-03',
+    total: 113,
+    public_token: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    warranty_sent_at: null,
+    warranty_starts_on: '2026-07-10',
+    line_items: [
+      { item_type: 'blind', room_name: 'Den', blinds_type: 'Zebra', control_name: 'Chain', quantity: 1 },
+    ],
+    payments: [{ id: 'p1', order_id: 'w2', amount: 113, paid_on: '2026-07-10', note: '' }],
+    customer: { ...WARRANTY_CUSTOMER },
+    ...over,
+  });
+
+  const post = (path: string) => ordersApp.request(path, { method: 'POST' }, ENV);
+
+  beforeEach(() => {
+    db.responses['company_settings.select'] = [WARRANTY_COMPANY];
+  });
+
+  it('409s while the order still owes money, without emailing', async () => {
+    db.responses['orders.select'] = [
+      order({ payments: [{ id: 'p1', order_id: 'w2', amount: 50, paid_on: '2026-07-10', note: '' }] }),
+    ];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w2/warranty');
+      expect(res.status).toBe(409);
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('resends for an order that already has a stamp', async () => {
+    db.responses['orders.select'] = [order({ warranty_sent_at: '2026-07-10T12:00:00.000Z' })];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w2/warranty');
+      expect(res.status).toBe(200);
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('400s when the customer has no email address', async () => {
+    db.responses['orders.select'] = [order({ customer: { ...WARRANTY_CUSTOMER, email: '' } })];
+    const sent = await withResend(200, { id: 'email_1' }, async () => {
+      const res = await post('/w2/warranty');
+      expect(res.status).toBe(400);
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it('502s when the email provider rejects the send', async () => {
+    db.responses['orders.select'] = [order()];
+    await withResend(401, { message: 'API key is invalid' }, async () => {
+      const res = await post('/w2/warranty');
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { error: string }).error).toBe('API key is invalid');
+    });
   });
 });

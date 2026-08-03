@@ -102,23 +102,33 @@ export interface PdfDocumentData {
 }
 
 /* ── Page + palette constants (US Letter, 40pt margins) ─────────── */
-const PAGE_W = 612;
-const PAGE_H = 792;
-const MARGIN = 40;
-const CONTENT_W = PAGE_W - MARGIN * 2;
+/*
+ * The constants, the `Cursor` class and the `money` / `drawRight` /
+ * `addressLines` helpers below are exported as this app's shared PDF
+ * toolkit. `warrantyPdf.ts` builds the warranty certificate on exactly
+ * these primitives so the two documents share a page geometry and a
+ * palette and read as siblings. They are exported in place rather than
+ * extracted into a separate module because moving logic between modules
+ * is out of scope for the feature that needed them (AI_GUIDELINES §6/§7);
+ * nothing here changed behaviour.
+ */
+export const PAGE_W = 612;
+export const PAGE_H = 792;
+export const MARGIN = 40;
+export const CONTENT_W = PAGE_W - MARGIN * 2;
 
-const INK = rgb(0.13, 0.145, 0.16); // #212529
-const MUTED = rgb(0.53, 0.56, 0.59); // #868e96
-const SOFT = rgb(0.29, 0.31, 0.34); // #495057
-const LINE = rgb(0.87, 0.89, 0.9); // #dee2e6
+export const INK = rgb(0.13, 0.145, 0.16); // #212529
+export const MUTED = rgb(0.53, 0.56, 0.59); // #868e96
+export const SOFT = rgb(0.29, 0.31, 0.34); // #495057
+export const LINE = rgb(0.87, 0.89, 0.9); // #dee2e6
 
 /** Formats money for print. */
-function money(n: number): string {
+export function money(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
 /** Builds one address block's lines, skipping empties. */
-function addressLines(a: {
+export function addressLines(a: {
   line1: string;
   line2: string;
   city: string;
@@ -200,7 +210,7 @@ function wrapText(font: PDFFont, text: string, size: number, maxWidth: number): 
  * Top-down layout cursor: tracks the current page and y position,
  * adds pages automatically when content would cross the bottom margin.
  */
-class Cursor {
+export class Cursor {
   page: PDFPage;
   y: number;
 
@@ -265,7 +275,7 @@ class Cursor {
 }
 
 /** Right-aligned text at the given baseline-top y. */
-function drawRight(
+export function drawRight(
   page: PDFPage,
   text: string,
   rightX: number,
@@ -281,6 +291,25 @@ function drawRight(
     font,
     color,
   });
+}
+
+/**
+ * Base64-encodes PDF bytes for an email attachment, in 8KB chunks —
+ * spreading a multi-hundred-KB document into `String.fromCharCode(...)`
+ * in one call overflows the stack.
+ *
+ * Lives beside the generators because every caller is attaching a
+ * document one of them produced, and both the order routes and the
+ * warranty issuer need it; a lib module must not reach into a route
+ * module to borrow it.
+ */
+export function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 /**

@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { recordOrderPayment } from '../lib/payments';
 import { resolveOrder } from '../lib/etransferMatch';
+import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -88,6 +89,19 @@ app.post('/etransfer', async (c) => {
       await sb
         .from('etransfers')
         .insert({ ...base, status: 'applied', order_id: match.id, payment_id: result.paymentId });
+
+      // Same side effect the staff payment route applies: an e-Transfer
+      // that settles the order issues the warranty. Never fatal — the
+      // Apps Script must not retry an applied transfer because an email
+      // bounced, so a failure is only recorded on the activity trail.
+      const warranty = await issueWarrantyIfPaid(sb, c.env, match.id);
+      if (warranty.status === 'failed') {
+        await sb.from('order_logs').insert({
+          order_id: match.id,
+          message: `Warranty email failed: ${warranty.message}`,
+        });
+      }
+
       return c.json({ status: 'applied', order_id: match.id, order_number: match.order_number });
     }
     // Recording failed → fall through and park it for manual handling.

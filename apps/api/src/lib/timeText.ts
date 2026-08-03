@@ -41,6 +41,21 @@ export function scheduleWindow(dateIso: string, time: string): {
 }
 
 /**
+ * Formats a stored "YYYY-MM-DD" date as "July 21, 2026" for email copy
+ * — a receipt's paid_on date, a warranty's coverage dates.
+ *
+ * Formatted by hand rather than with `Intl` locale data so the output is
+ * identical under workerd and Node, the same reason `scheduleWindow`
+ * does its own month/weekday lookup. Lives here rather than beside one
+ * caller because both the order routes and the warranty issuer need it,
+ * which is exactly this module's stated remit.
+ */
+export function formatDateLong(dateIso: string): string {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  return `${MONTHS[m - 1]} ${d}, ${y}`;
+}
+
+/**
  * The calendar date in America/Toronto, shifted by `offsetDays`, as
  * "YYYY-MM-DD" (en-CA locale formats exactly that way). Appointment and
  * installation dates are Ontario-local, so reminder matching must use
