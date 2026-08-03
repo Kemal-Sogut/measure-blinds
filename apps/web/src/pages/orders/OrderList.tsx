@@ -25,6 +25,7 @@ import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody, StatTile } from '../../components/ui';
 import { useOrderList, type OrderTab } from '../../hooks/useOrders';
+import { displayName } from '../../lib/customerName';
 import type { Order, OrderStatus } from '../../types';
 import type { CardAccent } from '../../components/ui';
 
@@ -78,8 +79,13 @@ function shortDate(iso: string): string {
   return format(new Date(y, m - 1, d), 'MMM d');
 }
 
+/**
+ * Row label for an order's customer. Falls back through email and phone
+ * for customers with no name (see `lib/customerName`); an order with no
+ * customer at all still shows an em dash.
+ */
 function customerName(order: Order): string {
-  return order.customer ? `${order.customer.first_name} ${order.customer.last_name}` : '—';
+  return order.customer ? displayName(order.customer) : '—';
 }
 
 export default function OrderList() {

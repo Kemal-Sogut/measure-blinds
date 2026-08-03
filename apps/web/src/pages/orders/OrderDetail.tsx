@@ -93,12 +93,14 @@ import {
   useUnmatchedEtransfers,
   useDismissEtransfer,
   useOrderLogs,
+  useOrderPublicToken,
   downloadOrderPdf,
   type OrderInput,
   type LineItemInput,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
+import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
 import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
 import InstallationSection from './InstallationSection';
@@ -346,6 +348,12 @@ const ICONS = {
       <path d="M12 15V3" />
     </ActionIcon>
   ),
+  customerView: (
+    <ActionIcon>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </ActionIcon>
+  ),
   manufacturer: (
     <ActionIcon>
       <path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
@@ -431,6 +439,7 @@ export default function OrderDetail() {
   const deletePaymentMut = useDeletePayment();
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
+  const publicTokenMut = useOrderPublicToken();
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -1127,6 +1136,31 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Opens the customer's own page in a new tab, exactly as they see it.
+   *
+   * The tab is opened SYNCHRONOUSLY and filled in afterwards: popup
+   * blockers reject a `window.open` that happens after an `await`, and
+   * the token may still need minting. `?preview=1` tells `CustomerView`
+   * to render a draft, disable every mutating control, and skip the
+   * "customer opened this" ping.
+   */
+  async function handleCustomerView() {
+    if (!id) return;
+    const tab = window.open('', '_blank');
+    try {
+      const { public_token } = await publicTokenMut.mutateAsync(id);
+      const url = `/customer/${public_token}?preview=1`;
+      if (tab) tab.location.href = url;
+      // Blocker refused the tab — fall back to a fresh open rather than
+      // leaving the click with no visible effect.
+      else window.open(url, '_blank');
+    } catch (e) {
+      tab?.close();
+      toast.error(e instanceof Error ? e.message : 'Could not open the customer view.');
+    }
+  }
+
   // ── Render ──────────────────────────────────────────────────────
   if (id && loadingExisting) {
     return (
@@ -1643,9 +1677,14 @@ export default function OrderDetail() {
   /**
    * Permanent top-bar document actions in the PageHeader's right slot,
    * colour-coded per the design: Save green, Send blue, Download gray,
-   * Delete red (icon-only, saved orders only).
+   * Customer View gray, Delete red (icon-only, saved orders only).
    * Icon-only on phones (labels appear from sm: up; title/aria-label
    * keep them accessible). Enable rules match the old panel buttons.
+   *
+   * Customer View is deliberately neutral-styled like Download, so the
+   * bar keeps exactly two coloured actions and the eye does not compete
+   * with Save/Send for attention. It is disabled until the order is
+   * saved: minting the capability token needs a row to mint against.
    *
    * The StatusBadge is hidden below sm: — "AWAITING PAYMENT" alone is
    * ~130px, which pushed this row past a phone's width and made the
@@ -1688,6 +1727,16 @@ export default function OrderDetail() {
       >
         {ICONS.download}
         <span className="hidden sm:inline">Download</span>
+      </button>
+      <button
+        onClick={() => void handleCustomerView()}
+        disabled={!id || saving || publicTokenMut.isPending}
+        title="Open the page the customer sees"
+        aria-label="Customer View"
+        className={`${headerBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken`}
+      >
+        {ICONS.customerView}
+        <span className="hidden sm:inline">Customer View</span>
       </button>
       {id && (
         <button
@@ -1736,7 +1785,7 @@ export default function OrderDetail() {
                   className="flex h-11 w-full items-center justify-between rounded-md border border-border-input bg-surface px-3 text-left"
                 >
                   <span className={`text-sm ${customer ? 'text-text-primary' : 'text-text-muted'}`}>
-                    {customer ? `${customer.first_name} ${customer.last_name}` : 'Select customer…'}
+                    {customer ? displayName(customer) : 'Select customer…'}
                   </span>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted" />
@@ -2001,9 +2050,20 @@ export default function OrderDetail() {
               )}
               {logs && logs.length > 0 && (
                 <>
+                  {/*
+                    Customer-sourced rows (page opened, estimate confirmed,
+                    cancellation asked for or withdrawn) sit on the light-blue
+                    info tint so staff can pick out what the customer did from
+                    what the office did. Padding is applied to every row, not
+                    just tinted ones, so the column alignment never shifts.
+                  */}
                   <ul className="flex flex-col gap-2.5">
                     {(logsExpanded ? logs : logs.slice(0, LOG_PREVIEW_COUNT)).map((log) => (
-                      <li key={log.id} className="flex justify-between gap-3 text-[13px]">
+                      <li
+                        key={log.id}
+                        className={`flex justify-between gap-3 rounded-md px-2 py-1 text-[13px] ${log.source === 'customer' ? 'bg-info-tint' : ''
+                          }`}
+                      >
                         <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
                         <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
                           {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
@@ -2073,9 +2133,8 @@ export default function OrderDetail() {
           can reserve the right amount of room for it. */}
       <div
         ref={setActionBar}
-        className={`fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] transition-transform duration-200 lg:hidden ${
-          keyboardOpen ? 'pointer-events-none translate-y-full' : ''
-        }`}
+        className={`fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] transition-transform duration-200 lg:hidden ${keyboardOpen ? 'pointer-events-none translate-y-full' : ''
+          }`}
       >
         {/* Same max-w-lg + 16px gutter as the page body, so the bar's
             edges line up with the card edges above it. */}
@@ -2126,7 +2185,7 @@ export default function OrderDetail() {
                     className="w-full rounded-sm p-3 text-left hover:bg-surface-sunken"
                   >
                     <span className="block text-sm font-medium text-text-primary">
-                      {cust.first_name} {cust.last_name}
+                      {displayName(cust)}
                     </span>
                     <span className="block text-[13px] text-text-muted">
                       {[cust.phone, cust.email].filter(Boolean).join(' · ')}

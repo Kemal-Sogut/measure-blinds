@@ -35,13 +35,27 @@
  * concerns are delegated: `OrderProgress` (tracker) and
  * `CancellationRequest` (request/withdraw), both pure and stateless
  * apart from their own local form drafts.
+ *
+ * STAFF PREVIEW (`?preview=1`) — the URL the order page's "Customer
+ * View" button opens. The page is otherwise identical to the customer's,
+ * which is the point, but four things change:
+ *   - a draft renders instead of the "link isn't ready yet" card, since
+ *     previewing BEFORE sending is the whole reason the button exists;
+ *   - Confirm and the cancellation controls are inert, so a staff member
+ *     cannot confirm an order on the customer's behalf just by looking;
+ *   - the "customer opened their page" ping never fires, so an office
+ *     visit is never mistaken for the customer reading their estimate;
+ *   - a banner says so, because none of the above is visible otherwise.
+ * The `expired` guard is deliberately NOT skipped: an expired estimate
+ * really does show the customer an expiry card, so a preview must too.
  */
 
-import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
+import { displayName } from '../../lib/customerName';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -256,6 +270,71 @@ function LineItemRow({
   );
 }
 
+/**
+ * Terms & conditions, fully collapsed behind a disclosure arrow.
+ *
+ * The shop's terms run to several paragraphs (~6,200 characters), which
+ * on a phone pushed the cancellation block and the confirm button off
+ * the bottom of the page — fine print crowding out the things the
+ * customer actually came to act on. Collapsed by default: nothing but
+ * the heading row shows until the customer asks for it.
+ *
+ * Deliberately NOT a partial preview. A few visible lines of legal text
+ * are no more useful than none, and a clamped preview still costs the
+ * vertical space this exists to reclaim.
+ *
+ * The chevron, its `rotate-90` open state and the row's shape mirror
+ * `LineItemRow` above, so both disclosures on this page read as the same
+ * control rather than two different ideas about expanding.
+ */
+function TermsSection({ terms }: { terms: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="terms-body"
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+          className={`shrink-0 text-text-muted transition-transform duration-150 ${
+            open ? 'rotate-90' : ''
+          }`}
+        >
+          <path
+            d="M9 6l6 6-6 6"
+            stroke="currentColor"
+            strokeWidth="1.9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <h2 className="text-xs font-semibold text-text-muted">TERMS &amp; CONDITIONS</h2>
+      </button>
+      {/*
+        `hidden` rather than unmounting, matching LineItemRow: the panel
+        keeps its identity so `aria-controls` always points at a real
+        element, whichever state the disclosure is in.
+      */}
+      <p
+        id="terms-body"
+        hidden={!open}
+        className="ml-[26px] mt-2 whitespace-pre-wrap text-xs text-text-secondary"
+      >
+        {terms}
+      </p>
+    </section>
+  );
+}
+
 /** Centered message card used by the terminal states. */
 function Message({ icon, title, body }: { icon: string; title: string; body: string }) {
   return (
@@ -271,6 +350,16 @@ function Message({ icon, title, body }: { icon: string; title: string; body: str
 
 export default function CustomerView() {
   const { token } = useParams<{ token: string }>();
+  const [searchParams] = useSearchParams();
+  // Staff opened this from the order page's "Customer View" button. The
+  // page renders identically, but nothing here may mutate the order or
+  // pollute the activity trail with an office visit.
+  const preview = searchParams.get('preview') === '1';
+
+  // One-shot guard for the view ping. React StrictMode mounts effects
+  // twice in development, and the ping must not fire twice.
+  const pinged = useRef(false);
+
   const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -296,6 +385,33 @@ export default function CustomerView() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * Tells the Worker the customer opened this page, exactly once.
+   *
+   * Three independent guards, because a false "customer opened it" entry
+   * would mislead staff into thinking the estimate was read:
+   *   - `preview` — a staff preview is not a customer open;
+   *   - `pinged` — StrictMode's double mount fires one effect twice;
+   *   - `localStorage` — a refresh, or the reload after confirming, is
+   *     the same visit and must not re-ping. This also keeps the page to
+   *     one extra request per device against the /public rate limit.
+   * The server refuses a second log regardless (`customer_viewed_at`),
+   * so these are courtesy, not correctness.
+   *
+   * Fire-and-forget: no state, no error surface. Telemetry must never be
+   * why a customer sees something break.
+   */
+  useEffect(() => {
+    if (preview || pinged.current || !token) return;
+    const key = `viewed:${token}`;
+    if (localStorage.getItem(key)) return;
+    pinged.current = true;
+    localStorage.setItem(key, '1');
+    void fetch(`${API_URL}/public/estimate/${token}/view`, { method: 'POST' }).catch(() => {
+      // Offline or rate-limited — the next visit records it instead.
+    });
+  }, [preview, token]);
 
   /**
    * POSTs the one-shot confirm. Success and 409 ("already confirmed")
@@ -369,7 +485,12 @@ export default function CustomerView() {
   // A draft was never sent to anyone; if a token somehow resolves to one
   // (a receipt send can mint a token without sending an estimate), say
   // nothing about it.
-  if (estimate.status === 'draft') {
+  //
+  // A staff preview is the one case that MAY render a draft — previewing
+  // before sending is the entire point of the "Customer View" button. The
+  // guard stays live for everyone else, so a leaked draft token still
+  // says nothing.
+  if (estimate.status === 'draft' && !preview) {
     return (
       <Message
         icon="🔍"
@@ -401,6 +522,17 @@ export default function CustomerView() {
 
   return (
     <div className={`min-h-screen bg-surface-muted ${confirmed ? 'pb-8' : 'pb-28'}`}>
+      {/*
+        Staff preview marker. This page is otherwise byte-identical to
+        the customer's, which is exactly why the banner is required:
+        without it a staff member has no way to tell that the Confirm
+        button in front of them is inert.
+      */}
+      {preview && (
+        <div className="bg-info-tint px-4 py-2 text-center text-xs font-medium text-info">
+          Staff preview — this is the page the customer sees. Actions are disabled.
+        </div>
+      )}
       <div className="mx-auto max-w-lg p-4">
         {/* Company header */}
         <header className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-elevated p-4">
@@ -445,7 +577,12 @@ export default function CustomerView() {
             <span className="whitespace-nowrap text-text-muted">{estimate.order_date}</span>
           </div>
           <p className="mt-1 text-text-secondary">
-            For {cust.first_name} {cust.last_name}
+            {/*
+              The public payload carries no email or phone by design, so
+              a nameless customer falls through to the placeholder rather
+              than seeing their own contact details printed as a name.
+            */}
+            For {displayName(cust)}
             {cust.shipping_address_line1 &&
               ` · ${cust.shipping_address_line1}, ${cust.shipping_city}`}
           </p>
@@ -537,13 +674,8 @@ export default function CustomerView() {
           </section>
         )}
 
-        {/* Terms */}
-        {estimate.terms && (
-          <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
-            <h2 className="mb-1 text-xs font-semibold text-text-muted">TERMS & CONDITIONS</h2>
-            <p className="whitespace-pre-wrap text-xs text-text-secondary">{estimate.terms}</p>
-          </section>
-        )}
+        {/* Terms — clamped to 5 lines behind a "Show more" toggle */}
+        {estimate.terms && <TermsSection terms={estimate.terms} />}
 
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
@@ -552,6 +684,7 @@ export default function CustomerView() {
           <CancellationRequest
             pending={Boolean(estimate.cancel_requested_at)}
             busy={cancelBusy}
+            disabled={preview}
             onRequest={(note) => void handleCancelAction('cancel-request', note)}
             onWithdraw={() => void handleCancelAction('cancel-withdraw')}
           />
@@ -563,10 +696,14 @@ export default function CustomerView() {
         <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={handleConfirm}
-            disabled={confirming}
+            disabled={confirming || preview}
             className="mx-auto flex h-14 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
           >
-            {confirming ? 'Confirming…' : 'Confirm Estimate'}
+            {/*
+              The label never says "Confirming…" in preview: nothing is
+              in flight, the button is simply inert.
+            */}
+            {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
           </button>
         </div>
       )}

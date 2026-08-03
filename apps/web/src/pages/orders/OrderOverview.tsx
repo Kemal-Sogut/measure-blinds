@@ -29,6 +29,7 @@ import { useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import { useOrder } from '../../hooks/useOrders';
+import { displayName } from '../../lib/customerName';
 import type { LineItem } from '../../types';
 
 /** Formats a number as dollars, e.g. `$1234.50`. */
@@ -207,7 +208,7 @@ export default function OrderOverview() {
   const { data: order, isLoading, error } = useOrder(id);
 
   const customerName = order?.customer
-    ? `${order.customer.first_name} ${order.customer.last_name}`.trim()
+    ? displayName(order.customer)
     : '';
   // Stable reference so the grouping memos below don't recompute (and
   // re-trigger the exhaustive-deps rule) on every render.

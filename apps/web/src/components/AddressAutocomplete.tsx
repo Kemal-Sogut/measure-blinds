@@ -2,23 +2,29 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * AddressAutocomplete — a labelled Address-Line-1 text input with a
- * search-as-you-type suggestion dropdown, used on every customer-entry
- * surface (the full `CustomerForm` page and the quick
- * `CustomerCreateModal`). As the consultant types, it debounces the
- * term and queries Photon (`lib/addressSearch`); picking a suggestion
- * fires `onSelect` with a normalised, form-ready address so the parent
- * can auto-fill line 1, city, province, and postal code in one tap.
+ * AddressAutocomplete — a labelled Address-Line-1 text input used on
+ * every customer-entry surface (the full `CustomerForm` page and the
+ * quick `CustomerCreateModal`).
  *
- * The component still behaves as a normal controlled input: `onChange`
- * mirrors every keystroke back to the parent's Address-Line-1 field,
- * so manual entry (or editing after an auto-fill) keeps working even
- * when the geocoder returns nothing. Autocomplete is strictly additive
- * — a network failure degrades to plain typing, never an error state.
+ * CURRENT BEHAVIOR: the search-as-you-type dropdown is switched OFF via
+ * `ADDRESS_SEARCH_ENABLED` (see below) — the component renders a plain
+ * controlled input and `onSelect` never fires. Callers keep passing
+ * `onSelect` so that re-enabling the switch needs no call-site change.
  *
- * Interaction: ↑/↓ move the highlight, Enter selects it, Escape or a
- * blur closes the list (blur is delayed so a mouse click on a row
- * still registers before the list unmounts).
+ * WHEN ENABLED: as the consultant types, it debounces the term and
+ * queries Photon (`lib/addressSearch`); picking a suggestion fires
+ * `onSelect` with a normalised, form-ready address so the parent can
+ * auto-fill line 1, city, province, and postal code in one tap.
+ *
+ * In either mode the component behaves as a normal controlled input:
+ * `onChange` mirrors every keystroke back to the parent's
+ * Address-Line-1 field, so manual entry (or editing after an auto-fill)
+ * always works. Autocomplete is strictly additive — a network failure
+ * degrades to plain typing, never an error state.
+ *
+ * Interaction while enabled: ↑/↓ move the highlight, Enter selects it,
+ * Escape or a blur closes the list (blur is delayed so a mouse click on
+ * a row still registers before the list unmounts).
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -27,6 +33,20 @@ import { searchAddresses, type AddressSuggestion } from '../lib/addressSearch';
 
 const INPUT_CLS =
   'h-11 w-full rounded-sm border border-border-input bg-surface px-3 text-sm text-text-primary';
+
+/**
+ * Master switch for search-as-you-type address lookup.
+ *
+ * Disabled 2026-08-01: the Photon results proved unreliable in the field
+ * (wrong or missing streets for real service-area addresses), so the
+ * dropdown is off and this component behaves as a plain controlled text
+ * input. `onSelect` therefore never fires while this is false.
+ *
+ * The query layer in `lib/addressSearch.ts` is deliberately left intact
+ * and still correct — flipping this to `true` restores the full
+ * autocomplete with no other edit anywhere in the tree.
+ */
+const ADDRESS_SEARCH_ENABLED = false;
 
 export default function AddressAutocomplete({
   label,
@@ -59,6 +79,11 @@ export default function AddressAutocomplete({
   const debounced = useDebouncedValue(value, 300);
 
   useEffect(() => {
+    // Kill-switch: no debounce reaction, no AbortController, no Photon
+    // request. Everything below this line is dormant while the switch is
+    // off; the component renders as a plain input (see the early return
+    // after the hooks).
+    if (!ADDRESS_SEARCH_ENABLED) return;
     if (skipNextSearch.current) {
       skipNextSearch.current = false;
       return;
@@ -109,6 +134,28 @@ export default function AddressAutocomplete({
     } else if (e.key === 'Escape') {
       setOpen(false);
     }
+  }
+
+  // Kill-switch path: the bare labelled input, with none of the
+  // dropdown markup, ARIA combobox roles, or blur timers below. Placed
+  // after every hook so the hook order is identical in both branches.
+  if (!ADDRESS_SEARCH_ENABLED) {
+    return (
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+          {label}
+          {required && <span className="text-danger"> *</span>}
+        </span>
+        <input
+          type="text"
+          value={value}
+          autoFocus={autoFocus}
+          autoComplete="off"
+          onChange={(e) => onChange(e.target.value)}
+          className={INPUT_CLS}
+        />
+      </label>
+    );
   }
 
   return (

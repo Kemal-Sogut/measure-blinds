@@ -25,6 +25,10 @@
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
  *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
+ *   POST   /:id/public-token
+ *                         return the customer-facing capability token,
+ *                         minting one if absent — backs the staff
+ *                         "Customer View" preview on unsent drafts
  *   POST   /:id/confirm   user confirm (draft/sent → awaiting_payment)
  *   POST   /:id/unconfirm reverse a confirmation (awaiting_payment → sent)
  *   POST   /:id/payments  record a payment (awaiting_payment → in_progress
@@ -63,6 +67,7 @@ import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
+import { greetingName } from '../lib/customerName';
 import {
   sendEmail,
   brandFromSettings,
@@ -336,10 +341,20 @@ function formatDateLong(dateIso: string): string {
  * Appends one row to the order's activity trail. Best-effort: a logging
  * failure must never fail the request it is describing, so errors are
  * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
+ *
+ * `source` marks who caused the entry: 'staff' (the default, so all
+ * existing call sites are unchanged) or 'customer' for anything driven
+ * from the token'd public page. The web trail renders customer rows on
+ * a light-blue background.
  */
-async function logOrderEvent(sb: SupabaseClient, orderId: string, message: string): Promise<void> {
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string,
+  source: 'staff' | 'customer' = 'staff'
+): Promise<void> {
   try {
-    await sb.from('order_logs').insert({ order_id: orderId, message });
+    await sb.from('order_logs').insert({ order_id: orderId, message, source });
   } catch {
     // Logging is diagnostic only — never block the caller's mutation.
   }
@@ -754,7 +769,7 @@ app.post('/:id/send', async (c) => {
       subject: `Your estimate ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildEstimateEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         total: Number(order.total),
         message,
@@ -842,6 +857,42 @@ app.post('/:id/mark-sent', async (c) => {
 });
 
 /**
+ * Returns the order's public capability token, minting one if it has
+ * none yet.
+ *
+ * Exists so staff can preview the customer's page BEFORE the estimate is
+ * sent: `public_token` is normally created by the send, and without this
+ * the "Customer View" button would have nothing to open on a draft.
+ *
+ * Idempotent and inert — it never changes `status`, never emails, and a
+ * second call returns the same token and logs nothing. Minting IS
+ * logged, once, because it brings a customer-reachable URL into
+ * existence and that is worth a line in the trail.
+ */
+app.post('/:id/public-token', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, public_token')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+
+  if (existing.public_token) {
+    return c.json({ data: { public_token: existing.public_token } });
+  }
+
+  const token = crypto.randomUUID();
+  const { error } = await sb.from('orders').update({ public_token: token }).eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  await logOrderEvent(sb, id, 'Customer view link created.');
+  return c.json({ data: { public_token: token } });
+});
+
+/**
  * Emails the customer their invoice (confirmed orders only) with the
  * Invoice PDF attached and an optional consultant note. This is a
  * document re-send: the order's lifecycle stage is NOT changed. The
@@ -885,7 +936,7 @@ app.post('/:id/send-invoice', async (c) => {
       subject: `Your invoice ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildInvoiceEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         total: Number(order.total),
         viewUrl,
@@ -1122,7 +1173,7 @@ app.post('/:id/payments/:paymentId/receipt', async (c) => {
       subject: `Your payment receipt ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
       html: buildReceiptEmailHtml({
         company: brandFromSettings(company),
-        customerFirstName: order.customer.first_name,
+        customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
         paymentAmount: Number(payment.amount),
         paidOnText: formatDateLong(payment.paid_on),
@@ -1248,7 +1299,7 @@ app.post('/:id/cancel-request/resolve', async (c) => {
         subject: `About your cancellation request — ${order.order_number}`,
         html: buildCancellationDeniedHtml({
           company: brandFromSettings(company),
-          customerFirstName: order.customer.first_name,
+          customerFirstName: greetingName(order.customer),
           orderNumber: order.order_number,
           total: Number(order.total),
           viewUrl,

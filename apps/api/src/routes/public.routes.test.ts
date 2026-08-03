@@ -437,6 +437,63 @@ describe('POST /public/appointment/:token/request', () => {
   });
 });
 
+describe('POST /public/estimate/:token/view', () => {
+  it('stamps customer_viewed_at and logs on the first open', async () => {
+    const res = await req(`/estimate/${TOKEN}/view`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('order_logs.insert');
+    expect(db.lastUpdate).toHaveProperty('customer_viewed_at');
+  });
+
+  it('is a no-op on a second open', async () => {
+    db.order = { ...sentOrder(), customer_viewed_at: '2026-08-01T10:00:00.000Z' };
+    const res = await req(`/estimate/${TOKEN}/view`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('order_logs.insert');
+  });
+
+  it('is a no-op for a draft order', async () => {
+    db.order = { ...sentOrder(), status: 'draft' };
+    const res = await req(`/estimate/${TOKEN}/view`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('order_logs.insert');
+  });
+
+  it('404s a malformed token without touching the DB', async () => {
+    const res = await req('/estimate/not-a-uuid/view', 'POST');
+    expect(res.status).toBe(404);
+    expect(db.calls).toEqual([]);
+  });
+
+  it('404s an unknown token', async () => {
+    db.order = null;
+    const res = await req(`/estimate/${TOKEN}/view`, 'POST');
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('customer action logs', () => {
+  it('logs the confirm as a customer action', async () => {
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('order_logs.insert');
+  });
+
+  it('logs a cancellation request as a customer action', async () => {
+    db.order = awaitingOrder();
+    const res = await req(`/estimate/${TOKEN}/cancel-request`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('order_logs.insert');
+  });
+
+  it('logs a cancellation withdrawal as a customer action', async () => {
+    db.order = awaitingOrder({ cancel_requested_at: '2026-08-01T10:00:00.000Z' });
+    const res = await req(`/estimate/${TOKEN}/cancel-withdraw`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('order_logs.insert');
+  });
+});
+
 describe('rate limiting', () => {
   it('returns 429 after 5 requests in a minute from one IP', async () => {
     const ip = '203.0.113.7';

@@ -16,6 +16,7 @@
  *
  * Endpoints:
  *   GET  /estimate/:token          customer-facing order/estimate view data
+ *   POST /estimate/:token/view     record the customer's first page open
  *   POST /estimate/:token/confirm  one-shot confirm (rate-limited)
  *   POST /estimate/:token/cancel-request   ask to cancel the confirmation
  *   POST /estimate/:token/cancel-withdraw  take that request back
@@ -42,6 +43,7 @@ import { Hono } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
+import { displayName } from '../lib/customerName';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -58,6 +60,28 @@ const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 
 /** Rate limit everything under /public (5 requests/min/IP). */
 app.use('*', rateLimit(5, 60_000));
+
+/**
+ * Best-effort activity-trail entry on an order, always attributed to the
+ * customer — this module is the token'd public surface, so nothing here
+ * is ever a staff action.
+ *
+ * Mirrors the same-named helpers in `orders.ts` and `appointments.ts`
+ * (route modules deliberately do not import from one another). Errors
+ * are swallowed: a customer's confirmation must never fail because the
+ * diagnostic log behind it did.
+ */
+async function logOrderEvent(
+  sb: SupabaseClient,
+  orderId: string,
+  message: string
+): Promise<void> {
+  try {
+    await sb.from('order_logs').insert({ order_id: orderId, message, source: 'customer' });
+  } catch {
+    // Logging is diagnostic only — never block the customer's action.
+  }
+}
 
 /**
  * Loads an order (+items/customer/payments) by public token, or null.
@@ -143,8 +167,7 @@ async function notifyCancellationRequest(
       .eq('id', 1)
       .single();
     if (!company?.email) return;
-    const customerName =
-      `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim();
+    const customerName = displayName(order.customer);
     await sendEmail(env, {
       to: company.email,
       subject: withdrawn
@@ -254,6 +277,43 @@ app.get('/estimate/:token', async (c) => {
 });
 
 /**
+ * Records that the customer opened their page — the trail's only
+ * evidence that the emailed link was actually read.
+ *
+ * Fired once by `CustomerView` on mount and never again: the browser
+ * suppresses repeats per token, and `orders.customer_viewed_at` makes
+ * the server refuse a second log regardless of what the client does.
+ * Staff previews (`?preview=1`) never call this at all.
+ *
+ * Always answers 200 for a real token, even when nothing was written —
+ * this is telemetry, and a customer's page must never surface an error
+ * because a log failed. 404 only for a malformed or unknown token, with
+ * the same wording as its neighbours so nothing leaks about which
+ * tokens exist.
+ */
+app.post('/estimate/:token/view', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+
+  // A draft was never sent to anyone, so there is no "customer opened
+  // it" event to record — the page itself refuses to render one.
+  if (order.status === 'draft') return c.json({ data: { ok: true } });
+  if (order.customer_viewed_at) return c.json({ data: { ok: true } });
+
+  await sb
+    .from('orders')
+    .update({ customer_viewed_at: new Date().toISOString() })
+    .eq('id', order.id);
+  await logOrderEvent(sb, order.id, 'Customer opened their order page.');
+
+  return c.json({ data: { ok: true } });
+});
+
+/**
  * Customer confirm — succeeds exactly once, moving the order
  * sent → awaiting_payment.
  * 404 unknown token · 409 already confirmed · 410 expired · 400 draft.
@@ -288,6 +348,8 @@ app.post('/estimate/:token/confirm', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
 
+  await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
+
   // Internal notification — best effort, never blocks the customer.
   try {
     const { data: company } = await sb
@@ -301,7 +363,7 @@ app.post('/estimate/:token/confirm', async (c) => {
         subject: `✅ Estimate ${updated.order_number} confirmed`,
         html: buildConfirmationNoticeHtml({
           orderNumber: updated.order_number,
-          customerName: `${order.customer?.first_name ?? ''} ${order.customer?.last_name ?? ''}`.trim(),
+          customerName: displayName(order.customer),
           total: Number(updated.total),
         }),
       });
@@ -375,6 +437,11 @@ app.post('/estimate/:token/cancel-request', async (c) => {
     return c.json({ error: 'We have already received your cancellation request.' }, 409);
   }
 
+  // The customer's free-text note is deliberately NOT interpolated into
+  // the trail message: staff already receive it in the notification
+  // email and on the order's own `cancel_request_note`.
+  await logOrderEvent(sb, order.id, 'Customer requested cancellation.');
+
   await notifyCancellationRequest(c.env, order, false, note);
   return c.json({ data: { cancel_requested: true } });
 });
@@ -410,6 +477,8 @@ app.post('/estimate/:token/cancel-withdraw', async (c) => {
   if (!updated) {
     return c.json({ error: 'There is no cancellation request to withdraw.' }, 409);
   }
+
+  await logOrderEvent(sb, order.id, 'Customer withdrew their cancellation request.');
 
   await notifyCancellationRequest(c.env, order, true);
   return c.json({ data: { cancel_requested: false } });
@@ -447,8 +516,7 @@ async function notifyAppointmentResponse(
       .eq('id', 1)
       .single();
     if (!company?.email) return;
-    const customerName =
-      `${appt.customer?.first_name ?? ''} ${appt.customer?.last_name ?? ''}`.trim();
+    const customerName = displayName(appt.customer);
     const isInstall = appt.kind === 'installation';
     const label = isInstall
       ? `order ${appt.order?.order_number ?? ''}`.trim()

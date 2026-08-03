@@ -21,6 +21,7 @@ import { useParams, Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import PageHeader from '../../components/PageHeader';
 import { useAppointment } from '../../hooks/useCalendar';
+import { displayName } from '../../lib/customerName';
 import type { Customer } from '../../types';
 
 /** Schedule-status → display label + Tailwind ink class (matches the section lists). */
@@ -99,9 +100,7 @@ export default function AppointmentDetail() {
   const isInstall = appt.kind === 'installation';
   const status = STATUS_LABEL[appt.status];
   const customer = appt.customer;
-  const fullName = customer
-    ? `${customer.first_name} ${customer.last_name}`.trim()
-    : 'Customer';
+  const fullName = customer ? displayName(customer) : 'Customer';
   const address = customer ? shippingAddress(customer) : '';
 
   return (

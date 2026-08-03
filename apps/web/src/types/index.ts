@@ -183,6 +183,12 @@ export interface OrderLog {
   order_id: string;
   message: string;
   created_at: string;
+  /**
+   * Who caused this entry. Optional on the wire on purpose: if the web
+   * app deploys ahead of the Worker, older rows arrive without it and
+   * must render as staff rather than crash or mis-colour.
+   */
+  source?: 'staff' | 'customer';
 }
 
 /**
@@ -203,8 +209,12 @@ export interface CalendarEvent {
   /** Installation visits only — null / '' for estimate visits. */
   order_id: string | null;
   order_number: string;
-  /** Joined customer name only — no address/contact fields needed here. */
-  customer: Pick<Customer, 'first_name' | 'last_name'>;
+  /**
+   * Joined identifying fields only — no address needed here. Email and
+   * phone are carried solely so `displayName` can label a customer who
+   * has no name; neither is rendered on a chip as such.
+   */
+  customer: Pick<Customer, 'first_name' | 'last_name' | 'email' | 'phone'>;
 }
 
 /** Line item type discriminator for different pricing models. */

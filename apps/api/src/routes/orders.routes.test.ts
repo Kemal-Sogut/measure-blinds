@@ -804,3 +804,35 @@ describe('POST /api/orders/:id/cancel-request/resolve', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /api/orders/:id/public-token', () => {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const post = (path: string) => ordersApp.request(path, { method: 'POST' }, ENV);
+
+  it('mints a token when the order has none, and logs it once', async () => {
+    db.responses['orders.select'] = [{ id: 'o1', public_token: null }];
+    const res = await post('/o1/public-token');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { public_token: string } };
+    expect(body.data.public_token).toMatch(UUID_RE);
+    expect(db.insertPayloads['order_logs']).toHaveLength(1);
+  });
+
+  it('returns the existing token unchanged and logs nothing', async () => {
+    const existing = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    db.responses['orders.select'] = [{ id: 'o1', public_token: existing }];
+    const res = await post('/o1/public-token');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { public_token: string } };
+    expect(body.data.public_token).toBe(existing);
+    expect(db.insertPayloads['order_logs']).toBeUndefined();
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('404s an unknown order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await post('/nope/public-token');
+    expect(res.status).toBe(404);
+  });
+});

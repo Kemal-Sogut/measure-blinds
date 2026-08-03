@@ -26,6 +26,7 @@ import { useCalendarEvents } from '../../hooks/useCalendar';
 import MonthGrid from './MonthGrid';
 import AppointmentWizard from './AppointmentWizard';
 import ScheduleSections from './ScheduleSections';
+import { displayName } from '../../lib/customerName';
 import type { CalendarEvent } from '../../types';
 
 /** "YYYY-MM-DD" for a local Date, matching the API's date-only convention. */
@@ -61,7 +62,7 @@ export default function CalendarPage() {
 
   /** "Change" on a section row → re-propose a new time, same link. */
   function changeAppointment(event: CalendarEvent) {
-    const customerName = `${event.customer.first_name} ${event.customer.last_name}`.trim();
+    const customerName = displayName(event.customer);
     setWizard({
       day: fromIsoDate(event.date),
       repropose: {
