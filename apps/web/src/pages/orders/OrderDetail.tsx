@@ -89,12 +89,14 @@ import {
   useDeleteOrder,
   useRecordPayment,
   useSendReceipt,
+  useSendWarranty,
   useDeletePayment,
   useUnmatchedEtransfers,
   useDismissEtransfer,
   useOrderLogs,
   useOrderPublicToken,
   downloadOrderPdf,
+  downloadWarrantyPdf,
   type OrderInput,
   type LineItemInput,
   type PendingEtransfer,
@@ -436,6 +438,7 @@ export default function OrderDetail() {
   const deleteMut = useDeleteOrder();
   const paymentMut = useRecordPayment();
   const receiptMut = useSendReceipt();
+  const warrantyMut = useSendWarranty();
   const deletePaymentMut = useDeletePayment();
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
@@ -450,7 +453,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'editItem' | 'bulkEdit' | 'cancelDeny'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -529,6 +532,11 @@ export default function OrderDetail() {
   // optional personal message included in the receipt email.
   const [receiptPayment, setReceiptPayment] = useState<Payment | null>(null);
   const [receiptMessage, setReceiptMessage] = useState('');
+
+  // Send-warranty sheet: the optional personal message included in the
+  // warranty email. There is no per-row state — one certificate covers
+  // the whole order.
+  const [warrantyMessage, setWarrantyMessage] = useState('');
 
   // Optional explanation emailed to the customer when DENYING their
   // cancellation request (accepting sends nothing).
@@ -1094,6 +1102,52 @@ export default function OrderDetail() {
   }
 
   /**
+   * Opens the send-warranty sheet. Same missing-email precedent as
+   * `openReceipt`: block with a toast rather than open a sheet whose
+   * email has nowhere to go. The certificate can still be DOWNLOADED in
+   * that case — that action is separate and needs no address.
+   */
+  function openWarranty() {
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    setWarrantyMessage('');
+    setSheet('warranty');
+  }
+
+  /**
+   * Submits the send-warranty sheet. The Worker recomputes the balance,
+   * renders the certificate from the snapshotted coverage start, emails
+   * it as a PDF attachment, stamps `warranty_sent_at`, and returns the
+   * refreshed order so the panel's "Warranty issued" marker updates from
+   * the cache. Server errors (409 balance outstanding / 400 no email /
+   * 502 email service) surface as toasts, like the other send flows.
+   */
+  async function submitWarranty() {
+    if (!id) return;
+    if (!customer?.email) return toast.error('This customer has no email address.');
+    try {
+      await warrantyMut.mutateAsync({ id, message: warrantyMessage.trim() || undefined });
+      toast.success(`Warranty certificate sent to ${customer.email}.`);
+      setSheet('none');
+      setWarrantyMessage('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send the warranty certificate.');
+    }
+  }
+
+  /**
+   * Downloads the staff copy of the warranty certificate. Sends nothing,
+   * so it stays available for a customer with no email on file.
+   */
+  async function handleDownloadWarranty() {
+    if (!id) return;
+    try {
+      await downloadWarrantyPdf(id, existing?.order_number ?? 'order');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not download the certificate.');
+    }
+  }
+
+  /**
    * Grants the customer's cancellation request. This REVERSES the
    * confirmation (awaiting_payment → sent), so it is gated behind a
    * confirm dialog like every other backward move, and the Worker
@@ -1273,6 +1327,55 @@ export default function OrderDetail() {
   );
 
   /**
+   * Warranty strip inside the Payments panel, shown ONLY once the
+   * balance is settled — the warranty does not exist before then, and an
+   * always-visible disabled control would just raise questions on every
+   * part-paid order.
+   *
+   * The certificate is emailed automatically the moment a payment clears
+   * the balance, so these are recovery actions: the caption says so, to
+   * stop a consultant sending a duplicate out of uncertainty. Send is
+   * disabled without a customer email (nothing to deliver to); Download
+   * never is, because it delivers nothing.
+   */
+  const warrantyStrip = postConfirm && balance <= 0.005 && (
+    <div className="mt-2 flex flex-col gap-1.5 border-t border-border-light pt-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-text-primary">Warranty</span>
+        {existing?.warranty_sent_at ? (
+          <span className="text-[11px] text-success" title="Warranty certificate emailed">
+            ✓ Issued {new Date(existing.warranty_sent_at).toLocaleDateString()}
+          </span>
+        ) : (
+          <span className="text-[11px] text-text-muted">Not sent yet</span>
+        )}
+      </div>
+      <p className="text-[11px] leading-snug text-text-muted">
+        The certificate is emailed automatically when the balance clears — 10 years on
+        products, 2 years on motorised parts.
+      </p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={openWarranty}
+          disabled={warrantyMut.isPending || !customer?.email}
+          title={customer?.email ? undefined : 'This customer has no email address.'}
+          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-[12px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+        >
+          {existing?.warranty_sent_at ? 'Resend warranty' : 'Send warranty'}
+        </button>
+        <button
+          type="button"
+          onClick={handleDownloadWarranty}
+          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-[12px] font-semibold text-text-primary hover:bg-surface-sunken"
+        >
+          Download
+        </button>
+      </div>
+    </div>
+  );
+
+  /**
    * Payments + balance panel (confirmed orders only).
    *
    * Lists the ledger the way it is stored — order total, then ONE row
@@ -1359,6 +1462,7 @@ export default function OrderDetail() {
         {ICONS.payment}
         Record Payment
       </button>
+      {warrantyStrip}
     </section>
   );
 
@@ -2628,6 +2732,56 @@ export default function OrderDetail() {
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   {receiptMut.isPending ? 'Sending…' : 'Send Receipt'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Send warranty bottom sheet (whole order, with optional message) */}
+      {sheet === 'warranty' && (
+        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+          <div
+            className="w-full rounded-t-sm bg-surface p-4 lg:max-w-md lg:rounded-sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">
+              {existing?.warranty_sent_at ? 'Resend warranty' : 'Send warranty'}
+            </h2>
+            <p className="mb-3 text-[13px] text-text-muted">
+              We&apos;ll email {customer?.email ?? 'the customer'} the warranty certificate for
+              this order as a PDF. Coverage runs from the date the order was paid in full and
+              the dates never change on a resend.
+            </p>
+            <div className="flex flex-col gap-3">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  Message to include (optional)
+                </span>
+                <textarea
+                  autoFocus
+                  value={warrantyMessage}
+                  onChange={(e) => setWarrantyMessage(e.target.value)}
+                  maxLength={1000}
+                  rows={4}
+                  placeholder="e.g. Here's your warranty certificate — keep it somewhere safe."
+                  className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
+                />
+              </label>
+              <div className="mt-1 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={submitWarranty}
+                  disabled={warrantyMut.isPending || !customer?.email}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {warrantyMut.isPending ? 'Sending…' : 'Send Warranty'}
                 </button>
               </div>
             </div>

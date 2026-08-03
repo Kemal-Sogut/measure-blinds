@@ -87,6 +87,15 @@ export async function sendEmail(
 /* ------------------------------------------------------------------ */
 /* Design tokens & shared building blocks (Customer Emails design doc) */
 /* ------------------------------------------------------------------ */
+/*
+ * The shell and block helpers below are exported so templates that
+ * cannot live in this file still render inside the same branded card.
+ * `warrantyEmail.ts` is the first such consumer: this module is already
+ * past the 800-line guideline, so new templates go beside it rather than
+ * inside it. Exporting in place keeps every visual token in ONE file —
+ * splitting the design system across modules is what would actually let
+ * the emails drift apart.
+ */
 
 const FONT = "'IBM Plex Sans','Segoe UI',system-ui,-apple-system,sans-serif";
 const MONO = "'IBM Plex Mono',Consolas,monospace";
@@ -172,7 +181,7 @@ function footerHtml(brand: CompanyBrand): string {
  * Wraps template body content in the shared card shell: warm-gray page,
  * white bordered card with logo header, body, and tinted footer.
  */
-function brandedShell(brand: CompanyBrand, bodyHtml: string): string {
+export function brandedShell(brand: CompanyBrand, bodyHtml: string): string {
   return `<!doctype html>
 <html><body style="margin:0;padding:0;background:${C.pageBg};">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.pageBg};">
@@ -188,12 +197,12 @@ function brandedShell(brand: CompanyBrand, bodyHtml: string): string {
 }
 
 /** The 22px heading that opens every customer email body. */
-function headingHtml(text: string): string {
+export function headingHtml(text: string): string {
   return `<h2 style="margin:0 0 12px;font-size:22px;font-weight:600;line-height:1.3;color:${C.heading};">${text}</h2>`;
 }
 
 /** The 15px intro paragraph under the heading (value is pre-escaped). */
-function introHtml(html: string): string {
+export function introHtml(html: string): string {
   return `<p style="margin:0 0 24px;font-size:15px;line-height:1.6;color:${C.body};">${html}</p>`;
 }
 
@@ -202,7 +211,7 @@ function detailRowHtml(label: string, valueHtml: string): string {
   return `<tr><td style="padding:3px 16px 3px 0;font-size:14px;color:${C.faint};width:110px;vertical-align:top;">${label}</td><td style="padding:3px 0;font-size:14px;font-weight:500;color:${C.heading};">${valueHtml}</td></tr>`;
 }
 
-interface SummaryCardOpts {
+export interface SummaryCardOpts {
   /** Small uppercase accent label, e.g. "Proposed time" (pre-escaped). */
   eyebrow: string;
   /** Optional mono badge right of the eyebrow, e.g. the order number. */
@@ -216,7 +225,7 @@ interface SummaryCardOpts {
 }
 
 /** The soft-tinted summary card used by every customer template. */
-function summaryCardHtml(opts: SummaryCardOpts): string {
+export function summaryCardHtml(opts: SummaryCardOpts): string {
   const eyebrowRow = opts.badge
     ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
         <td style="font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:${C.accent};">${opts.eyebrow}</td>
@@ -241,7 +250,7 @@ function summaryCardHtml(opts: SummaryCardOpts): string {
 }
 
 /** Full-width primary CTA button. */
-function primaryButtonHtml(url: string, label: string): string {
+export function primaryButtonHtml(url: string, label: string): string {
   return `<a href="${url}" style="display:block;background:${C.accent};border-radius:6px;padding:14px 0;text-align:center;font-size:15px;font-weight:600;color:#FFFFFF;text-decoration:none;">${label}</a>`;
 }
 
@@ -259,17 +268,17 @@ function buttonPairHtml(primary: string, secondary: string): string {
 }
 
 /** Muted small print that closes the email body (pre-escaped). */
-function finePrintHtml(html: string): string {
+export function finePrintHtml(html: string): string {
   return `<p style="margin:0;font-size:13px;line-height:1.6;color:${C.faint};">${html}</p>`;
 }
 
 /** "If the button doesn't work" fallback with the raw link. */
-function linkFallbackHtml(url: string): string {
+export function linkFallbackHtml(url: string): string {
   return `<p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${C.faintest};word-break:break-all;">If the button doesn&#39;t work, copy this link: ${url}</p>`;
 }
 
 /** A highlighted note block for an optional consultant message. */
-function messageBlockHtml(message: string | undefined): string {
+export function messageBlockHtml(message: string | undefined): string {
   return message?.trim()
     ? `<div style="background:${C.tintBg};border-radius:8px;padding:14px 18px;margin:0 0 20px;font-size:14px;line-height:1.6;color:${C.body};white-space:pre-wrap;">${escapeHtml(
         message.trim()
@@ -281,7 +290,7 @@ function messageBlockHtml(message: string | undefined): string {
  * A titled checklist with accent check marks (plain "✓" characters —
  * most email clients strip inline SVG). Items are pre-escaped.
  */
-function checklistHtml(heading: string, items: string[]): string {
+export function checklistHtml(heading: string, items: string[]): string {
   const rows = items
     .map(
       (item) =>

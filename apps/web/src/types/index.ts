@@ -156,6 +156,22 @@ export interface Order {
    */
   cut_done_at: string | null;
   /**
+   * When the warranty certificate was last emailed to the customer;
+   * `null` = never sent. Stamped server-side only after the email
+   * provider accepts the send. The certificate goes out automatically as
+   * soon as a payment clears the balance, so a paid order with `null`
+   * here means the send was skipped or failed — that is what the
+   * Send/Resend warranty action on the Payments panel is for.
+   */
+  warranty_sent_at: string | null;
+  /**
+   * The date warranty coverage runs from — the day the order was paid in
+   * full; `null` until then. Snapshotted server-side so every
+   * regeneration of the certificate prints identical expiry dates
+   * (coverage + 10 years on products, + 2 years on motorised parts).
+   */
+  warranty_starts_on: string | null;
+  /**
    * When the customer asked, from the public page, for their confirmation
    * to be cancelled; `null` = no open request. The request changes no
    * status by itself — staff answer it on

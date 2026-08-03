@@ -9,8 +9,9 @@
  * computes all money authoritatively and its response becomes the
  * cached detail. Lifecycle mutations (send estimate, confirm, reverse
  * confirmation, record payment, send receipt, complete) refresh both
- * detail and list caches. `downloadOrderPdf` streams the Estimate/Invoice PDF through
- * the authenticated download helper and triggers a browser save.
+ * detail and list caches. `downloadOrderPdf` and `downloadWarrantyPdf`
+ * stream the Estimate/Invoice and the warranty certificate through the
+ * authenticated download helper and trigger a browser save.
  */
 
 import {
@@ -463,6 +464,55 @@ export async function downloadOrderPdf(id: string, orderNumber: string): Promise
   const a = document.createElement('a');
   a.href = url;
   a.download = `${orderNumber.replace(/[^\w-]/g, '_')}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Emails (or re-emails) the warranty certificate for a fully paid order,
+ * with an optional consultant note.
+ *
+ * The certificate is normally sent automatically the moment a payment
+ * clears the balance, so this backs a recovery action rather than the
+ * happy path: a send that failed, an email address added after the fact,
+ * a $0 order that never had a payment to trigger on, or a customer who
+ * lost the email. The Worker rejects it with 409 while any balance is
+ * outstanding, so the caller must only offer it on a settled order.
+ */
+export function useSendWarranty(): UseMutationResult<
+  Order,
+  Error,
+  { id: string; message?: string }
+> {
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, message }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/warranty`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        })
+      ).data,
+    onSuccess: cache,
+  });
+}
+
+/**
+ * Downloads the warranty certificate PDF — the staff copy of exactly
+ * what the customer was emailed — as `{orderNumber}-warranty.pdf`.
+ *
+ * Sends nothing, so it works for a customer with no email on file. Like
+ * the send action it is only valid once the order is paid in full; the
+ * Worker answers 409 otherwise.
+ */
+export async function downloadWarrantyPdf(id: string, orderNumber: string): Promise<void> {
+  const blob = await apiDownload(`/api/orders/${id}/warranty-pdf`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${orderNumber.replace(/[^\w-]/g, '_')}-warranty.pdf`;
   document.body.appendChild(a);
   a.click();
   a.remove();
