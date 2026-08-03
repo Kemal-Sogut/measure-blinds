@@ -66,8 +66,12 @@ import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
-import { buildDocumentPdf, fetchLogo, type PdfDocumentData } from '../lib/pdf';
+import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../lib/pdf';
 import { greetingName } from '../lib/customerName';
+import { formatDateLong } from '../lib/timeText';
+import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
+import { buildWarrantyCoverage } from '../lib/warranty';
+import { buildWarrantyPdf } from '../lib/warrantyPdf';
 import {
   sendEmail,
   brandFromSettings,
@@ -318,23 +322,6 @@ const DETAIL_SELECT = '*, line_items(*), customer:customers(*), payments(*)';
 function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
   const total = (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
   return Math.round(total * 100) / 100;
-}
-
-/** Month names for human-facing email dates (no `Intl` — see below). */
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
-/**
- * Formats a stored "YYYY-MM-DD" date as "July 21, 2026" for email copy
- * (e.g. a receipt's paid_on date). Formatted by hand rather than with
- * `Intl` locale data so the output is identical under workerd and Node
- * — the same precedent as lib/timeText's `scheduleWindow`.
- */
-function formatDateLong(dateIso: string): string {
-  const [y, m, d] = dateIso.split('-').map(Number);
-  return `${MONTH_NAMES[m - 1]} ${d}, ${y}`;
 }
 
 /**
@@ -685,19 +672,6 @@ async function toPdfData(
     terms,
     logo: await fetchLogo(company.logo_url),
   };
-}
-
-/**
- * Base64-encodes bytes in 8KB chunks — spreading a large PDF into
- * String.fromCharCode(...) would overflow the call stack.
- */
-function toBase64(bytes: Uint8Array): string {
-  let binary = '';
-  const CHUNK = 8192;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
 }
 
 /** Streams the order as a downloadable PDF (Estimate, or Invoice once paid). */
@@ -1075,6 +1049,16 @@ app.post('/:id/payments', async (c) => {
 
   await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);
 
+  // If that payment settled the order, the customer's warranty is due.
+  // Deliberately BEFORE readDetail so the refreshed order the UI caches
+  // already carries warranty_sent_at. The payment is already committed,
+  // so no warranty outcome may fail this request — a send failure is
+  // recorded on the activity trail and left for staff to resend.
+  const warranty = await issueWarrantyIfPaid(sb, c.env, id);
+  if (warranty.status === 'failed') {
+    await logOrderEvent(sb, id, `Warranty email failed: ${warranty.message}`);
+  }
+
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data }, 201);
@@ -1214,6 +1198,119 @@ app.post('/:id/payments/:paymentId/receipt', async (c) => {
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
+});
+
+/**
+ * Emails (or re-emails) the warranty certificate for a fully paid order.
+ *
+ * The certificate normally goes out on its own the moment a payment
+ * clears the balance — see `issueWarrantyIfPaid`, called from both the
+ * payment route and the e-Transfer webhook. This endpoint exists for the
+ * cases automation cannot cover: a send that failed, a customer whose
+ * email address was added afterwards, a $0 order that never had a
+ * payment to trigger on, and a customer who simply lost the email.
+ *
+ * Resending is always allowed (`force`), exactly like the per-payment
+ * receipt: the stamp moves forward and the expiry dates do not, because
+ * they are pinned to the snapshotted `warranty_starts_on`.
+ *
+ * Server-authoritative (§1): the body carries only an optional
+ * consultant note. Every date and the paid-in-full test are computed in
+ * the Worker from the order total and the payments ledger.
+ *
+ * 404 unknown order · 409 balance still outstanding · 400 no customer
+ * email · 502 the email provider rejected the send (nothing stamped).
+ */
+app.post('/:id/warranty', async (c) => {
+  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+
+  const result = await issueWarrantyIfPaid(sb, c.env, id, {
+    force: true,
+    message: parsed.data.message,
+  });
+
+  if (result.status === 'failed') return c.json({ error: result.message }, 502);
+  if (result.status === 'skipped') {
+    if (result.reason === 'order_not_found') return c.json({ error: 'Order not found' }, 404);
+    if (result.reason === 'no_email') {
+      return c.json({ error: 'This customer has no email address on file.' }, 400);
+    }
+    return c.json(
+      { error: 'This order still has an outstanding balance — the warranty is issued once it is paid in full.' },
+      409
+    );
+  }
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
+/**
+ * Streams the warranty certificate as a downloadable PDF — the staff
+ * copy of exactly what the customer was emailed.
+ *
+ * No email is required and none is sent: nothing is delivered, so a
+ * customer without an address on file can still have their certificate
+ * printed or handed over. Coverage dates come from the snapshotted
+ * `warranty_starts_on` when it exists, so a download after the send is
+ * byte-for-byte the same document; before any send it previews from the
+ * ledger's latest payment date.
+ *
+ * 404 unknown order · 409 balance still outstanding · 500 render failure.
+ */
+app.get('/:id/warranty-pdf', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const bundle = await loadOrderBundle(sb, id);
+  if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const { order, company } = bundle;
+
+  const paid = sumPayments(order.payments);
+  const balance = Math.round((Number(order.total) - paid) * 100) / 100;
+  if (balance > 0.005) {
+    return c.json(
+      { error: 'This order still has an outstanding balance — the warranty is issued once it is paid in full.' },
+      409
+    );
+  }
+
+  const payDates: string[] = (order.payments ?? [])
+    .map((p: { paid_on?: string | null }) => p.paid_on)
+    .filter((d: unknown): d is string => typeof d === 'string');
+  const startsOn: string =
+    order.warranty_starts_on ??
+    [...payDates].sort().pop() ??
+    new Date().toISOString().slice(0, 10);
+
+  try {
+    const pdf = await buildWarrantyPdf({
+      order: { order_number: order.order_number, order_date: order.order_date },
+      coverage: buildWarrantyCoverage(order.line_items ?? [], startsOn),
+      customer: order.customer,
+      company: {
+        company_name: company.company_name || 'Blinds Nisa',
+        logo_url: company.logo_url,
+        email: company.email,
+        phone: company.phone,
+        address: company.address,
+      },
+      issuedOn: new Date().toISOString().slice(0, 10),
+      logo: await fetchLogo(company.logo_url),
+    });
+    // Re-slice into a plain ArrayBuffer — Hono's body type rejects
+    // Uint8Array<ArrayBufferLike> views directly.
+    const body = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength) as ArrayBuffer;
+    return c.body(body, 200, {
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${order.order_number}-warranty.pdf"`,
+    });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
+  }
 });
 
 /**
