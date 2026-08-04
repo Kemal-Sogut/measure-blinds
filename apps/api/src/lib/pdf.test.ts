@@ -14,32 +14,50 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
-import { buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString } from 'pdf-lib';
+import { MARGIN, PAGE_W, TOTALS_W, buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
+
+/** One `/Link` annotation read back off a rendered document. */
+interface RenderedLink {
+  uri: string;
+  /** Clickable region as [x1, y1, x2, y2] in PDF points. */
+  rect: number[];
+}
 
 /**
- * Reads back a rendered document and returns the destination URL of
- * every `/Link` annotation on it, in page order.
+ * Reads back a rendered document and returns every `/Link` annotation on
+ * it, in page order.
  *
  * The bytes cannot be string-searched for the URL: `doc.save()` packs
  * the annotation dictionaries into a Flate-compressed object stream. So
  * the document is re-parsed with pdf-lib and the annotation objects are
  * inspected — which also proves the link is a real URI action a viewer
- * will follow, not merely text that looks like one.
+ * will follow, not merely text that looks like one. The `/Rect` comes
+ * back too, because the button's alignment with the totals column is a
+ * layout requirement and nothing else can assert it on opaque bytes.
  */
-async function linkUris(bytes: Uint8Array): Promise<string[]> {
+async function links(bytes: Uint8Array): Promise<RenderedLink[]> {
   const doc = await PDFDocument.load(bytes);
-  const uris: string[] = [];
+  const found: RenderedLink[] = [];
   for (const page of doc.getPages()) {
     const annots = page.node.Annots();
     for (let i = 0; i < (annots?.size() ?? 0); i++) {
       const annot = annots!.lookup(i, PDFDict);
       if (annot.lookup(PDFName.of('Subtype')) !== PDFName.of('Link')) continue;
       const action = annot.lookup(PDFName.of('A'), PDFDict);
-      uris.push(action.lookup(PDFName.of('URI'), PDFString).decodeText());
+      const rect = annot.lookup(PDFName.of('Rect'), PDFArray);
+      found.push({
+        uri: action.lookup(PDFName.of('URI'), PDFString).decodeText(),
+        rect: rect.asArray().map((n) => (n as PDFNumber).asNumber()),
+      });
     }
   }
-  return uris;
+  return found;
+}
+
+/** Destination URLs only — the common case. */
+async function linkUris(bytes: Uint8Array): Promise<string[]> {
+  return (await links(bytes)).map((l) => l.uri);
 }
 
 const SAMPLE: PdfDocumentData = {
@@ -154,6 +172,15 @@ describe('buildDocumentPdf', () => {
     const url = 'https://app.example.com/customer/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const invoice: PdfDocumentData = { ...SAMPLE, docType: 'invoice', viewUrl: url };
     expect(await linkUris(await buildDocumentPdf(invoice))).toEqual([url]);
+  });
+
+  it('aligns the button with the totals column, flush to the right margin', async () => {
+    const [link] = await links(
+      await buildDocumentPdf({ ...SAMPLE, viewUrl: 'https://app.example.com/customer/x' })
+    );
+    const [x1, , x2] = link.rect;
+    expect(x2).toBeCloseTo(PAGE_W - MARGIN, 5);
+    expect(x2 - x1).toBeCloseTo(TOTALS_W, 5);
   });
 
   it('omits the link block when no customer page URL is supplied', async () => {

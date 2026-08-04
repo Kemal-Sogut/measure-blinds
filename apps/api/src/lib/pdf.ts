@@ -108,10 +108,10 @@ export interface PdfDocumentData {
   /**
    * Absolute URL of the customer's own order page
    * (`APP_URL/customer/:public_token`). When present the document prints
-   * a clickable "View your order online" button — plus the URL as plain
-   * text for printed copies — so a customer who has only the PDF can
-   * still reach the same page the estimate/invoice email links to.
-   * Null/omitted (an order with no public token) simply drops the block.
+   * a clickable "View your order online" button under the totals, so a
+   * customer who has only the PDF can still reach the same page the
+   * estimate/invoice email links to. Null/omitted (an order with no
+   * public token) simply drops the button.
    */
   viewUrl?: string | null;
 }
@@ -136,6 +136,13 @@ export const INK = rgb(0.13, 0.145, 0.16); // #212529
 export const MUTED = rgb(0.53, 0.56, 0.59); // #868e96
 export const SOFT = rgb(0.29, 0.31, 0.34); // #495057
 export const LINE = rgb(0.87, 0.89, 0.9); // #dee2e6
+/**
+ * Primary-action blue — the web app's `--color-brand-600` (#2563eb), the
+ * fill behind every primary button ("Send", "Save"). Used here so a
+ * call-to-action printed on a document reads as the same affordance the
+ * customer clicks in the app. Keep the two in sync if the token moves.
+ */
+export const BRAND = rgb(0.145, 0.388, 0.922); // #2563eb
 
 /** Formats money for print. */
 export function money(n: number): string {
@@ -309,28 +316,33 @@ export function drawRight(
 }
 
 /**
- * Draws a centered, clickable call-to-action button and advances the
- * cursor past it.
+ * Width of the right-hand totals column (Subtotal … Balance due). The
+ * call-to-action button spans exactly this column so it reads as part of
+ * the same right-aligned stack rather than as a floating banner.
+ */
+export const TOTALS_W = 220;
+
+/**
+ * Draws a clickable call-to-action button occupying the totals column —
+ * flush right, `TOTALS_W` wide — and advances the cursor past it.
  *
- * The button is a filled `INK` rectangle with white bold text, covered
- * by a PDF `/Link` annotation carrying a URI action — that annotation,
- * not the drawing, is what makes it clickable in a viewer. The same URL
- * is repeated underneath in small muted type because a printed page (or
- * a viewer with link actions disabled) has no other way to reach it.
+ * The button is a filled `BRAND` rectangle with centered white bold
+ * text, covered by a PDF `/Link` annotation carrying a URI action. That
+ * annotation, not the drawing, is what makes it clickable; the visible
+ * rectangle only tells the reader where to aim.
  *
- * The whole block is reserved with a single `ensure` before any drawing
- * so the rectangle, its text and its annotation can never be split
- * across a page break — the annotation is attached to `cur.page`, so a
- * mid-block page change would leave the link on the wrong page.
+ * The block is reserved with a single `ensure` before any drawing so the
+ * rectangle, its text and its annotation can never be split across a
+ * page break — the annotation is attached to `cur.page`, so a mid-block
+ * page change would leave the link on the wrong page.
  *
  * Exported as part of this module's shared PDF toolkit (see the note by
  * the page constants) so sibling documents can render an identical CTA.
  *
  * @param doc   the document being built — used to register the annotation
- * @param cur   layout cursor; advanced past the button and the URL line
- * @param url   absolute destination URL (printed verbatim as the fallback)
+ * @param cur   layout cursor; advanced past the button
+ * @param url   absolute destination URL for the link action
  * @param label button text, e.g. "View your order online"
- * @param font  regular face, used for the fallback URL line
  * @param bold  bold face, used for the button label
  */
 export function drawLinkButton(
@@ -338,24 +350,18 @@ export function drawLinkButton(
   cur: Cursor,
   url: string,
   label: string,
-  font: PDFFont,
   bold: PDFFont
 ): void {
   const LABEL_SIZE = 11;
-  const URL_SIZE = 8;
   const BTN_H = 30;
-  const PAD_X = 18;
 
+  cur.ensure(BTN_H);
   const labelW = bold.widthOfTextAtSize(label, LABEL_SIZE);
-  const btnW = Math.min(CONTENT_W, labelW + PAD_X * 2);
-  // button + 4pt gap + one URL line (URL_SIZE + 3)
-  cur.ensure(BTN_H + 4 + URL_SIZE + 3);
-
-  const x = MARGIN + (CONTENT_W - btnW) / 2;
+  const x = PAGE_W - MARGIN - TOTALS_W;
   const y = cur.y - BTN_H;
-  cur.page.drawRectangle({ x, y, width: btnW, height: BTN_H, color: INK });
+  cur.page.drawRectangle({ x, y, width: TOTALS_W, height: BTN_H, color: BRAND });
   cur.page.drawText(label, {
-    x: x + (btnW - labelW) / 2,
+    x: x + Math.max(0, (TOTALS_W - labelW) / 2),
     y: y + (BTN_H - LABEL_SIZE) / 2 + 2,
     size: LABEL_SIZE,
     font: bold,
@@ -367,22 +373,12 @@ export function drawLinkButton(
   const annotation = doc.context.obj({
     Type: 'Annot',
     Subtype: 'Link',
-    Rect: [x, y, x + btnW, y + BTN_H],
+    Rect: [x, y, x + TOTALS_W, y + BTN_H],
     Border: [0, 0, 0],
     A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
   });
   cur.page.node.addAnnot(doc.context.register(annotation));
-  cur.y = y - 4;
-
-  const urlW = font.widthOfTextAtSize(url, URL_SIZE);
-  cur.page.drawText(url, {
-    x: MARGIN + Math.max(0, (CONTENT_W - urlW) / 2),
-    y: cur.y - URL_SIZE,
-    size: URL_SIZE,
-    font,
-    color: MUTED,
-  });
-  cur.y -= URL_SIZE + 3;
+  cur.y = y;
 }
 
 /**
@@ -526,7 +522,7 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
 
   /* ── Totals box (right-aligned column) ────────────────────────── */
   cur.gap(8);
-  const labelX = rightEdge - 220;
+  const labelX = rightEdge - TOTALS_W;
   const totalsRow = (label: string, value: string, f: PDFFont, size: number, color = INK) => {
     cur.ensure(size + 5);
     cur.page.drawText(label, { x: labelX, y: cur.y - size, size, font: f, color: MUTED });
@@ -588,8 +584,8 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
   // Placed after the money and before the terms: it lands on the same
   // page as the total, while a long T&C block may spill to page 2.
   if (data.viewUrl) {
-    cur.gap(16);
-    drawLinkButton(doc, cur, data.viewUrl, 'View your order online', font, bold);
+    cur.gap(10);
+    drawLinkButton(doc, cur, data.viewUrl, 'View your order online', bold);
   }
 
   /* ── Terms & conditions ───────────────────────────────────────── */
