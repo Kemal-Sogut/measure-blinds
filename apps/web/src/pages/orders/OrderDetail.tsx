@@ -603,11 +603,19 @@ export default function OrderDetail() {
       return;
     }
     if (expiryManual) return;
+    // An order being opened carries its own expiry: until it has
+    // hydrated, the default must not write anything. Both effects can
+    // fire in the SAME commit — `company` settling changes this one's
+    // deps just as the order arrives — and this one runs second, so
+    // without the guard the default overwrote the saved date. A chip
+    // hid the damage by recomputing on the next pass; a hand-picked
+    // date had nothing to restore it.
+    if (id && !hydrated) return;
     const days = company?.default_expiry_days ?? 14;
     const d = new Date(orderDate);
     d.setDate(d.getDate() + days);
     setExpiryDate(d);
-  }, [orderDate, company, expiryManual, expiryPreset]);
+  }, [orderDate, company, expiryManual, expiryPreset, id, hydrated]);
 
   const catalogs: Catalogs = useMemo(
     () => ({
