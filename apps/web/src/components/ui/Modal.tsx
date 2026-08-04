@@ -14,7 +14,9 @@
  * Accessibility is handled here so callers cannot forget it: Escape
  * closes, the backdrop closes on click while content clicks do not
  * bubble, body scroll locks while open, focus moves into the panel on
- * open, and the panel is a labelled `role="dialog"` with `aria-modal`.
+ * open (once, and never away from a child that already holds it — see
+ * the focus effect), and the panel is a labelled `role="dialog"` with
+ * `aria-modal`.
  * Rendering is conditional rather than CSS-hidden, so a closed dialog
  * holds no focusable nodes.
  *
@@ -61,24 +63,53 @@ export default function Modal({
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Latest `onClose` behind a ref so the Escape/scroll-lock effect can
+   * depend on `open` alone. Callers pass an inline arrow (`onClose={() =>
+   * setOpen(false)}`), which changes identity on every render of the
+   * PAGE — with `onClose` in the dependency array that effect tore down
+   * and re-ran on each of those renders.
+   */
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKeyDown);
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
 
-    panelRef.current?.focus();
-
     return () => {
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = previousOverflow;
     };
-  }, [open, onClose]);
+  }, [open]);
+
+  /**
+   * Move focus into the panel ONCE per open, and only when focus is not
+   * already inside it.
+   *
+   * Both conditions are load-bearing on phones. Focusing the panel while
+   * a child input holds focus blurs that input, and a blur closes the
+   * software keyboard — which is what happened to the fields of a form
+   * rendered in this dialog (an `autoFocus` child lost the caret
+   * immediately, and any later re-render of the opening page yanked the
+   * keyboard away mid-typing).
+   */
+  useEffect(() => {
+    if (!open) return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (panel.contains(document.activeElement) && document.activeElement !== panel) return;
+    panel.focus();
+  }, [open]);
 
   if (!open) return null;
 

@@ -2085,10 +2085,21 @@ export default function OrderDetail() {
                       return (
                         <li
                           key={it.key}
-                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-start sm:gap-2"
+                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
                         >
-                          {/* Line 1 on phones: checkbox, badge, name. */}
-                          <div className="flex min-w-0 flex-1 items-start gap-2 sm:py-1.5">
+                          {/*
+                            Line 1 on phones: checkbox, badge, name.
+
+                            Alignment is start on phones and centre at `sm+`.
+                            On a phone the name routinely wraps to several
+                            lines, and a centred checkbox/badge would float
+                            beside the middle of that block instead of its
+                            first line. At `sm+` the row is one line whose
+                            height is set by the 32px action buttons, so
+                            start-alignment left the text visibly above the
+                            row's centre — hence the switch.
+                          */}
+                          <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
                             {/* Checkbox — hidden in read-only */}
                             {!readOnly && (
                               <input
@@ -2096,12 +2107,12 @@ export default function OrderDetail() {
                                 checked={selected.has(it.key)}
                                 onChange={() => toggleSelect(it.key)}
                                 aria-label={`Select ${name}`}
-                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm accent-brand-600"
+                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm accent-brand-600 sm:mt-0"
                               />
                             )}
 
                             {/* Type badge */}
-                            <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                            <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
                               {typeBadge}
                             </span>
 
