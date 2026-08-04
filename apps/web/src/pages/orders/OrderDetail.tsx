@@ -71,7 +71,7 @@ import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
-import { expiryFromPreset, type ExpiryPresetId } from '../../lib/expiryTerms';
+import { expiryFromPreset, presetFromDates, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
 import { calculateTotals } from '../../lib/totals';
 import {
@@ -575,10 +575,16 @@ export default function OrderDetail() {
   // Hydrate once from a loaded order.
   useEffect(() => {
     if (id && existing && !hydrated) {
+      const savedOrderDate = fromIso(existing.order_date);
+      const savedExpiry = fromIso(existing.expiry_date);
       setCustomer(existing.customer ?? null);
-      setOrderDate(fromIso(existing.order_date));
-      setExpiryDate(fromIso(existing.expiry_date));
+      setOrderDate(savedOrderDate);
+      setExpiryDate(savedExpiry);
       setExpiryManual(true); // persisted expiry counts as chosen
+      // Only the resolved dates are stored, so the term that produced
+      // them is re-derived — otherwise re-opening a saved order shows an
+      // empty chip row and the choice looks like it was lost.
+      setExpiryPreset(presetFromDates(savedOrderDate, savedExpiry));
       setItems(toDrafts(existing));
       setDiscountType(existing.discount_type);
       setDiscountValue(existing.discount_value ? String(existing.discount_value) : '');

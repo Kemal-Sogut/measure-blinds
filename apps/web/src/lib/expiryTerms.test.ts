@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { EXPIRY_PRESETS, expiryFromPreset } from './expiryTerms';
+import { EXPIRY_PRESETS, expiryFromPreset, presetFromDates } from './expiryTerms';
 
 /** Local-time date, avoiding UTC parsing of 'YYYY-MM-DD' strings. */
 function at(y: number, m: number, d: number): Date {
@@ -51,5 +51,33 @@ describe('expiryFromPreset', () => {
     const base = at(2026, 8, 4);
     for (const p of EXPIRY_PRESETS) expiryFromPreset(base, p.id);
     expect(base).toEqual(at(2026, 8, 4));
+  });
+});
+
+describe('presetFromDates', () => {
+  it('round-trips every term', () => {
+    const base = at(2026, 8, 6);
+    for (const p of EXPIRY_PRESETS) {
+      expect(presetFromDates(base, expiryFromPreset(base, p.id))).toBe(p.id);
+    }
+  });
+
+  it('recovers the term a saved order was dated with', () => {
+    // The order that exposed the bug: Aug 6 → Aug 21 is the 15-day term.
+    expect(presetFromDates(at(2026, 8, 6), at(2026, 8, 21))).toBe('d15');
+  });
+
+  it('returns null for a gap no term explains', () => {
+    // The company default is 14 days — deliberately not a chip.
+    expect(presetFromDates(at(2026, 8, 1), at(2026, 8, 15))).toBeNull();
+    // Same day is a term ("on receipt"); an expiry BEFORE the order date
+    // is not, even though the API/DB would reject it anyway.
+    expect(presetFromDates(at(2026, 8, 4), at(2026, 8, 4))).toBe('on_receipt');
+    expect(presetFromDates(at(2026, 8, 4), at(2026, 7, 30))).toBeNull();
+  });
+
+  it('ignores a time component on the order date', () => {
+    const dated = new Date(2026, 7, 6, 16, 45, 30);
+    expect(presetFromDates(dated, at(2026, 8, 13))).toBe('d7');
   });
 });

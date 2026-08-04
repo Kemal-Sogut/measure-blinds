@@ -8,7 +8,8 @@
  *
  * A term is a UI-only convenience — only the resolved `expiry_date` is
  * persisted with the order — but it stays selected while the editor is
- * open so that moving the order date moves the expiry with it.
+ * open so that moving the order date moves the expiry with it, and
+ * `presetFromDates` recovers it when a saved order is re-opened.
  */
 
 /**
@@ -65,4 +66,28 @@ export function expiryFromPreset(orderDate: Date, preset: ExpiryPresetId): Date 
       return d;
     }
   }
+}
+
+/** Calendar-day identity, ignoring any time component. */
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+/**
+ * Inverse of `expiryFromPreset`: the term whose offset explains a saved
+ * expiry date, or `null` when the gap matches no shortcut (a hand-picked
+ * date, or the company default of 14 days).
+ *
+ * An order row stores only the two resolved dates, so re-opening a saved
+ * order would otherwise show an empty term row even though the estimate
+ * was dated by one — the selection would look like it had been lost.
+ * Offsets are distinct (0/1/3/7/15 days and a calendar month, which is
+ * 28–31), so the first match is the only match.
+ */
+export function presetFromDates(orderDate: Date, expiryDate: Date): ExpiryPresetId | null {
+  const target = dayKey(expiryDate);
+  for (const p of EXPIRY_PRESETS) {
+    if (dayKey(expiryFromPreset(orderDate, p.id)) === target) return p.id;
+  }
+  return null;
 }
