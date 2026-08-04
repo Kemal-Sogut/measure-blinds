@@ -70,6 +70,8 @@ import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
+import { expiryFromPreset, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
 import { calculateTotals } from '../../lib/totals';
 import {
@@ -140,6 +142,22 @@ import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRail
 const SHEET_PANEL =
   'max-h-[92dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 ' +
   'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:rounded-2xl lg:pb-4';
+
+/**
+ * Overlay for the customer picker. On phone/tablet it anchors the panel 25%
+ * down from the top instead of the bottom: the search field then sits around
+ * the middle of the screen with its results directly underneath, so the
+ * on-screen keyboard can't cover the (often single) match. Desktop keeps the
+ * usual centered dialog.
+ */
+const CUSTOMER_SHEET_OVERLAY =
+  'fixed inset-0 z-40 flex items-start justify-center bg-black/40 pt-[25dvh] ' +
+  'lg:items-center lg:pt-0';
+
+/** Panel for the customer picker — fully rounded and fits the space below the 25% offset. */
+const CUSTOMER_SHEET_PANEL =
+  'max-h-[calc(75dvh-1rem)] w-full overflow-y-auto overscroll-contain rounded-2xl bg-surface p-4 ' +
+  'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:max-w-md lg:pb-4';
 
 /** Icon-badge tint + ink per accent, mirroring `ui/Card`'s CardHeader. */
 const SECTION_ACCENTS: Record<CardAccent, string> = {
@@ -449,6 +467,10 @@ export default function OrderDetail() {
   const [orderDate, setOrderDate] = useState<Date>(new Date());
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
   const [expiryManual, setExpiryManual] = useState(false);
+  // Expiry term chosen from the shortcut chips ("On receipt", 7 days…).
+  // While set, the expiry date follows the order date; picking a date
+  // directly clears it back to null.
+  const [expiryPreset, setExpiryPreset] = useState<ExpiryPresetId | null>(null);
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
@@ -564,15 +586,22 @@ export default function OrderDetail() {
     }
   }, [id, existing, hydrated]);
 
-  // Auto-default expiry = order date + default_expiry_days until the
-  // consultant picks an expiry manually.
+  // Expiry follows the order date in two cases: a chip term is selected
+  // (its offset is re-applied whenever the order date moves), or nothing
+  // has been chosen yet and the company default_expiry_days applies. A
+  // date picked straight from the expiry DatePicker clears the term and
+  // sets `expiryManual`, which pins it.
   useEffect(() => {
+    if (expiryPreset) {
+      setExpiryDate(expiryFromPreset(orderDate, expiryPreset));
+      return;
+    }
     if (expiryManual) return;
     const days = company?.default_expiry_days ?? 14;
     const d = new Date(orderDate);
     d.setDate(d.getDate() + days);
     setExpiryDate(d);
-  }, [orderDate, company, expiryManual]);
+  }, [orderDate, company, expiryManual, expiryPreset]);
 
   const catalogs: Catalogs = useMemo(
     () => ({
@@ -1962,43 +1991,30 @@ export default function OrderDetail() {
           {timelineCard}
 
           <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
-            {/* Header card: customer + dates */}
-            <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-              <div>
-                <span className="mb-1.5 block text-xs font-medium text-text-secondary">Customer</span>
-                <button
-                  type="button"
-                  onClick={() => !readOnly && setSheet('customer')}
-                  className="flex h-11 w-full items-center justify-between rounded-md border border-border-input bg-surface px-3 text-left"
-                >
-                  <span className={`text-sm ${customer ? 'text-text-primary' : 'text-text-muted'}`}>
-                    {customer ? displayName(customer) : 'Select customer…'}
-                  </span>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted" />
-                  </svg>
-                </button>
-              </div>
+            {/* Customer card: picker title row + expandable detail panel */}
+            <CustomerCard
+              customer={customer}
+              onPick={() => setSheet('customer')}
+              readOnly={readOnly}
+            />
 
-              <div className="grid grid-cols-2 gap-3.5">
-                <DatePicker label="Order date" value={orderDate} onChange={setOrderDate} />
-                <DatePicker
-                  label="Expiry date"
-                  value={expiryDate}
-                  onChange={(d) => {
-                    setExpiryDate(d);
-                    setExpiryManual(true);
-                  }}
-                />
-              </div>
-
-              <div className="text-xs text-text-muted">
-                Order #:{' '}
-                <span className="font-mono font-medium text-text-secondary">
-                  {existing?.order_number ?? 'assigned on save'}
-                </span>
-              </div>
-            </section>
+            {/* Dates card: order/expiry dates, expiry terms, order number */}
+            <OrderDatesCard
+              orderDate={orderDate}
+              onOrderDate={setOrderDate}
+              expiryDate={expiryDate}
+              onExpiryDate={(d) => {
+                setExpiryDate(d);
+                setExpiryManual(true);
+                setExpiryPreset(null);
+              }}
+              expiryPreset={expiryPreset}
+              onExpiryPreset={(preset) => {
+                setExpiryPreset(preset);
+                setExpiryManual(true);
+              }}
+              orderNumber={existing?.order_number ?? null}
+            />
 
             {/* Line items summary table */}
             {(items.length > 0 || !readOnly) && (
@@ -2394,9 +2410,9 @@ export default function OrderDetail() {
 
       {/* Customer selector bottom sheet */}
       {sheet === 'customer' && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
+        <div className={CUSTOMER_SHEET_OVERLAY} onClick={() => setSheet('none')}>
           <div
-            className={`${SHEET_PANEL} lg:max-w-md`}
+            className={CUSTOMER_SHEET_PANEL}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex gap-2">

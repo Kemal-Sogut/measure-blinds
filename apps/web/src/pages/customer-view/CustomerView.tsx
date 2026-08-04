@@ -12,7 +12,7 @@
  *
  *   not found / draft → generic error card
  *   expired           → "contact us for a new quote" card
- *   sent              → summary + Confirm button (the estimate)
+ *   sent              → summary + terms tick + Confirm button (estimate)
  *   confirmed         → e-Transfer details FIRST (with the 50% deposit
  *                       quoted while the order awaits its first payment)
  *                       + progress tracker + summary + cancellation block
@@ -25,6 +25,12 @@
  *
  * Because the tracker is always live here, the app sends customers NO
  * status-update emails.
+ *
+ * Confirm is gated on an explicit "I have read and agree to the Terms &
+ * Conditions" tick whenever the payload carries terms — the tick sits in
+ * the fixed confirm bar and links to the (collapsed) terms section. Shops
+ * with no terms configured keep the ungated button; the gate is UI-side,
+ * so the acceptance is not recorded on the order row.
  *
  * The confirm POST is rate-limited server-side and succeeds exactly
  * once; a 409 flips the UI into the confirmed state. A confirmation can
@@ -286,15 +292,25 @@ function LineItemRow({
  * The chevron, its `rotate-90` open state and the row's shape mirror
  * `LineItemRow` above, so both disclosures on this page read as the same
  * control rather than two different ideas about expanding.
+ *
+ * Open/closed is OWNED BY THE PARENT: the acceptance checkbox in the
+ * confirm bar links here, and a customer who follows that link must land
+ * on expanded text, not on a heading they have to tap again.
  */
-function TermsSection({ terms }: { terms: string }) {
-  const [open, setOpen] = useState(false);
-
+function TermsSection({
+  terms,
+  open,
+  onToggle,
+}: {
+  terms: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
   return (
-    <section className="mb-4 rounded-2xl bg-surface-elevated p-4">
+    <section id="terms" className="mb-4 scroll-mt-4 rounded-2xl bg-surface-elevated p-4">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={onToggle}
         aria-expanded={open}
         aria-controls="terms-body"
         className="flex w-full items-center gap-2 text-left"
@@ -363,6 +379,12 @@ export default function CustomerView() {
   const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Terms disclosure + the acceptance tick that gates Confirm. Both are
+  // page state: the checkbox's "Terms & Conditions" link opens the
+  // section, and neither survives a reload — a confirmation must be a
+  // deliberate act on the page the customer is looking at.
+  const [termsOpen, setTermsOpen] = useState(false);
+  const [termsAccepted, setTermsAccepted] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -422,6 +444,9 @@ export default function CustomerView() {
    * what the customer needs next.
    */
   async function handleConfirm() {
+    // Belt-and-braces with the disabled button: the terms tick is the
+    // customer's assent, so nothing may POST without it.
+    if (estimate?.terms && !termsAccepted) return;
     setConfirming(true);
     setActionError(null);
     try {
@@ -501,6 +526,11 @@ export default function CustomerView() {
   }
 
   const confirmed = CONFIRMED_STATUSES.includes(estimate.status);
+  // Acceptance is only demanded when there is something to accept: a shop
+  // with no terms configured (or a payload from an older Worker) must not
+  // end up with an un-confirmable estimate.
+  const requiresTerms = Boolean(estimate.terms);
+  const canConfirm = !preview && !confirming && (!requiresTerms || termsAccepted);
   // Defaulted, not assumed: if the web app ships ahead of the Worker
   // this field is absent, and a public page must degrade to "no receipt
   // history" rather than crash for the customer.
@@ -520,8 +550,15 @@ export default function CustomerView() {
   const c = estimate.company;
   const cust = estimate.customer;
 
+  // Bottom padding clears the fixed confirm bar, which is one row taller
+  // when it carries the terms checkbox — otherwise the last card ends up
+  // underneath it.
   return (
-    <div className={`min-h-screen bg-surface-muted ${confirmed ? 'pb-8' : 'pb-28'}`}>
+    <div
+      className={`min-h-screen bg-surface-muted ${
+        confirmed ? 'pb-8' : requiresTerms ? 'pb-40' : 'pb-28'
+      }`}
+    >
       {/*
         Staff preview marker. This page is otherwise byte-identical to
         the customer's, which is exactly why the banner is required:
@@ -675,7 +712,13 @@ export default function CustomerView() {
         )}
 
         {/* Terms — clamped to 5 lines behind a "Show more" toggle */}
-        {estimate.terms && <TermsSection terms={estimate.terms} />}
+        {estimate.terms && (
+          <TermsSection
+            terms={estimate.terms}
+            open={termsOpen}
+            onToggle={() => setTermsOpen((v) => !v)}
+          />
+        )}
 
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
@@ -691,20 +734,58 @@ export default function CustomerView() {
         )}
       </div>
 
-      {/* Big confirm button — pre-confirmation only */}
+      {/* Terms tick + big confirm button — pre-confirmation only */}
       {!confirmed && (
         <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <button
-            onClick={handleConfirm}
-            disabled={confirming || preview}
-            className="mx-auto flex h-14 w-full max-w-lg items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-          >
+          <div className="mx-auto flex w-full max-w-lg flex-col gap-2.5">
             {/*
-              The label never says "Confirming…" in preview: nothing is
-              in flight, the button is simply inert.
+              The tick lives WITH the button, not up in the terms card:
+              the terms are collapsed by default and can sit a full screen
+              above, and an acceptance the customer never scrolls to is no
+              acceptance at all. Tapping the link expands the section and
+              scrolls to it, so agreeing without being able to read is not
+              a state this page can be in.
             */}
-            {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
-          </button>
+            {requiresTerms && (
+              <label className="flex items-start gap-2.5 text-sm text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  disabled={preview}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  className="mt-0.5 h-5 w-5 shrink-0 accent-brand-600 disabled:opacity-50"
+                />
+                <span>
+                  I have read and agree to the{' '}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTermsOpen(true);
+                      document.getElementById('terms')?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start',
+                      });
+                    }}
+                    className="font-medium text-brand-600 underline underline-offset-2"
+                  >
+                    Terms &amp; Conditions
+                  </button>
+                  .
+                </span>
+              </label>
+            )}
+            <button
+              onClick={handleConfirm}
+              disabled={!canConfirm}
+              className="flex h-14 w-full items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+            >
+              {/*
+                The label never says "Confirming…" in preview: nothing is
+                in flight, the button is simply inert.
+              */}
+              {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
+            </button>
+          </div>
         </div>
       )}
     </div>
