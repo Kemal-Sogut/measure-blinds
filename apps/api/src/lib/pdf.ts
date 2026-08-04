@@ -13,6 +13,12 @@
  * (once at least one payment is recorded) adds a payments list plus an
  * "Amount paid" / "Balance due" block after the totals.
  *
+ * CUSTOMER LINK: when the caller supplies `viewUrl`, a clickable
+ * "View your order online" button is printed between the totals and the
+ * terms, pointing at the customer's own order page. It makes the PDF
+ * self-sufficient — a customer who kept only the attachment, and staff
+ * who downloaded it, can still reach the live page without the email.
+ *
  * ENGINE NOTE: built with `pdf-lib` (pure JavaScript). The originally
  * planned @react-pdf/renderer cannot run on Cloudflare Workers — its
  * yoga-layout engine compiles WASM at runtime, which workerd forbids
@@ -23,7 +29,7 @@
  * word-wrapping and automatic page breaks.
  */
 
-import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, PDFFont, PDFPage, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { displayName } from './customerName';
 
 /** A single recorded payment, printed on invoices. */
@@ -99,6 +105,15 @@ export interface PdfDocumentData {
   terms: string;
   /** Pre-fetched logo bytes, or null to omit the logo */
   logo: Uint8Array | null;
+  /**
+   * Absolute URL of the customer's own order page
+   * (`APP_URL/customer/:public_token`). When present the document prints
+   * a clickable "View your order online" button — plus the URL as plain
+   * text for printed copies — so a customer who has only the PDF can
+   * still reach the same page the estimate/invoice email links to.
+   * Null/omitted (an order with no public token) simply drops the block.
+   */
+  viewUrl?: string | null;
 }
 
 /* ── Page + palette constants (US Letter, 40pt margins) ─────────── */
@@ -291,6 +306,83 @@ export function drawRight(
     font,
     color,
   });
+}
+
+/**
+ * Draws a centered, clickable call-to-action button and advances the
+ * cursor past it.
+ *
+ * The button is a filled `INK` rectangle with white bold text, covered
+ * by a PDF `/Link` annotation carrying a URI action — that annotation,
+ * not the drawing, is what makes it clickable in a viewer. The same URL
+ * is repeated underneath in small muted type because a printed page (or
+ * a viewer with link actions disabled) has no other way to reach it.
+ *
+ * The whole block is reserved with a single `ensure` before any drawing
+ * so the rectangle, its text and its annotation can never be split
+ * across a page break — the annotation is attached to `cur.page`, so a
+ * mid-block page change would leave the link on the wrong page.
+ *
+ * Exported as part of this module's shared PDF toolkit (see the note by
+ * the page constants) so sibling documents can render an identical CTA.
+ *
+ * @param doc   the document being built — used to register the annotation
+ * @param cur   layout cursor; advanced past the button and the URL line
+ * @param url   absolute destination URL (printed verbatim as the fallback)
+ * @param label button text, e.g. "View your order online"
+ * @param font  regular face, used for the fallback URL line
+ * @param bold  bold face, used for the button label
+ */
+export function drawLinkButton(
+  doc: PDFDocument,
+  cur: Cursor,
+  url: string,
+  label: string,
+  font: PDFFont,
+  bold: PDFFont
+): void {
+  const LABEL_SIZE = 11;
+  const URL_SIZE = 8;
+  const BTN_H = 30;
+  const PAD_X = 18;
+
+  const labelW = bold.widthOfTextAtSize(label, LABEL_SIZE);
+  const btnW = Math.min(CONTENT_W, labelW + PAD_X * 2);
+  // button + 4pt gap + one URL line (URL_SIZE + 3)
+  cur.ensure(BTN_H + 4 + URL_SIZE + 3);
+
+  const x = MARGIN + (CONTENT_W - btnW) / 2;
+  const y = cur.y - BTN_H;
+  cur.page.drawRectangle({ x, y, width: btnW, height: BTN_H, color: INK });
+  cur.page.drawText(label, {
+    x: x + (btnW - labelW) / 2,
+    y: y + (BTN_H - LABEL_SIZE) / 2 + 2,
+    size: LABEL_SIZE,
+    font: bold,
+    color: rgb(1, 1, 1),
+  });
+
+  // Border [0,0,0] suppresses the viewer's default link outline, which
+  // would otherwise draw a visible box over the filled button.
+  const annotation = doc.context.obj({
+    Type: 'Annot',
+    Subtype: 'Link',
+    Rect: [x, y, x + btnW, y + BTN_H],
+    Border: [0, 0, 0],
+    A: { Type: 'Action', S: 'URI', URI: PDFString.of(url) },
+  });
+  cur.page.node.addAnnot(doc.context.register(annotation));
+  cur.y = y - 4;
+
+  const urlW = font.widthOfTextAtSize(url, URL_SIZE);
+  cur.page.drawText(url, {
+    x: MARGIN + Math.max(0, (CONTENT_W - urlW) / 2),
+    y: cur.y - URL_SIZE,
+    size: URL_SIZE,
+    font,
+    color: MUTED,
+  });
+  cur.y -= URL_SIZE + 3;
 }
 
 /**
@@ -490,6 +582,14 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
         cur.y -= 12;
       }
     }
+  }
+
+  /* ── "View your order online" CTA ─────────────────────────────── */
+  // Placed after the money and before the terms: it lands on the same
+  // page as the total, while a long T&C block may spill to page 2.
+  if (data.viewUrl) {
+    cur.gap(16);
+    drawLinkButton(doc, cur, data.viewUrl, 'View your order online', font, bold);
   }
 
   /* ── Terms & conditions ───────────────────────────────────────── */

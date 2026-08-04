@@ -623,11 +623,18 @@ async function loadOrderBundle(sb: SupabaseClient, id: string) {
  * Maps a loaded bundle into the PDF module's input shape. `docType`
  * decides the document title (Estimate vs Invoice); the invoice
  * variant also carries the payment ledger and outstanding balance.
+ *
+ * `viewUrl` is the customer's order-page URL for the "View your order
+ * online" button. Every caller already resolves the public token (they
+ * either just minted it or reuse the stored one), so it is passed in
+ * rather than derived here — this helper stays free of `c.env` and of
+ * any database write.
  */
 async function toPdfData(
   order: Record<string, any>,
   company: Record<string, any>,
-  terms: string
+  terms: string,
+  viewUrl: string | null
 ): Promise<PdfDocumentData> {
   const amount_paid = sumPayments(order.payments);
   const total = Number(order.total);
@@ -671,17 +678,37 @@ async function toPdfData(
     },
     terms,
     logo: await fetchLogo(company.logo_url),
+    viewUrl,
   };
 }
 
-/** Streams the order as a downloadable PDF (Estimate, or Invoice once paid). */
+/**
+ * Streams the order as a downloadable PDF (Estimate, or Invoice once paid).
+ *
+ * The document carries the customer's order-page button, so this GET
+ * mints and persists `public_token` when the order never had one —
+ * exactly the reuse-or-mint rule the send routes and `POST
+ * /:id/public-token` follow, and for the same reason: a link printed on
+ * a document that leaves the building must resolve. Minting is logged
+ * once; a download of an order that already has a token writes nothing.
+ */
 app.get('/:id/pdf', async (c) => {
   const sb = createSupabaseAdmin(c.env);
-  const bundle = await loadOrderBundle(sb, c.req.param('id'));
+  const id = c.req.param('id');
+  const bundle = await loadOrderBundle(sb, id);
   if (!bundle) return c.json({ error: 'Order not found' }, 404);
   const terms = bundle.order.terms_snapshot ?? bundle.company.terms_and_conditions ?? '';
+
+  const publicToken: string = bundle.order.public_token ?? crypto.randomUUID();
+  if (!bundle.order.public_token) {
+    const { error } = await sb.from('orders').update({ public_token: publicToken }).eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+    await logOrderEvent(sb, id, 'Customer view link created.');
+  }
+  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+
   try {
-    const data = await toPdfData(bundle.order, bundle.company, terms);
+    const data = await toPdfData(bundle.order, bundle.company, terms, viewUrl);
     const pdf = await buildDocumentPdf(data);
     // Re-slice into a plain ArrayBuffer — Hono's body type rejects
     // Uint8Array<ArrayBufferLike> views directly.
@@ -732,7 +759,7 @@ app.post('/:id/send', async (c) => {
   let pdf: Uint8Array;
   try {
     // An unsent order has no payments yet, so this is always an Estimate.
-    pdf = await buildDocumentPdf(await toPdfData(order, company, terms));
+    pdf = await buildDocumentPdf(await toPdfData(order, company, terms, viewUrl));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
   }
@@ -899,7 +926,7 @@ app.post('/:id/send-invoice', async (c) => {
   let pdf: Uint8Array;
   try {
     // toPdfData renders an Invoice because the order is confirmed.
-    pdf = await buildDocumentPdf(await toPdfData(order, company, terms));
+    pdf = await buildDocumentPdf(await toPdfData(order, company, terms, viewUrl));
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
   }

@@ -14,7 +14,33 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
 import { buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
+
+/**
+ * Reads back a rendered document and returns the destination URL of
+ * every `/Link` annotation on it, in page order.
+ *
+ * The bytes cannot be string-searched for the URL: `doc.save()` packs
+ * the annotation dictionaries into a Flate-compressed object stream. So
+ * the document is re-parsed with pdf-lib and the annotation objects are
+ * inspected — which also proves the link is a real URI action a viewer
+ * will follow, not merely text that looks like one.
+ */
+async function linkUris(bytes: Uint8Array): Promise<string[]> {
+  const doc = await PDFDocument.load(bytes);
+  const uris: string[] = [];
+  for (const page of doc.getPages()) {
+    const annots = page.node.Annots();
+    for (let i = 0; i < (annots?.size() ?? 0); i++) {
+      const annot = annots!.lookup(i, PDFDict);
+      if (annot.lookup(PDFName.of('Subtype')) !== PDFName.of('Link')) continue;
+      const action = annot.lookup(PDFName.of('A'), PDFDict);
+      uris.push(action.lookup(PDFName.of('URI'), PDFString).decodeText());
+    }
+  }
+  return uris;
+}
 
 const SAMPLE: PdfDocumentData = {
   docType: 'estimate',
@@ -117,6 +143,22 @@ describe('buildDocumentPdf', () => {
     const bytes = await buildDocumentPdf(invoice);
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
     expect(bytes.length).toBeGreaterThan(2000);
+  });
+
+  it('embeds the customer order page as a clickable link annotation', async () => {
+    const url = 'https://app.example.com/customer/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    expect(await linkUris(await buildDocumentPdf({ ...SAMPLE, viewUrl: url }))).toEqual([url]);
+  });
+
+  it('carries the link on the invoice variant too', async () => {
+    const url = 'https://app.example.com/customer/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const invoice: PdfDocumentData = { ...SAMPLE, docType: 'invoice', viewUrl: url };
+    expect(await linkUris(await buildDocumentPdf(invoice))).toEqual([url]);
+  });
+
+  it('omits the link block when no customer page URL is supplied', async () => {
+    expect(await linkUris(await buildDocumentPdf(SAMPLE))).toEqual([]);
+    expect(await linkUris(await buildDocumentPdf({ ...SAMPLE, viewUrl: null }))).toEqual([]);
   });
 
   it('renders without optional content (no discount, no terms, no items)', async () => {
