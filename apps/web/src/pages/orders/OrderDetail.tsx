@@ -1893,7 +1893,13 @@ export default function OrderDetail() {
     // the first measurement lands. `overflow-x-clip` is a guard against
     // a future child overflowing, not a fix for one — nothing here is
     // supposed to exceed the viewport.
-    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] xl:pb-8">
+    // `--page-max` is set HERE, on the page root, rather than on each
+    // container: every `.page-container` below — the sticky head, the
+    // grid, and the fixed action bar — inherits it, so the header, the
+    // body and the bar cannot end up on three different tracks. 1000px
+    // caps the form column plus the summary rail together; past that the
+    // whole block centres in whatever room the nav rail leaves.
+    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] [--page-max:1000px] xl:pb-8">
       {/*
         Sticky head: the page header and the document-action toolbar pin
         as ONE block, so the second never needs to know the first's
@@ -1945,13 +1951,10 @@ export default function OrderDetail() {
         cards run off the screen.
       */}
       <div
-        className={`${PAGE_CONTAINER} pb-4 pt-4 md:pb-6 md:pt-6 xl:grid xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start xl:gap-8 xl:pb-8 xl:pt-8`}
+        className={`${PAGE_CONTAINER} pb-4 pt-4 md:pb-6 md:pt-6 xl:grid xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start xl:gap-6 xl:pb-8 xl:pt-8`}
       >
         {/* ── Form column ── */}
         <div className="flex w-full min-w-0 flex-col gap-4">
-          {/* Document actions (Save / Send / Download / Customer View / Delete) */}
-          {docActions}
-
           {/* Open cancellation request — needs an answer before anything else */}
           {cancelRequestBanner}
 
