@@ -7,11 +7,12 @@
  *
  * `CustomerCard` keeps the existing picker as its title row — tapping it
  * opens the searchable customer sheet owned by `OrderDetail` — and adds
- * a disclosure that expands the full customer record (contact plus
- * shipping/billing addresses) inline as read-only text fields, so a
- * consultant can read or copy an address without leaving the order.
- * Editing a customer stays in the Customers module; nothing here writes
- * back to the customer row.
+ * a disclosure that expands the customer record inline as PLAIN TEXT
+ * laid out like an address label: name / phone / email, then the
+ * shipping block, with billing beside it only when the two differ. Not
+ * form fields — this is something to read, and boxes around unchangeable
+ * values invite edits that cannot happen. Editing a customer stays in
+ * the Customers module; nothing here writes back to the customer row.
  *
  * `OrderDatesCard` owns the order/expiry date pair and the expiry term
  * shortcuts from `lib/expiryTerms` ("On receipt", 1/3/7/15 days, 1
@@ -32,30 +33,49 @@ import { EXPIRY_PRESETS, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { Customer } from '../../types';
 
 /**
- * One labelled read-only value inside the expanded customer card.
- * Rendered as a real `input` rather than text so the value keeps the
- * field affordance of the surrounding form and stays selectable /
- * copyable (phone numbers, postal codes) on touch devices. Empty values
- * render a muted em dash placeholder instead of a blank box.
+ * Formats one address as the two printed lines used on letters:
+ *
+ *   123 Main Street, Toronto, ON
+ *   X0X X0X Canada
+ *
+ * Line 2 of the street address (unit/buzzer) folds into the first line
+ * rather than getting a line of its own, so a two-line block stays two
+ * lines. Empty parts are dropped, and the country word is only appended
+ * behind a postal code — this shop's address search is Canada-only, but
+ * "Canada" alone under an otherwise empty address would be noise.
+ * Returns an empty array when the customer has no address at all, which
+ * is the caller's signal to skip the block.
  */
-function DetailField({
-  label,
-  value,
-  className = '',
-}: {
-  label: string;
-  value: string | null | undefined;
-  className?: string;
-}) {
+function addressLines(a: {
+  line1: string;
+  line2: string;
+  city: string;
+  province: string;
+  postal: string;
+}): string[] {
+  const street = [a.line1, a.line2, a.city, a.province]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean)
+    .join(', ');
+  const postal = (a.postal ?? '').trim();
+  return [street, postal && `${postal} Canada`].filter(Boolean);
+}
+
+/**
+ * One address block inside the expanded customer card: a "Shipping
+ * Address:" / "Billing Address:" caption over its formatted lines.
+ * Renders nothing when the address is empty, so a customer with only a
+ * shipping address never shows a dangling caption.
+ */
+function AddressBlock({ label, lines }: { label: string; lines: string[] }) {
+  if (lines.length === 0) return null;
   return (
-    <div className={className}>
-      <span className="block text-xs font-medium text-text-secondary">{label}</span>
-      <input
-        readOnly
-        value={value?.trim() ? value : ''}
-        placeholder="—"
-        className="mt-1 h-11 w-full rounded-md border border-border-input bg-surface-sunken px-3 text-sm text-text-primary"
-      />
+    <div>
+      <p className="font-medium text-text-secondary">{label}</p>
+      {/* Index keys: a static, never-reordered list of formatted lines. */}
+      {lines.map((line, i) => (
+        <p key={i}>{line}</p>
+      ))}
     </div>
   );
 }
@@ -81,6 +101,34 @@ export function CustomerCard({
   // Nothing to reveal until a customer is chosen.
   const canExpand = Boolean(customer);
   const open = expanded && canExpand;
+
+  // Name / phone / email, in that reading order, with blanks dropped so
+  // a partially-filled record never shows a gap.
+  const contact = customer
+    ? [displayName(customer), customer.phone, customer.email]
+        .map((s) => (s ?? '').trim())
+        .filter(Boolean)
+    : [];
+  const shipping = customer
+    ? addressLines({
+        line1: customer.shipping_address_line1,
+        line2: customer.shipping_address_line2,
+        city: customer.shipping_city,
+        province: customer.shipping_province,
+        postal: customer.shipping_postal_code,
+      })
+    : [];
+  // Billing is shown ONLY when it actually differs from shipping.
+  const billing =
+    customer && !customer.billing_same_as_shipping
+      ? addressLines({
+          line1: customer.billing_address_line1,
+          line2: customer.billing_address_line2,
+          city: customer.billing_city,
+          province: customer.billing_province,
+          postal: customer.billing_postal_code,
+        })
+      : [];
 
   return (
     <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
@@ -124,45 +172,30 @@ export function CustomerCard({
       </div>
 
       {open && customer && (
-        <div id="customer-details" className="flex flex-col gap-3.5 border-t border-border-light pt-3.5">
-          <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-            <DetailField label="First name" value={customer.first_name} />
-            <DetailField label="Last name" value={customer.last_name} />
-            <DetailField label="Email" value={customer.email} />
-            <DetailField label="Phone" value={customer.phone} />
+        <div
+          id="customer-details"
+          className="flex flex-col gap-3.5 border-t border-border-light pt-3.5 text-sm text-text-primary"
+        >
+          {/* Contact block — one value per line, empties dropped. */}
+          <div>
+            {contact.map((line, i) => (
+              <p key={i}>{line}</p>
+            ))}
           </div>
 
-          <div className="flex flex-col gap-3.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-              Shipping address
-            </span>
-            <DetailField label="Address line 1" value={customer.shipping_address_line1} />
-            <DetailField label="Address line 2" value={customer.shipping_address_line2} />
-            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
-              <DetailField label="City" value={customer.shipping_city} />
-              <DetailField label="Province" value={customer.shipping_province} />
-              <DetailField label="Postal code" value={customer.shipping_postal_code} />
+          {/*
+            Addresses side by side, shipping left. Billing is omitted
+            entirely when it mirrors shipping — repeating the same lines
+            under a second caption tells the reader nothing — which is
+            also why the grid only splits into two columns when there is
+            a second block to put in one.
+          */}
+          {(shipping.length > 0 || billing.length > 0) && (
+            <div className={`grid gap-3.5 ${billing.length > 0 ? 'sm:grid-cols-2' : ''}`}>
+              <AddressBlock label="Shipping Address:" lines={shipping} />
+              <AddressBlock label="Billing Address:" lines={billing} />
             </div>
-          </div>
-
-          <div className="flex flex-col gap-3.5">
-            <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-              Billing address
-            </span>
-            {customer.billing_same_as_shipping ? (
-              <p className="text-sm text-text-secondary">Same as shipping address.</p>
-            ) : (
-              <>
-                <DetailField label="Address line 1" value={customer.billing_address_line1} />
-                <DetailField label="Address line 2" value={customer.billing_address_line2} />
-                <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
-                  <DetailField label="City" value={customer.billing_city} />
-                  <DetailField label="Province" value={customer.billing_province} />
-                  <DetailField label="Postal code" value={customer.billing_postal_code} />
-                </div>
-              </>
-            )}
-          </div>
+          )}
         </div>
       )}
     </section>
