@@ -1,0 +1,217 @@
+# System Patterns
+
+## Architecture
+- **Monorepo** — pnpm workspaces with `apps/web` (frontend) and `apps/api` (backend)
+- **Frontend** — React SPA with client-side routing (React Router v6)
+- **Backend** — Cloudflare Workers edge functions (Hono.js framework)
+- **Database** — Supabase PostgreSQL with Row Level Security on all tables
+- **Auth flow** — Supabase Auth (frontend) → JWT → Worker verifies via JWKS
+
+## Key Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+| Worker as API gateway | Frontend never calls Supabase directly for data; all goes through Worker with service role key |
+| RLS on every table | Defense-in-depth; even if Worker is bypassed somehow, RLS blocks unauthorized access |
+| Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
+| Snapshot pricing on line items | Material/cassette/control prices stored on line item at creation time to prevent retroactive price changes |
+| UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
+| No anon RLS on estimates | Public estimate view served only by the Worker (service role, single-row lookup by token); anon key grants zero data access, preventing enumeration |
+| DB-enforced order_number uniqueness | Count-based generation can race under concurrent saves; UNIQUE index + Worker retry makes duplicates impossible |
+| Session-sourced API tokens | `apiFetch` asks supabase-js for the current token per request (auto-refresh); tokens are never manually persisted |
+| Vitest on money math | `pricing.ts`/`orderNumber.ts` (and later `totals.ts`) are pure functions; tests lock the formulas against silent drift |
+
+## Design Patterns
+- **Single Responsibility per File** — Each `.ts`/`.tsx` file has one clearly defined purpose
+- **Barrel exports** — Types and hooks use index.ts barrel files
+- **Thin entry points** — `main.tsx` and `index.ts` delegate all logic to modules
+- **Zod validation** — All Worker inputs validated with Zod schemas before any DB operation
+- **Optimistic UI** — TanStack Query with optimistic updates for settings CRUD
+
+## Component Relationships
+```
+App.tsx → Router → Pages → Components
+                 → Hooks (useAuth, useQuery...)
+                 → Lib (api.ts, pricing.ts, orderNumber.ts)
+                 → Types (index.ts)
+```
+
+## Order lifecycle & payments (2026-07-04)
+- **Entity rename:** `estimates → orders`, `estimate_date → order_date`,
+  `line_items.estimate_id → order_id`. An estimate/invoice is only the generated document.
+- **Statuses:** draft → sent → awaiting_payment → in_progress → ready → installed
+  (+ expired). Transitions live in `routes/orders.ts`; each is DB-guarded (e.g. confirm
+  updates only a `sent` row). `unconfirm` (awaiting_payment→sent) is user-only and refused
+  once a payment exists. Recording the first payment advances awaiting_payment→in_progress;
+  `/ready` (in_progress→ready) and `/installed` (ready→installed) are user actions.
+- **Installation scheduling:** once `ready`, the user proposes a time (`/install/propose`,
+  ready-only) which emails the customer a one-hour arrival window [install_time, +1h] on
+  install_date and a link to the token'd public page. The customer confirms
+  (`/install/confirm`) or requests another (`/install/request`, optional note). This lives
+  in `install_status` (unscheduled/proposed/confirmed/change_requested) independent of the
+  order status; the customer can respond but can never reverse the order confirmation.
+  Reaching `installed` remains a deliberate user action.
+- **Payments ledger:** `payments` table (one order → many payments). Balance is DERIVED
+  (`total − Σamount`), never stored, so it can't drift. `amount_paid` is attached to API
+  responses by the Worker (summed server-side). Payments may be recorded at ANY
+  post-confirmation stage (awaiting_payment / in_progress / ready / installed); the Record
+  Payment sheet opens with an empty amount.
+- **Document type:** the PDF is an Estimate until the first payment, then an Invoice
+  (`docType` in `lib/pdf.ts`); the send flow always emails an Estimate.
+
+### Money-triggered side effects live in `lib/` (added 2026-08-02)
+Payments reach an order through TWO doors — `POST /orders/:id/payments` (a consultant) and
+`POST /webhooks/etransfer` (the Gmail Apps Script). Anything that must happen "when money
+lands" therefore belongs in a `lib/` helper called after `recordOrderPayment` from both, never
+inline in one route. `lib/payments.ts` set the precedent; `lib/warrantyIssue.ts` follows it.
+Two rules for such helpers:
+- **They never throw.** The payment is already committed by the time they run, so a failure
+  must come back as a value the caller logs — a bounced email must not turn a recorded payment
+  into a failed request, and the webhook must not answer non-2xx and invite a retry of an
+  already-applied transfer.
+- **They own their own idempotency**, because both doors can fire for the same event. The
+  warranty uses `orders.warranty_sent_at`; the e-Transfer ingest uses the Gmail message id.
+
+## Calendar surface (2026-07-06)
+A read-only presentation layer over the existing installation-scheduling domain — no
+new lifecycle or schema. `GET /api/orders/calendar?from=&to=` (Zod-validated inclusive
+date range) returns lightweight `CalendarEvent` rows (mirrors the list route's
+`.select()` shape) for orders with an active `install_status`. **Must be registered
+before `GET /:id` in `routes/orders.ts`** — Hono matches routes in registration order,
+so a param route registered first would swallow `/calendar` as `id="calendar"`.
+`pages/calendar/CalendarPage.tsx` is a thin composition root (month state + wizard
+open/day state) delegating to `MonthGrid.tsx` (pure grid) and
+`InstallProposalWizard.tsx` (strict 3-step Day→Time→Ready-order flow). The wizard
+submits through the SAME `useProposeInstallation` mutation used by `OrderDetail.tsx` —
+there is no separate "quiet" scheduling endpoint; creating a proposal from the calendar
+always emails the customer. `useCalendar.ts` follows `useOrders.ts`'s direct-import
+convention (not added to the `hooks/index.ts` barrel). Calendar is a 5th item in both
+`Sidebar.tsx` and `BottomNav.tsx` (Home, Customers, Orders, Calendar, Settings).
+(As of 2026-08-03 `BottomNav.tsx` no longer exists; nav items live only in `Sidebar.tsx`.)
+
+## Order activity log & always-editable orders (2026-07-06)
+- **Editability:** an order's customer/dates/line items can be edited (and saved via
+  `PUT /:id`) at ANY lifecycle stage, not just draft/sent. This is distinct from
+  send/confirm eligibility (`EDITABLE = ['draft','sent']` still gates whether an
+  estimate can be (re)sent or the order (re)confirmed) — editing line items and
+  advancing the lifecycle are separate concerns.
+- **Activity log:** `order_logs` (order_id FK cascade, `message` text, `created_at`) is
+  an append-only trail written by a best-effort `logOrderEvent()` call at every
+  mutation point in `routes/orders.ts`. It is diagnostic/display-only — logging
+  failures never fail the mutation they describe, and there is no update/delete path.
+  `GET /:id/logs` returns newest-first; the web `useOrderLogs` hook is invalidated by
+  the same `useCacheOrder` callback every lifecycle mutation already uses.
+
+## Expandable/collapsible sections (2026-07-07)
+No accordion component existed anywhere in `apps/web/src` before the customer-view
+Terms & Conditions section — the pattern is a local `useState<boolean>` toggled by a
+`<button aria-expanded>` header (title + a rotating chevron `<svg>` reusing
+`PageHeader.tsx`'s stroke-icon style: `stroke="currentColor" strokeWidth="1.9"`,
+`rotate-180` via a `transition-transform` class when open), with the content only
+mounted while open. See `pages/customer-view/CustomerView.tsx`'s TERMS & CONDITIONS
+section as the reference implementation for future collapsible UI.
+
+## Blind pricing calculators + per-type Materials (2026-07-12)
+- **Class hierarchy (twins):** `apps/{api,web}/src/lib/calculators/` — a concrete
+  `BaseBlindCalculator` holds the shared "main" formula (material + cassette + control with
+  the width/height minimums) exposed via granular override hooks (`materialCost`,
+  `cassetteCost`, `controlCost`, `applyWidthMinimum`, `applyHeightMinimum`). Each of the ten
+  canonical types has its own file that `extends` the base and, for now, inherits it
+  unchanged — Honeycomb, Shutter, Curtains are the ones the user will override later. New
+  divergence should override the smallest hook, never fork `calculateUnitPrice` wholesale.
+- **Dispatch by snapshot name:** line items store `blinds_type` as free text, so
+  `registry.ts` resolves it with `normalizeBlindType` (lowercase, alphanumerics only, trailing
+  "blind" stripped) → "Roller Blind" and "Roller" both map to Roller; unknown/empty falls back
+  to the base default so pricing never throws. `getCalculator(name)` returns the instance.
+- **pricing.ts is a façade:** keeps `calculateBlindUnitPrice` (type-agnostic default, used by
+  the shared money-math tests) and adds `calculateBlindUnitPriceForType(blindsType, inputs)`
+  used by `resolveLineItems` (api) and the editor's live preview (web). The api and web sides
+  remain twins — change both, and both `pricing.test.ts` suites.
+- **Materials ↔ blind types (many-to-many):** `material_blind_types` join. The Materials
+  settings API embeds `blind_type_ids` on reads and replaces them on create/update. The
+  settings UI is a TWO-LEVEL flow: `Materials.tsx` lists blind types (and manages them),
+  `MaterialsForType.tsx` (`/settings/materials/:blindTypeId`) lists+adds Materials scoped to
+  one type. RULE (updated 2026-07-12): the editor's `materialsForType()` shows ONLY Materials
+  linked to the selected type (linked-only; empty until a type is chosen) — the earlier
+  "empty links = all types" rule was dropped, and migration 22 linked any orphaned Materials
+  to Roller. Materials use dedicated settings routes/pages, not the generic CatalogEditor,
+  because of these links. There is no separate "Blind Types" settings page — it lives inside
+  Materials.
+
+## Critical Implementation Paths
+1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
+2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent
+3. **Customer confirm:** Email link → Public view → Confirm → status=awaiting_payment → Notification email
+4. **Reverse confirm (user only):** Order detail → Reverse Confirmation → status back to sent
+5. **Payment:** Order detail → Record Payment → ledger row → status=in_progress → balance updates → PDF now an Invoice
+6. **Ready:** Order detail → Mark Ready → status=ready
+7. **Installation scheduling:** Order detail → Propose Installation (date + time) → email to customer → customer confirms/requests on public page → shows on the order; the panel also offers Change time (re-propose) / Delete time (`/install/cancel`)
+8. **Installed:** Order detail → Mark Installed → status=installed (terminal)
+9. **Revert / delete:** the order-detail Progress timeline shows all stages with an undo icon on earlier ones (`/:id/revert { to }`, backward-only, resets stage metadata but keeps payments); a Delete Order button removes the order (`DELETE /:id`, cascades line items + payments)
+
+## Semantic colour (added 2026-07-31)
+Hue encodes STATE, never decoration. blue=info/sent, violet=scheduled/in progress,
+amber=payment owed, emerald=ready/paid, rose=expired/destructive, slate=draft.
+
+- The `OrderStatus` mapping lives in ONE place: `apps/web/src/lib/statusStyles.ts`
+  (`statusLabel`, `statusPill`, `PillTone`). It is JSX-free so it is unit-testable under the
+  project's pure-logic Vitest setup.
+- Components MUST NOT hard-code a status colour. `StatusBadge` is a thin binding of that
+  mapping to the `Pill` primitive and holds no colour knowledge itself.
+- Two states that legitimately share a hue are told apart by FILL, not by a new hue —
+  `installed` is solid emerald, `ready` is tinted emerald.
+- The same discipline extends beyond order status: installations are violet everywhere
+  (EventChip, the appointments list, the schedule headings, the order page's Installation
+  card), estimate visits emerald.
+
+## UI primitive layer (added 2026-07-31)
+`apps/web/src/components/ui/` owns the app's chrome: `Pill`, `Card` (+`CardHeader`,
+`CardBody`, `CardFooter`, `CardAccent`), `Button`, `Field` (+`inputClass`), `Modal`,
+`StatTile`, re-exported from `ui/index.ts`.
+
+- Pages COMPOSE these rather than repeating class strings, so a future visual change is a
+  primitive-level edit instead of a sweep through ~30 files.
+- `inputClass` exists as a bare string alongside the `Field` wrapper specifically so pages
+  with their own form grids can adopt the treatment WITHOUT being restructured. Existing
+  local `INPUT_CLS` constants compose it rather than redefining it.
+- `Modal` owns Escape, backdrop dismissal, scroll lock and focus. A caller migrating onto it
+  MUST delete its own equivalents or the close handler fires twice.
+- Cards carry a shadow AND a hairline border. The border is not redundant — the app is used
+  on phones outdoors where a soft shadow alone can vanish in daylight.
+
+## Design tokens are the propagation lever (added 2026-07-31)
+`apps/web/src/index.css`'s `@theme` block is the single point of visual control.
+
+- **Never delete a token name; change its value.** The pre-2026-07-31 system flattened every
+  radius token to 2px, so the codebase says `rounded-sm` almost everywhere. Retokenizing
+  reshaped the entire app with zero markup edits — and by the same mechanism, removing a
+  name silently breaks every page nobody happened to open.
+- Corollary: `rounded-full` used to render as a SQUARE. Any pre-2026-07-31 markup that says
+  `rounded-full` may have meant "not a circle". Audit before trusting it.
+- ~~`Sidebar`'s width and `Layout`'s `lg:pl-[…]` are one measurement written in two files.~~
+  **Retired 2026-08-03.** That pairing is gone. Rail width is now `--sidebar-w` alone:
+  `.app-shell-rail { width }` and `.app-shell-main { padding-inline-start }` both read it,
+  and `Layout` picks the value by stamping `data-rail="icons|expanded"` on `.app-shell`.
+  There is no second copy to keep in sync. Do not reintroduce a literal rail width.
+
+## App shell & responsive layout (2026-08-03)
+- **One nav component for every width.** `Sidebar` renders a collapsible rail at `md+` and a
+  full-screen overlay below it. `BottomNav` and `Layout`'s `nav` prop were DELETED — the
+  split of "sidebar at lg+, tab bar below, tab bar suppressed on detail pages" left tablets
+  and every detail page with no navigation at all. Do not reintroduce a second nav component
+  keyed on width.
+- **One horizontal track.** `.page-container` (in `index.css`, re-exported as
+  `PAGE_CONTAINER` from `PageHeader`) is the only page container: fluid, gutters 16/24/32px,
+  capped at `var(--page-max, 1600px)`. Page headers and page bodies MUST use it, or they sit
+  on different tracks and stop aligning. Narrow a body with `[--page-max:48rem]` on the same
+  element — never with a second `max-w-*` utility, which resolves against `.page-container`'s
+  own `max-width` by Tailwind's internal sort order rather than by written order.
+- **Breakpoint meanings on the order screen:** `md` (768) = rail appears; `xl` (1280) = the
+  summary rail appears as a third column and the sticky bottom action bar goes away. The
+  order screen's `lg:` classes were remapped to `xl:` for this reason — `lg` no longer marks
+  anything structural there.
+- **Measured, not assumed, sticky offsets.** `--action-bar-h` and `--order-head-h` are both
+  published from a `ResizeObserver` in `OrderDetail`. Hard-coded pixel offsets for these are
+  wrong at most lifecycle stages and most widths; that is how `top-[57px]` came to be wrong.
+- **Touch/overflow invariant:** assert `document.documentElement.scrollWidth ===
+  window.innerWidth`. The page root's `overflow-x-clip` guard HIDES horizontal overflow, so
+  "it looks fine" is not evidence.

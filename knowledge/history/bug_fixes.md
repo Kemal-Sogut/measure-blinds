@@ -1,0 +1,481 @@
+# Bug Fixes History
+
+## 2026-07-21 — Half-finished email-theme extraction left the api not compiling
+- **Issue:** commit `ef0f441` ("email-templates") on `feat/responsive-emails` created
+  `apps/api/src/lib/email-theme.ts` and added the corresponding imports + re-exports to
+  `email.ts`, but never DELETED the original definitions from `email.ts`. Every moved
+  name therefore collided with its own import: 19 errors — TS2440 "Import declaration
+  conflicts with local declaration" for 15 names, plus TS2323/TS2484 redeclaration
+  errors for `brandFromSettings` and `CompanyBrand`. `email.ts` was 835 lines, over the
+  Rule 6 limit, because it now held the presentation layer twice.
+- **Detection:** the working tree was CLEAN and `git status` said nothing was wrong —
+  the breakage was the committed state. Found only by running `pnpm check` before
+  starting new work. Same failure shape as the `pdf.test.ts` conflict-marker entry
+  below: a "clean" tree is not evidence the branch compiles.
+- **Fix:** commit `a3096d6` deletes the duplicated block (`email.ts` lines 105–312:
+  tokens, `CompanyBrand`, `brandFromSettings`, `formatMoney`, and the shell/block
+  helpers), leaving the single copy in `email-theme.ts` reached through the existing
+  import and re-export. `email.ts` 835 → 627 lines.
+- **Verified no behaviour change:** tsc clean and 116/116 api tests passed with the test
+  files completely untouched — which is exactly what makes a "pure move" provable. If a
+  test had needed editing, the move would not have been verbatim.
+- **Lesson:** when splitting a module, deleting the source is not a cleanup step to do
+  later — it is half of the change. Run `pnpm check` before trusting a clean tree.
+
+## 2026-07-21 — Committed merge-conflict markers broke api type-checking (pdf.test.ts)
+- **Issue:** `apps/api/src/lib/pdf.test.ts` was committed WITH unresolved git conflict
+  markers (`<<<<<<< HEAD` … `>>>>>>> 70a85e7`, the feat/blind-color-code merge), so
+  `tsc --noEmit` failed with TS1185. The tree was "clean" — the broken file was the
+  committed state, discovered by the receipt-feature verification pass.
+- **Fix:** resolved to the HEAD side, which matches shipped `pdf.ts` (`material_name`,
+  `color` field). The branch side was NOT keepable as-is: it imported `itemContent`
+  (not exported from pdf.ts) and asserted Color renders after Control, but shipped
+  order is Panels → Material → Color → Cassette → Control → Note. Its dropped
+  color-line tests are flagged as a follow-up task (export `itemContent` or assert via
+  rendered output, using the REAL ordering).
+- **Lesson:** a clean `git status` does not mean the committed state compiles.
+
+## 2026-07-21 — Date time-bomb in the /send route test fixture
+- **Issue:** the `POST /:id/send → 502 on email failure` test hardcoded
+  `expiry_date: '2026-07-17'`. The send route 400s on a lapsed expiry
+  (`orders.ts` ~701) BEFORE reaching the email path, so once the calendar passed
+  July 17 the test failed with 400-vs-502 — on clean main, unrelated to any change.
+- **Fix:** fixture now computes `order_date` = today and `expiry_date` = today + 14d.
+- **Lesson:** route tests that must get PAST a date guard need relative dates;
+  hardcoded ISO dates in fixtures are only safe for routes that don't compare to now.
+
+## 2026-07-21 — Order page scrolled sideways on phones; sections looked unequally wide
+- **Issue (user report):** on a phone the order detail page's sections (Progress, Items,
+  Payments) did not line up and "some of them extend off my screen". Every section is a
+  child of one `flex flex-col` column, so the BOXES were always equal — what differed was
+  (a) the chrome gutters around them and (b) content overflowing past the page width,
+  which makes the document scroll horizontally while the sticky header and action bar stay
+  pinned to the viewport, so nothing lines up any more.
+- **Root causes, in order of impact:**
+  1. `headerActions` put the full `StatusBadge` in the `PageHeader` right slot next to four
+     icon buttons. "AWAITING PAYMENT" is ~130px on its own; badge + 4 buttons + gaps
+     ≈ 300px, which does not fit beside the 44px back chevron on a ≤390px phone.
+  2. The Progress timeline was `<ol className="flex …">` with six `flex-1` items. A flex
+     item's automatic minimum size is its longest word, so the labels ("Awaiting",
+     "Progress", "Installed" at 10px) put a hard ~285px floor on the row — it could not
+     shrink and pushed the card, and therefore the page, wider than a narrow screen.
+  3. Three different gutters (header 8px, cards 16px, sticky bar 14px) — see the
+     `engine_features.md` 2026-07-21 entry.
+- **Fix (`apps/web/src/pages/orders/OrderDetail.tsx`, `components/PageHeader.tsx`):**
+  1. StatusBadge in the top bar is `hidden sm:inline-flex` — on phones the status already
+     shows on the Progress card and the Payments panel, so nothing is lost.
+  2. The timeline is now a GRID with `repeat(STAGES.length, minmax(0, 1fr))` tracks
+     (inline style, derived from `STAGES.length` so adding a stage cannot silently break
+     it) — `minmax(0, …)` tracks may shrink below their content, so the row can never
+     exceed the card. Labels got `w-full break-words`; the `<li>` lost `flex-1`.
+  3. Shared `mx-auto w-full max-w-lg` + 16px gutter across header, body and sticky bar.
+  4. Belt and braces: `overflow-x-clip` on the page root (`clip`, NOT `hidden` — `hidden`
+     creates a scroll container and would break the sticky header), plus `min-w-0` /
+     `truncate` / `break-words` on the rows that can hold unbounded strings (line-item
+     rows, payment note rows, activity-log messages).
+- **Verified:** web `tsc --noEmit` clean, vitest 40/40, oxlint clean on both touched files.
+  ⚠️ NOT yet confirmed on a physical phone — the layout math above is the reasoning, so
+  re-check on a real device (and at 320px) before considering this closed.
+
+## 2026-07-03 — @react-pdf/renderer cannot run on Cloudflare Workers (found by live E2E)
+- **Issue:** PDF endpoint + send flow failed at runtime in workerd (fine in vitest/Node).
+  Root causes, verified in-sandbox: (1) wrangler bundles @react-pdf's WEB build, whose
+  `renderToBuffer` is a Node-only stub; (2) the web build's `pdf().toBlob()` then hits
+  yoga-layout WASM: "Wasm code generation disallowed by embedder" — workerd forbids
+  runtime WASM compilation. Both v4 and v3.4 are affected; v3 additionally breaks on
+  React 19 (react-reconciler crash).
+- **Fix:** rewrote `apps/api/src/lib/pdf.ts` on `pdf-lib` (pure JS, zero WASM, no React):
+  same `PdfEstimateData` interface, same §10 layout via a cursor with word-wrap and page
+  breaks. Removed react/@react-pdf deps from the api workspace; Worker bundle dropped from
+  ~825 to ~427 KiB gzip. Verified: 29 api tests pass AND a workerd smoke render returns
+  a real `%PDF-` stream.
+
+## 2026-07-03 — Bulk line-item insert NULL-filled missing columns (found by live E2E)
+- **Issue:** blind and preset/custom rows were built with different key sets. PostgREST
+  bulk inserts unify columns across rows and send NULL for any row missing a key →
+  `null value in column "description" violates not-null constraint` on mixed estimates.
+  The fake-DB route tests missed it because the fake didn't enforce column uniformity.
+- **Fix:** `resolveLineItems` now emits the FULL column set for every row ('' / [] / null
+  explicitly). New regression test captures the actual insert payload and asserts identical
+  key sets across rows (estimates.routes.test.ts).
+
+## 2026-07-03 — Blind line-item schema silently stripped client prices
+- **Issue:** `blindItemSchema` was a plain `z.object`, so a tampered payload carrying
+  `unit_price` was quietly stripped instead of rejected — caught by the route-level
+  integration test expecting 400.
+- **Fix:** both line-item schemas are now `.strict()`; any unknown field (esp. money) → 400.
+
+## 2026-07-03 — PDF response body type + Hono
+- **Issue:** `c.body(Uint8Array)` fails Hono's typing (`Uint8Array<ArrayBufferLike>`).
+- **Fix:** re-slice into a plain `ArrayBuffer` before returning the PDF stream.
+
+## 2026-07-03 — base64 attachment stack overflow risk
+- **Issue:** `btoa(String.fromCharCode(...bytes))` overflows the call stack for PDFs
+  larger than ~100 kB.
+- **Fix:** chunked 8 kB conversion in `toBase64()` in the estimates routes.
+
+## 2026-07-03 — Root scripts broken on Windows (single-quoted pnpm filters)
+- **Issue:** `pnpm dev` failed with "No projects matched the filters" — cmd.exe does not
+  treat single quotes as quoting, so `--filter './apps/*'` was passed literally.
+- **Fix:** Root `package.json` scripts now use escaped double quotes (`\"./apps/*\"`),
+  which work in both cmd.exe and bash. Also added root `test` script and pinned
+  `"packageManager": "pnpm@9.15.9"` (pnpm 11 via Corepack crashes on Node 20).
+
+## 2026-07-03 — api.ts token source (latent bug, fixed before release)
+- **Issue:** `apiFetch` read the access token from `localStorage.getItem('sb-access-token')`,
+  a key supabase-js does not use (it stores under `sb-<project-ref>-auth-token` as JSON).
+  Every authenticated API call would have gone out without a Bearer token → permanent 401s.
+- **Fix:** `apiFetch` now calls `supabase.auth.getSession()` per request, which also gets
+  transparent token refresh. No token is manually persisted anywhere.
+
+## 2026-07-03 — package.json truncation during tooling edits
+- **Issue:** During plan-improvement edits, `apps/web/package.json` and `apps/api/package.json`
+  were observed truncated mid-file in one environment view (stale filesystem cache between the
+  editing tool and the sandbox mount).
+- **Fix:** Both files rewritten in full and re-validated with `JSON.parse`. Lesson recorded:
+  after editing JSON config files, validate them with a parser, not by eye.
+
+## 2026-07-07 — CORS allowed hostile "localhost" look-alike origins (security review)
+- **Issue:** the Worker's CORS origin callback used `origin.includes('localhost')`, which
+  also matches attacker-controlled origins such as `https://evil-localhost.example.com`,
+  reflecting them as allowed.
+- **Fix:** `apps/api/src/index.ts` now uses exact/prefix checks
+  (`http://localhost[:port]`, `http://127.0.0.1[:port]`) plus the exact production origin
+  `https://measure-blinds.blindsnisa.workers.dev`.
+
+## 2026-07-07 — PUT /api/orders/:id silently moved order_date to "today"
+- **Issue:** the update route defaulted a missing `order_date` to the current date, so any
+  edit payload omitting it re-dated the order — desyncing it from the order number, which
+  encodes the original date.
+- **Fix:** the route now selects the stored `order_date` and falls back to it
+  (`input.order_date ?? existing.order_date`). Only POST defaults to today.
+
+## 2026-07-07 — Order edits could strand an order with zero line items
+- **Issue:** PUT ran update → delete line_items → insert line_items as three separate
+  PostgREST calls; an insert failure after the delete left updated totals and NO items.
+- **Fix:** migration 18 adds `public.update_order_with_items(uuid, jsonb, jsonb)` — order
+  field update + wholesale item replacement in ONE transaction (service_role-only
+  execute). PUT now calls it via `sb.rpc(...)`; rollback restores the previous items on
+  any failure. Applied live to `lgbxxlwsdeuhdgzrjjen`.
+
+## 2026-07-07 — "Today" was computed in UTC, not the business timezone
+- **Issue:** every "today" (defensive expiry checks, cron expiry, default order_date /
+  paid_on) used `new Date().toISOString().slice(0,10)` — UTC is 4–5 h ahead of Toronto,
+  so evening reads expired estimates hours early and late-evening e-Transfers were dated
+  "tomorrow".
+- **Fix:** new `apps/api/src/lib/dates.ts` (`BUSINESS_TZ = America/Toronto`,
+  `todayBusiness()`, `businessDateOf()`) via cached `Intl.DateTimeFormat('en-CA')`.
+  Adopted in `routes/orders.ts`, `routes/public.ts`, `routes/webhook.ts`, and the cron
+  handler in `index.ts`. Timestamps (sent_at etc.) intentionally stay UTC.
+
+## 2026-07-07 — Payments could double-record and silently exceed the order total
+- **Issue:** POST /:id/payments had no idempotency (a double-click or network retry
+  inserted two ledger rows) and accepted any amount regardless of the outstanding balance.
+- **Fix:** migration 18 adds `payments.client_key uuid UNIQUE`; the payment sheet mints
+  one UUID per open and `recordOrderPayment` maps a 23505 on it to an idempotent
+  `{ duplicate }` result (route returns the current order, no second insert). The route
+  also refuses a payment pushing the ledger past `orders.total` with
+  409 `{ code: 'OVERPAY', error: 'This amount will exceed total balance.' }` unless
+  `allow_overpay: true`; the UI shows a confirmation pop-up ("This amount will exceed
+  total balance. Record it anyway?") and sends the flag only on consent. New route tests
+  cover 409/consent/within-balance paths.
+
+## 2026-07-21 — pdf.test.ts was committed with unresolved merge-conflict markers
+- **Issue:** the merge of `feat/blind-color-code` (70a85e7) into HEAD landed
+  `apps/api/src/lib/pdf.test.ts` with literal `<<<<<<<`/`=======`/`>>>>>>>` markers, so the
+  file was not valid TypeScript and vitest could not collect it — the whole PDF suite was
+  silently absent from `pnpm --filter api test`. The feature side of the conflict also
+  referred to a `fabric_name` field that HEAD had renamed to `material_name`, and its
+  `describe('itemContent color')` block imported a symbol `pdf.ts` did not export.
+- **Fix:** resolved the file to the HEAD side and restored the dropped color coverage
+  against the SHIPPED behaviour. `itemContent` in `apps/api/src/lib/pdf.ts` is now exported
+  (with JSDoc documenting the print order) and the tests assert the real attribute order —
+  Panels, Material, Color, Cassette, Control, Note — not the feature branch's assumed
+  "Color after Control". Added cases for trimming, and for omitting the Color line when it
+  is empty, whitespace, null or absent. `pnpm --filter api run check` is clean and the PDF
+  suite passes 8/8. (Unrelated pre-existing failure in `orders.routes.test.ts` — the
+  "502 on email failure" case returns 400 — is untouched by this fix.)
+
+## 2026-07-21 — Advancing an order to "Sent" emailed the customer
+- **Issue:** the Progress-timeline advance arrow under the *Sent* stage called
+  `sendMut` → `POST /api/orders/:id/send`, the endpoint that emails the "Estimate Ready"
+  mail with the PDF attached and only then flips the status. So a consultant using the
+  timeline purely as bookkeeping — for an estimate already handed over in person or
+  printed — silently sent the customer a duplicate email. Advancing also inherited
+  `/send`'s "customer must have an email address" requirement, blocking the status move
+  for walk-in customers with no email on file.
+- **Root cause:** `sent` was the only lifecycle stage with no status-only route. Every
+  other transition (`/confirm`, `/in-progress`, `/ready`, `/installed`) had one, so
+  `handleAdvance` had nothing to call for `sent` and reused the emailing route.
+- **Fix:** new `POST /:id/mark-sent` in `apps/api/src/routes/orders.ts` — status-only
+  `draft → sent`, mirroring the `/confirm` pattern: stamps `sent_at`, logs
+  "Marked as sent (no email).", needs NO customer email address, and deliberately writes
+  neither `public_token` nor `terms_snapshot` (nothing was delivered, so there is no
+  customer link to keep alive and no terms to freeze; a later real `/send` still mints
+  both lazily). It keeps `/send`'s lapsed-expiry 400 because `applyDefensiveExpiry` would
+  otherwise flip the order straight back to `expired` on the next read.
+  `useMarkSent()` added to `apps/web/src/hooks/useOrders.ts`; `handleAdvance` in
+  `OrderDetail.tsx` now calls it for the `sent` target.
+- **Invariant pinned:** the top-bar Send button is the ONLY control that emails the
+  estimate — documented in the OrderDetail module header and in `handleAdvance`'s JSDoc.
+  `useSendOrder` now has exactly one call site (`handleSendEstimate`).
+- **Tests:** 4 new cases in `orders.routes.test.ts` intercept Resend and assert zero
+  email calls on the happy path plus the 409 (already confirmed), 400 (lapsed expiry) and
+  404 guards. Verified: `pnpm --filter api test` 90/90, `pnpm --filter web test` 40/40,
+  both `tsc --noEmit` clean, `pnpm --filter web lint` clean for the touched files.
+
+## 2026-07-28 (later) - Trailing blank page in the label print preview
+Bug fix in `apps/web/src/pages/orders/OrderLabels.tsx`.
+- **Cause:** `print:break-after-page` sat unconditionally on every label box, including the
+  last one. A break AFTER the final label opens a page that nothing then fills, so the preview
+  showed one empty page and the printer would feed one blank die-cut label per batch.
+- **Fix:** breaks now go BETWEEN labels. `Label` takes a `pageBreak: boolean` prop and only
+  then applies the class. The page computes `lastPrinted` from the SELECTED list
+  (`selected[selected.length - 1].index`), not from a CSS `:last-child` - a deselected label is
+  `print:hidden`, so the last DOM child is often not the last printed one, and `:last-child`
+  would have left the blank page in place whenever the trailing labels were unchecked. Also
+  guarded with `isOn` so a hidden label never carries a break.
+- Class strings stay literal (`'print:break-after-page'` in the source) so the Tailwind v4
+  scanner still emits the utility despite the conditional.
+- Verified: web `tsc -b --noEmit` clean, vitest 56/56, oxlint = the same 4 pre-existing
+  `LineItemEditor.tsx` warnings. Preview/physical print still to be confirmed on the shop PC.
+
+## 2026-07-31 - Label material separator disagreed with its own test and doc
+Bug fix in `apps/web/src/lib/labels.test.ts` and `apps/web/src/lib/labels.ts` (doc only).
+- **Cause:** a recent label commit changed `buildLabels`' material/colour join from `' · '`
+  to `' — '` in `labels.ts` but updated neither the assertion in `labels.test.ts` nor the
+  `LabelFields.material` JSDoc. Three sources then disagreed, and `pnpm --filter web test`
+  had been failing 1/61 on `main` ever since - a red baseline that masks new regressions.
+- **Fix:** the em dash is the intended printed output, so the TEST and the DOC were
+  corrected to match the code, not the other way round. `hardwareOf` deliberately KEEPS
+  `' · '`: the material line is two prose names that need the wider separator, while the
+  hardware line is three captioned codes that an em dash would push past the 3in stock's
+  usable width. That reasoning is now pinned in the `material` field's JSDoc so the two
+  separators are not "unified" by a future pass.
+- Found while establishing a green baseline before the UI redesign; unrelated to it.
+- Verified: web `tsc -b --noEmit` clean, vitest 61/61. oxlint = the same 4 pre-existing
+  `LineItemEditor.tsx` `only-export-components` warnings.
+
+## 2026-08-01 - Address autocomplete returned wrong or missing streets; switched off
+Change in `apps/web/src/components/AddressAutocomplete.tsx` only.
+- **Cause:** the Photon (`photon.komoot.io`) results were unreliable in the field — wrong or
+  missing streets for real service-area addresses — so the dropdown cost the consultant more
+  time than typing the address did. The lookup was NOT diagnosed further; it was turned off.
+- **Fix:** a module constant `ADDRESS_SEARCH_ENABLED = false`. When false the component
+  renders a plain labelled controlled input and `onSelect` never fires. Flipping it to `true`
+  restores the full autocomplete with **no other edit anywhere in the tree**.
+- **Two guards, not one, and the ordering matters.** The switch is checked FIRST inside the
+  search `useEffect` (so no debounce reaction, no `AbortController`, no Photon request), and
+  the plain-input early return sits AFTER every hook. An early return placed above the
+  `useState` calls would break the rules of hooks and oxlint flags it — being a module
+  constant does not exempt it.
+- **`lib/addressSearch.ts` is deliberately untouched** and still correct. So are all three
+  call sites (`CustomerForm.tsx` ×2, `CustomerCreateModal.tsx`): the component's props are
+  unchanged, and callers keep passing `onSelect` precisely so re-enabling costs one line.
+- Verified: web `tsc -b --noEmit` clean; vitest 69/69; oxlint = the same 4 pre-existing
+  `LineItemEditor.tsx` warnings. NOT verified: the in-app typing behaviour and the absence of
+  the `photon.komoot.io` request in the Network tab — `/customers/new` is behind
+  `ProtectedRoute` and no Supabase session was available.
+
+## 2026-08-02 - Mobile (iPhone Safari) layout defects on the order screen
+Changes in `apps/web/src/index.css`, `components/ui/Modal.tsx`, `hooks/useKeyboardOpen.ts`
+(new), `hooks/index.ts`, `pages/orders/OrderDetail.tsx`, `pages/orders/LineItemEditor.tsx`,
+`pages/orders/InstallationSection.tsx`.
+
+Four reported symptoms: line-item rows running off the right edge with the edit/delete
+buttons unreachable; the item popup "too big" with its edges off-screen; tapping any text
+box zooming the page; and the bottom action bar moving with the screen and burying things.
+
+- **Focus zoom (confirmed, and probably the root of "goes out of screen" too).** iOS Safari
+  zooms the viewport whenever a focused control renders below 16px. `inputClass` was 15px and
+  `LineItemEditor`'s `INPUT` was 14px. A zoomed page's right edge — which is exactly where the
+  row's edit/duplicate/delete buttons live — is off-screen, and the page root is
+  `overflow-x-clip`, so panning back is awkward. Fixed with a `max-width: 1023px` rule setting
+  `font-size: 16px` on `input, select, textarea`.
+  **The rule is deliberately UNLAYERED, not inside `@layer base`.** Tailwind's utilities layer
+  beats base, so a base rule loses to every `text-sm` on an input; unlayered declarations
+  outrank all layered ones. Do not "tidy" it into `@layer base` — that silently reverts it.
+  `maximum-scale=1` in the viewport meta was rejected: it kills pinch-zoom app-wide.
+- **Sheet height was `vh`, and `vh` is the wrong unit on iOS.** Safari resolves `vh` against
+  the LARGE viewport (URL toolbar hidden), so a `max-h-[90vh]` sheet is taller than the
+  visible area and its footer buttons sit behind the toolbar — the "too big, edges off-screen"
+  report. All eight hand-rolled sheets in `OrderDetail` now share a `SHEET_PANEL` constant
+  (`max-h-[92dvh]`, `overscroll-contain`, home-indicator inset, 20px radius); the sheet in
+  `InstallationSection` and the shared `ui/Modal` got the same treatment. The sheets were NOT
+  migrated onto `ui/Modal` — that is a refactor, not this fix.
+- **Action bar vs. the keyboard.** `position: fixed` is resolved against the LAYOUT viewport,
+  which iOS does not shrink when the keyboard opens — so the bar stayed where the bottom of
+  the screen used to be, on top of the field being typed into. New `useKeyboardOpen()` watches
+  `window.visualViewport` and the bar translates away while the keyboard is up. Threshold is
+  150px of shrink: Safari's collapsing URL toolbar moves the visual viewport 60–90px during a
+  normal scroll, and a lower threshold would make the bar flicker away mid-scroll. Returns
+  `false` where `visualViewport` is absent, so unsupported browsers keep the old bar.
+- **Bar height is now measured, not guessed.** The page reserved a constant `pb-40` while the
+  bar is one to three button rows depending on lifecycle stage. The bar publishes its
+  `offsetHeight` as `--action-bar-h` via `ResizeObserver`; the root reads
+  `pb-[var(--action-bar-h,10rem)]`.
+- **Item rows now break onto two lines below `sm`** (identity above; price + actions below),
+  with 44px action targets on that layout and the old 32px inline ones at `sm+`.
+- **Two hypotheses were tested and DISPROVED — do not re-derive them.** Measured in Chrome at
+  375px and 320px with a throwaway harness that mounted the real components:
+  1. *"A `<select>`'s min-content width (its longest option) blows the popup past the screen."*
+     Forcing `min-width:auto` back on every element in the popup changed `scrollWidth` by
+     zero — Chrome clamps a `select` at its `width:100%`. The `min-w-0` classes added to
+     `LineItemEditor` are harmless hardening, NOT the fix. (Untested on real Safari.)
+  2. *"The single-line item row is geometrically wider than a phone."* It is not. At 320px the
+     old row's `scrollWidth` equalled its `clientWidth`; flex crushed the NAME to 0px wide
+     instead of overflowing, and all three buttons stayed inside the card. The two-line layout
+     is still worth it (name gets 182px at 320px instead of 0), but the unreachable buttons
+     were not caused by row geometry.
+- **Verified:** web `tsc -b --noEmit` clean, vitest **74 passed / 7 files** (5 new
+  `useKeyboardOpen` cases covering the threshold, the toolbar-collapse false positive, and the
+  inverted-viewport guard); oxlint = the same 4 pre-existing `LineItemEditor.tsx`
+  `only-export-components` warnings. In-browser at 375px: form controls compute to 16px and
+  the page has no horizontal overflow.
+- **NOT verified:** anything on real iOS Safari. `/orders/:id` is behind `ProtectedRoute` and
+  no Supabase session was available, so the item rows, the sheets, the `dvh` cap and the
+  keyboard-hide behaviour were never seen in the running app. `dvh` and `visualViewport`
+  cannot be exercised in desktop Chrome at all. The remaining question is what actually put
+  the buttons out of reach on the reporter's phone; focus zoom is the leading explanation.
+
+## 2026-08-03 - Tablet had no navigation; page bodies never tracked the window width
+
+Reported as "mobile and tablet views are still broken, ui is not responsive". Four distinct
+defects, all in `apps/web`. Fixed by the shell rewrite in `engine_features.md` 2026-08-03.
+
+- **Issue 1 - tablets had no navigation at all.** `Sidebar` was `lg:flex` (>=1024px) and
+  `BottomNav` was rendered only when `Layout` got `nav={true}`. Every order, customer,
+  settings and appointment detail route passed `nav={false}`. So at 768-1023px, and on
+  EVERY detail page at every width below `lg`, the only way out of the page was the back
+  chevron. **Cause:** two components splitting the width axis at `lg` while a second,
+  orthogonal flag (`nav`) independently switched one of them off. **Fix:** one `Sidebar`
+  covering every width; `BottomNav` and the `nav` prop deleted.
+
+- **Issue 2 - main never expanded or shrank with the window.** `OrderDetail`'s body was
+  `mx-auto w-full max-w-lg lg:max-w-6xl`. At 768px that renders a 512px column between two
+  128px dead gutters; the same `max-w-lg` pattern was repeated in ~15 other pages, and
+  `PageHeader` used `max-w-lg` below `lg` and `max-w-none` above — so the header sat on a
+  different track from the body it headed. **Fix:** one `.page-container` class, fluid with
+  stepped gutters, capped at an overridable `--page-max`.
+
+- **Issue 3 - line-item descriptions pushed the card past the viewport.** The name span was
+  `truncate`. Note this is subtler than "truncate should have prevented overflow": a
+  truncated box still reports the min-content width of its longest unbroken word as its
+  intrinsic width, and the row/card/grid above it sized to that. A long unbroken
+  description therefore widened the whole card even though its own text was clipped.
+  **Fix:** `wrap-anywhere` (`overflow-wrap: anywhere`) — deliberately NOT `break-words`,
+  which only breaks INSIDE an over-long word and leaves the same min-content width, i.e.
+  would not have fixed this. Verified with a 99-character unbroken token at 375px:
+  `scrollWidth === innerWidth`.
+
+- **Issue 4 - header actions overflowed and were silently clipped.** `OrderDetail` put five
+  document buttons in `PageHeader`'s `shrink-0` right slot. From `sm` up their labels
+  appear, measuring roughly 470px inside a row capped at 512px. The excess was swallowed by
+  the page root's `overflow-x-clip` guard, so the rightmost action — Delete, the least
+  recoverable one — was simply invisible rather than visibly broken. **Fix:** the actions
+  moved into a wrapping toolbar in the page body; `PageHeader`'s right slot is now
+  `min-w-0` and may shrink. **Lesson:** `overflow-x-clip` as a "belt and braces" guard (added
+  2026-08-02) also HIDES real overflow bugs. It was kept, but it is not evidence of
+  correctness — assert `scrollWidth === innerWidth` instead.
+
+- **Note on the measurement transition.** `.app-shell-rail` / `.app-shell-main` animate
+  width for 200ms. Anything measuring rail geometry immediately after flipping `data-rail`
+  reads the PRE-transition value. This produced two confusing probe runs before it was
+  spotted. Force a settled read (`transition: none`) or wait past 200ms.
+
+- **NOT verified:** nothing was exercised as a signed-in user. `/orders/:id` and every other
+  shell route sit behind `ProtectedRoute`, and no Supabase session was available. The
+  geometry above was measured against the real compiled stylesheet using markup matching the
+  new DOM, which covers the layout defects; it does NOT cover the React wiring — hamburger
+  opens the overlay, Esc/route-change/backdrop dismiss it, the collapse toggle persists
+  across reloads, and `inert` actually blocks Tab into the page behind the overlay. Those
+  are owed on a real session, and the phone overlay is owed on real iOS.
+
+## 2026-08-03 (later) - Duplicate document-action toolbar on the order screen
+- **Issue:** `/orders/:id` rendered the Save / Send / Download / Customer View / Delete row
+  TWICE — once in the sticky head and once again as the first child of the form column.
+- **Cause:** self-inflicted, same session. `docActions` was first placed at the top of the
+  form column; the sticky-head block was introduced afterwards and rendered it there too,
+  but the original placement was never removed. Both call sites referenced the same
+  variable, so nothing about the JSX looked wrong in isolation and `tsc`/lint had nothing
+  to say.
+- **Fix:** dropped the form-column copy; `docActions` now has exactly one use site.
+- **Lesson:** when a block MOVES rather than gets added, assert the count at the new
+  location AND the absence at the old one. `grep -c docActions` returning 2 (one
+  definition, one use) is the cheap check that would have caught this.
+
+## 2026-08-03 (later) - Note: CSS transitions do not advance in the headless browser pane
+Not a product defect; recorded because it cost a false bug report during verification.
+Measuring `.app-shell-rail`'s width right after flipping `data-rail` returned the OLD value
+(248px) even after a 600ms wait, while `--sidebar-w` correctly read `4.5rem`.
+`el.getAnimations()` showed the `width` CSSTransition still `running`. The pane was not
+displayed, so it composites no frames and time-driven CSS transitions never progress —
+`setTimeout` still fires, which makes it look like a settled read. Injecting
+`transition: none !important` produced the correct 72px / 248px immediately.
+**When measuring anything the shell transitions, force `transition: none` first.**
+
+## 2026-08-04 - Software keyboard closed itself in the add-customer pop-up (mobile)
+- **Issue:** on `/orders/:id`, opening "+ Add customer" and tapping any field made the
+  on-screen keyboard appear and then immediately hide again; the `autoFocus`ed first-name
+  field never held the caret either.
+- **Cause:** `components/ui/Modal.tsx` ran `panelRef.current?.focus()` inside an effect
+  keyed on `[open, onClose]`. Every caller passes an inline arrow (`onClose={() =>
+  setAddingCustomer(false)}`), so `onClose` changed identity on every render of the OPENING
+  PAGE — the effect re-ran and re-focused the panel each time, blurring whatever child input
+  held focus, and a blur closes the software keyboard. `OrderDetail` closed the loop: it
+  subscribes to `useKeyboardOpen()`, so the keyboard opening re-rendered the page, which
+  re-ran the effect, which hid the keyboard again.
+- **Fix:** `onClose` now lives behind a ref so the Escape/scroll-lock effect depends on
+  `[open]` alone; the panel focus moved into its own `[open]`-only effect that no-ops when
+  focus is already inside the panel (so `autoFocus` children keep the caret).
+- **Lesson:** an effect that touches focus must never depend on a prop the caller recreates
+  each render. Focus-moving effects are not idempotent — re-running one is a visible,
+  destructive action on mobile, not a no-op. `document.activeElement` is the guard.
+
+## 2026-08-04 - Line-item rows sat above their vertical centre
+- **Issue:** in the order screen's items list, the checkbox / BLIND badge / name group was
+  visibly higher than the price and the edit-duplicate-delete icons on the same row.
+- **Cause:** the `<li>` was `sm:items-start` and the left group `items-start` with `mt-0.5`
+  nudges, while the right group is `items-center` around 32px buttons that set the row
+  height. Top-aligned text next to a taller centred group reads as uncentred.
+- **Fix:** `sm:items-center` on the row and on the left group, with the `mt-0.5` nudges
+  cancelled by `sm:mt-0`. Phone layout keeps start-alignment on purpose: a wrapped
+  multi-line item name would otherwise get a checkbox floating beside its middle line.
+- **Lesson:** mixing `items-start` and `items-center` between siblings of a flex row is the
+  usual source of "not centred" reports; align the whole row, then re-opt out per breakpoint.
+
+## 2026-08-04 - Expiry term reverted when a saved order was re-opened
+- **Issue:** picking an expiry term chip ("15 days") on `/orders/:id` and saving looked
+  correct, but leaving the order and opening it again showed no term selected — the choice
+  read as lost on save.
+- **Cause:** the resolved `expiry_date` IS persisted and re-read correctly (verified against
+  the live rows: order dated Aug 6 stored Aug 21, exactly the 15-day term). Only the chip was
+  missing: `expiryPreset` is editor-only state, and the hydration effect in `OrderDetail`
+  set the two dates but left the term at its `null` initial value. A stored date has no
+  memory of the arithmetic that produced it.
+- **Fix:** `lib/expiryTerms.ts` gained `presetFromDates(orderDate, expiryDate)` — the inverse
+  of `expiryFromPreset`, matching by calendar day so a time component on the order date does
+  not defeat it — and hydration now re-derives the chip from the two saved dates.
+- **Lesson:** derived UI state that is not persisted has to be re-derivable, or it silently
+  disappears at the next mount and users read that as a failed save. The give-away is a
+  "revert" that only shows up after navigating away — local state was masking it until then.
+
+## 2026-08-04 - A hand-picked expiry date reverted to the company default on re-open
+- **Issue:** on `/orders/:id`, choosing an expiry date in the picker and saving persisted
+  correctly, but re-opening the order from the orders list showed `order_date + 14` instead.
+  Orders dated with a term chip were unaffected.
+- **Cause:** last-write-wins between two effects in the SAME commit. The hydration effect is
+  declared first and sets the saved expiry; the auto-expiry effect is declared second and
+  re-runs whenever its deps change — `company` settles from `useCompanySettings` at almost
+  exactly that moment, and its object identity is a dep. At that point `expiryManual` is
+  still `false` (hydration's update has not been applied yet), so the default branch ran and
+  overwrote the saved date. A chip masked the bug: on the next pass `expiryPreset` was set,
+  so the effect recomputed the correct date. A hand-picked date has no rule to restore it.
+- **Fix:** the default branch now returns early while an existing order is unhydrated
+  (`if (id && !hydrated) return;`). A saved order supplies its own expiry; only `/orders/new`
+  may fall through to the company default.
+- **Lesson:** two effects writing the same state make declaration order load-bearing, and
+  the second one sees pre-update values for everything the first one set. Guard on the
+  condition ("this order has not hydrated"), not on the state the other effect is about to
+  change. Symptom shape to remember: the bug only bites the case that has no recomputation
+  rule to paper over it.
