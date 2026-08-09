@@ -51,6 +51,7 @@ function lineItem(overrides: Partial<LineItem> = {}): LineItem {
     description: '',
     note: '',
     color: '',
+    attributes: {},
     quantity: 1,
     unit_price: 0,
     line_total: 0,

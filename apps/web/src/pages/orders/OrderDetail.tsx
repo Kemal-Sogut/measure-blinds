@@ -112,15 +112,18 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
+  type BulkEditState,
+} from './LineItemEditor';
+import {
   blindDraftPrice,
   flatDraftPrice,
+  parseDraftAttributes,
   parsePositive,
   type BlindDraft,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type BulkEditState,
-} from './LineItemEditor';
+} from './lineItemDrafts';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
 
 /**
@@ -240,6 +243,10 @@ function toDrafts(order: Order): ItemDraft[] {
         control_id: li.control_id ?? '',
         color: li.color ?? '',
         note: li.note ?? '',
+        // The persisted blob is typed; the draft holds strings.
+        attributes: Object.fromEntries(
+          Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
+        ),
         quantity: String(li.quantity),
       } satisfies BlindDraft;
     }
@@ -700,6 +707,9 @@ export default function OrderDetail() {
       control_id: findOptionIdByName(catalogs.controls, 'Chain'),
       color: '',
       note: '',
+      // Empty until a blind type is chosen — the type dropdown seeds this
+      // from the newly selected type's `defaultAttributes()`.
+      attributes: {},
       quantity: '1',
     };
     setItems((list) => [...list, draft]);
@@ -831,6 +841,11 @@ export default function OrderDetail() {
         if (!it.material_id || !it.cassette_id || !it.bottom_rail_id || !it.control_id)
           return `Item ${i + 1}: choose material, cassette, bottom rail, and control.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
+        // Convert once, here. Failing now gives a readable message instead
+        // of a 400 from the server's own re-parse.
+        const attributes = parseDraftAttributes(it);
+        if (attributes === null)
+          return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
         line_items.push({
           item_type: 'blind',
           room_name: it.room_name.trim(),
@@ -843,6 +858,7 @@ export default function OrderDetail() {
           control_id: it.control_id,
           color: it.color.trim(),
           note: it.note.trim(),
+          attributes,
           quantity: Math.round(qty),
         });
       } else {
