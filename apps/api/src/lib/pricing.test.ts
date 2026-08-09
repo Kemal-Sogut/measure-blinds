@@ -17,7 +17,7 @@ import {
   calculateBlindUnitPrice,
   calculateBlindUnitPriceForType,
 } from './pricing';
-import { getCalculator, normalizeBlindType } from './calculators';
+import { getBlindType, normalizeBlindType } from './blindTypes';
 import { calculateTotals } from './totals';
 import { generateOrderNumber, parseDateOnly } from './orderNumber';
 
@@ -86,18 +86,18 @@ describe('blind-type calculator registry', () => {
   });
 
   it('resolves each canonical type to its own calculator', () => {
-    expect(getCalculator('Roller').blindType).toBe('Roller');
-    expect(getCalculator('Zebra').blindType).toBe('Zebra');
-    expect(getCalculator('Curtains').blindType).toBe('Curtains');
+    expect(getBlindType('Roller').blindType).toBe('Roller');
+    expect(getBlindType('Zebra').blindType).toBe('Zebra');
+    expect(getBlindType('Curtains').blindType).toBe('Curtains');
     // Alias + legacy snapshot name both resolve.
-    expect(getCalculator('solar').blindType).toBe('Sunscreen/Solar');
-    expect(getCalculator('Roller Blind').blindType).toBe('Roller');
+    expect(getBlindType('solar').blindType).toBe('Sunscreen/Solar');
+    expect(getBlindType('Roller Blind').blindType).toBe('Roller');
   });
 
   it('falls back to the default calculator for unknown/empty types', () => {
-    expect(getCalculator('Nonexistent').blindType).toBe('Default');
-    expect(getCalculator('').blindType).toBe('Default');
-    expect(getCalculator(null).blindType).toBe('Default');
+    expect(getBlindType('Nonexistent').blindType).toBe('Default');
+    expect(getBlindType('').blindType).toBe('Default');
+    expect(getBlindType(null).blindType).toBe('Default');
   });
 
   it('type-aware pricing matches the default formula while all types inherit it', () => {

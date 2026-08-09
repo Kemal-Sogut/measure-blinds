@@ -2,15 +2,15 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Honeycomb blind pricing calculator.
+ * Honeycomb blind-type module.
  *
  * Placeholder for a future custom formula. For now it inherits the shared
- * default calculation from BaseBlindCalculator unchanged; the type-specific
+ * default calculation from BaseBlindType unchanged; the type-specific
  * pricing will be implemented here later by overriding the cost hooks.
  */
 
-import { BaseBlindCalculator } from './base';
+import { BaseBlindType } from './base';
 
-export class HoneycombCalculator extends BaseBlindCalculator {
+export class HoneycombBlindType extends BaseBlindType {
   readonly blindType = 'Honeycomb';
 }

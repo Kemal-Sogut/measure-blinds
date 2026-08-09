@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Roller blind pricing calculator.
+ * Vertical Roller blind-type module.
  *
- * Currently inherits the shared default calculation from BaseBlindCalculator.
+ * Currently inherits the shared default calculation from BaseBlindType.
  * Override the cost hooks (materialCost / cassetteCost / bottomRailCost /
  * controlCost) or the
  * minimum rules here to give this blind type its own formula.
  */
 
-import { BaseBlindCalculator } from './base';
+import { BaseBlindType } from './base';
 
-export class RollerCalculator extends BaseBlindCalculator {
-  readonly blindType = 'Roller';
+export class VerticalRollerBlindType extends BaseBlindType {
+  readonly blindType = 'Vertical Roller';
 }

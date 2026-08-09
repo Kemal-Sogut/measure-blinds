@@ -36,7 +36,7 @@
  */
 
 import type { LineItem } from '../types';
-import { normalizeBlindType } from './calculators/registry';
+import { normalizeBlindType } from './blindTypes/registry';
 
 /**
  * Default length of one stock aluminium bar, in cm (6 m) — the bar the

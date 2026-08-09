@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Curtains blind pricing calculator.
+ * Curtains blind-type module.
  *
  * Placeholder for a future custom formula. For now it inherits the shared
- * default calculation from BaseBlindCalculator unchanged; the type-specific
+ * default calculation from BaseBlindType unchanged; the type-specific
  * pricing will be implemented here later by overriding the cost hooks.
  */
 
-import { BaseBlindCalculator } from './base';
+import { BaseBlindType } from './base';
 
-export class CurtainsCalculator extends BaseBlindCalculator {
+export class CurtainsBlindType extends BaseBlindType {
   readonly blindType = 'Curtains';
   readonly aliases = ['curtain'];
 }

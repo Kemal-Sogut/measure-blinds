@@ -2,16 +2,16 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Zebra blind pricing calculator.
+ * Roller blind-type module.
  *
- * Currently inherits the shared default calculation from BaseBlindCalculator.
+ * Currently inherits the shared default calculation from BaseBlindType.
  * Override the cost hooks (materialCost / cassetteCost / bottomRailCost /
  * controlCost) or the
  * minimum rules here to give this blind type its own formula.
  */
 
-import { BaseBlindCalculator } from './base';
+import { BaseBlindType } from './base';
 
-export class ZebraCalculator extends BaseBlindCalculator {
-  readonly blindType = 'Zebra';
+export class RollerBlindType extends BaseBlindType {
+  readonly blindType = 'Roller';
 }

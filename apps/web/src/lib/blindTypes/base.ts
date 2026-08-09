@@ -2,18 +2,19 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Base blind pricing calculator — the shared "main" calculation logic
- * used today for every blind type. Each supported blind type has its
- * own calculator module (`apps/web/src/lib/calculators/<type>.ts`) that
- * EXTENDS this class; for now they all inherit the default formula
- * unchanged. A subclass diverges by overriding one of the granular cost
+ * Base blind-type module — the shared "main" calculation logic used
+ * today for every blind type, and the extension point each type builds
+ * on. Each supported blind type has its own module
+ * (`apps/web/src/lib/blindTypes/<type>.ts`) that EXTENDS this class; for
+ * now they all inherit the default formula unchanged. A subclass
+ * diverges by overriding one of the granular cost
  * hooks (`materialCost` / `cassetteCost` / `bottomRailCost` /
  * `controlCost`), the minimum rules (`applyWidthMinimum` /
  * `applyHeightMinimum`), or the whole `calculateUnitPrice` — whichever is
  * the smallest correct change.
  *
  * This client class is the twin of the AUTHORITATIVE server-side
- * `apps/api/src/lib/calculators/base.ts`, which recalculates and
+ * `apps/api/src/lib/blindTypes/base.ts`, which recalculates and
  * finalizes pricing on save; this web class only powers live keystroke
  * previews. The two MUST stay in sync; `pricing.test.ts` on both sides
  * encodes the same expected values so any drift fails a suite.
@@ -50,17 +51,17 @@ export interface BlindPricingInputs {
 }
 
 /**
- * The default calculator. Instantiable on its own (used as the fallback
- * when a blind type has no dedicated calculator) and the superclass for
- * every per-type calculator.
+ * The default blind-type module. Instantiable on its own (used as the
+ * fallback when a blind type has no dedicated module) and the superclass
+ * for every per-type module.
  */
-export class BaseBlindCalculator {
-  /** Human-readable label of the blind type this calculator prices. */
+export class BaseBlindType {
+  /** Human-readable label of the blind type this module prices. */
   readonly blindType: string = 'Default';
 
   /**
    * Extra normalised name aliases that should resolve to this
-   * calculator, on top of the normalised `blindType` label itself
+   * module, on top of the normalised `blindType` label itself
    * (e.g. Sunscreen/Solar also answers to "solar"). Lowercase,
    * alphanumerics only — see `normalizeBlindType` in the registry.
    */
