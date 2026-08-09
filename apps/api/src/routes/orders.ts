@@ -63,6 +63,7 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
+import { getBlindType } from '../lib/blindTypes';
 import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -110,6 +111,15 @@ const blindItemSchema = z
     control_id: z.string().uuid(),
     color: z.string().max(100).default(''),
     note: z.string().max(1000).default(''),
+    /**
+     * The blind type's own extra inputs. Accepted loosely here and
+     * re-parsed in `resolveLineItems` through that type's own
+     * `attributeSchema`, because the discriminator this shape needs
+     * (`blinds_type`) is a sibling field — Zod cannot branch on it in
+     * the same object. That second parse is `.strict()`, so an
+     * undeclared key is still a 400.
+     */
+    attributes: z.record(z.unknown()).default({}),
     quantity: z.number().int().min(1).max(999),
   })
   .strict();
@@ -262,6 +272,10 @@ async function resolveLineItems(
         description: it.description,
         note: '',
         color: '',
+        // Flat items carry no per-type inputs, but the key MUST be present:
+        // PostgREST unifies keys across bulk-inserted rows and NULL-fills
+        // any row missing one, and `attributes` is not-null.
+        attributes: {},
         quantity: it.quantity,
         unit_price: unit,
         line_total: Math.round(unit * it.quantity * 100) / 100,
@@ -276,7 +290,20 @@ async function resolveLineItems(
     if (!bottomRail) throw new Error('Selected bottom rail option no longer exists.');
     if (!control) throw new Error('Selected control option no longer exists.');
 
-    // Dispatch to the blind type's own calculator (falls back to the
+    // Second, type-aware gate: the loose `z.record` on the payload schema
+    // only proved the blob is an object. This parses it through the blind
+    // type's own strict schema, so an undeclared key — a price above all
+    // — is a 400 rather than a silent write into the jsonb column.
+    const blindType = getBlindType(it.blinds_type);
+    const parsedAttrs = blindType.attributeSchema.safeParse(it.attributes);
+    if (!parsedAttrs.success) {
+      throw new Error(
+        `Item ${position + 1}: ${it.blinds_type || 'this blind type'} does not accept those options.`
+      );
+    }
+    const attributes = parsedAttrs.data as Record<string, string | number | boolean>;
+
+    // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
     const unit_price = calculateBlindUnitPriceForType(it.blinds_type, {
       panels: it.panels,
@@ -285,7 +312,7 @@ async function resolveLineItems(
       cassette_price_per_m: cassette.price,
       bottom_rail_price_per_m: bottomRail.price,
       control_price_per_item: control.price,
-      attributes: {},
+      attributes,
     });
     return {
       item_type: 'blind',
@@ -309,6 +336,7 @@ async function resolveLineItems(
       description: '',
       note: it.note,
       color: it.color,
+      attributes,
       quantity: it.quantity,
       unit_price,
       line_total: Math.round(unit_price * it.quantity * 100) / 100,
