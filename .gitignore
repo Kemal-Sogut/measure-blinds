@@ -6,12 +6,8 @@ dist/
 .wrangler/
 .dev.vars
 *.log
-memory-bank/
-knowledge/
-AI_GUIDELINES.md
-implementation_plan.md
+
+# Local-only AI working artifacts — never pushed
 design/
-SESSION_HANDOFF.md
-supabase/
-scripts/
 docs/
+.superpowers/
