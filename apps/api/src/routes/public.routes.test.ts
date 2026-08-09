@@ -9,9 +9,11 @@
  *   - confirm succeeds exactly once (second attempt → 409), moving the
  *     order sent → awaiting_payment
  *   - the in-memory rate limiter returns 429 after the budget is spent
+ *   - internal notification emails are attempted, against a stubbed
+ *     Resend (see `sentEmails` below — the suite performs NO network I/O)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 
 interface FakeDb {
   order: Record<string, unknown> | null;
@@ -114,6 +116,54 @@ const ENV = {
 
 const TOKEN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 
+/* ------------------------------------------------------------------ */
+/* Resend stub                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Emails the routes attempted, newest last. Reset before every test.
+ */
+const sentEmails: Array<{ to: string; subject: string }> = [];
+
+/**
+ * Resend is stubbed for the WHOLE suite, not per-test.
+ *
+ * Five public routes send an internal notification (confirm,
+ * cancel-request, cancel-withdraw, appointment confirm, appointment
+ * request) and `sendEmail` in `lib/email.ts` calls `fetch` directly.
+ * Without this stub each of those tests made a REAL HTTPS request to
+ * api.resend.com, waited for the 401 that a placeholder key earns, and
+ * only then continued — 2-4 seconds apiece, occasionally past vitest's
+ * 5s default timeout, which is what made this file fail at random on an
+ * unchanged tree. It also meant `pnpm --filter api test` performed live
+ * network I/O against a third party on every run.
+ *
+ * All three call sites wrap the send in try/catch and log, so a 200 here
+ * exercises exactly the same route behaviour a 401 did — no assertion in
+ * this file changes meaning because of the stub.
+ *
+ * Any fetch to another host THROWS rather than falling through to the
+ * network, so the next unmocked outbound call fails loudly in CI instead
+ * of quietly reaching the internet.
+ */
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const href = input instanceof Request ? input.url : String(input);
+  if (!href.startsWith('https://api.resend.com/')) {
+    throw new Error(`Unmocked outbound fetch in tests: ${href}`);
+  }
+  const body = JSON.parse(String(init?.body ?? '{}')) as { to?: string[]; subject?: string };
+  sentEmails.push({ to: body.to?.[0] ?? '', subject: body.subject ?? '' });
+  return new Response(JSON.stringify({ id: 'stub-email-id' }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}) as typeof globalThis.fetch;
+
+afterAll(() => {
+  globalThis.fetch = realFetch;
+});
+
 /** Requests carry a unique IP by default so the limiter doesn't interfere. */
 let ipSeq = 0;
 function req(path: string, method = 'GET', ip?: string) {
@@ -174,6 +224,7 @@ beforeEach(() => {
   db.updated = false;
   db.calls = [];
   db.lastUpdate = null;
+  sentEmails.length = 0;
 });
 
 /** POSTs a JSON body (the cancellation routes accept an optional note). */
@@ -229,6 +280,11 @@ describe('POST /public/estimate/:token/confirm', () => {
 
     const second = await req(`/estimate/${TOKEN}/confirm`, 'POST');
     expect(second.status).toBe(409);
+
+    // The 409 short-circuits before the notification, so staff hear about
+    // the confirmation once, not once per customer click.
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].subject).toContain('confirmed');
   });
 
   it('410 for an expired order', async () => {
@@ -338,6 +394,10 @@ describe('POST /public/estimate/:token/cancel-request', () => {
     expect(row.cancel_request_note).toBe('Changed my mind');
     // The customer can ask, but can never move the order themselves.
     expect(row.status).toBe('awaiting_payment');
+    // Staff are notified exactly once.
+    expect(sentEmails).toHaveLength(1);
+    expect(sentEmails[0].to).toBe('biz@example.com');
+    expect(sentEmails[0].subject).toContain('Cancellation requested');
   });
 
   it('409 before confirmation (nothing to cancel yet)', async () => {
@@ -358,6 +418,8 @@ describe('POST /public/estimate/:token/cancel-request', () => {
     db.order = awaitingOrder({ cancel_requested_at: '2026-07-21T09:00:00.000Z' });
     const res = await postJson(`/estimate/${TOKEN}/cancel-request`, {});
     expect(res.status).toBe(409);
+    // The point of the guard: a second request must not re-notify staff.
+    expect(sentEmails).toHaveLength(0);
   });
 
   it('truncates an overlong note to 500 characters', async () => {

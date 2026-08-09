@@ -1,5 +1,41 @@
 # Bug Fixes History
 
+## 2026-08-09 — `public.routes.test.ts` made REAL calls to Resend on every test run
+- **Issue:** the api suite failed at random on a clean tree. Different tests each time —
+  `customer action logs > logs the confirm as a customer action` (5013ms),
+  `POST /public/appointment/:token/request > records a change request with the customer
+  note` (5003ms), `customer action logs > logs a cancellation request as a customer
+  action` (5014ms) — always vitest's 5000ms default timeout, and a third run would pass
+  all 35.
+- **Root cause:** five public routes send an internal notification (estimate confirm,
+  cancel-request, cancel-withdraw, appointment confirm, appointment request), and
+  `sendEmail` in `lib/email.ts` calls `fetch('https://api.resend.com/emails')` directly.
+  `public.routes.test.ts` mocked `../lib/supabase` and NOTHING else, so every one of
+  those tests opened a real HTTPS connection to Resend, waited for the 401 that
+  `RESEND_API_KEY: 'placeholder'` earns, and only then continued. The suite's own file
+  header claimed a "scripted fake Supabase client" — true, and irrelevant to the wait.
+  `orders.routes.test.ts` had this right all along: it stubs `globalThis.fetch` around
+  every email-sending test. That divergence is why one file was flaky and the other was
+  not.
+- **Detection:** noticed while verifying an unrelated refactor — a failure appeared in
+  `apps/api` on a run where `git status apps/api` was empty. Re-running produced a
+  DIFFERENT failing test, which is the signature of latency, not logic.
+- **Fix:** stub `globalThis.fetch` for the whole suite (restored in `afterAll`), record
+  each attempted send in a `sentEmails` array reset per test, and THROW on a fetch to
+  any host other than `api.resend.com` so the next unmocked outbound call fails loudly
+  instead of silently reaching the internet. All three call sites already wrapped the
+  send in try/catch and logged, so returning 200 instead of 401 exercises identical
+  route behaviour — no existing assertion changed meaning.
+- **Result:** the file's tests went 6295ms → ~32ms; the whole api suite 8.0s → ~2.0s.
+  Eight consecutive full runs at 207/207, where before roughly one run in three failed.
+- **Bonus:** `409 when a request is already open (no duplicate notifications)` asserted
+  only the 409 — its stated point, that staff are not re-notified, was untested. It now
+  asserts `sentEmails` is empty, and the confirm and cancel-request tests assert the
+  single expected send.
+- **Lesson:** a test suite that takes seconds against an in-memory fake is telling you it
+  is not actually isolated. Treat multi-second unit tests as a bug report, not a quirk —
+  and never leave `fetch` unstubbed in a suite whose routes send mail.
+
 ## 2026-07-21 — Half-finished email-theme extraction left the api not compiling
 - **Issue:** commit `ef0f441` ("email-templates") on `feat/responsive-emails` created
   `apps/api/src/lib/email-theme.ts` and added the corresponding imports + re-exports to
