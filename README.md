@@ -85,4 +85,4 @@ this data volume a dump takes seconds.
 
 See `AI_GUIDELINES.md` (SRP per file, doc comments, SPDX headers) and the
 `memory-bank/` + `knowledge/history/` folders for architecture decisions and
-change history. The phase plan is `implementation_plan.md`.
+change history.
