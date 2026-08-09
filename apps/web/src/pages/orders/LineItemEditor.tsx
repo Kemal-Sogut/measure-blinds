@@ -114,6 +114,7 @@ export function blindDraftPrice(
     bottom_rail_price_per_m: Number(bottomRail.price_per_m),
     control_price_per_item: Number(control.price_per_item),
     quantity: qty,
+    attributes: {},
   });
   return { unit, total: Math.round(unit * qty * 100) / 100 };
 }

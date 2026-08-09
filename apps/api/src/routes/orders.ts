@@ -285,6 +285,7 @@ async function resolveLineItems(
       cassette_price_per_m: cassette.price,
       bottom_rail_price_per_m: bottomRail.price,
       control_price_per_item: control.price,
+      attributes: {},
     });
     return {
       item_type: 'blind',

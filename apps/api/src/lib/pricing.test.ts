@@ -31,6 +31,7 @@ describe('pricing (server)', () => {
         cassette_price_per_m: 0,
         bottom_rail_price_per_m: 0,
         control_price_per_item: 0,
+        attributes: {},
       })
     ).toBe(140);
   });
@@ -49,6 +50,7 @@ describe('pricing (server)', () => {
       cassette_price_per_m: 20,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
+      attributes: {},
     });
     expect(price).toBe(140 + 28 + 20);
   });
@@ -60,6 +62,7 @@ describe('pricing (server)', () => {
       material_price_per_sqm: 50,
       cassette_price_per_m: 0,
       control_price_per_item: 0,
+      attributes: {},
     };
     // 140cm wide → 1.4m. A $15/m rail adds $21 on top of the $140 material.
     expect(calculateBlindUnitPrice({ ...base, bottom_rail_price_per_m: 15 })).toBe(161);
@@ -77,7 +80,7 @@ describe('pricing (server)', () => {
   });
 });
 
-describe('blind-type calculator registry', () => {
+describe('blind-type module registry', () => {
   it('normalises names, stripping spacing/case and a trailing "blind"', () => {
     expect(normalizeBlindType('Roller Blind')).toBe('roller');
     expect(normalizeBlindType('  ROLLER ')).toBe('roller');
@@ -85,7 +88,7 @@ describe('blind-type calculator registry', () => {
     expect(normalizeBlindType('Sun-screen/Solar')).toBe('sunscreensolar');
   });
 
-  it('resolves each canonical type to its own calculator', () => {
+  it('resolves each canonical type to its own module', () => {
     expect(getBlindType('Roller').blindType).toBe('Roller');
     expect(getBlindType('Zebra').blindType).toBe('Zebra');
     expect(getBlindType('Curtains').blindType).toBe('Curtains');
@@ -94,7 +97,7 @@ describe('blind-type calculator registry', () => {
     expect(getBlindType('Roller Blind').blindType).toBe('Roller');
   });
 
-  it('falls back to the default calculator for unknown/empty types', () => {
+  it('falls back to the default module for unknown/empty types', () => {
     expect(getBlindType('Nonexistent').blindType).toBe('Default');
     expect(getBlindType('').blindType).toBe('Default');
     expect(getBlindType(null).blindType).toBe('Default');
@@ -108,6 +111,7 @@ describe('blind-type calculator registry', () => {
       cassette_price_per_m: 20,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
+      attributes: {},
     };
     const expected = calculateBlindUnitPrice(inputs);
     for (const type of ['Roller', 'Zebra', 'Honeycomb', 'Shutter', 'Curtains', 'Nonexistent']) {

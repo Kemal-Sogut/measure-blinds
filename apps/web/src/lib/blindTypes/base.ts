@@ -28,6 +28,17 @@
  * minimum (<100→100, 100–199→200, ≥200→actual) applied first.
  */
 
+import { z } from 'zod';
+
+/**
+ * A blind type's extra inputs, as stored in `line_items.attributes`.
+ *
+ * Deliberately flat and primitive-valued: the blob is rendered on the
+ * PDF, the manufacturer copy and the customer page, all of which format
+ * one label/value pair per entry. Nesting would have no way to render.
+ */
+export type BlindAttributes = Record<string, string | number | boolean>;
+
 /** Inputs required to price a single blind line item. */
 export interface BlindPricingInputs {
   /** Individual panel widths in cm (summed for the effective width). */
@@ -48,6 +59,17 @@ export interface BlindPricingInputs {
   bottom_rail_price_per_m: number;
   /** Control cost per panel (server-fetched snapshot). */
   control_price_per_item: number;
+  /**
+   * The blind type's own extra inputs, already validated by that type's
+   * `attributeSchema`. `{}` for every type that has not diverged. Read it
+   * only from a subclass that declared the key — the base formula ignores
+   * it entirely, which is why every historical row prices unchanged.
+   *
+   * REQUIRED, not optional, for the same reason `bottom_rail_price_per_m`
+   * is: an optional member would let a caller silently drop a type's
+   * inputs and get the base price back with no error at all.
+   */
+  attributes: BlindAttributes;
 }
 
 /**
@@ -66,6 +88,57 @@ export class BaseBlindType {
    * alphanumerics only — see `normalizeBlindType` in the registry.
    */
   readonly aliases: readonly string[] = [];
+
+  /**
+   * Builds a `.strict()` attribute schema from a field map. Subclasses
+   * use this rather than calling `z.object` directly so the strictness —
+   * the server's only gate against an undeclared key reaching the jsonb
+   * column — cannot be forgotten.
+   *
+   * Declare numeric fields with `z.coerce.number()`: the value arriving
+   * from a draft is a string, because the editor holds every numeric
+   * field as raw text so a half-typed "12." does not fight the keyboard.
+   */
+  static attrs<T extends z.ZodRawShape>(shape: T) {
+    return z.object(shape).strict();
+  }
+
+  /**
+   * Validation contract for this type's extra inputs. The Worker parses
+   * the client's `attributes` blob through this before any write, so an
+   * undeclared key (notably a price) is a 400, not a silent store.
+   *
+   * The base accepts ONLY `{}` — a type that has not declared fields
+   * cannot receive any. Every field a subclass declares must be optional
+   * or defaulted, because migration 29 left every historical row at `{}`.
+   *
+   * Typed `ZodTypeAny`, NOT `z.ZodType<BlindAttributes>`: a subclass
+   * assigning a narrower `ZodObject` to the latter fails to typecheck,
+   * because Zod's schema types are not covariant in their output. Callers
+   * cast the parse result to `BlindAttributes`.
+   */
+  readonly attributeSchema: z.ZodTypeAny = BaseBlindType.attrs({});
+
+  /**
+   * Seed values for a freshly added blind of this type. Must satisfy
+   * `attributeSchema` — `attributes.test.ts` asserts the round-trip.
+   */
+  defaultAttributes(): BlindAttributes {
+    return {};
+  }
+
+  /**
+   * Renders this type's attributes as ordered label/value pairs for the
+   * documents — the estimate/invoice PDF, the manufacturer copy, the
+   * customer page, and the order item rows. Deliberately React-free:
+   * `apps/api/src/lib/pdf.ts` runs on the Worker and cannot import JSX.
+   *
+   * Return `[]` for a value the customer should not see; the caller
+   * renders exactly what it is given, in order.
+   */
+  describeAttributes(_attrs: BlindAttributes): { label: string; value: string }[] {
+    return [];
+  }
 
   /** Raises widths below 100cm to 100cm. */
   applyWidthMinimum(totalCm: number): number {
