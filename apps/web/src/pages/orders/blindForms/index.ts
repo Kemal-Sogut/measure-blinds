@@ -21,25 +21,55 @@
  * without adding it to the other.
  */
 
-import { normalizeBlindType } from '../../../lib/blindTypes';
+import { getBlindType, normalizeBlindType } from '../../../lib/blindTypes';
 import DefaultForm from './DefaultForm';
 import type { BlindFormComponent } from './fields';
 
+import RollerForm from './RollerForm';
+import ZebraForm from './ZebraForm';
+import RomanForm from './RomanForm';
+import SunscreenForm from './SunscreenForm';
+import HoneycombForm from './HoneycombForm';
+import ShutterForm from './ShutterForm';
+import VerticalSheerForm from './VerticalSheerForm';
+import VerticalPanelForm from './VerticalPanelForm';
+import VerticalRollerForm from './VerticalRollerForm';
+import CurtainsForm from './CurtainsForm';
+
 /**
- * normalised name/alias → form component.
+ * Canonical blind-type label → form component.
  *
- * Populated per type. Every key a type's pricing module answers to must
- * appear here too, aliases included (Sunscreen also answers to "solar",
- * Curtains to "curtain") — see `lib/blindTypes/registry.ts`.
+ * Keyed only by each type's CANONICAL name. Aliases are deliberately
+ * absent: `getBlindForm` resolves the incoming name through the pricing
+ * registry first and keys on the canonical label that comes back, so the
+ * two registries cannot disagree about "solar" or "curtain" even in
+ * principle. Adding an alias in `lib/blindTypes/` needs no edit here.
  */
-const byKey = new Map<string, BlindFormComponent>();
+const byKey = new Map<string, BlindFormComponent>([
+  [normalizeBlindType('Roller'), RollerForm],
+  [normalizeBlindType('Zebra'), ZebraForm],
+  [normalizeBlindType('Roman'), RomanForm],
+  [normalizeBlindType('Sunscreen/Solar'), SunscreenForm],
+  [normalizeBlindType('Honeycomb'), HoneycombForm],
+  [normalizeBlindType('Shutter'), ShutterForm],
+  [normalizeBlindType('Vertical Sheer'), VerticalSheerForm],
+  [normalizeBlindType('Vertical Panel'), VerticalPanelForm],
+  [normalizeBlindType('Vertical Roller'), VerticalRollerForm],
+  [normalizeBlindType('Curtains'), CurtainsForm],
+]);
 
 /**
  * Returns the form for a stored blind-type name, or `DefaultForm` when the
  * name is empty or unrecognised.
+ *
+ * Resolution goes through `getBlindType` FIRST, so every alias, casing and
+ * legacy "… Blind" spelling the pricing registry accepts lands on the same
+ * form that prices it. An unrecognised name resolves to the base module,
+ * whose label ('Default') is not in the map — hence `DefaultForm`.
  */
 export function getBlindForm(blindsType: string | null | undefined): BlindFormComponent {
-  return byKey.get(normalizeBlindType(blindsType)) ?? DefaultForm;
+  const canonical = getBlindType(blindsType).blindType;
+  return byKey.get(normalizeBlindType(canonical)) ?? DefaultForm;
 }
 
 export { DefaultForm };
