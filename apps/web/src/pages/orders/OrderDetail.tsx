@@ -114,6 +114,7 @@ import {
   BulkEditForm,
   type BulkEditState,
 } from './LineItemEditor';
+import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
   flatDraftPrice,
@@ -2127,6 +2128,13 @@ export default function OrderDetail() {
                             .filter(Boolean)
                             .join(' — ')
                           : it.description || `Item ${i + 1}`;
+                      const attrLine =
+                        it.item_type === 'blind'
+                          ? getBlindType(it.blinds_type)
+                            .describeAttributes(parseDraftAttributes(it) ?? {})
+                            .map((a) => `${a.label}: ${a.value}`)
+                            .join(' · ')
+                          : '';
 
                       return (
                         <li
@@ -2182,6 +2190,31 @@ export default function OrderDetail() {
                             */}
                             <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
                               {name}
+                              {/*
+                                The blind type's own inputs, formatted by
+                                the type itself so this row, the PDF, the
+                                manufacturer copy and the customer page
+                                cannot disagree about labels. Read from the
+                                DRAFT, not the persisted item, because this
+                                list shows unsaved edits.
+
+                                Nested INSIDE the name span as a block, not
+                                beside it in a flex column. Wrapping the two
+                                in `flex flex-col` was measured to break the
+                                name's wrapping outright — a 120-character
+                                unbroken name went from 238px over 5 lines
+                                to 1252px on one, dragging the row to
+                                1356px inside a 375px viewport. Inheriting
+                                this span's `wrap-anywhere` and `min-w-0`
+                                keeps the original intrinsic-width
+                                behaviour, and renders byte-identical
+                                markup while no type declares attributes.
+                              */}
+                              {attrLine && (
+                                <span className="mt-0.5 block text-xs text-text-muted">
+                                  {attrLine}
+                                </span>
+                              )}
                             </span>
                           </div>
 

@@ -207,6 +207,25 @@ describe('buildManufacturingPlan', () => {
     expect(plan.asIs.map((a) => a.label)).toContain('Installation fee');
   });
 
+  it('leaves the as-is detail unchanged when a blind declares no attributes', () => {
+    // Every type is still on the base schema, so the production sheet must
+    // read exactly as it did before the attributes column existed — no
+    // stray separator, no empty tail.
+    const plan = buildManufacturingPlan([
+      lineItem({
+        blinds_type: 'Roman',
+        room_name: 'Room',
+        material_name: 'Blackout White',
+        color: 'Ivory',
+        panels: [120],
+        height_cm: 210,
+        attributes: {},
+      }),
+    ], new Map());
+    expect(plan.asIs).toHaveLength(1);
+    expect(plan.asIs[0].detail).toBe('Blackout White · Ivory · 120 cm W × 210 cm H');
+  });
+
   it('never merges the same material across different colour codes', () => {
     // Same material id + width, different colour = different physical roll.
     const items: LineItem[] = [
