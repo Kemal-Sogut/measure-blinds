@@ -112,15 +112,19 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
+  type BulkEditState,
+} from './LineItemEditor';
+import { getBlindType } from '../../lib/blindTypes';
+import {
   blindDraftPrice,
   flatDraftPrice,
+  parseDraftAttributes,
   parsePositive,
   type BlindDraft,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type BulkEditState,
-} from './LineItemEditor';
+} from './lineItemDrafts';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
 
 /**
@@ -240,6 +244,10 @@ function toDrafts(order: Order): ItemDraft[] {
         control_id: li.control_id ?? '',
         color: li.color ?? '',
         note: li.note ?? '',
+        // The persisted blob is typed; the draft holds strings.
+        attributes: Object.fromEntries(
+          Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
+        ),
         quantity: String(li.quantity),
       } satisfies BlindDraft;
     }
@@ -700,6 +708,9 @@ export default function OrderDetail() {
       control_id: findOptionIdByName(catalogs.controls, 'Chain'),
       color: '',
       note: '',
+      // Empty until a blind type is chosen — the type dropdown seeds this
+      // from the newly selected type's `defaultAttributes()`.
+      attributes: {},
       quantity: '1',
     };
     setItems((list) => [...list, draft]);
@@ -831,6 +842,11 @@ export default function OrderDetail() {
         if (!it.material_id || !it.cassette_id || !it.bottom_rail_id || !it.control_id)
           return `Item ${i + 1}: choose material, cassette, bottom rail, and control.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
+        // Convert once, here. Failing now gives a readable message instead
+        // of a 400 from the server's own re-parse.
+        const attributes = parseDraftAttributes(it);
+        if (attributes === null)
+          return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
         line_items.push({
           item_type: 'blind',
           room_name: it.room_name.trim(),
@@ -843,6 +859,7 @@ export default function OrderDetail() {
           control_id: it.control_id,
           color: it.color.trim(),
           note: it.note.trim(),
+          attributes,
           quantity: Math.round(qty),
         });
       } else {
@@ -2111,6 +2128,13 @@ export default function OrderDetail() {
                             .filter(Boolean)
                             .join(' — ')
                           : it.description || `Item ${i + 1}`;
+                      const attrLine =
+                        it.item_type === 'blind'
+                          ? getBlindType(it.blinds_type)
+                            .describeAttributes(parseDraftAttributes(it) ?? {})
+                            .map((a) => `${a.label}: ${a.value}`)
+                            .join(' · ')
+                          : '';
 
                       return (
                         <li
@@ -2166,6 +2190,31 @@ export default function OrderDetail() {
                             */}
                             <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
                               {name}
+                              {/*
+                                The blind type's own inputs, formatted by
+                                the type itself so this row, the PDF, the
+                                manufacturer copy and the customer page
+                                cannot disagree about labels. Read from the
+                                DRAFT, not the persisted item, because this
+                                list shows unsaved edits.
+
+                                Nested INSIDE the name span as a block, not
+                                beside it in a flex column. Wrapping the two
+                                in `flex flex-col` was measured to break the
+                                name's wrapping outright — a 120-character
+                                unbroken name went from 238px over 5 lines
+                                to 1252px on one, dragging the row to
+                                1356px inside a 375px viewport. Inheriting
+                                this span's `wrap-anywhere` and `min-w-0`
+                                keeps the original intrinsic-width
+                                behaviour, and renders byte-identical
+                                markup while no type declares attributes.
+                              */}
+                              {attrLine && (
+                                <span className="mt-0.5 block text-xs text-text-muted">
+                                  {attrLine}
+                                </span>
+                              )}
                             </span>
                           </div>
 

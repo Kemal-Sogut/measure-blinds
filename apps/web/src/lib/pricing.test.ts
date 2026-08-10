@@ -20,7 +20,7 @@ import {
   calculateBlindLineTotal,
   type BlindInputs,
 } from './pricing';
-import { getCalculator } from './calculators';
+import { getBlindType } from './blindTypes';
 
 /** Builds a baseline blind input; individual tests override single fields. */
 function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
@@ -31,6 +31,7 @@ function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
     cassette_price_per_m: 0,
     bottom_rail_price_per_m: 0,
     control_price_per_item: 0,
+    attributes: {},
     quantity: 1,
     ...overrides,
   };
@@ -112,11 +113,11 @@ describe('calculateBlindUnitPrice', () => {
 });
 
 describe('calculateBlindUnitPriceForType (type dispatch)', () => {
-  it('resolves each canonical type to its own calculator', () => {
-    expect(getCalculator('Roller').blindType).toBe('Roller');
-    expect(getCalculator('Sunscreen/Solar').blindType).toBe('Sunscreen/Solar');
-    expect(getCalculator('Vertical Roller').blindType).toBe('Vertical Roller');
-    expect(getCalculator('unknown').blindType).toBe('Default');
+  it('resolves each canonical type to its own module', () => {
+    expect(getBlindType('Roller').blindType).toBe('Roller');
+    expect(getBlindType('Sunscreen/Solar').blindType).toBe('Sunscreen/Solar');
+    expect(getBlindType('Vertical Roller').blindType).toBe('Vertical Roller');
+    expect(getBlindType('unknown').blindType).toBe('Default');
   });
 
   it('prices identically to the default while every type inherits it', () => {

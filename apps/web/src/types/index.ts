@@ -267,6 +267,14 @@ export interface LineItem {
   note: string;
   /** Free-text colour label (display-only; no pricing effect). */
   color: string;
+  /**
+   * The blind type's own extra inputs, as validated and stored by the
+   * Worker. `{}` for flat items and for every blind of a type that has
+   * not declared any. Render it through
+   * `getBlindType(blinds_type).describeAttributes()` — never by iterating
+   * the object directly, or the labels drift between surfaces.
+   */
+  attributes: Record<string, string | number | boolean>;
   quantity: number;
   unit_price: number;
   line_total: number;

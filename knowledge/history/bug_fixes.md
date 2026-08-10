@@ -1,5 +1,66 @@
 # Bug Fixes History
 
+## 2026-08-09 — Wrapping a `wrap-anywhere` span in `flex flex-col` destroyed its wrapping
+- **Issue:** adding the per-blind-type attribute line to the order item rows, the first
+  attempt put the name and the new line side by side in a `flex min-w-0 flex-1 flex-col`
+  wrapper, moving `min-w-0 flex-1 wrap-anywhere` off the name span onto the wrapper. Measured
+  at 375px with a 120-character unbroken name: the name span went from **238px over 5 lines
+  (height 98px) to 1252px on a single line**, dragging the row from 342px to **1356px**.
+- **Why it hid:** the page's `scrollWidth` stayed at 375 in BOTH cases, so the usual
+  "does the page scroll horizontally" check passed. An ancestor's `overflow-x-clip` was
+  swallowing the overflow — the row was not scrolling the page, it was being cut off.
+  Adding `min-w-0` back onto the inner span did NOT fix it; the flex-column context itself
+  was the cause.
+- **Fix:** do not wrap. Keep the original span with its exact classes and nest the attribute
+  line INSIDE it as `<span className="mt-0.5 block …">`, inheriting `wrap-anywhere` (an
+  inherited property) and the parent's intrinsic-width behaviour. Markup is then
+  byte-identical (2647 chars) while no type declares attributes, and the 120-character stress
+  case reproduces the old geometry exactly.
+- **Detection:** A/B in a signed-in browser — capture geometry, `git checkout HEAD -- <file>`,
+  let vite reload, capture again, restore. Comparing `getBoundingClientRect` between the two
+  builds is what turned "looks fine" into a number.
+- **Lesson:** `scrollWidth === clientWidth` is NOT proof a layout contains itself when an
+  ancestor clips overflow — measure the element, not just the page. And moving a layout class
+  from a child onto a new parent is not a no-op: `wrap-anywhere`'s effect on min-content width
+  depends on the box it sits on. This is the same family of trap as the 2026-08-03
+  `truncate`-vs-`wrap-anywhere` finding.
+
+## 2026-08-09 — `public.routes.test.ts` made REAL calls to Resend on every test run
+- **Issue:** the api suite failed at random on a clean tree. Different tests each time —
+  `customer action logs > logs the confirm as a customer action` (5013ms),
+  `POST /public/appointment/:token/request > records a change request with the customer
+  note` (5003ms), `customer action logs > logs a cancellation request as a customer
+  action` (5014ms) — always vitest's 5000ms default timeout, and a third run would pass
+  all 35.
+- **Root cause:** five public routes send an internal notification (estimate confirm,
+  cancel-request, cancel-withdraw, appointment confirm, appointment request), and
+  `sendEmail` in `lib/email.ts` calls `fetch('https://api.resend.com/emails')` directly.
+  `public.routes.test.ts` mocked `../lib/supabase` and NOTHING else, so every one of
+  those tests opened a real HTTPS connection to Resend, waited for the 401 that
+  `RESEND_API_KEY: 'placeholder'` earns, and only then continued. The suite's own file
+  header claimed a "scripted fake Supabase client" — true, and irrelevant to the wait.
+  `orders.routes.test.ts` had this right all along: it stubs `globalThis.fetch` around
+  every email-sending test. That divergence is why one file was flaky and the other was
+  not.
+- **Detection:** noticed while verifying an unrelated refactor — a failure appeared in
+  `apps/api` on a run where `git status apps/api` was empty. Re-running produced a
+  DIFFERENT failing test, which is the signature of latency, not logic.
+- **Fix:** stub `globalThis.fetch` for the whole suite (restored in `afterAll`), record
+  each attempted send in a `sentEmails` array reset per test, and THROW on a fetch to
+  any host other than `api.resend.com` so the next unmocked outbound call fails loudly
+  instead of silently reaching the internet. All three call sites already wrapped the
+  send in try/catch and logged, so returning 200 instead of 401 exercises identical
+  route behaviour — no existing assertion changed meaning.
+- **Result:** the file's tests went 6295ms → ~32ms; the whole api suite 8.0s → ~2.0s.
+  Eight consecutive full runs at 207/207, where before roughly one run in three failed.
+- **Bonus:** `409 when a request is already open (no duplicate notifications)` asserted
+  only the 409 — its stated point, that staff are not re-notified, was untested. It now
+  asserts `sentEmails` is empty, and the confirm and cancel-request tests assert the
+  single expected send.
+- **Lesson:** a test suite that takes seconds against an in-memory fake is telling you it
+  is not actually isolated. Treat multi-second unit tests as a bug report, not a quirk —
+  and never leave `fetch` unstubbed in a suite whose routes send mail.
+
 ## 2026-07-21 — Half-finished email-theme extraction left the api not compiling
 - **Issue:** commit `ef0f441` ("email-templates") on `feat/responsive-emails` created
   `apps/api/src/lib/email-theme.ts` and added the corresponding imports + re-exports to

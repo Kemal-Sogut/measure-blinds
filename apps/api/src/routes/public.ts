@@ -44,6 +44,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
+import { getBlindType } from '../lib/blindTypes';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -268,6 +269,26 @@ app.get('/estimate/:token', async (c) => {
         color: li.color,
         description: li.description,
         note: li.note,
+        /**
+         * Per-type attributes are formatted HERE, server-side, and the raw
+         * blob is deliberately NOT forwarded.
+         *
+         * This endpoint is unauthenticated — the capability token is the
+         * only gate — so anything spread into this object is public the
+         * moment it exists. Sending `attributes` wholesale would publish
+         * every future internal-only field automatically and silently,
+         * including retroactively for orders already sent. Forwarding the
+         * rendered label/value pairs instead means a new field reaches the
+         * customer only if its type's `describeAttributes` chose to return
+         * it.
+         *
+         * Do NOT replace this with a spread.
+         */
+        attribute_lines: getBlindType(String(li.blinds_type ?? ''))
+          .describeAttributes(
+            (li.attributes ?? {}) as Record<string, string | number | boolean>
+          )
+          .map((a) => `${a.label}: ${a.value}`),
         quantity: li.quantity,
         unit_price: li.unit_price,
         line_total: li.line_total,

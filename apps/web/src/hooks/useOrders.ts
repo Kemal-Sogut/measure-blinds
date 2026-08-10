@@ -54,6 +54,8 @@ export interface BlindItemInput {
   control_id: string;
   color: string;
   note: string;
+  /** Typed per-type inputs; `{}` when the type declares none. */
+  attributes: Record<string, string | number | boolean>;
   quantity: number;
 }
 

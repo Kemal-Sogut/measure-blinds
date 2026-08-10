@@ -206,6 +206,55 @@ describe('POST /api/orders', () => {
     expect(db.calls).not.toContain('orders.insert');
   });
 
+  it('rejects a price smuggled inside attributes', async () => {
+    // The payload schema accepts `attributes` loosely (z.record), so this
+    // is caught by the SECOND gate: the blind type's own strict schema,
+    // re-parsed in resolveLineItems. Without it a client could write an
+    // arbitrary money field into the jsonb column.
+    const bad = payload();
+    (bad.line_items[0] as Record<string, unknown>).attributes = { unit_price: 1 };
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(bad),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+    // Proves WHICH gate fired: the payload schema now accepts `attributes`
+    // as a loose record, so this message can only come from the per-type
+    // re-parse. Without this assertion the test would still pass if the
+    // second gate were deleted and the first happened to reject.
+    expect(((await res.json()) as { error: string }).error).toContain('does not accept those options');
+  });
+
+  it('rejects an attribute key the blind type has not declared', async () => {
+    // Roller declares no attributes, so a Shutter-shaped field is not
+    // merely ignored — it is refused, which is what keeps the stored blob
+    // in step with the type that owns it.
+    const bad = payload();
+    (bad.line_items[0] as Record<string, unknown>).attributes = { louvre_mm: 63 };
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(bad),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+    expect(((await res.json()) as { error: string }).error).toContain('Roller does not accept those options');
+  });
+
+  it('defaults attributes to {} on every row when the client omits them', async () => {
+    db.orderInsertResults = [{ data: { id: 'e4' } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()), // blind + preset, neither sends attributes
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    for (const r of rows) expect(r.attributes).toEqual({});
+  });
+
   it('gives every line-item row an identical column set (PostgREST bulk-insert rule)', async () => {
     // PostgREST unifies keys across bulk-inserted rows and NULL-fills
     // gaps, which violates not-null defaults — regression for the bug

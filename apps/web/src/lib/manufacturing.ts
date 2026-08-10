@@ -36,7 +36,7 @@
  */
 
 import type { LineItem } from '../types';
-import { normalizeBlindType } from './calculators/registry';
+import { getBlindType, normalizeBlindType } from './blindTypes/registry';
 
 /**
  * Default length of one stock aluminium bar, in cm (6 m) — the bar the
@@ -394,7 +394,20 @@ export function buildManufacturingPlan(
       const dims = describeDimensions(item.panels, item.height_cm);
       asIs.push({
         label: `${roomLabel} — ${typeLabel}`,
-        detail: [item.material_name, item.color, dims].filter(Boolean).join(' · '),
+        detail: [
+          item.material_name,
+          item.color,
+          dims,
+          // The type's own inputs, formatted by the type itself. Written
+          // "Label value" rather than "Label: value" as on the documents:
+          // this is a dense middot-separated run for a production sheet,
+          // where colons inside it read as noise.
+          ...getBlindType(item.blinds_type)
+            .describeAttributes(item.attributes ?? {})
+            .map((a) => `${a.label} ${a.value}`),
+        ]
+          .filter(Boolean)
+          .join(' · '),
         quantity: item.quantity,
       });
       continue;

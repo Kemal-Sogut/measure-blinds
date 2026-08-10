@@ -79,6 +79,13 @@ interface PublicLineItem {
   cassette_name: string | null;
   bottom_rail_name: string | null;
   control_name: string | null;
+  /**
+   * Per-blind-type attributes, ALREADY formatted as "Label: value" by the
+   * Worker. The raw blob is never sent to this page — `public.ts` decides
+   * what a customer may see, because this route is unauthenticated.
+   * Optional so a page served by an older Worker still renders.
+   */
+  attribute_lines?: string[] | null;
   color: string | null;
   description: string | null;
   note: string | null;
@@ -175,6 +182,8 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
         li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
         li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : '',
         li.control_name ? `Control: ${li.control_name}` : '',
+        // Already formatted server-side; same position as on the PDF.
+        ...(li.attribute_lines ?? []),
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',
       ].filter(Boolean),
     };

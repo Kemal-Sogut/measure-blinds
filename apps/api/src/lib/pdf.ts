@@ -31,6 +31,7 @@
 
 import { PDFDocument, PDFFont, PDFPage, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { displayName } from './customerName';
+import { getBlindType } from './blindTypes';
 
 /** A single recorded payment, printed on invoices. */
 export interface PdfPayment {
@@ -72,6 +73,14 @@ export interface PdfDocumentData {
     color?: string | null;
     description: string | null;
     note?: string | null;
+    /**
+     * Per-blind-type inputs, rendered through that type's own
+     * `describeAttributes`. Optional and nullable here — unlike on
+     * `LineItem`, where it is required — because warranty and receipt
+     * payloads are assembled elsewhere in the codebase and an older
+     * assembled object must never break document generation.
+     */
+    attributes?: Record<string, string | number | boolean> | null;
     quantity: number;
     unit_price: number;
     line_total: number;
@@ -191,6 +200,13 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
+      // The blind type's own inputs, formatted by the type itself so the
+      // PDF, the manufacturer copy and the customer page cannot disagree
+      // about labels. Positioned with the other SPECIFICATION lines; the
+      // free-text note stays last, where readers look for it.
+      ...getBlindType(li.blinds_type)
+        .describeAttributes(li.attributes ?? {})
+        .map((a) => `${a.label}: ${a.value}`),
       li.note?.trim() ? `Note: ${li.note.trim()}` : null,
     ].filter((x): x is string => Boolean(x));
     return { title, attrs };
