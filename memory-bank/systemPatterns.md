@@ -110,22 +110,43 @@ Terms & Conditions section — the pattern is a local `useState<boolean>` toggle
 mounted while open. See `pages/customer-view/CustomerView.tsx`'s TERMS & CONDITIONS
 section as the reference implementation for future collapsible UI.
 
-## Blind pricing calculators + per-type Materials (2026-07-12)
-- **Class hierarchy (twins):** `apps/{api,web}/src/lib/calculators/` — a concrete
-  `BaseBlindCalculator` holds the shared "main" formula (material + cassette + control with
-  the width/height minimums) exposed via granular override hooks (`materialCost`,
-  `cassetteCost`, `controlCost`, `applyWidthMinimum`, `applyHeightMinimum`). Each of the ten
-  canonical types has its own file that `extends` the base and, for now, inherits it
-  unchanged — Honeycomb, Shutter, Curtains are the ones the user will override later. New
-  divergence should override the smallest hook, never fork `calculateUnitPrice` wholesale.
+## Blind-type modules + per-type Materials (2026-07-12, widened 2026-08-09)
+- **Class hierarchy (twins):** `apps/{api,web}/src/lib/blindTypes/` (named `calculators/`
+  until 2026-08-09) — a concrete `BaseBlindType` holds the shared "main" formula (material +
+  cassette + bottom rail + control with the width/height minimums) exposed via granular
+  override hooks (`materialCost`, `cassetteCost`, `bottomRailCost`, `controlCost`,
+  `applyWidthMinimum`, `applyHeightMinimum`). Each of the ten canonical types has its own
+  file that `extends` the base and, for now, inherits it unchanged — Honeycomb, Shutter,
+  Curtains are the ones the owner will override later. New divergence should override the
+  smallest hook, never fork `calculateUnitPrice` wholesale. (2026-07-12)
+- **A blind type owns more than a formula (2026-08-09).** `BaseBlindType` also carries
+  `attributeSchema` (a `.strict()` Zod contract for that type's extra inputs; base accepts
+  only `{}`), `defaultAttributes()`, and `describeAttributes()` → `{label, value}[]`. The
+  formatter is deliberately React-free because `apps/api/src/lib/pdf.ts` runs on the Worker.
+  Every display surface renders through it, so labels cannot drift between the PDF, the
+  customer page, the manufacturer copy and the order rows.
+- **Per-type inputs live in one `line_items.attributes` jsonb column** (migration 29), not a
+  column per field. The Zod schema is the contract, enforced server-side before the write,
+  because jsonb gives no DB-level type checking. Validation is TWO-STAGE: the payload schema
+  takes a loose `z.record` (Zod cannot branch on the sibling `blinds_type`), then
+  `resolveLineItems` re-parses through the type's own strict schema — an undeclared key is a
+  400, never a silent store.
 - **Dispatch by snapshot name:** line items store `blinds_type` as free text, so
   `registry.ts` resolves it with `normalizeBlindType` (lowercase, alphanumerics only, trailing
   "blind" stripped) → "Roller Blind" and "Roller" both map to Roller; unknown/empty falls back
-  to the base default so pricing never throws. `getCalculator(name)` returns the instance.
+  to the base default so pricing never throws. `getBlindType(name)` returns the instance
+  (called `getCalculator` before 2026-08-09).
 - **pricing.ts is a façade:** keeps `calculateBlindUnitPrice` (type-agnostic default, used by
   the shared money-math tests) and adds `calculateBlindUnitPriceForType(blindsType, inputs)`
   used by `resolveLineItems` (api) and the editor's live preview (web). The api and web sides
   remain twins — change both, and both `pricing.test.ts` suites.
+- **Forms are per type too (2026-08-09):** `apps/web/src/pages/orders/blindForms/` — shared
+  controls in `fields.tsx`, one hand-written file per type, `DefaultForm` as the permanent
+  fallback, and `BlindEditForm` reduced to a dispatcher. This is a SECOND registry (React
+  cannot live in `lib/blindTypes`, which runs on the Worker), but `getBlindForm` resolves the
+  name through `getBlindType` first and keys on the canonical label, so the two cannot
+  disagree about aliases. Draft models and pure functions live apart in `lineItemDrafts.ts`;
+  keeping them out of the `.tsx` is what allows Fast Refresh.
 - **Materials ↔ blind types (many-to-many):** `material_blind_types` join. The Materials
   settings API embeds `blind_type_ids` on reads and replaces them on create/update. The
   settings UI is a TWO-LEVEL flow: `Materials.tsx` lists blind types (and manages them),

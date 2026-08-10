@@ -1,5 +1,86 @@
 # Engine Features / Feature History
 
+## 2026-08-09 — Blind types become modules: own inputs, own form, own documents
+
+Driven by the request to modularize item adding: "different calculation logic usually
+requires different inputs — more or less, but the UI should be different… each UI of the
+blinds adding form can be edited separately." Spec
+`docs/superpowers/specs/2026-08-09-blind-type-modules-design.md`, plan
+`docs/superpowers/plans/2026-08-09-blind-type-modules.md` (both local-only; `docs/` is
+gitignored).
+
+**End state: nothing diverges yet.** Every type still prices by the base formula and
+declares zero attributes, so no order's price moved and no form looks different. The
+scaffold is the deliverable. The first real divergence is a two-file change per type
+(`lib/blindTypes/<type>.ts` in both twins + `blindForms/<Type>Form.tsx`) and needs the
+owner's actual formula.
+
+- **`calculators/` → `blindTypes/` (both twins), `BaseBlindCalculator` → `BaseBlindType`,
+  `getCalculator` → `getBlindType`.** The class stopped being only a calculator once it
+  owned a field schema and a display formatter. Rename verified behaviour-free by test
+  count: web 98/10 and api 196/11, identical either side. `normalizeBlindType` kept its
+  name — `manufacturing.ts` depends on its exact output for `isAluminumType`.
+- **Three new members on `BaseBlindType`:**
+  - `attributeSchema` — a `.strict()` Zod contract, built via the `BaseBlindType.attrs()`
+    helper so strictness cannot be forgotten. The base accepts ONLY `{}`. Typed
+    `z.ZodTypeAny`, NOT `z.ZodType<BlindAttributes>`: Zod schema types are not covariant in
+    their output, so a subclass assigning a narrower `ZodObject` would not typecheck.
+    Declare numeric fields with `z.coerce.number()` — the value arriving from a draft is a
+    string.
+  - `defaultAttributes()` — seed for a new draft, re-seeded when the type dropdown changes.
+  - `describeAttributes()` — React-free `{label, value}[]`, because `apps/api/src/lib/pdf.ts`
+    runs on the Worker and cannot import JSX. Every display surface renders through this one
+    formatter, so they cannot disagree about labels.
+- **`BlindPricingInputs.attributes` is REQUIRED**, matching the reasoning behind
+  `bottom_rail_price_per_m`: an optional member would let a caller silently drop a type's
+  inputs and get the base price back with no error at all.
+- **DB (migration 29, APPLIED live to `lgbxxlwsdeuhdgzrjjen` by the maintainer):**
+  `line_items.attributes jsonb not null default '{}'`. One jsonb column rather than a sparse
+  column per field per type — a real column per field costs a migration plus the locked
+  bulk-insert column-set discipline every time any type gains a field, and a child table
+  would add a read path to every consumer for data only ever read alongside its parent.
+  `update_order_with_items()` rebuilt to carry the column; the diff against migration 28 is
+  exactly three hunks (insert list, select, recordset definition).
+- **Two-stage validation, because Zod cannot branch on a sibling field.** `blindItemSchema`
+  accepts `attributes` as a loose `z.record(z.unknown())` — the discriminator it needs
+  (`blinds_type`) sits beside it — then `resolveLineItems` re-parses the blob through that
+  type's own `.strict()` schema. An undeclared key, a price above all, is a 400 and never a
+  silent write. The route tests assert on the error MESSAGE, not just the 400, so they fail
+  if the second gate is ever removed.
+- **Flat rows carry `attributes: {}` explicitly** — PostgREST unifies keys across
+  bulk-inserted rows and NULL-fills any row missing one, and the column is not-null.
+- **Web forms split per type:** `pages/orders/blindForms/` — `fields.tsx` (shared controls,
+  moved verbatim, plus `AttributeText`), `DefaultForm.tsx` (the old layout, and the permanent
+  fallback for unknown/inactive/legacy free-text types), `index.ts` (`getBlindForm`), and ten
+  per-type files. `BlindEditForm` is now a ~4-line dispatcher with unchanged props.
+- **`getBlindForm` resolves through `getBlindType` FIRST** and keys the form map on the
+  canonical label that comes back, instead of duplicating each type's aliases into a second
+  map. Sunscreen alone answers to four spellings. Adding an alias in `lib/blindTypes/` needs
+  no edit in the form layer, and the two registries cannot disagree even in principle.
+- **`lineItemDrafts.ts` (new, JSX-free)** holds the draft models and every pure function over
+  them, including `parseDraftAttributes` — the ONE string→typed conversion, used by both the
+  live preview and the save payload. Blank strings are dropped rather than coerced so an
+  unfilled field looks absent to the schema instead of reading as NaN. Splitting it out of
+  `LineItemEditor.tsx` took `apps/web` lint from 4 pre-existing `react/only-export-components`
+  warnings to **0**: a module exporting both components and plain functions cannot be
+  Fast-Refreshed. `LineItemEditor.tsx` 570 → 168 lines.
+- **Display surfaces, all fed by `describeAttributes`:** the PDF (`itemContent`, between
+  Control and Note — attributes are specification, the free-text note stays last), the
+  customer page, the manufacturer copy's as-is detail (written `Label value`, no colons, in
+  that dense middot run), and the order item rows.
+- **SECURITY — `/public/estimate/:token` forwards `attribute_lines`, never `attributes`.**
+  That endpoint is unauthenticated; the capability token is the only gate. The handler names
+  every field explicitly, which is what has kept internal columns off it, and the blob is
+  formatted server-side so a future internal-only field reaches a customer only if its type's
+  `describeAttributes` chose to return it. **Do not replace it with a spread.** The
+  regression test seeds `attributes.internal_cost_code = 'SUPPLIER-SECRET-123'` and asserts
+  the string appears nowhere in the response bytes.
+- **Verification:** web 116/13, api 214/13, lint 0 warnings, production build clean. The
+  blind popup was verified in a signed-in browser against the pre-refactor build by restoring
+  the old file, letting vite reload it, and diffing the rendered DOM — **byte-identical, 6826
+  chars**. The item row was verified the same way (2647 chars identical) after a first attempt
+  regressed it, below.
+
 ## 2026-07-28 — Production label printing (TSPL labels, `print_jobs` queue, print-agent workspace)
 
 > **⛔ PARTLY DROPPED — removed 2026-07-28 at the owner's request (the shop PC covers printing,

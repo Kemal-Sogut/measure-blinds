@@ -1,5 +1,37 @@
 # Progress
 
+## Blind-type modules (2026-08-09)
+Branch `refactor/blind-type-modules`, 10 commits on top of `main`. Touches the DB, the
+pricing twins, the order payload, the whole blind form layer, and all four display surfaces.
+
+**Works:** a blind type is now a self-contained module. `apps/{api,web}/src/lib/blindTypes/`
+(renamed from `calculators/`) carries the price formula AND an `attributeSchema`,
+`defaultAttributes()` and a React-free `describeAttributes()`. Per-type inputs persist in
+`line_items.attributes` jsonb (migration 29, applied live), validated server-side in two
+stages so an undeclared key — a price above all — is a 400 rather than a silent write.
+`pages/orders/blindForms/` holds one hand-written form per type behind a dispatcher, with
+shared controls in `fields.tsx` and `DefaultForm` as the permanent fallback for unknown,
+inactive and legacy free-text types. Attributes render on the estimate PDF, the customer
+page, the manufacturer copy and the order item rows, all through the one formatter.
+`/public/estimate/:token` forwards only pre-formatted lines, never the raw blob.
+
+`pnpm check` clean, web 116/13, api 214/13, oxlint **0 warnings** (down from 4 — the
+`lineItemDrafts.ts` split removed the long-standing `react/only-export-components` ones),
+production build clean. The blind popup and the item rows were diffed in a signed-in browser
+against the pre-refactor build: rendered DOM byte-identical, 6826 and 2647 chars.
+
+**Not done, by design:** no blind type has diverged. Every type still prices by the base
+formula and declares zero attributes — the scaffold is the deliverable, and the extension
+points are proven by a throwaway subclass in `attributes.test.ts` rather than by inventing a
+pricing rule. The first real divergence needs the owner's formula and touches two files per
+type. Also deliberately untouched: the api ⇄ web twin duplication, which grew here; a shared
+package is a separate architectural decision, and the mirrored suites remain the drift alarm.
+
+**Untested with real data:** no surface has been seen rendering a NON-empty attribute list,
+because no type declares one. The formatter, the PDF insertion point and the public
+whitelist all have unit tests using a mocked/throwaway type, but the first divergence should
+be eyeballed end-to-end on all four surfaces.
+
 ## Responsive shell rewrite (2026-08-03)
 Branch `main`. Web-only; no API, schema, or pricing surface touched.
 

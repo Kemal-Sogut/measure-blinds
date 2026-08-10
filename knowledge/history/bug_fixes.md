@@ -1,5 +1,30 @@
 # Bug Fixes History
 
+## 2026-08-09 — Wrapping a `wrap-anywhere` span in `flex flex-col` destroyed its wrapping
+- **Issue:** adding the per-blind-type attribute line to the order item rows, the first
+  attempt put the name and the new line side by side in a `flex min-w-0 flex-1 flex-col`
+  wrapper, moving `min-w-0 flex-1 wrap-anywhere` off the name span onto the wrapper. Measured
+  at 375px with a 120-character unbroken name: the name span went from **238px over 5 lines
+  (height 98px) to 1252px on a single line**, dragging the row from 342px to **1356px**.
+- **Why it hid:** the page's `scrollWidth` stayed at 375 in BOTH cases, so the usual
+  "does the page scroll horizontally" check passed. An ancestor's `overflow-x-clip` was
+  swallowing the overflow — the row was not scrolling the page, it was being cut off.
+  Adding `min-w-0` back onto the inner span did NOT fix it; the flex-column context itself
+  was the cause.
+- **Fix:** do not wrap. Keep the original span with its exact classes and nest the attribute
+  line INSIDE it as `<span className="mt-0.5 block …">`, inheriting `wrap-anywhere` (an
+  inherited property) and the parent's intrinsic-width behaviour. Markup is then
+  byte-identical (2647 chars) while no type declares attributes, and the 120-character stress
+  case reproduces the old geometry exactly.
+- **Detection:** A/B in a signed-in browser — capture geometry, `git checkout HEAD -- <file>`,
+  let vite reload, capture again, restore. Comparing `getBoundingClientRect` between the two
+  builds is what turned "looks fine" into a number.
+- **Lesson:** `scrollWidth === clientWidth` is NOT proof a layout contains itself when an
+  ancestor clips overflow — measure the element, not just the page. And moving a layout class
+  from a child onto a new parent is not a no-op: `wrap-anywhere`'s effect on min-content width
+  depends on the box it sits on. This is the same family of trap as the 2026-08-03
+  `truncate`-vs-`wrap-anywhere` finding.
+
 ## 2026-08-09 — `public.routes.test.ts` made REAL calls to Resend on every test run
 - **Issue:** the api suite failed at random on a clean tree. Different tests each time —
   `customer action logs > logs the confirm as a customer action` (5013ms),

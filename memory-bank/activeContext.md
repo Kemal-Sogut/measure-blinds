@@ -1,6 +1,43 @@
 # Active Context
 
-## Current Focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
+## Current Focus — 2026-08-09: Blind types are modules (own inputs, own form, own documents)
+Owner request: "different calculation logic usually requires different inputs — more or
+less, but the UI should be different… each UI of the blinds adding form can be edited
+separately." Branch `refactor/blind-type-modules`, 10 commits. Full detail in
+`engine_features.md` 2026-08-09.
+
+- **NOTHING HAS DIVERGED YET, and that is the intended end state of this branch.** All ten
+  types still price by the base formula and declare zero attributes, so no price moved and
+  no form changed. The machinery is proven by a throwaway subclass in `attributes.test.ts`,
+  not by a real blind type. The first divergence needs the owner's actual formula and is a
+  two-file change per type: `lib/blindTypes/<type>.ts` (BOTH twins) + `blindForms/<Type>Form.tsx`.
+- **Standing hazards a future session must not trip over:**
+  1. **The twins.** `apps/{api,web}/src/lib/blindTypes/*` must stay byte-identical below the
+     import lines. Verify with `diff <(tail -n +4 api/…) <(tail -n +4 web/…)`; only `base.ts`
+     and `registry.ts` legitimately differ, and only in their twin-reference sentences.
+  2. **`public.ts` sends `attribute_lines`, never `attributes`.** That route is
+     unauthenticated. Replacing the explicit field list with a spread publishes every future
+     internal-only field automatically and retroactively.
+  3. **Two registries.** `lib/blindTypes` (pricing, no React) and `pages/orders/blindForms`
+     (UI). `getBlindForm` keys on the canonical label returned by `getBlindType`, so aliases
+     resolve once — do not reintroduce a hand-copied alias list.
+  4. **`attributeSchema` is `z.ZodTypeAny`**, not `z.ZodType<BlindAttributes>` — Zod schema
+     types are not covariant in their output. Numeric fields need `z.coerce.number()`
+     because drafts hold strings.
+  5. **`lineItemDrafts.ts` must stay JSX-free.** Moving plain functions back into
+     `LineItemEditor.tsx` reintroduces the four `react/only-export-components` warnings and
+     breaks Fast Refresh on every form edit.
+- **Migration 29 is APPLIED** to `lgbxxlwsdeuhdgzrjjen` (by the maintainer, 2026-08-09).
+- **`apps/web` lint is now 0 warnings**, down from the 4 long-standing
+  `react/only-export-components` ones — the `lineItemDrafts.ts` split removed them.
+- **Verified:** web 116/13, api 214/13, `pnpm check` clean, production build clean. The blind
+  popup and the order item rows were both diffed in a signed-in browser against the
+  pre-refactor build and are byte-identical (6826 and 2647 chars).
+- **Deliberately deferred:** the api ⇄ web twin duplication grew and was NOT addressed; a
+  shared workspace package is a separate architectural decision (AI_GUIDELINES §7/§8). The
+  mirrored test suites remain the only drift alarm.
+
+## Prior focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
 Owner report: "mobile and tablet views are still broken, ui is not responsive", with a
 sketch of the target order screen (collapsible menu | main with a save/edit header |
 summary). Full detail in `engine_features.md` and `bug_fixes.md`, both 2026-08-03.
