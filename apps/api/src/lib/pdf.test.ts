@@ -241,6 +241,25 @@ describe('itemContent color', () => {
     ]);
   });
 
+  it('adds no lines when the blind type declares no attributes', () => {
+    // Every type is on the base schema today, so an existing document must
+    // render byte-identically to before the attributes column existed.
+    expect(itemContent({ ...blind, attributes: {} }).attrs).toHaveLength(7);
+    expect(itemContent({ ...blind, attributes: undefined }).attrs).toHaveLength(7);
+    expect(itemContent({ ...blind, attributes: null }).attrs).toHaveLength(7);
+  });
+
+  it('places attribute lines between Control and Note', () => {
+    // Attributes are product specification, so they group with the other
+    // specification lines; the free-text Note stays last, where readers
+    // look for it.
+    const { attrs } = itemContent({ ...blind, attributes: {} });
+    const controlIdx = attrs.findIndex((a) => a.startsWith('Control:'));
+    const noteIdx = attrs.findIndex((a) => a.startsWith('Note:'));
+    expect(controlIdx).toBeLessThan(noteIdx);
+    expect(noteIdx).toBe(attrs.length - 1);
+  });
+
   it('places the Bottom rail line between Cassette and Control', () => {
     const { attrs } = itemContent(blind);
     const cassetteIdx = attrs.findIndex((a) => a.startsWith('Cassette:'));
