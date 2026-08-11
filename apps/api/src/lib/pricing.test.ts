@@ -133,8 +133,9 @@ describe('blind-type module registry', () => {
       attributes: {},
     };
     // Fabric by the metre with no pleat chosen: 1.4 × 1 × 50 = 70, plus
-    // 2 panels × $10 control = 90 — and no cassette charge at all.
-    expect(calculateBlindUnitPriceForType('Curtains', inputs)).toBe(90);
+    // 2 panels × 0.5 m × $50 hem allowance = 50, plus 2 panels × $10
+    // control = 140 — and no cassette charge at all.
+    expect(calculateBlindUnitPriceForType('Curtains', inputs)).toBe(140);
     expect(calculateBlindUnitPriceForType('Curtains', inputs)).not.toBe(
       calculateBlindUnitPrice(inputs)
     );
@@ -191,8 +192,8 @@ describe('Curtains', () => {
   }
 
   it('prices fabric by the running metre times the pleat multiplier', () => {
-    // 3.0 m × 2.5 × $40 = $300.00
-    expect(calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2.5 }))).toBe(300);
+    // 3.0 m × 2.5 × $40 = 300, + 1 panel × 0.5 m × $40 hem = $320.00
+    expect(calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2.5 }))).toBe(320);
   });
 
   it('ignores height entirely', () => {
@@ -201,18 +202,19 @@ describe('Curtains', () => {
         ...curtain({ pleat_multiplier: 2.5 }),
         height_cm: 100,
       })
-    ).toBe(300);
+    ).toBe(320);
   });
 
   it('adds the fixed installation charge once, not per panel', () => {
-    // 3.0 × 2 × 40 = 240, + 45 = 285
+    // 3.0 × 2 × 40 = 240, + 20 hem, + 45 = 305
     expect(
       calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2, installation_price: 45 }))
-    ).toBe(285);
+    ).toBe(305);
   });
 
   it('adds the control charge per panel', () => {
-    // width 300 → 3.0 × 2.5 × 40 = 300, + 2 panels × 30 = 360.
+    // width 300 → 3.0 × 2.5 × 40 = 300, + 2 panels × 0.5 × 40 = 40 hem,
+    // + 2 panels × 30 control = 400.
     // A multiplier of exactly 2 would make this equal the base formula
     // at a 200cm height, so the assertion would hold without the override.
     expect(
@@ -221,7 +223,29 @@ describe('Curtains', () => {
         panels: [150, 150],
         control_price_per_item: 30,
       })
-    ).toBe(360);
+    ).toBe(400);
+  });
+
+  it('charges the hem allowance per panel, not per metre of width', () => {
+    // Same 300cm of curtain, split in two: the fabric leg is unchanged
+    // and ONLY the hem allowance moves, 0.5 m → 1.0 m (+$20). This is the
+    // assertion that fails if the allowance is ever driven by the summed
+    // panel WIDTH instead of the panel COUNT.
+    const onePanel = calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2.5 }));
+    const twoPanels = calculateBlindUnitPriceForType('Curtains', {
+      ...curtain({ pleat_multiplier: 2.5 }),
+      panels: [150, 150],
+    });
+    expect(twoPanels - onePanel).toBe(20);
+  });
+
+  it('does not multiply the hem allowance by the pleat fullness', () => {
+    // Fabric doubles from pleat 1 → 2 (120 → 240); the $20 hem allowance
+    // is identical in both, so the gap is exactly the fabric leg.
+    const flat = calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 1 }));
+    const full = calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2 }));
+    expect(flat).toBe(140);
+    expect(full).toBe(260);
   });
 
   it('charges nothing for a cassette or bottom rail even when priced', () => {
@@ -231,21 +255,24 @@ describe('Curtains', () => {
         cassette_price_per_m: 99,
         bottom_rail_price_per_m: 99,
       })
-    ).toBe(240);
+    ).toBe(260);
   });
 
   it('treats a legacy {} row as flat fabric with no installation', () => {
-    // Migration 29 left every historical row at {}. 3.0 × 1 × 40 = 120.
-    expect(calculateBlindUnitPriceForType('Curtains', curtain({}))).toBe(120);
+    // Migration 29 left every historical row at {}.
+    // 3.0 × 1 × 40 = 120, + 20 hem = 140.
+    expect(calculateBlindUnitPriceForType('Curtains', curtain({}))).toBe(140);
   });
 
   it('applies the 100cm width minimum', () => {
-    // 60cm raised to 100cm → 1.0 × 2.5 × 40 = 100 (the base formula gives 80).
+    // 60cm raised to 100cm → 1.0 × 2.5 × 40 = 100, + 20 hem = 120.
+    // The minimum lifts the WIDTH only; the hem allowance is added after
+    // it and is unaffected.
     expect(
       calculateBlindUnitPriceForType('Curtains', {
         ...curtain({ pleat_multiplier: 2.5 }),
         panels: [60],
       })
-    ).toBe(100);
+    ).toBe(120);
   });
 });

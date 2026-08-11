@@ -1157,8 +1157,9 @@ describe('Curtains line items', () => {
       installation_price: 45,
     });
     // MATERIAL is $55 per running metre here: 3.0 × 2.5 × 55 = 412.50,
-    // control $0, installation $45.
-    expect(rows[0].unit_price).toBe(457.5);
+    // + 1 panel × 0.5 m × 55 = 27.50 hem allowance, control $0,
+    // installation $45.
+    expect(rows[0].unit_price).toBe(485);
     expect(rows[0].cassette_id).toBeNull();
     expect(rows[0].cassette_name).toBeNull();
     expect(rows[0].cassette_price_per_m).toBeNull();
@@ -1192,8 +1193,8 @@ describe('Curtains line items', () => {
     const res = await create(curtainPayload({ attributes: {} }));
     expect(res.status).toBe(201);
     const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
-    // 3.0 × 1 × 55 = 165, and no installation charge.
-    expect(rows[0].unit_price).toBe(165);
+    // 3.0 × 1 × 55 = 165, + 27.50 hem allowance, and no installation charge.
+    expect(rows[0].unit_price).toBe(192.5);
     expect(rows[0].attributes).toEqual({});
   });
 

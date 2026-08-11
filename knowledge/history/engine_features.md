@@ -2120,3 +2120,36 @@ Revises the same-day entry above. `apps/web/src/pages/orders/OrderHeaderCards.ts
 web `tsc --noEmit` clean; `oxlint` = the 4 pre-existing `LineItemEditor.tsx` warnings.
 Test suite untouched by this revision (94/94 at the previous run). Still not exercised in
 a browser — `/orders/:id` is behind `ProtectedRoute`.
+
+---
+
+## Curtains hem allowance (2026-08-10)
+
+Curtains now charge a per-panel making allowance on top of the fabric leg:
+
+```
+unit = (width_m x pleat x price_per_m)          -- fabric, fullness applies
+     + panels x HEM_ALLOWANCE_M x price_per_m   -- hems, fullness does NOT apply
+     + panels x control_price_per_item
+     + installation_price
+```
+
+`HEM_ALLOWANCE_M = 0.5` running metres, declared as a named constant in both
+`apps/api/src/lib/blindTypes/curtains.ts` and its web twin.
+
+Two decisions worth keeping:
+
+- **Per panel COUNT, not summed width.** An intermediate revision of this change read
+  `item.panels.reduce((a, b) => a + b, 0)` — the total width in cm — and multiplied THAT
+  by 0.5, which priced the standard 300cm test curtain at $15,300 instead of $320. The
+  pinned test `charges the hem allowance per panel, not per metre of width` splits one
+  300cm panel into two 150cm panels and asserts the delta is exactly one allowance; it
+  fails if the summed-width reading ever returns.
+- **Outside the fullness multiplier.** A hem is cut on the finished panel, so gathering
+  the curtain more does not widen it. `does not multiply the hem allowance by the pleat
+  fullness` pins this.
+
+The 100cm width minimum still lifts the WIDTH only — the allowance is added after it.
+
+### Verified
+api 244/244, web 135/135, both `tsc --noEmit` clean, `oxlint` clean.
