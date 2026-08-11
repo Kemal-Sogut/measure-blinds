@@ -107,6 +107,10 @@ const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', pri
 // Priced at 0, mirroring the production seed, so every pre-existing money
 // assertion in this file still holds. The priced case is exercised below.
 const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price_per_m: 0 };
+// Curtains-only catalogs. Both carry non-identity values so a test that
+// accidentally priced with the fallbacks would show a different number.
+const PLEAT = { id: '66666666-6666-4666-8666-666666666666', name: 'Pinch', multiplier: 2.5 };
+const INSTALL = { id: '77777777-7777-4777-8777-777777777777', name: 'Rod', price_per_item: 45 };
 
 /** Valid create payload used across tests. */
 function payload() {
@@ -1092,5 +1096,117 @@ describe('POST /api/orders/:id/warranty', () => {
       expect(res.status).toBe(502);
       expect(((await res.json()) as { error: string }).error).toBe('API key is invalid');
     });
+  });
+});
+
+describe('Curtains line items', () => {
+  /**
+   * A create payload whose single item is a curtain. `payload()` returns
+   * an inferred type whose line-item shape has non-null hardware ids, so
+   * the assignment needs the cast — the request body is JSON either way,
+   * and the schema under test is what validates it.
+   */
+  function curtainPayload(overrides: Record<string, unknown> = {}) {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items = [
+      {
+        item_type: 'blind',
+        room_name: 'Lounge',
+        blinds_type: 'Curtains',
+        panels: [300],
+        height_cm: 250,
+        material_id: MATERIAL.id,
+        cassette_id: null,
+        bottom_rail_id: null,
+        control_id: CONTROL.id,
+        color: '',
+        note: '',
+        attributes: { pleat_type_id: PLEAT.id, installation_id: INSTALL.id },
+        quantity: 1,
+        ...overrides,
+      },
+    ];
+    return p;
+  }
+
+  /** POSTs a payload to the create route with a successful order insert. */
+  function create(body: unknown) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  beforeEach(() => {
+    db.responses['pleat_types.select'] = [PLEAT];
+    db.responses['installation_options.select'] = [INSTALL];
+  });
+
+  it('snapshots the pleat and installation rows into attributes', async () => {
+    const res = await create(curtainPayload());
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].attributes).toEqual({
+      pleat_type_id: PLEAT.id,
+      pleat_name: 'Pinch',
+      pleat_multiplier: 2.5,
+      installation_id: INSTALL.id,
+      installation_name: 'Rod',
+      installation_price: 45,
+    });
+    // MATERIAL is $55 per running metre here: 3.0 × 2.5 × 55 = 412.50,
+    // control $0, installation $45.
+    expect(rows[0].unit_price).toBe(457.5);
+    expect(rows[0].cassette_id).toBeNull();
+    expect(rows[0].cassette_name).toBeNull();
+    expect(rows[0].cassette_price_per_m).toBeNull();
+    expect(rows[0].bottom_rail_id).toBeNull();
+  });
+
+  it('rejects a client-supplied pleat multiplier', async () => {
+    const res = await create(
+      curtainPayload({ attributes: { pleat_type_id: PLEAT.id, pleat_multiplier: 99 } })
+    );
+    expect(res.status).toBe(400);
+    expect(db.insertPayloads['line_items']).toBeUndefined();
+  });
+
+  it('rejects a client-supplied installation price', async () => {
+    const res = await create(curtainPayload({ attributes: { installation_price: 0 } }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a cassette id on a type that has no cassette', async () => {
+    const res = await create(curtainPayload({ cassette_id: CASSETTE.id }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a bottom rail id on a type that has no bottom rail', async () => {
+    const res = await create(curtainPayload({ bottom_rail_id: BOTTOM_RAIL.id }));
+    expect(res.status).toBe(400);
+  });
+
+  it('prices a curtain with no pleat chosen as flat fabric', async () => {
+    const res = await create(curtainPayload({ attributes: {} }));
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    // 3.0 × 1 × 55 = 165, and no installation charge.
+    expect(rows[0].unit_price).toBe(165);
+    expect(rows[0].attributes).toEqual({});
+  });
+
+  it('fails when the chosen pleat type has been deleted', async () => {
+    db.responses['pleat_types.select'] = [];
+    const res = await create(curtainPayload());
+    expect(res.status).toBe(400);
+  });
+
+  it('still requires a cassette on a type that uses one', async () => {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items[0].cassette_id = null;
+    const res = await create(p);
+    expect(res.status).toBe(400);
   });
 });

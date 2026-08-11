@@ -64,6 +64,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
+import type { CatalogResolver } from '../lib/blindTypes/base';
 import { calculateTotals } from '../lib/totals';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -106,8 +107,17 @@ const blindItemSchema = z
     panels: z.array(z.number().positive().max(1000)).min(1, 'At least one panel').max(10),
     height_cm: z.number().positive().max(1000),
     material_id: z.string().uuid(),
-    cassette_id: z.string().uuid(),
-    bottom_rail_id: z.string().uuid(),
+    /**
+     * Nullable because a blind type may not use these slots at all —
+     * Curtains has neither a cassette nor a bottom rail. WHICH slots a
+     * type requires is declared by its module (`requiredCatalogs`) and
+     * enforced in `resolveLineItems`, not here: Zod cannot branch on the
+     * sibling `blinds_type` field. Sending an id for a slot the type does
+     * not use is rejected there, so the form and the price cannot
+     * disagree.
+     */
+    cassette_id: z.string().uuid().nullable().default(null),
+    bottom_rail_id: z.string().uuid().nullable().default(null),
     control_id: z.string().uuid(),
     color: z.string().max(100).default(''),
     note: z.string().max(1000).default(''),
@@ -211,12 +221,29 @@ async function resolveLineItems(
     bottom_rail_options: new Set<string>(),
     control_options: new Set<string>(),
   };
+  /**
+   * Ids referenced from `attributes` rather than from a column, keyed by
+   * table, together with the numeric column that table snapshots. Driven
+   * entirely by each blind type's `catalogRefs`, so this loop needs no
+   * knowledge of which types have diverged — it is empty for every type
+   * that declares none.
+   */
+  const refIds = new Map<string, { valueColumn: string; ids: Set<string> }>();
   for (const it of items) {
-    if (it.item_type === 'blind') {
-      ids.materials.add(it.material_id);
-      ids.cassette_options.add(it.cassette_id);
-      ids.bottom_rail_options.add(it.bottom_rail_id);
-      ids.control_options.add(it.control_id);
+    if (it.item_type !== 'blind') continue;
+    ids.materials.add(it.material_id);
+    if (it.cassette_id) ids.cassette_options.add(it.cassette_id);
+    if (it.bottom_rail_id) ids.bottom_rail_options.add(it.bottom_rail_id);
+    ids.control_options.add(it.control_id);
+    for (const ref of getBlindType(it.blinds_type).catalogRefs) {
+      const raw = (it.attributes as Record<string, unknown>)[ref.attrKey];
+      if (typeof raw !== 'string' || raw === '') continue;
+      const entry = refIds.get(ref.table) ?? {
+        valueColumn: ref.valueColumn,
+        ids: new Set<string>(),
+      };
+      entry.ids.add(raw);
+      refIds.set(ref.table, entry);
     }
   }
 
@@ -242,6 +269,21 @@ async function resolveLineItems(
     lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
     lookup('control_options', ids.control_options, 'price_per_item'),
   ]);
+
+  // One query per referenced catalog table. Empty for every blind type
+  // that declares no refs, which today is all of them but Curtains.
+  const refRows = new Map<string, Map<string, { name: string; price: number }>>();
+  await Promise.all(
+    [...refIds].map(async ([table, entry]) => {
+      refRows.set(table, await lookup(table, entry.ids, entry.valueColumn));
+    })
+  );
+
+  /** Backs `resolveCatalogRefs` with the rows just fetched. */
+  const resolveRef: CatalogResolver = (table, id) => {
+    const hit = refRows.get(table)?.get(id);
+    return hit ? { name: hit.name, value: hit.price } : undefined;
+  };
 
   // IMPORTANT: every row must carry the SAME column set. PostgREST
   // bulk inserts unify keys across rows and fill gaps with NULL, which
@@ -281,27 +323,54 @@ async function resolveLineItems(
         line_total: Math.round(unit * it.quantity * 100) / 100,
       };
     }
+    const blindType = getBlindType(it.blinds_type);
+    const label = it.blinds_type || 'this blind type';
     const material = materials.get(it.material_id);
-    const cassette = cassettes.get(it.cassette_id);
-    const bottomRail = bottomRails.get(it.bottom_rail_id);
     const control = controls.get(it.control_id);
     if (!material) throw new Error('Selected material no longer exists.');
-    if (!cassette) throw new Error('Selected cassette option no longer exists.');
-    if (!bottomRail) throw new Error('Selected bottom rail option no longer exists.');
     if (!control) throw new Error('Selected control option no longer exists.');
+
+    // A type either uses a hardware slot or it does not. Storing an id
+    // for a slot the type has no formula for would name that option on
+    // every document while contributing nothing to the price, so the
+    // form and the total would disagree.
+    const uses = new Set<string>(blindType.requiredCatalogs);
+    if (uses.has('cassette') !== Boolean(it.cassette_id)) {
+      throw new Error(
+        it.cassette_id
+          ? `Item ${position + 1}: ${label} does not take a cassette.`
+          : `Item ${position + 1}: a cassette option is required.`
+      );
+    }
+    if (uses.has('bottom_rail') !== Boolean(it.bottom_rail_id)) {
+      throw new Error(
+        it.bottom_rail_id
+          ? `Item ${position + 1}: ${label} does not take a bottom rail.`
+          : `Item ${position + 1}: a bottom rail option is required.`
+      );
+    }
+    const cassette = it.cassette_id ? cassettes.get(it.cassette_id) : null;
+    const bottomRail = it.bottom_rail_id ? bottomRails.get(it.bottom_rail_id) : null;
+    if (it.cassette_id && !cassette) throw new Error('Selected cassette option no longer exists.');
+    if (it.bottom_rail_id && !bottomRail) {
+      throw new Error('Selected bottom rail option no longer exists.');
+    }
 
     // Second, type-aware gate: the loose `z.record` on the payload schema
     // only proved the blob is an object. This parses it through the blind
     // type's own strict schema, so an undeclared key — a price above all
     // — is a 400 rather than a silent write into the jsonb column.
-    const blindType = getBlindType(it.blinds_type);
     const parsedAttrs = blindType.attributeSchema.safeParse(it.attributes);
     if (!parsedAttrs.success) {
-      throw new Error(
-        `Item ${position + 1}: ${it.blinds_type || 'this blind type'} does not accept those options.`
-      );
+      throw new Error(`Item ${position + 1}: ${label} does not accept those options.`);
     }
-    const attributes = parsedAttrs.data as Record<string, string | number | boolean>;
+    // Snapshot AFTER the parse, and always overwriting: this is the only
+    // way a catalog-backed price (a pleat multiplier, an installation
+    // charge) enters the blob, so a client can never supply one.
+    const attributes = blindType.resolveCatalogRefs(
+      parsedAttrs.data as Record<string, string | number | boolean>,
+      resolveRef
+    );
 
     // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
@@ -309,8 +378,8 @@ async function resolveLineItems(
       panels: it.panels,
       height_cm: it.height_cm,
       material_price_per_sqm: material.price,
-      cassette_price_per_m: cassette.price,
-      bottom_rail_price_per_m: bottomRail.price,
+      cassette_price_per_m: cassette?.price ?? 0,
+      bottom_rail_price_per_m: bottomRail?.price ?? 0,
       control_price_per_item: control.price,
       attributes,
     });
@@ -325,11 +394,11 @@ async function resolveLineItems(
       material_name: material.name,
       material_price_per_sqm: material.price,
       cassette_id: it.cassette_id,
-      cassette_name: cassette.name,
-      cassette_price_per_m: cassette.price,
+      cassette_name: cassette?.name ?? null,
+      cassette_price_per_m: cassette?.price ?? null,
       bottom_rail_id: it.bottom_rail_id,
-      bottom_rail_name: bottomRail.name,
-      bottom_rail_price_per_m: bottomRail.price,
+      bottom_rail_name: bottomRail?.name ?? null,
+      bottom_rail_price_per_m: bottomRail?.price ?? null,
       control_id: it.control_id,
       control_name: control.name,
       control_price_per_item: control.price,
