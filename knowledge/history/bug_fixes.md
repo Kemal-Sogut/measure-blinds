@@ -1,5 +1,42 @@
 # Bug Fixes History
 
+## 2026-08-10 — A re-opened order silently dropped its per-type options on the second save
+- **Issue:** found while wiring Curtains, but latent since the attributes scaffold shipped.
+  Save an item with per-type options → reopen the order → save again, and the whole
+  `attributes` blob came back `{}`. The first save was correct; the second quietly wiped it,
+  with no error anywhere and a price that changed under the user.
+- **Cause:** `toDrafts` stringifies the PERSISTED blob into the draft, and that blob carries
+  the Worker's snapshot keys (`pleat_name`, `pleat_multiplier`, …) alongside the ids the
+  client originally sent. `parseDraftAttributes` then re-parsed the draft through the type's
+  `.strict()` schema, which does not declare those keys — deliberately, since declaring them
+  would let a client set a price. The parse failed, and its failure signal is `null`, which
+  the payload builder reads as "no attributes".
+- **Fix:** `parseDraftAttributes` filters the draft down to `blindType.inputKeys()` (the
+  schema's declared keys) before parsing. Same call also stops a resolved price being echoed
+  back to the server at all.
+- **Note:** this changed an existing assertion. An undeclared key is now DROPPED client-side
+  rather than making the parse return `null`; the test was rewritten to say so, and a
+  companion case pins that an invalid value on a *declared* key still returns `null`. The
+  server-side gate is unchanged and is the one that matters.
+- **Lesson:** a validation schema that is deliberately narrower than the stored shape needs
+  an explicit narrowing step on the way back in. Round-tripping through it is not symmetric,
+  and a parser whose failure mode is a falsy value will lose data quietly rather than loudly.
+  Any type with a server-written key would have hit this — Curtains just got there first.
+
+## 2026-08-10 — Three new tests passed before the feature existed
+- **Issue:** while writing the Curtains pricing suite, three assertions went green against
+  the OLD base formula, so they proved nothing about the code they were written for.
+- **Cause:** arithmetic coincidence in the chosen fixture. With a 200cm height the base area
+  formula is `W × 0.8` and the Curtains formula is `W × 0.4 × multiplier` — identical
+  whenever the multiplier is exactly **2**. A 250cm height with a 2.5 multiplier collides the
+  same way (`300 × 250 × 40 / 10000 = 3.0 × 2.5 × 40 = 300`).
+- **Fix:** re-fixtured to a 200cm height with a 2.5 multiplier so the two formulas differ
+  (240 vs 300), and the reasoning is written into the helper's doc comment so the next person
+  does not "tidy" it back. Confirmed all seven then failed before the module was written.
+- **Lesson:** run a new test against the unchanged code and watch it fail for the RIGHT
+  reason — "it failed" is not enough when several tests share one fixture. Round numbers in
+  a pricing fixture are exactly where formulas coincide.
+
 ## 2026-08-09 — Wrapping a `wrap-anywhere` span in `flex flex-col` destroyed its wrapping
 - **Issue:** adding the per-blind-type attribute line to the order item rows, the first
   attempt put the name and the new line side by side in a `flex min-w-0 flex-1 flex-col`

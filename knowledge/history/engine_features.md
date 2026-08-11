@@ -1,5 +1,102 @@
 # Engine Features / Feature History
 
+## 2026-08-10 — Curtains diverges: fabric by the running metre × pleat fullness
+
+The first blind type to leave the shared base formula. Everything below builds on the
+module scaffold from the 2026-08-09 entry; nothing there had to change shape to allow it.
+
+### The formula
+
+```
+width   = applyWidthMinimum(sum(panels))          // <100cm → 100cm, unchanged
+fabric  = (width / 100) × pleat_multiplier × material_price_per_sqm
+control = panels.length × control_price_per_item  // unchanged
+install = installation_price                       // fixed, once per curtain
+unit    = round2(fabric + control + install)
+```
+
+- **Height is measured but never priced.** It still reaches the manufacturer copy.
+- **Cassette and bottom rail do not exist for this type.** Not zero-priced entries someone
+  must remember to pick — genuinely absent, `null` in the row, `0` in the formula.
+- **For Curtains materials, `materials.price_per_sqm` holds DOLLARS PER RUNNING METRE.**
+  One column, two meanings, keyed off the blind type. `MaterialsForType` relabels every
+  affected string (`Price / m`, list rows, CSV hint, CSV error) when the type resolves to
+  Curtains. That relabel is load-bearing: an m² price entered there under-quotes by roughly
+  the drop in metres.
+
+Worked example, in both `pricing.test.ts` suites: 300cm wide, pleat 2.5, $40/m fabric →
+`3.0 × 2.5 × 40 = $300.00`.
+
+### Migration 30 — two catalogs, both seeded at their identity
+
+`pleat_types` (`multiplier numeric check (multiplier > 0)`, seeded No-pleat / Regular /
+Pinch at **1.0**) and `installation_options` (`price_per_item`, seeded Rod / Track at
+**0**). `line_items` gains NO columns — the snapshot lives in the `attributes` jsonb from
+migration 29, so `update_order_with_items()` needed no rebuild.
+
+Every seeded value is the identity for its operation (×1, +0), so **applying the migration
+cannot move any existing order's total**. The deliberate consequence: a curtain prices as
+flat fabric until someone sets the real ratios, and the Pleat Types page carries a standing
+note saying exactly that.
+
+### `catalogRefs` — a price input that never comes from the client
+
+The generic mechanism, on `BaseBlindType` (both twins), empty for every other type:
+
+```ts
+readonly catalogRefs: readonly CatalogRef[] = [];        // attrKey → table/value/snapshot keys
+readonly requiredCatalogs: readonly CatalogSlot[] = ['cassette', 'bottom_rail', 'control'];
+inputKeys(): string[]                                    // the schema's declared keys
+resolveCatalogRefs(attrs, resolve: CatalogResolver): BlindAttributes
+```
+
+Curtains declares `pleat_type_id → pleat_types.multiplier → {pleat_name, pleat_multiplier}`
+and `installation_id → installation_options.price_per_item → {installation_name,
+installation_price}`, plus `requiredCatalogs = ['control']`.
+
+- The client sends **ids only**. The two snapshot keys are NOT in `attributeSchema`, so a
+  client that sends `pleat_multiplier` gets a **400** — the same `.strict()` gate, now
+  covering the one place a price could have leaked in.
+- `resolveLineItems` collects ids, queries once per referenced table, and calls
+  `resolveCatalogRefs` **after** the strict parse, always overwriting. `orders.ts` gained a
+  generic loop, not a branch on `blinds_type`.
+- The web preview runs the same declaration against the TanStack Query cache, so the
+  keystroke price and the server agree. `lineItemDrafts.ts` holds the only table-name→list
+  mapping on the client.
+
+### Absent hardware
+
+`cassette_id` / `bottom_rail_id` are now `z.string().uuid().nullable().default(null)`.
+`resolveLineItems` requires an id for each declared slot and **rejects one for a slot the
+type does not use** — otherwise the option would be named on every document while
+contributing nothing to the price, and the form and the total would disagree.
+
+Three client paths had to learn the same rule or the order became unsavable: the save
+guard, `BlindTypeSelect` (clears a hardware id the new type does not use), and bulk edit
+(skips a slot the target type does not have).
+
+### Settings
+
+- `/settings/pleat-types` — reached from the **Curtains materials page**, not the Settings
+  index, because a pleat is meaningless without the fabric it gathers. `CatalogEditor`
+  gained `priceUnit: 'plain'` (renders `2.50×`, not `$2.50`), `priceMin` (0.01 here — a 0
+  multiplier would zero the line) and `note`.
+- `/settings/installation-options` — listed beside Control Options; an ordinary priced
+  hardware catalog.
+
+### Documents
+
+All four surfaces render `Installation: Rod · Pleat: Pinch` from `describeAttributes`,
+which returns the snapshot **names only** — the multiplier and the installation charge are
+internal pricing detail and are never printed. `public.ts` was NOT touched; it already
+forwards `attribute_lines`.
+
+### Verified
+`pnpm check` clean; api 242 tests / 14 files, web 133 / 13; `pnpm lint` 0 warnings. Twin
+bodies byte-identical for `base.ts` and `curtains.ts`. Two tests were caught passing
+trivially and re-fixtured (see `bug_fixes.md`, same date). Not yet exercised against live
+data — migration 30 is applied by the maintainer.
+
 ## 2026-08-09 — Blind types become modules: own inputs, own form, own documents
 
 Driven by the request to modularize item adding: "different calculation logic usually

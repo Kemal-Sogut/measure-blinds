@@ -1,5 +1,43 @@
 # Progress
 
+## Curtains pricing (2026-08-10)
+Branch `feat/curtains-pricing`, 9 commits from `origin/main` at `4dedf24`. The first use of
+the blind-type module scaffold below, and the first type to leave the shared formula.
+
+**Works:** a curtain prices as `width_m × pleat fullness × fabric price per metre`, plus the
+per-panel control charge and a fixed installation charge; height is measured but not priced,
+and the type has no cassette or bottom rail at all. Two catalogs (`pleat_types`,
+`installation_options`, migration 30) are managed through the existing settings route
+factory — pleat types from the Curtains materials page, installation options from the
+Settings index. `BaseBlindType` gained four generic members (`catalogRefs`,
+`requiredCatalogs`, `inputKeys()`, `resolveCatalogRefs()`); `orders.ts` drives all of them
+in a loop and still contains no branch on `blinds_type`. The pleat multiplier and the
+installation charge are resolved from ids server-side and snapshotted into the `attributes`
+jsonb after the strict parse, so neither can arrive from a client — a payload carrying
+`pleat_multiplier` is a 400.
+
+`pnpm check` clean, api 242/14, web 133/13, oxlint 0 warnings. Twin bodies byte-identical
+for `base.ts` and `curtains.ts`.
+
+**Fixed along the way:** a latent round-trip defect that would have hit any type with a
+server-written key — a re-opened order's draft carried the snapshot keys into a `.strict()`
+parse, which failed, and the failure signal is `null`, so the item silently lost every
+per-type option on its second save. See `bug_fixes.md` 2026-08-10, along with three tests
+caught passing before the feature existed.
+
+**Not done:** migration 30 is written but NOT applied — the maintainer applies it. All nine
+remaining blind types still inherit the base formula, unchanged.
+
+**Untested with real data:** still true, and now the thing most worth doing. No display
+surface has been seen rendering a non-empty attribute list; every test uses a mocked or
+throwaway type. Once migration 30 is live, check the estimate PDF, the customer page, the
+manufacturer copy and the order item rows, plus the save → reopen → save round trip and one
+non-Curtains blind for regression.
+
+**Owner decision pending:** all three pleat multipliers ship at 1.0, so a curtain prices as
+flat fabric until the real ratios are entered in Settings. That was chosen over seeding
+guessed industry values.
+
 ## Blind-type modules (2026-08-09)
 Branch `refactor/blind-type-modules`, 10 commits on top of `main`. Touches the DB, the
 pricing twins, the order payload, the whole blind form layer, and all four display surfaces.
@@ -20,17 +58,13 @@ page, the manufacturer copy and the order item rows, all through the one formatt
 production build clean. The blind popup and the item rows were diffed in a signed-in browser
 against the pre-refactor build: rendered DOM byte-identical, 6826 and 2647 chars.
 
-**Not done, by design:** no blind type has diverged. Every type still prices by the base
-formula and declares zero attributes — the scaffold is the deliverable, and the extension
-points are proven by a throwaway subclass in `attributes.test.ts` rather than by inventing a
-pricing rule. The first real divergence needs the owner's formula and touches two files per
-type. Also deliberately untouched: the api ⇄ web twin duplication, which grew here; a shared
-package is a separate architectural decision, and the mirrored suites remain the drift alarm.
-
-**Untested with real data:** no surface has been seen rendering a NON-empty attribute list,
-because no type declares one. The formatter, the PDF insertion point and the public
-whitelist all have unit tests using a mocked/throwaway type, but the first divergence should
-be eyeballed end-to-end on all four surfaces.
+**Not done, by design (SUPERSEDED 2026-08-10 — Curtains has since diverged, see above):** no
+blind type had diverged when this branch landed. Every type priced by the base formula and
+declared zero attributes — the scaffold was the deliverable, and the extension points were
+proven by a throwaway subclass in `attributes.test.ts` rather than by inventing a pricing
+rule. Also deliberately untouched, and still true: the api ⇄ web twin duplication, which
+grew here; a shared package is a separate architectural decision, and the mirrored suites
+remain the drift alarm.
 
 ## Responsive shell rewrite (2026-08-03)
 Branch `main`. Web-only; no API, schema, or pricing surface touched.

@@ -1,16 +1,51 @@
 # Active Context
 
-## Current Focus — 2026-08-09: Blind types are modules (own inputs, own form, own documents)
+## Current Focus — 2026-08-10: Curtains is the first divergent blind type
+Owner spec: "width × pleat rate × fabric price", pleat types managed as a settings
+sub-page off the Curtains materials page, options Installation (rod/track) / Pleat /
+Control. Branch `feat/curtains-pricing`, cut from `origin/main` at `4dedf24`. Full detail
+in `engine_features.md` 2026-08-10.
+
+- **Curtains is the worked example of a divergent type.** The 2026-08-09 note below said
+  nothing had diverged; that is no longer true. To diverge a second type, copy what Curtains
+  does: `lib/blindTypes/curtains.ts` (BOTH twins) + `blindForms/CurtainsForm.tsx`, and
+  nothing else needs to change.
+- **Standing hazards added by this work:**
+  1. **For Curtains materials, `price_per_sqm` is DOLLARS PER RUNNING METRE.** One column,
+     two meanings, keyed off the blind type. `MaterialsForType` relabels itself for Curtains
+     — do not "simplify" that back to a constant string; an m² price entered there
+     under-quotes every curtain by roughly its drop in metres.
+  2. **Every value migration 30 seeds is an identity** (multiplier 1, price 0), so applying
+     it cannot move a total. Do NOT replace them with realistic-looking numbers without the
+     owner's actual figures — that silently reprices every curtain on its next save.
+  3. **A type's `attributeSchema` must never declare a snapshot key.** `pleat_multiplier`
+     and `installation_price` are absent from it on purpose: declaring one would let a
+     client set a price. The Worker writes them via `resolveCatalogRefs` AFTER the parse.
+  4. **`parseDraftAttributes` filters to `inputKeys()`.** Removing that filter silently
+     drops every per-type option on the second save of a re-opened order — see
+     `bug_fixes.md` 2026-08-10.
+  5. **Three client paths share the `requiredCatalogs` rule**: the save guard,
+     `BlindTypeSelect` (clears a hardware id the new type does not use) and bulk edit. Miss
+     one and switching a Roller to Curtains carries a cassette the Worker rejects, making
+     the order unsavable.
+- **Migration 30 is written but NOT applied** — the maintainer applies it. Every unit test
+  passes without it; only end-to-end checking needs it live.
+- **No display surface has yet been seen rendering a non-empty attribute list with real
+  data.** Every test to date uses a mocked or throwaway type. The four surfaces to eyeball
+  once migration 30 is live: estimate PDF, customer page, manufacturer copy, order item rows.
+- **Verified:** `pnpm check` clean, api 242/14, web 133/13, `pnpm lint` 0 warnings.
+
+## Prior focus — 2026-08-09: Blind types are modules (own inputs, own form, own documents)
 Owner request: "different calculation logic usually requires different inputs — more or
 less, but the UI should be different… each UI of the blinds adding form can be edited
 separately." Branch `refactor/blind-type-modules`, 10 commits. Full detail in
 `engine_features.md` 2026-08-09.
 
-- **NOTHING HAS DIVERGED YET, and that is the intended end state of this branch.** All ten
-  types still price by the base formula and declare zero attributes, so no price moved and
-  no form changed. The machinery is proven by a throwaway subclass in `attributes.test.ts`,
-  not by a real blind type. The first divergence needs the owner's actual formula and is a
-  two-file change per type: `lib/blindTypes/<type>.ts` (BOTH twins) + `blindForms/<Type>Form.tsx`.
+- **Nothing had diverged when this branch landed, and that was its intended end state.** All
+  ten types priced by the base formula and declared zero attributes, so no price moved and
+  no form changed. SUPERSEDED 2026-08-10: Curtains has since diverged (see above). The
+  remaining nine still inherit the base formula; divergence stays a two-file change per
+  type: `lib/blindTypes/<type>.ts` (BOTH twins) + `blindForms/<Type>Form.tsx`.
 - **Standing hazards a future session must not trip over:**
   1. **The twins.** `apps/{api,web}/src/lib/blindTypes/*` must stay byte-identical below the
      import lines. Verify with `diff <(tail -n +4 api/…) <(tail -n +4 web/…)`; only `base.ts`
