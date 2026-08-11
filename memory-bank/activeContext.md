@@ -1,11 +1,54 @@
 # Active Context
 
-## Current Focus — 2026-08-10: Curtains is the first divergent blind type
+## Current Focus — 2026-08-10: Line item price adjustments
+Owner spec: override a line item's price (with the option to show the customer the previous
+price, and to reset to the calculated one), give custom items a title plus a multi-line
+description, and attach custom add-ons with their own pricing shown on PDFs and the
+overview. Branch `feat/line-item-price-adjustments`, cut from `feat/curtains-pricing`.
+Full detail in `engine_features.md` 2026-08-10.
+
+- **`unit_price` means THE PRICE CHARGED, always.** An override writes the new figure
+  there; `base_unit_price` holds the calculated one and is non-null only while overridden.
+  This is why no existing reader needed changing. Do not "fix" this by moving the override
+  into its own charged column — every surface would then have to learn the rule.
+- **`base_unit_price is not null` is the ONLY test for "was this overridden?"** There is no
+  boolean. Adding one would let the two disagree.
+- **A preset with `preset_id` is server-priced.** Its `unit_price` field in the payload is
+  ignored, and `FlatEditForm` renders the price read-only for those. Presets saved before
+  migration 31 have `preset_id = null`, keep their client-sent price, and CANNOT be
+  overridden until re-picked from the preset sheet.
+- **Standing hazards added by this work:**
+  1. **Two places strip a hidden original**: `toPdfData` in `routes/orders.ts` and the
+     `/public/estimate/:token` payload. Both must keep doing it — a PDF text layer is
+     extractable whether or not the figure was drawn, and the public route is
+     unauthenticated, so hiding it client-side is not hiding it.
+  2. **`lineItemAdjustments.ts` is a TWIN pair**, api + web, byte-identical below the file
+     header. Diff them from the first export after touching either. Log diffing lives in
+     `lineItemAuditLog.ts` (api-only) precisely so the twin claim stays true.
+  3. **Add-on prices round to the cent INDIVIDUALLY before summing** — they each land in a
+     `numeric(10,2)`. Sum-then-round quotes a total the database cannot store.
+  4. **`z.discriminatedUnion` rejects `.refine()`d members.** The title-or-description and
+     preset-needs-a-price rules therefore live on a `superRefine` at the union level.
+  5. **Every flat surface falls back to `description` when `title` is empty.** Removing a
+     fallback makes every pre-migration-31 order print unnamed items.
+- **Migration 31 is written but NOT applied** — the maintainer applies it. Every unit test
+  passes without it; the Worker will fail on unknown columns until it is live.
+- **Nothing has been seen in a browser.** `/orders/:id` is behind `ProtectedRoute`. Four
+  surfaces to eyeball once migration 31 is live: the edit popup's price block, the item
+  list's amber dot, the estimate PDF's strikethrough, the customer page.
+- **Verified:** api 289/16, web 164/14, both `tsc --noEmit` clean, `oxlint` clean.
+
+## Prior focus — 2026-08-10: Curtains is the first divergent blind type
 Owner spec: "width × pleat rate × fabric price", pleat types managed as a settings
 sub-page off the Curtains materials page, options Installation (rod/track) / Pleat /
 Control. Branch `feat/curtains-pricing`, cut from `origin/main` at `4dedf24`. Full detail
 in `engine_features.md` 2026-08-10.
 
+- **Superseded 2026-08-10: Curtains now also charge a per-panel hem allowance** —
+  `panels.length × HEM_ALLOWANCE_M (0.5) × price_per_m`, added OUTSIDE the pleat multiplier
+  and after the width minimum. Per panel COUNT, never the summed width: an in-progress
+  revision read the summed width and priced the standard 300cm test curtain at $15,300.
+  Both twins and both suites pin it.
 - **Curtains is the worked example of a divergent type.** The 2026-08-09 note below said
   nothing had diverged; that is no longer true. To diverge a second type, copy what Curtains
   does: `lib/blindTypes/curtains.ts` (BOTH twins) + `blindForms/CurtainsForm.tsx`, and

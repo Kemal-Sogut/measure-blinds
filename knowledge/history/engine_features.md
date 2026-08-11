@@ -2153,3 +2153,84 @@ The 100cm width minimum still lifts the WIDTH only — the allowance is added af
 
 ### Verified
 api 244/244, web 135/135, both `tsc --noEmit` clean, `oxlint` clean.
+
+---
+
+## Line item price adjustments (2026-08-10)
+
+Three consultant-facing capabilities on order line items, plus one tightening.
+
+### Price override
+
+A blind, or a preset carrying `preset_id`, can have its server-calculated unit price
+replaced by a consultant-typed figure.
+
+- `line_items.unit_price` keeps meaning **the price CHARGED**, so every existing reader
+  (PDF, manufacturer copy, customer page, totals) stayed correct untouched. The new
+  nullable `base_unit_price` holds the calculated figure and is non-null ONLY while an
+  override is in effect — `base_unit_price is not null` is the single answer to "is this
+  overridden?", with no second boolean that could disagree with it.
+- **Reset** = the client stops sending the override; the Worker re-prices from today's
+  catalog. There is no frozen snapshot to go stale.
+- `show_original_price` (default true) controls the struck-through original on customer
+  surfaces. Both `toPdfData` and `/public/estimate/:token` STRIP the figure when it is
+  false — a PDF text layer is extractable whether or not the number was drawn, and the
+  public route is unauthenticated, so hiding with CSS would not be hiding.
+- Staff surfaces mark an overridden price with an amber dot (editor list + overview
+  tables). The customer's signal is the strikethrough, never the dot.
+
+### Titled flat items
+
+`preset` and `custom` items gained `title` plus a multi-line `description` (textarea;
+newlines print as separate lines). `addPreset` no longer concatenates the catalog name and
+description into one string. Legacy rows have `title = ''`, and EVERY surface falls back to
+`description` for the heading — otherwise historical orders would print unnamed items.
+
+### Add-ons
+
+`line_items.addons` is `[{label, price}]`, capped at 10, each price added **ONCE** to
+`line_total` — never multiplied by quantity. Each price is rounded to the cent
+individually before summing, matching the `numeric(10,2)` it is stored in; summing first
+and rounding once would quote a total the database cannot hold.
+
+### Presets became server-priced
+
+`preset_id` is snapshotted and the Worker reads the price from `preset_line_items`,
+batched with the other catalog lookups. This tightens AI_GUIDELINES rule 1 — presets used
+to be client-priced — and is what gives an overridden preset a default to reset TO.
+
+**Known limitation:** rows saved before this have `preset_id = null`. They keep their
+historical client-sent `unit_price` and cannot be overridden until re-picked from the
+preset sheet. `buildPayload` still sends `unit_price` for those, and the schema still
+accepts it.
+
+### The money carve-out
+
+`unit_price_override` and `addons[].price` are the only client money fields beyond a
+custom item's own `unit_price`. Both are clamped in `apps/api/src/routes/orders.ts`, the
+add-on object is `.strict()` so a future `taxable`/`cost` field cannot ride along, and
+every change is written to the order activity log by `describePriceChanges`. A calculated
+price moving on its own (a catalog rate rose) logs nothing — nobody typed it.
+
+### New modules
+
+- `apps/api/src/lib/lineItemAdjustments.ts` + `apps/web/src/lib/lineItemAdjustments.ts` —
+  a TWIN pair like `pricing.ts`/`totals.ts`, byte-identical below the file header. Verify
+  with a diff from the first export when touching either.
+- `apps/api/src/lib/lineItemAuditLog.ts` — api-only, deliberately NOT in the twin file,
+  because log diffing has no browser side and its presence there would make the twin claim
+  untrue.
+- `apps/web/src/pages/orders/blindForms/PriceBlock.tsx` — replaces `PriceReadout`, shared
+  by all 11 blind forms and `FlatEditForm`. Shows the calculated price ALWAYS, including
+  while overridden.
+
+### Schema shape
+
+`flatItemSchema` split into `presetItemBase` + `customItemBase`; the union has three
+members. Cross-field rules (title-or-description required; a preset needs `preset_id` or
+`unit_price`) live on a `superRefine` at the union level, because
+`z.discriminatedUnion` rejects `.refine()`d members — they become `ZodEffects`.
+
+### Verified
+api 289/289, web 164/164, both `tsc --noEmit` clean, `oxlint` clean.
+Migration 31 written but NOT applied — see below.
