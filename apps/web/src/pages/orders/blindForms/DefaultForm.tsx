@@ -30,11 +30,12 @@ import {
   MaterialAndColor,
   NoteField,
   PanelWidths,
-  PriceReadout,
   QuantityStepper,
   RoomField,
   type BlindFormProps,
 } from './fields';
+import { blindDraftPrice } from '../lineItemDrafts';
+import { PriceBlock } from './PriceBlock';
 
 export default function DefaultForm({ draft, catalogs, onChange, footer }: BlindFormProps) {
   return (
@@ -61,7 +62,12 @@ export default function DefaultForm({ draft, catalogs, onChange, footer }: Blind
       <FormSection title="Details">
         <NoteField draft={draft} onChange={onChange} />
         <QuantityStepper draft={draft} onChange={onChange} />
-        <PriceReadout draft={draft} catalogs={catalogs} />
+        <PriceBlock
+          price={blindDraftPrice(draft, catalogs)}
+          adjustments={draft}
+          canOverride
+          onChange={(adj) => onChange({ ...draft, ...adj })}
+        />
         {footer}
       </FormSection>
     </div>
