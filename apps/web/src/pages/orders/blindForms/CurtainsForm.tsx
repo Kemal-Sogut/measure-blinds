@@ -2,31 +2,37 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Curtains blind form.
+ * Curtains blind form — the first per-type form to diverge from
+ * `DefaultForm`.
  *
- * Composes the same fields, in the same order, as `DefaultForm` — the
- * scaffold state. This type has not diverged yet.
+ * Curtains have no cassette and no bottom rail, so `HardwareRow` is
+ * replaced by a row of Installation / Pleat / Control. Dropping those two
+ * pickers is safe because `lib/blindTypes/curtains.ts` declares
+ * `requiredCatalogs = ['control']`: the save guard, the price preview and
+ * the Worker all read that same declaration, so none of them waits on a
+ * cassette this type does not have.
  *
- * Diverge here freely: reorder the sections, drop a field this type does
- * not use, or add an `<AttributeText>` bound to a key that
- * `lib/blindTypes/curtains.ts` declares in its `attributeSchema`. Nothing
- * outside this file and that module needs to change, and no other blind
- * type is affected.
+ * The two new selects write only a catalog ROW ID into the draft. The
+ * Worker resolves the pleat multiplier and the installation charge
+ * itself, which is why neither number appears anywhere in this file.
  *
- * A new input must be declared in BOTH places or it will not persist: the
- * schema is what the Worker validates against, and an undeclared key is
- * rejected with a 400. Declare numeric fields with `z.coerce.number()` —
- * the value arriving from a draft is a string.
+ * Both `attrKey` values below are declared in
+ * `lib/blindTypes/curtains.ts`. Adding an input here without declaring it
+ * there is a 400 on save.
+ *
+ * Height is still collected: it is a manufacturing measurement that
+ * reaches the manufacturer copy, and it does NOT enter the price.
  */
 
 import {
+  AttributeSelect,
   BlindTypeSelect,
   FormSection,
   FormSplitter,
-  HardwareRow,
   HeightField,
   MaterialAndColor,
   NoteField,
+  OptionSelect,
   PanelWidths,
   PriceReadout,
   QuantityStepper,
@@ -50,7 +56,28 @@ export default function CurtainsForm({ draft, catalogs, onChange, footer }: Blin
       {/* ── 2. Options ──────────────────────────────────────────────── */}
       <FormSection title="Options">
         <MaterialAndColor draft={draft} catalogs={catalogs} onChange={onChange} />
-        <HardwareRow draft={draft} catalogs={catalogs} onChange={onChange} />
+        <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-3">
+          <AttributeSelect
+            draft={draft}
+            onChange={onChange}
+            attrKey="installation_id"
+            label="Installation"
+            options={catalogs.installationOptions}
+          />
+          <AttributeSelect
+            draft={draft}
+            onChange={onChange}
+            attrKey="pleat_type_id"
+            label="Pleat"
+            options={catalogs.pleatTypes}
+          />
+          <OptionSelect
+            label="Control"
+            value={draft.control_id}
+            onChange={(id) => onChange({ ...draft, control_id: id })}
+            options={catalogs.controls}
+          />
+        </div>
       </FormSection>
 
       <FormSplitter />

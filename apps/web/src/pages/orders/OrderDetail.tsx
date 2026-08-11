@@ -826,9 +826,15 @@ export default function OrderDetail() {
       list.map((it) => {
         if (!selected.has(it.key) || it.item_type !== 'blind') return it;
         const patch: Partial<BlindDraft> = {};
+        // A bulk selection can mix blind types, and a hardware slot only
+        // applies to the types that use it — pushing a cassette onto a
+        // curtain here would make the whole order unsavable.
+        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
         if (bulkState.material_id) patch.material_id = bulkState.material_id;
-        if (bulkState.cassette_id) patch.cassette_id = bulkState.cassette_id;
-        if (bulkState.bottom_rail_id) patch.bottom_rail_id = bulkState.bottom_rail_id;
+        if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
+        if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
+          patch.bottom_rail_id = bulkState.bottom_rail_id;
+        }
         if (bulkState.control_id) patch.control_id = bulkState.control_id;
         return { ...it, ...patch };
       })

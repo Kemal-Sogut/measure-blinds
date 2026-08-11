@@ -124,11 +124,16 @@ export function OptionSelect({
  * when it is inactive or a legacy free-text entry not in the list, so an
  * old order never silently loses its type.
  *
- * Changing the type does two clean-ups the caller must not have to
- * remember: it drops a Material that the new type does not offer, and it
- * RESEEDS `attributes` from the new type's `defaultAttributes()`. Without
- * the reseed the draft would keep the previous type's keys, which that
- * type's schema does not declare — the save would 400.
+ * Changing the type does three clean-ups the caller must not have to
+ * remember, each of which would otherwise be a 400 on save:
+ *
+ * 1. It drops a Material the new type does not offer.
+ * 2. It RESEEDS `attributes` from the new type's `defaultAttributes()`.
+ *    Without this the draft keeps the previous type's keys, which the new
+ *    type's schema does not declare.
+ * 3. It CLEARS a hardware id the new type does not use. Switching a
+ *    Roller to Curtains would otherwise carry the cassette across, and
+ *    the Worker rejects an id for a slot the type has no formula for.
  */
 export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
   const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
@@ -144,10 +149,13 @@ export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
             (m) => m.id === draft.material_id
           );
           const next = getBlindType(blinds_type);
+          const uses = new Set<string>(next.requiredCatalogs);
           onChange({
             ...draft,
             blinds_type,
             material_id: stillValid ? draft.material_id : '',
+            cassette_id: uses.has('cassette') ? draft.cassette_id : '',
+            bottom_rail_id: uses.has('bottom_rail') ? draft.bottom_rail_id : '',
             attributes: Object.fromEntries(
               Object.entries(next.defaultAttributes()).map(([k, v]) => [k, String(v)])
             ),
@@ -435,5 +443,42 @@ export function AttributeText({
         className={`${INPUT} font-mono`}
       />
     </label>
+  );
+}
+
+/**
+ * Catalog-backed dropdown bound to one attribute key — the sibling of
+ * `AttributeText` for a value that comes from a settings list rather
+ * than the keyboard.
+ *
+ * Writes the chosen row's ID into the draft, never its price. The Worker
+ * resolves that id against the catalog itself and snapshots the name and
+ * value (see the blind type's `catalogRefs`), which is what keeps pricing
+ * server-authoritative even when the value is a multiplier.
+ *
+ * `attrKey` MUST be a key the type's `attributeSchema` declares, or the
+ * save is rejected with a 400.
+ */
+export function AttributeSelect({
+  draft,
+  onChange,
+  attrKey,
+  label,
+  options,
+  placeholder,
+}: Pick<BlindFormProps, 'draft' | 'onChange'> & {
+  attrKey: string;
+  label: string;
+  options: { id: string; name: string; active: boolean }[];
+  placeholder?: string;
+}) {
+  return (
+    <OptionSelect
+      label={label}
+      value={draft.attributes[attrKey] ?? ''}
+      onChange={(id) => onChange({ ...draft, attributes: { ...draft.attributes, [attrKey]: id } })}
+      options={options}
+      placeholder={placeholder}
+    />
   );
 }
