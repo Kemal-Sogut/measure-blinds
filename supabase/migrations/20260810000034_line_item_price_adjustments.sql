@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
--- Migration 31: per-line-item price adjustments.
+-- Migration 34: per-line-item price adjustments.
 --
 -- Three consultant-facing capabilities share these columns:
 --   * price override  — `unit_price` keeps meaning "the unit price

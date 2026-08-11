@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Copyright (c) 2026 Blinds Nisa. All rights reserved.
 --
--- Migration 30: pleat_types + installation_options — the two catalogs the
+-- Migration 33: pleat_types + installation_options — the two catalogs the
 -- Curtains blind type prices from.
 --
 -- Curtains is the first blind type to leave the shared base formula. It is
