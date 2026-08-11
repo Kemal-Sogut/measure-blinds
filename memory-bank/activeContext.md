@@ -1,5 +1,27 @@
 # Active Context
 
+## Current Focus — 2026-08-11: Installable home-screen app (PWA)
+Branch `feat/pwa-home-screen`, cut from `main`. Static assets only — no TS, no API, no schema.
+Full detail in `engine_features.md` 2026-08-11.
+
+- **`display: "standalone"` in the manifest is the whole answer to "hide the browser UI".**
+  `.htaccess` is irrelevant — the web app is a Cloudflare Worker with `[assets]`, no Apache.
+- **`logo.svg` is the single source for every icon.** `scripts/generate-icons.mjs` derives
+  `favicon.svg` and the four PNGs from it. Never hand-edit a derived file; re-run the script.
+- **Every PNG is an opaque white plate on purpose** (iOS composites transparency onto black),
+  and the maskable one is inset to 60% (Android crops to launcher shapes).
+- **`apple-mobile-web-app-status-bar-style` is `default`.** `black-translucent` needs
+  `env(safe-area-inset-top)` handling that `apps/web` does not have.
+- **Verified:** `pnpm --filter web build` clean and all six assets present in `dist/`; manifest
+  served as `application/manifest+json`, all icons 200, no console errors; `pnpm check` clean,
+  web tests 98/10 pass. `oxlint` reports 4 pre-existing `only-export-components` warnings in
+  `LineItemEditor.tsx`, untouched by this branch.
+- **NOT verified: a physical device.** Nothing here has been installed on a real phone or
+  tablet. Do that before merging — an installed PWA caches the manifest, so a bad `start_url`
+  or icon path survives the next deploy until users remove and re-add the icon.
+- **Ships by merging to `main`** (Cloudflare builds `apps/web` from GitHub). No API deploy is
+  involved, so the usual API-first ordering does not apply to this branch.
+
 ## Current Focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
 Owner report: "mobile and tablet views are still broken, ui is not responsive", with a
 sketch of the target order screen (collapsible menu | main with a save/edit header |

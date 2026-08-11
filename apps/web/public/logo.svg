@@ -1,0 +1,54 @@
+<!--
+  SPDX-License-Identifier: GPL-3.0-only
+  Copyright (c) 2026 Blinds Nisa. All rights reserved.
+
+  Blinds Nisa brand mark — the SINGLE SOURCE for every derived icon.
+
+  A blind hung in a black frame: five slats in a tonal red ramp (deep red at the
+  top fading to white at the bottom) behind a white pull cord with a weighted
+  tassel. The frame's left edge is square and its right edge is rounded, which is
+  what makes the shape read as a blind rather than a plain card.
+
+  Geometry notes for anyone editing this file:
+  - The viewBox is tight to the mark (no padding) so every consumer controls its
+    own breathing room. Padded/square variants are GENERATED, never hand-copied —
+    see scripts/generate-icons.mjs, which reads this file to emit favicon.svg and
+    the PWA PNGs. Editing the paths here updates all of them on the next run.
+  - The slats deliberately overrun the right edge (x=623 against a 593-wide frame)
+    and are cut back by clipPath #frame. That is how they get flush square ends
+    against the rounded frame without anyone matching a curve by hand.
+  - Colours are literal, not design tokens: this file is served as a static asset
+    to browsers and native OS icon pipelines, none of which resolve CSS variables.
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 593 1060"
+  width="593"
+  height="1060"
+  role="img"
+  aria-labelledby="blinds-nisa-logo-title"
+>
+  <title id="blinds-nisa-logo-title">Blinds Nisa</title>
+
+  <defs>
+    <!-- The frame doubles as the clip for the slats; keep the two path strings identical. -->
+    <clipPath id="frame">
+      <path d="M0 0H559a34 34 0 0 1 34 34v992a34 34 0 0 1-34 34H0Z" />
+    </clipPath>
+  </defs>
+
+  <path d="M0 0H559a34 34 0 0 1 34 34v992a34 34 0 0 1-34 34H0Z" fill="#000000" />
+
+  <g clip-path="url(#frame)">
+    <rect x="162" y="76" width="461" height="143" rx="30" fill="#d1090f" />
+    <rect x="162" y="267" width="461" height="143" rx="30" fill="#e96d6f" />
+    <rect x="162" y="458" width="461" height="143" rx="30" fill="#f8a9af" />
+    <rect x="162" y="649" width="461" height="143" rx="30" fill="#fbd1d6" />
+    <rect x="162" y="840" width="461" height="143" rx="30" fill="#ffffff" />
+  </g>
+
+  <!-- Pull cord: a hairline down the spine, weighted by a flared tassel. -->
+  <!-- The tassel's tip lands on y=983, level with the bottom slat, not below it. -->
+  <rect x="52" y="0" width="14" height="898" fill="#ffffff" />
+  <path d="M52 893 32 973q-2 10 8 10h38q10 0 8-10l-20-80Z" fill="#ffffff" />
+</svg>

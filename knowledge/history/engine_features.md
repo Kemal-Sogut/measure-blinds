@@ -1,5 +1,64 @@
 # Engine Features / Feature History
 
+## 2026-08-11 — Installable home-screen app (PWA manifest, real brand icons)
+
+Owner asked whether an `.htaccess` could turn the app into a phone/tablet home-screen
+shortcut with the browser UI hidden. **`.htaccess` does nothing here** — `apps/web` is served
+by a Cloudflare Worker with `[assets]` (`apps/web/wrangler.toml`), so there is no Apache to
+read one. The web-standard equivalent is a manifest, and `display: "standalone"` is the single
+line that drops the address bar and tabs once the app is launched from its icon.
+
+### Files (all static, all web-side — nothing in `apps/api`)
+
+- **`apps/web/public/logo.svg`** — the real Blinds Nisa mark, replacing the purple placeholder
+  that shipped as `favicon.svg`. A blind in a black frame: five slats in a tonal red ramp
+  (`#d1090f → #e96d6f → #f8a9af → #fbd1d6 → #ffffff`) behind a white pull cord with a
+  weighted tassel. `viewBox="0 0 593 1060"`, tight to the mark, no padding.
+  - **The slats overrun the frame (x to 623 against a 593-wide frame) and are cut by
+    `clipPath #frame`.** That is deliberate: it gives them flush square ends against the
+    frame's rounded right edge without anyone hand-matching a curve. The clip path string and
+    the frame's fill path string must stay identical.
+  - Colours are literal hex, not design tokens — browsers and OS icon pipelines fetch this
+    file as a static asset and never resolve CSS variables.
+- **`scripts/generate-icons.mjs`** — the ONLY place icons are padded, plated and rasterised.
+  Reads `logo.svg`, writes `favicon.svg` (square, transparent, 88% fit) plus `icon-192.png`,
+  `icon-512.png` (82% fit), `icon-maskable-512.png` (60% fit) and `apple-touch-icon.png`
+  (180px, 78% fit). Run it after ANY edit to `logo.svg` and commit the output — the geometry
+  must never be hand-copied into a second file.
+- **`apps/web/public/manifest.webmanifest`** — `display: "standalone"`, `start_url`/`scope`
+  `/`, `theme_color` `#2563eb` (matches the existing `theme-color` meta and `--color-brand-600`),
+  `background_color` `#f6f7f9` (matches `--color-surface-muted`, the body background, so the
+  splash does not flash a different colour than the first paint), `orientation: "any"` because
+  staff hold tablets both ways.
+- **`apps/web/index.html`** — `<link rel="manifest">` plus the Apple tags Safari needs
+  instead of the manifest.
+
+### Three constraints that dictated the numbers
+
+1. **Every PNG is an opaque white plate.** iOS composites a transparent `apple-touch-icon`
+   onto BLACK, which would erase this mark's black frame completely; Android theming can do
+   the same on a dark background. Only the SVG keeps transparency, because the tab strip
+   handles it correctly.
+2. **The maskable icon is inset much further (60% vs 82%).** Android crops maskable icons to
+   arbitrary launcher shapes and only guarantees the middle 80%. A portrait mark at 82% loses
+   the top slat and the tassel on round-icon launchers.
+3. **`apple-mobile-web-app-status-bar-style` is `default`, NOT `black-translucent`.**
+   Translucent hands the app the area under the iOS clock/notch, and nothing in `apps/web`
+   styles `env(safe-area-inset-top)` — every existing inset rule is `safe-area-inset-bottom`.
+   Translucent would put the shell header under the status bar. Changing this is a
+   top-inset-pass prerequisite, not a free toggle.
+
+### Standing hazards
+
+- **Installed PWAs cache the manifest.** A bad `start_url` or icon path is not fixed by the
+  next deploy for anyone who already installed — they must remove and re-add the icon. Verify
+  on a real device before merging to `main`.
+- **Android standalone has no browser back button.** Any route reachable without in-app back
+  navigation becomes a dead end once installed. Not audited by this change.
+- **No service worker, so no offline.** Launching still needs network. Offline is not a small
+  follow-up: pricing is server-authoritative, so offline writes would need a queue and a
+  re-price-on-sync story.
+
 ## 2026-07-28 — Production label printing (TSPL labels, `print_jobs` queue, print-agent workspace)
 
 > **⛔ PARTLY DROPPED — removed 2026-07-28 at the owner's request (the shop PC covers printing,

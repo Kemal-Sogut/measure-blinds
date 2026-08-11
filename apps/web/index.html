@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#2563eb" />
+
+    <!--
+      Home-screen install. `display: standalone` in the manifest is what drops the
+      browser chrome (address bar, tabs) once the app is launched from its icon;
+      Chrome/Android reads it from here. iOS Safari needs the apple-* tags below
+      instead — it ignores the manifest's display mode on older versions, and it
+      composites a transparent apple-touch-icon onto black, so that PNG is
+      deliberately an opaque plate (see scripts/generate-icons.mjs).
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!--
+      `default`, NOT `black-translucent`. Translucent hands the app the full screen
+      including the area under the iOS clock/notch, and nothing in apps/web styles
+      `env(safe-area-inset-top)` — only the bottom inset is handled — so the app
+      shell header would sit under the status bar. Revisit only alongside a top-inset
+      pass.
+    -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Blinds Nisa" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
