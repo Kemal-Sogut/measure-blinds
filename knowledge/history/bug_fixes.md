@@ -577,3 +577,45 @@ displayed, so it composites no frames and time-driven CSS transitions never prog
   condition ("this order has not hydrated"), not on the state the other effect is about to
   change. Symptom shape to remember: the bug only bites the case that has no recomputation
   rule to paper over it.
+
+---
+
+## Add-on rows: `w-24` never beat `w-full`, collapsing the description field (2026-08-10)
+
+**Symptom (owner report):** in the add-on list, "the first box is only clickable — not sure
+what it does, it does nothing", and the × button "extends the form, requires dragging to
+the right".
+
+**Cause.** One line, two symptoms:
+
+```tsx
+className={`${INPUT} w-24 shrink-0`}   // INPUT already contains w-full
+```
+
+`w-full` and `w-24` are both width utilities of equal specificity, so which one applies is
+decided by their order in the GENERATED STYLESHEET, not by the order they appear in the
+class attribute. `w-full` won. The price input was therefore 100% wide AND `shrink-0`, so
+it could not give any of that width back:
+
+- the × button was pushed past the right edge of the popup — the horizontal drag;
+- the description input, the row's only shrinkable item (`min-w-0`, default `shrink:1`),
+  absorbed the entire overflow and collapsed to a sliver. It was never broken and its
+  `onChange` was never wrong — it simply had no width to render what you typed.
+
+**Fix.** Widths now come from a grid template instead of from competing utilities. The
+add-on rows use the same `grid-cols-2 gap-3.5` as the Calculated-price/Override and
+Quantity/Unit-price pairs, with the remove button INSIDE the second column beside its price
+— a third column would have knocked both fields out of alignment with every other field in
+the form. `fields.tsx` gained `INPUT_BASE` (every input token except a width) for controls
+sized by their container; `INPUT` is now `${INPUT_BASE} w-full`.
+
+**Rule this leaves behind:** never compose `INPUT` with another width class. Use
+`INPUT_BASE` plus the container's own sizing. The same trap was caught a second time in the
+same edit, in `${LABEL} mb-0`.
+
+**Verified in a browser**, not just by tsc: the real component was mounted against the real
+stylesheet at the popup's 420px width and measured. No horizontal overflow
+(`scrollWidth === clientWidth === 417`); description cells span 18→203, exactly matching the
+Calculated-price cell; price input + remove button span 217→402, exactly matching the
+Override input; typing into the description updates state (the remove button's aria-label
+follows it).
