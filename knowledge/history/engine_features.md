@@ -2234,3 +2234,61 @@ members. Cross-field rules (title-or-description required; a preset needs `prese
 ### Verified
 api 289/289, web 164/164, both `tsc --noEmit` clean, `oxlint` clean.
 Migration 31 written but NOT applied — see below.
+
+## 2026-08-11: blind-type scoping for the four option catalogs
+
+**What.** Cassette, bottom rail, control and installation options each carry the blind
+types they are offered for, picked as toggle chips on their settings page. A blind type
+uses a hardware slot exactly when at least one ACTIVE option of that catalog is scoped to
+it; otherwise the line-item form hides the dropdown and the cost leaves the price. In the
+same change, Installation stopped being a Curtains-only attribute and became a real
+line-item slot beside cassette / bottom rail / control.
+
+**Why.** Which slots a type used was a code constant — `BaseBlindType.requiredCatalogs`,
+overridden to `['control']` by Curtains. Turning a cassette off for a type meant a code
+change, a deploy and a test edit. It is data now.
+
+**How.** Migration 35 adds four join tables shaped exactly like `material_blind_types`
+(`cassette_option_blind_types`, `bottom_rail_option_blind_types`,
+`control_option_blind_types`, `installation_option_blind_types`).
+`apps/api/src/lib/optionScoping.ts` answers "does this type use this slot" for the Worker;
+`slotsForType` / `optionsForType` in `apps/web/src/pages/orders/lineItemDrafts.ts` answer
+it for the editor. `requiredCatalogs` is DELETED from both `base.ts` twins and from
+`curtains.ts`.
+
+**The convention trap.** EMPTY MEANS NONE here — the OPPOSITE of `material_blind_types`,
+where an unlinked Material is available for every type. Empty-means-all would make it
+impossible to switch a slot off, which is the entire feature. That is why migration 35's
+backfill is mandatory rather than cosmetic: it seeds cassette + rail to every type except
+Curtains, control to every type, installation to Curtains only — reproducing the old
+hardcoded behaviour exactly, so applying the migration changed nothing a user could see.
+
+**The second trap.** `line_items.attributes` had its three `installation_*` keys STRIPPED
+by the same migration, after copying them into the new columns. `curtains.ts` no longer
+declares `installation_id`, its `attributeSchema` is strict, and the editor re-parses a
+re-opened order's blob — a key left behind would be a 400 on the second save. (In practice
+no production row carried one: the migration moved 0 rows.)
+
+**Order of checks in `resolveLineItems` is load-bearing.** Existence checks run BEFORE the
+slot gates. Deleting an option cascades its scoping links away, so the slot goes quiet in
+the same breath — checking slots first would report a deleted cassette as "this type does
+not take a cassette."
+
+**Deliberately NOT enforced.** The Worker checks that a chosen option EXISTS, not that it
+is scoped to the type. This mirrors Materials (the UI filters, the Worker does not) and
+keeps a re-save working after an option is unscoped mid-life. An unknown `blinds_type` —
+free text from before the dropdown — resolves to no scoping row and is left unconstrained
+entirely, or every pre-dropdown order would become unsavable.
+
+**Also changed.** `control_id` is nullable in the payload schema (a type with no control
+scoped prices it at 0); `BlindPricingInputs` gained a required
+`installation_price_per_item` charged flat per blind by `installationCost`; the settings
+catalog factory grew an optional `links` config plus `syncCatalogLinks` /
+`flattenCatalogLinks`, and its create schema is now `.strict()` so a scoping list sent to
+an unscoped catalog is a 400 instead of a silent strip; Installation prints on the PDF,
+the customer page, the order overview and the shop label (`INSTALLATION_CODES`: Rod = R,
+Track = T).
+
+### Verified
+api 308/308, web 175/175, both `tsc --noEmit` clean, `oxlint` clean, `vite build` clean.
+Migration 35 applied to the live project and its backfill verified by query.
