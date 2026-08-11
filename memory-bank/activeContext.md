@@ -23,6 +23,122 @@ Full detail in `engine_features.md` 2026-08-11.
   involved, so the usual API-first ordering does not apply to this branch.
 
 ## Current Focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
+## Current Focus — 2026-08-10: Line item price adjustments
+Owner spec: override a line item's price (with the option to show the customer the previous
+price, and to reset to the calculated one), give custom items a title plus a multi-line
+description, and attach custom add-ons with their own pricing shown on PDFs and the
+overview. Branch `feat/line-item-price-adjustments`, cut from `feat/curtains-pricing`.
+Full detail in `engine_features.md` 2026-08-10.
+
+- **`unit_price` means THE PRICE CHARGED, always.** An override writes the new figure
+  there; `base_unit_price` holds the calculated one and is non-null only while overridden.
+  This is why no existing reader needed changing. Do not "fix" this by moving the override
+  into its own charged column — every surface would then have to learn the rule.
+- **`base_unit_price is not null` is the ONLY test for "was this overridden?"** There is no
+  boolean. Adding one would let the two disagree.
+- **A preset with `preset_id` is server-priced.** Its `unit_price` field in the payload is
+  ignored, and `FlatEditForm` renders the price read-only for those. Presets saved before
+  migration 31 have `preset_id = null`, keep their client-sent price, and CANNOT be
+  overridden until re-picked from the preset sheet.
+- **Standing hazards added by this work:**
+  1. **Two places strip a hidden original**: `toPdfData` in `routes/orders.ts` and the
+     `/public/estimate/:token` payload. Both must keep doing it — a PDF text layer is
+     extractable whether or not the figure was drawn, and the public route is
+     unauthenticated, so hiding it client-side is not hiding it.
+  2. **`lineItemAdjustments.ts` is a TWIN pair**, api + web, byte-identical below the file
+     header. Diff them from the first export after touching either. Log diffing lives in
+     `lineItemAuditLog.ts` (api-only) precisely so the twin claim stays true.
+  3. **Add-on prices round to the cent INDIVIDUALLY before summing** — they each land in a
+     `numeric(10,2)`. Sum-then-round quotes a total the database cannot store.
+  4. **`z.discriminatedUnion` rejects `.refine()`d members.** The title-or-description and
+     preset-needs-a-price rules therefore live on a `superRefine` at the union level.
+  5. **Every flat surface falls back to `description` when `title` is empty.** Removing a
+     fallback makes every pre-migration-31 order print unnamed items.
+- **Migration 31 is written but NOT applied** — the maintainer applies it. Every unit test
+  passes without it; the Worker will fail on unknown columns until it is live.
+- **Nothing has been seen in a browser.** `/orders/:id` is behind `ProtectedRoute`. Four
+  surfaces to eyeball once migration 31 is live: the edit popup's price block, the item
+  list's amber dot, the estimate PDF's strikethrough, the customer page.
+- **Verified:** api 289/16, web 164/14, both `tsc --noEmit` clean, `oxlint` clean.
+
+## Prior focus — 2026-08-10: Curtains is the first divergent blind type
+Owner spec: "width × pleat rate × fabric price", pleat types managed as a settings
+sub-page off the Curtains materials page, options Installation (rod/track) / Pleat /
+Control. Branch `feat/curtains-pricing`, cut from `origin/main` at `4dedf24`. Full detail
+in `engine_features.md` 2026-08-10.
+
+- **Superseded 2026-08-10: Curtains now also charge a per-panel hem allowance** —
+  `panels.length × HEM_ALLOWANCE_M (0.5) × price_per_m`, added OUTSIDE the pleat multiplier
+  and after the width minimum. Per panel COUNT, never the summed width: an in-progress
+  revision read the summed width and priced the standard 300cm test curtain at $15,300.
+  Both twins and both suites pin it.
+- **Curtains is the worked example of a divergent type.** The 2026-08-09 note below said
+  nothing had diverged; that is no longer true. To diverge a second type, copy what Curtains
+  does: `lib/blindTypes/curtains.ts` (BOTH twins) + `blindForms/CurtainsForm.tsx`, and
+  nothing else needs to change.
+- **Standing hazards added by this work:**
+  1. **For Curtains materials, `price_per_sqm` is DOLLARS PER RUNNING METRE.** One column,
+     two meanings, keyed off the blind type. `MaterialsForType` relabels itself for Curtains
+     — do not "simplify" that back to a constant string; an m² price entered there
+     under-quotes every curtain by roughly its drop in metres.
+  2. **Every value migration 30 seeds is an identity** (multiplier 1, price 0), so applying
+     it cannot move a total. Do NOT replace them with realistic-looking numbers without the
+     owner's actual figures — that silently reprices every curtain on its next save.
+  3. **A type's `attributeSchema` must never declare a snapshot key.** `pleat_multiplier`
+     and `installation_price` are absent from it on purpose: declaring one would let a
+     client set a price. The Worker writes them via `resolveCatalogRefs` AFTER the parse.
+  4. **`parseDraftAttributes` filters to `inputKeys()`.** Removing that filter silently
+     drops every per-type option on the second save of a re-opened order — see
+     `bug_fixes.md` 2026-08-10.
+  5. **Three client paths share the `requiredCatalogs` rule**: the save guard,
+     `BlindTypeSelect` (clears a hardware id the new type does not use) and bulk edit. Miss
+     one and switching a Roller to Curtains carries a cassette the Worker rejects, making
+     the order unsavable.
+- **Migration 30 is written but NOT applied** — the maintainer applies it. Every unit test
+  passes without it; only end-to-end checking needs it live.
+- **No display surface has yet been seen rendering a non-empty attribute list with real
+  data.** Every test to date uses a mocked or throwaway type. The four surfaces to eyeball
+  once migration 30 is live: estimate PDF, customer page, manufacturer copy, order item rows.
+- **Verified:** `pnpm check` clean, api 242/14, web 133/13, `pnpm lint` 0 warnings.
+
+## Prior focus — 2026-08-09: Blind types are modules (own inputs, own form, own documents)
+Owner request: "different calculation logic usually requires different inputs — more or
+less, but the UI should be different… each UI of the blinds adding form can be edited
+separately." Branch `refactor/blind-type-modules`, 10 commits. Full detail in
+`engine_features.md` 2026-08-09.
+
+- **Nothing had diverged when this branch landed, and that was its intended end state.** All
+  ten types priced by the base formula and declared zero attributes, so no price moved and
+  no form changed. SUPERSEDED 2026-08-10: Curtains has since diverged (see above). The
+  remaining nine still inherit the base formula; divergence stays a two-file change per
+  type: `lib/blindTypes/<type>.ts` (BOTH twins) + `blindForms/<Type>Form.tsx`.
+- **Standing hazards a future session must not trip over:**
+  1. **The twins.** `apps/{api,web}/src/lib/blindTypes/*` must stay byte-identical below the
+     import lines. Verify with `diff <(tail -n +4 api/…) <(tail -n +4 web/…)`; only `base.ts`
+     and `registry.ts` legitimately differ, and only in their twin-reference sentences.
+  2. **`public.ts` sends `attribute_lines`, never `attributes`.** That route is
+     unauthenticated. Replacing the explicit field list with a spread publishes every future
+     internal-only field automatically and retroactively.
+  3. **Two registries.** `lib/blindTypes` (pricing, no React) and `pages/orders/blindForms`
+     (UI). `getBlindForm` keys on the canonical label returned by `getBlindType`, so aliases
+     resolve once — do not reintroduce a hand-copied alias list.
+  4. **`attributeSchema` is `z.ZodTypeAny`**, not `z.ZodType<BlindAttributes>` — Zod schema
+     types are not covariant in their output. Numeric fields need `z.coerce.number()`
+     because drafts hold strings.
+  5. **`lineItemDrafts.ts` must stay JSX-free.** Moving plain functions back into
+     `LineItemEditor.tsx` reintroduces the four `react/only-export-components` warnings and
+     breaks Fast Refresh on every form edit.
+- **Migration 29 is APPLIED** to `lgbxxlwsdeuhdgzrjjen` (by the maintainer, 2026-08-09).
+- **`apps/web` lint is now 0 warnings**, down from the 4 long-standing
+  `react/only-export-components` ones — the `lineItemDrafts.ts` split removed them.
+- **Verified:** web 116/13, api 214/13, `pnpm check` clean, production build clean. The blind
+  popup and the order item rows were both diffed in a signed-in browser against the
+  pre-refactor build and are byte-identical (6826 and 2647 chars).
+- **Deliberately deferred:** the api ⇄ web twin duplication grew and was NOT addressed; a
+  shared workspace package is a separate architectural decision (AI_GUIDELINES §7/§8). The
+  mirrored test suites remain the only drift alarm.
+
+## Prior focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
 Owner report: "mobile and tablet views are still broken, ui is not responsive", with a
 sketch of the target order screen (collapsible menu | main with a save/edit header |
 summary). Full detail in `engine_features.md` and `bug_fixes.md`, both 2026-08-03.

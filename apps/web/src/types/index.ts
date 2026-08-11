@@ -237,10 +237,24 @@ export interface CalendarEvent {
 export type LineItemType = 'blind' | 'custom' | 'preset';
 
 /**
+ * One consultant-added extra on a line item — a label and a flat price.
+ *
+ * The price is added ONCE to the item's line total, never multiplied by
+ * the item's quantity: an add-on describes something bought for the line
+ * as a whole ("rush fee", "site measure"), not a per-unit upgrade. Both
+ * fields are snapshotted onto the row at save time, so editing nothing
+ * but a catalog price later cannot rewrite a quoted extra.
+ */
+export interface LineItemAddon {
+  label: string;
+  price: number;
+}
+
+/**
  * Line item within an order. Mirrors the `line_items` table:
  * blind items use panels/height + snapshotted option names & prices
  * (frozen at save time so later catalog edits never change history);
- * preset/custom items use description + unit_price.
+ * preset/custom items use title + description + unit_price.
  */
 export interface LineItem {
   id: string;
@@ -267,9 +281,47 @@ export interface LineItem {
   note: string;
   /** Free-text colour label (display-only; no pricing effect). */
   color: string;
+  /**
+   * The blind type's own extra inputs, as validated and stored by the
+   * Worker. `{}` for flat items and for every blind of a type that has
+   * not declared any. Render it through
+   * `getBlindType(blinds_type).describeAttributes()` — never by iterating
+   * the object directly, or the labels drift between surfaces.
+   */
+  attributes: Record<string, string | number | boolean>;
   quantity: number;
   unit_price: number;
   line_total: number;
+  /**
+   * Headline for preset/custom items; `''` on blind rows, whose title is
+   * derived from `room_name` + `blinds_type`. Rows written before the
+   * title existed also carry `''` — every surface falls back to
+   * `description` so historical orders still print a name.
+   */
+  title: string;
+  /**
+   * Catalog provenance for preset items, `null` for blind, custom, and
+   * pre-migration-31 preset rows. Its presence is what lets the Worker
+   * re-price the item — and therefore what makes "reset to calculated"
+   * possible on a preset.
+   */
+  preset_id: string | null;
+  /**
+   * The server-CALCULATED unit price, populated only while the item's
+   * price is overridden; `null` means no override. `unit_price` always
+   * holds the price actually charged, so this is purely the "was" figure
+   * behind a strikethrough, never a number any total is derived from.
+   */
+  base_unit_price: number | null;
+  /**
+   * Whether customer-facing surfaces print the struck-through original.
+   * Meaningless while `base_unit_price` is `null`. The public endpoint
+   * omits the figure entirely when this is false, so the toggle is a real
+   * privacy control rather than a CSS-level one.
+   */
+  show_original_price: boolean;
+  /** Consultant-added extras; each price lands once in `line_total`. */
+  addons: LineItemAddon[];
   created_at: string;
   updated_at: string;
 }
@@ -321,6 +373,36 @@ export interface BottomRailOption {
 
 /** Control mechanism option from settings — flat price per panel. */
 export interface ControlOption {
+  id: string;
+  name: string;
+  price_per_item: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/**
+ * Pleat style from settings — a Curtains-only catalog. `multiplier` is a
+ * fullness RATIO, not money: metres of fabric consumed per metre of
+ * finished curtain width, so 2.5 means a 3 m curtain uses 7.5 m of
+ * fabric. It multiplies the fabric cost, which makes it a price input —
+ * the client only ever sends the row id and the Worker resolves the
+ * ratio itself.
+ */
+export interface PleatType {
+  id: string;
+  name: string;
+  multiplier: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/**
+ * Installation method from settings — rod or track, a Curtains-only
+ * catalog. Charged as a FIXED amount per curtain, unlike the cassette and
+ * bottom rail, which are charged per linear metre of width. Like the
+ * pleat multiplier, the price is resolved server-side from the id.
+ */
+export interface InstallationOption {
   id: string;
   name: string;
   price_per_item: number;

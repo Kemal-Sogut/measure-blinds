@@ -27,6 +27,105 @@ needs in place of it. The purple placeholder favicon is gone.
 - ⬜ Optional: `Sidebar.tsx`'s `Brand` still falls back to a plain `bg-brand-600` square when
   company settings carry no `logo_url`. It could fall back to `/logo.svg` instead. Left alone
   as out of scope.
+## Line item price adjustments (2026-08-10)
+Branch `feat/line-item-price-adjustments`, 15 commits from `feat/curtains-pricing`.
+
+**Works:** a consultant can override the calculated unit price of a blind or a
+catalog-backed preset, optionally show the customer the original struck through, and reset
+to the calculated price at any time; preset and custom items carry a title plus a
+multi-line description; any line item can carry up to ten `{label, price}` add-ons whose
+prices land once each in the line total. Overridden prices are marked with an amber dot on
+staff surfaces, printed with a hand-drawn strikethrough on PDFs (pdf-lib has no such
+primitive), and shown struck through on the customer page. Every hand-typed money change
+writes its own order-activity line.
+
+Presets are now server-priced from `preset_line_items` via a snapshotted `preset_id`, which
+tightens the server-authoritative money rule and is what gives an override a default to
+reset to. The three client money fields (`unit_price_override`, `addons[].price`, and a
+custom item's own `unit_price`) are the whole carve-out, each clamped and logged.
+
+api 289/16, web 164/14, both `tsc --noEmit` clean, oxlint 0 warnings. `lineItemAdjustments`
+twin bodies byte-identical below the header.
+
+**Fixed along the way:** an uncommitted Curtains formula edit was multiplying the SUMMED
+PANEL WIDTH by 0.5 instead of the panel count, pricing the standard 300cm test curtain at
+$15,300 and leaving the web twin out of sync with the api one. Finished as a per-panel hem
+allowance outside the pleat multiplier, mirrored into both twins, with tests pinning both
+the per-panel reading and the fullness exclusion.
+
+**Not done:** migration 31 is written but NOT applied — the maintainer applies it, and the
+Worker will fail on unknown columns until it is live. Nothing has been rendered in a
+browser; `/orders/:id` is behind `ProtectedRoute`.
+
+**Known limitation:** preset items saved before migration 31 have no `preset_id`. They keep
+their historical client-sent price and cannot be overridden or reset until re-picked from
+the preset sheet — there is no catalog default to return to.
+
+## Curtains pricing (2026-08-10)
+Branch `feat/curtains-pricing`, 9 commits from `origin/main` at `4dedf24`. The first use of
+the blind-type module scaffold below, and the first type to leave the shared formula.
+
+**Works:** a curtain prices as `width_m × pleat fullness × fabric price per metre`, plus the
+per-panel control charge and a fixed installation charge; height is measured but not priced,
+and the type has no cassette or bottom rail at all. Two catalogs (`pleat_types`,
+`installation_options`, migration 30) are managed through the existing settings route
+factory — pleat types from the Curtains materials page, installation options from the
+Settings index. `BaseBlindType` gained four generic members (`catalogRefs`,
+`requiredCatalogs`, `inputKeys()`, `resolveCatalogRefs()`); `orders.ts` drives all of them
+in a loop and still contains no branch on `blinds_type`. The pleat multiplier and the
+installation charge are resolved from ids server-side and snapshotted into the `attributes`
+jsonb after the strict parse, so neither can arrive from a client — a payload carrying
+`pleat_multiplier` is a 400.
+
+`pnpm check` clean, api 242/14, web 133/13, oxlint 0 warnings. Twin bodies byte-identical
+for `base.ts` and `curtains.ts`.
+
+**Fixed along the way:** a latent round-trip defect that would have hit any type with a
+server-written key — a re-opened order's draft carried the snapshot keys into a `.strict()`
+parse, which failed, and the failure signal is `null`, so the item silently lost every
+per-type option on its second save. See `bug_fixes.md` 2026-08-10, along with three tests
+caught passing before the feature existed.
+
+**Not done:** migration 30 is written but NOT applied — the maintainer applies it. All nine
+remaining blind types still inherit the base formula, unchanged.
+
+**Untested with real data:** still true, and now the thing most worth doing. No display
+surface has been seen rendering a non-empty attribute list; every test uses a mocked or
+throwaway type. Once migration 30 is live, check the estimate PDF, the customer page, the
+manufacturer copy and the order item rows, plus the save → reopen → save round trip and one
+non-Curtains blind for regression.
+
+**Owner decision pending:** all three pleat multipliers ship at 1.0, so a curtain prices as
+flat fabric until the real ratios are entered in Settings. That was chosen over seeding
+guessed industry values.
+
+## Blind-type modules (2026-08-09)
+Branch `refactor/blind-type-modules`, 10 commits on top of `main`. Touches the DB, the
+pricing twins, the order payload, the whole blind form layer, and all four display surfaces.
+
+**Works:** a blind type is now a self-contained module. `apps/{api,web}/src/lib/blindTypes/`
+(renamed from `calculators/`) carries the price formula AND an `attributeSchema`,
+`defaultAttributes()` and a React-free `describeAttributes()`. Per-type inputs persist in
+`line_items.attributes` jsonb (migration 29, applied live), validated server-side in two
+stages so an undeclared key — a price above all — is a 400 rather than a silent write.
+`pages/orders/blindForms/` holds one hand-written form per type behind a dispatcher, with
+shared controls in `fields.tsx` and `DefaultForm` as the permanent fallback for unknown,
+inactive and legacy free-text types. Attributes render on the estimate PDF, the customer
+page, the manufacturer copy and the order item rows, all through the one formatter.
+`/public/estimate/:token` forwards only pre-formatted lines, never the raw blob.
+
+`pnpm check` clean, web 116/13, api 214/13, oxlint **0 warnings** (down from 4 — the
+`lineItemDrafts.ts` split removed the long-standing `react/only-export-components` ones),
+production build clean. The blind popup and the item rows were diffed in a signed-in browser
+against the pre-refactor build: rendered DOM byte-identical, 6826 and 2647 chars.
+
+**Not done, by design (SUPERSEDED 2026-08-10 — Curtains has since diverged, see above):** no
+blind type had diverged when this branch landed. Every type priced by the base formula and
+declared zero attributes — the scaffold was the deliverable, and the extension points were
+proven by a throwaway subclass in `attributes.test.ts` rather than by inventing a pricing
+rule. Also deliberately untouched, and still true: the api ⇄ web twin duplication, which
+grew here; a shared package is a separate architectural decision, and the mirrored suites
+remain the drift alarm.
 
 ## Responsive shell rewrite (2026-08-03)
 Branch `main`. Web-only; no API, schema, or pricing surface touched.

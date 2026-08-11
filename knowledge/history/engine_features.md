@@ -58,6 +58,183 @@ line that drops the address bar and tabs once the app is launched from its icon.
 - **No service worker, so no offline.** Launching still needs network. Offline is not a small
   follow-up: pricing is server-authoritative, so offline writes would need a queue and a
   re-price-on-sync story.
+## 2026-08-10 — Curtains diverges: fabric by the running metre × pleat fullness
+
+The first blind type to leave the shared base formula. Everything below builds on the
+module scaffold from the 2026-08-09 entry; nothing there had to change shape to allow it.
+
+### The formula
+
+```
+width   = applyWidthMinimum(sum(panels))          // <100cm → 100cm, unchanged
+fabric  = (width / 100) × pleat_multiplier × material_price_per_sqm
+control = panels.length × control_price_per_item  // unchanged
+install = installation_price                       // fixed, once per curtain
+unit    = round2(fabric + control + install)
+```
+
+- **Height is measured but never priced.** It still reaches the manufacturer copy.
+- **Cassette and bottom rail do not exist for this type.** Not zero-priced entries someone
+  must remember to pick — genuinely absent, `null` in the row, `0` in the formula.
+- **For Curtains materials, `materials.price_per_sqm` holds DOLLARS PER RUNNING METRE.**
+  One column, two meanings, keyed off the blind type. `MaterialsForType` relabels every
+  affected string (`Price / m`, list rows, CSV hint, CSV error) when the type resolves to
+  Curtains. That relabel is load-bearing: an m² price entered there under-quotes by roughly
+  the drop in metres.
+
+Worked example, in both `pricing.test.ts` suites: 300cm wide, pleat 2.5, $40/m fabric →
+`3.0 × 2.5 × 40 = $300.00`.
+
+### Migration 30 — two catalogs, both seeded at their identity
+
+`pleat_types` (`multiplier numeric check (multiplier > 0)`, seeded No-pleat / Regular /
+Pinch at **1.0**) and `installation_options` (`price_per_item`, seeded Rod / Track at
+**0**). `line_items` gains NO columns — the snapshot lives in the `attributes` jsonb from
+migration 29, so `update_order_with_items()` needed no rebuild.
+
+Every seeded value is the identity for its operation (×1, +0), so **applying the migration
+cannot move any existing order's total**. The deliberate consequence: a curtain prices as
+flat fabric until someone sets the real ratios, and the Pleat Types page carries a standing
+note saying exactly that.
+
+### `catalogRefs` — a price input that never comes from the client
+
+The generic mechanism, on `BaseBlindType` (both twins), empty for every other type:
+
+```ts
+readonly catalogRefs: readonly CatalogRef[] = [];        // attrKey → table/value/snapshot keys
+readonly requiredCatalogs: readonly CatalogSlot[] = ['cassette', 'bottom_rail', 'control'];
+inputKeys(): string[]                                    // the schema's declared keys
+resolveCatalogRefs(attrs, resolve: CatalogResolver): BlindAttributes
+```
+
+Curtains declares `pleat_type_id → pleat_types.multiplier → {pleat_name, pleat_multiplier}`
+and `installation_id → installation_options.price_per_item → {installation_name,
+installation_price}`, plus `requiredCatalogs = ['control']`.
+
+- The client sends **ids only**. The two snapshot keys are NOT in `attributeSchema`, so a
+  client that sends `pleat_multiplier` gets a **400** — the same `.strict()` gate, now
+  covering the one place a price could have leaked in.
+- `resolveLineItems` collects ids, queries once per referenced table, and calls
+  `resolveCatalogRefs` **after** the strict parse, always overwriting. `orders.ts` gained a
+  generic loop, not a branch on `blinds_type`.
+- The web preview runs the same declaration against the TanStack Query cache, so the
+  keystroke price and the server agree. `lineItemDrafts.ts` holds the only table-name→list
+  mapping on the client.
+
+### Absent hardware
+
+`cassette_id` / `bottom_rail_id` are now `z.string().uuid().nullable().default(null)`.
+`resolveLineItems` requires an id for each declared slot and **rejects one for a slot the
+type does not use** — otherwise the option would be named on every document while
+contributing nothing to the price, and the form and the total would disagree.
+
+Three client paths had to learn the same rule or the order became unsavable: the save
+guard, `BlindTypeSelect` (clears a hardware id the new type does not use), and bulk edit
+(skips a slot the target type does not have).
+
+### Settings
+
+- `/settings/pleat-types` — reached from the **Curtains materials page**, not the Settings
+  index, because a pleat is meaningless without the fabric it gathers. `CatalogEditor`
+  gained `priceUnit: 'plain'` (renders `2.50×`, not `$2.50`), `priceMin` (0.01 here — a 0
+  multiplier would zero the line) and `note`.
+- `/settings/installation-options` — listed beside Control Options; an ordinary priced
+  hardware catalog.
+
+### Documents
+
+All four surfaces render `Installation: Rod · Pleat: Pinch` from `describeAttributes`,
+which returns the snapshot **names only** — the multiplier and the installation charge are
+internal pricing detail and are never printed. `public.ts` was NOT touched; it already
+forwards `attribute_lines`.
+
+### Verified
+`pnpm check` clean; api 242 tests / 14 files, web 133 / 13; `pnpm lint` 0 warnings. Twin
+bodies byte-identical for `base.ts` and `curtains.ts`. Two tests were caught passing
+trivially and re-fixtured (see `bug_fixes.md`, same date). Not yet exercised against live
+data — migration 30 is applied by the maintainer.
+
+## 2026-08-09 — Blind types become modules: own inputs, own form, own documents
+
+Driven by the request to modularize item adding: "different calculation logic usually
+requires different inputs — more or less, but the UI should be different… each UI of the
+blinds adding form can be edited separately." Spec
+`docs/superpowers/specs/2026-08-09-blind-type-modules-design.md`, plan
+`docs/superpowers/plans/2026-08-09-blind-type-modules.md` (both local-only; `docs/` is
+gitignored).
+
+**End state: nothing diverges yet.** Every type still prices by the base formula and
+declares zero attributes, so no order's price moved and no form looks different. The
+scaffold is the deliverable. The first real divergence is a two-file change per type
+(`lib/blindTypes/<type>.ts` in both twins + `blindForms/<Type>Form.tsx`) and needs the
+owner's actual formula.
+
+- **`calculators/` → `blindTypes/` (both twins), `BaseBlindCalculator` → `BaseBlindType`,
+  `getCalculator` → `getBlindType`.** The class stopped being only a calculator once it
+  owned a field schema and a display formatter. Rename verified behaviour-free by test
+  count: web 98/10 and api 196/11, identical either side. `normalizeBlindType` kept its
+  name — `manufacturing.ts` depends on its exact output for `isAluminumType`.
+- **Three new members on `BaseBlindType`:**
+  - `attributeSchema` — a `.strict()` Zod contract, built via the `BaseBlindType.attrs()`
+    helper so strictness cannot be forgotten. The base accepts ONLY `{}`. Typed
+    `z.ZodTypeAny`, NOT `z.ZodType<BlindAttributes>`: Zod schema types are not covariant in
+    their output, so a subclass assigning a narrower `ZodObject` would not typecheck.
+    Declare numeric fields with `z.coerce.number()` — the value arriving from a draft is a
+    string.
+  - `defaultAttributes()` — seed for a new draft, re-seeded when the type dropdown changes.
+  - `describeAttributes()` — React-free `{label, value}[]`, because `apps/api/src/lib/pdf.ts`
+    runs on the Worker and cannot import JSX. Every display surface renders through this one
+    formatter, so they cannot disagree about labels.
+- **`BlindPricingInputs.attributes` is REQUIRED**, matching the reasoning behind
+  `bottom_rail_price_per_m`: an optional member would let a caller silently drop a type's
+  inputs and get the base price back with no error at all.
+- **DB (migration 29, APPLIED live to `lgbxxlwsdeuhdgzrjjen` by the maintainer):**
+  `line_items.attributes jsonb not null default '{}'`. One jsonb column rather than a sparse
+  column per field per type — a real column per field costs a migration plus the locked
+  bulk-insert column-set discipline every time any type gains a field, and a child table
+  would add a read path to every consumer for data only ever read alongside its parent.
+  `update_order_with_items()` rebuilt to carry the column; the diff against migration 28 is
+  exactly three hunks (insert list, select, recordset definition).
+- **Two-stage validation, because Zod cannot branch on a sibling field.** `blindItemSchema`
+  accepts `attributes` as a loose `z.record(z.unknown())` — the discriminator it needs
+  (`blinds_type`) sits beside it — then `resolveLineItems` re-parses the blob through that
+  type's own `.strict()` schema. An undeclared key, a price above all, is a 400 and never a
+  silent write. The route tests assert on the error MESSAGE, not just the 400, so they fail
+  if the second gate is ever removed.
+- **Flat rows carry `attributes: {}` explicitly** — PostgREST unifies keys across
+  bulk-inserted rows and NULL-fills any row missing one, and the column is not-null.
+- **Web forms split per type:** `pages/orders/blindForms/` — `fields.tsx` (shared controls,
+  moved verbatim, plus `AttributeText`), `DefaultForm.tsx` (the old layout, and the permanent
+  fallback for unknown/inactive/legacy free-text types), `index.ts` (`getBlindForm`), and ten
+  per-type files. `BlindEditForm` is now a ~4-line dispatcher with unchanged props.
+- **`getBlindForm` resolves through `getBlindType` FIRST** and keys the form map on the
+  canonical label that comes back, instead of duplicating each type's aliases into a second
+  map. Sunscreen alone answers to four spellings. Adding an alias in `lib/blindTypes/` needs
+  no edit in the form layer, and the two registries cannot disagree even in principle.
+- **`lineItemDrafts.ts` (new, JSX-free)** holds the draft models and every pure function over
+  them, including `parseDraftAttributes` — the ONE string→typed conversion, used by both the
+  live preview and the save payload. Blank strings are dropped rather than coerced so an
+  unfilled field looks absent to the schema instead of reading as NaN. Splitting it out of
+  `LineItemEditor.tsx` took `apps/web` lint from 4 pre-existing `react/only-export-components`
+  warnings to **0**: a module exporting both components and plain functions cannot be
+  Fast-Refreshed. `LineItemEditor.tsx` 570 → 168 lines.
+- **Display surfaces, all fed by `describeAttributes`:** the PDF (`itemContent`, between
+  Control and Note — attributes are specification, the free-text note stays last), the
+  customer page, the manufacturer copy's as-is detail (written `Label value`, no colons, in
+  that dense middot run), and the order item rows.
+- **SECURITY — `/public/estimate/:token` forwards `attribute_lines`, never `attributes`.**
+  That endpoint is unauthenticated; the capability token is the only gate. The handler names
+  every field explicitly, which is what has kept internal columns off it, and the blob is
+  formatted server-side so a future internal-only field reaches a customer only if its type's
+  `describeAttributes` chose to return it. **Do not replace it with a spread.** The
+  regression test seeds `attributes.internal_cost_code = 'SUPPLIER-SECRET-123'` and asserts
+  the string appears nowhere in the response bytes.
+- **Verification:** web 116/13, api 214/13, lint 0 warnings, production build clean. The
+  blind popup was verified in a signed-in browser against the pre-refactor build by restoring
+  the old file, letting vite reload it, and diffing the rendered DOM — **byte-identical, 6826
+  chars**. The item row was verified the same way (2647 chars identical) after a first attempt
+  regressed it, below.
 
 ## 2026-07-28 — Production label printing (TSPL labels, `print_jobs` queue, print-agent workspace)
 
@@ -2001,3 +2178,117 @@ Revises the same-day entry above. `apps/web/src/pages/orders/OrderHeaderCards.ts
 web `tsc --noEmit` clean; `oxlint` = the 4 pre-existing `LineItemEditor.tsx` warnings.
 Test suite untouched by this revision (94/94 at the previous run). Still not exercised in
 a browser — `/orders/:id` is behind `ProtectedRoute`.
+
+---
+
+## Curtains hem allowance (2026-08-10)
+
+Curtains now charge a per-panel making allowance on top of the fabric leg:
+
+```
+unit = (width_m x pleat x price_per_m)          -- fabric, fullness applies
+     + panels x HEM_ALLOWANCE_M x price_per_m   -- hems, fullness does NOT apply
+     + panels x control_price_per_item
+     + installation_price
+```
+
+`HEM_ALLOWANCE_M = 0.5` running metres, declared as a named constant in both
+`apps/api/src/lib/blindTypes/curtains.ts` and its web twin.
+
+Two decisions worth keeping:
+
+- **Per panel COUNT, not summed width.** An intermediate revision of this change read
+  `item.panels.reduce((a, b) => a + b, 0)` — the total width in cm — and multiplied THAT
+  by 0.5, which priced the standard 300cm test curtain at $15,300 instead of $320. The
+  pinned test `charges the hem allowance per panel, not per metre of width` splits one
+  300cm panel into two 150cm panels and asserts the delta is exactly one allowance; it
+  fails if the summed-width reading ever returns.
+- **Outside the fullness multiplier.** A hem is cut on the finished panel, so gathering
+  the curtain more does not widen it. `does not multiply the hem allowance by the pleat
+  fullness` pins this.
+
+The 100cm width minimum still lifts the WIDTH only — the allowance is added after it.
+
+### Verified
+api 244/244, web 135/135, both `tsc --noEmit` clean, `oxlint` clean.
+
+---
+
+## Line item price adjustments (2026-08-10)
+
+Three consultant-facing capabilities on order line items, plus one tightening.
+
+### Price override
+
+A blind, or a preset carrying `preset_id`, can have its server-calculated unit price
+replaced by a consultant-typed figure.
+
+- `line_items.unit_price` keeps meaning **the price CHARGED**, so every existing reader
+  (PDF, manufacturer copy, customer page, totals) stayed correct untouched. The new
+  nullable `base_unit_price` holds the calculated figure and is non-null ONLY while an
+  override is in effect — `base_unit_price is not null` is the single answer to "is this
+  overridden?", with no second boolean that could disagree with it.
+- **Reset** = the client stops sending the override; the Worker re-prices from today's
+  catalog. There is no frozen snapshot to go stale.
+- `show_original_price` (default true) controls the struck-through original on customer
+  surfaces. Both `toPdfData` and `/public/estimate/:token` STRIP the figure when it is
+  false — a PDF text layer is extractable whether or not the number was drawn, and the
+  public route is unauthenticated, so hiding with CSS would not be hiding.
+- Staff surfaces mark an overridden price with an amber dot (editor list + overview
+  tables). The customer's signal is the strikethrough, never the dot.
+
+### Titled flat items
+
+`preset` and `custom` items gained `title` plus a multi-line `description` (textarea;
+newlines print as separate lines). `addPreset` no longer concatenates the catalog name and
+description into one string. Legacy rows have `title = ''`, and EVERY surface falls back to
+`description` for the heading — otherwise historical orders would print unnamed items.
+
+### Add-ons
+
+`line_items.addons` is `[{label, price}]`, capped at 10, each price added **ONCE** to
+`line_total` — never multiplied by quantity. Each price is rounded to the cent
+individually before summing, matching the `numeric(10,2)` it is stored in; summing first
+and rounding once would quote a total the database cannot hold.
+
+### Presets became server-priced
+
+`preset_id` is snapshotted and the Worker reads the price from `preset_line_items`,
+batched with the other catalog lookups. This tightens AI_GUIDELINES rule 1 — presets used
+to be client-priced — and is what gives an overridden preset a default to reset TO.
+
+**Known limitation:** rows saved before this have `preset_id = null`. They keep their
+historical client-sent `unit_price` and cannot be overridden until re-picked from the
+preset sheet. `buildPayload` still sends `unit_price` for those, and the schema still
+accepts it.
+
+### The money carve-out
+
+`unit_price_override` and `addons[].price` are the only client money fields beyond a
+custom item's own `unit_price`. Both are clamped in `apps/api/src/routes/orders.ts`, the
+add-on object is `.strict()` so a future `taxable`/`cost` field cannot ride along, and
+every change is written to the order activity log by `describePriceChanges`. A calculated
+price moving on its own (a catalog rate rose) logs nothing — nobody typed it.
+
+### New modules
+
+- `apps/api/src/lib/lineItemAdjustments.ts` + `apps/web/src/lib/lineItemAdjustments.ts` —
+  a TWIN pair like `pricing.ts`/`totals.ts`, byte-identical below the file header. Verify
+  with a diff from the first export when touching either.
+- `apps/api/src/lib/lineItemAuditLog.ts` — api-only, deliberately NOT in the twin file,
+  because log diffing has no browser side and its presence there would make the twin claim
+  untrue.
+- `apps/web/src/pages/orders/blindForms/PriceBlock.tsx` — replaces `PriceReadout`, shared
+  by all 11 blind forms and `FlatEditForm`. Shows the calculated price ALWAYS, including
+  while overridden.
+
+### Schema shape
+
+`flatItemSchema` split into `presetItemBase` + `customItemBase`; the union has three
+members. Cross-field rules (title-or-description required; a preset needs `preset_id` or
+`unit_price`) live on a `superRefine` at the union level, because
+`z.discriminatedUnion` rejects `.refine()`d members — they become `ZodEffects`.
+
+### Verified
+api 289/289, web 164/164, both `tsc --noEmit` clean, `oxlint` clean.
+Migration 31 written but NOT applied — see below.

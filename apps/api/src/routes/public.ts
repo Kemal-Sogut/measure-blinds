@@ -44,6 +44,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
+import { getBlindType } from '../lib/blindTypes';
+import { originalLineTotal } from '../lib/lineItemAdjustments';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -266,8 +268,55 @@ app.get('/estimate/:token', async (c) => {
         bottom_rail_name: li.bottom_rail_name,
         control_name: li.control_name,
         color: li.color,
+        title: li.title,
         description: li.description,
         note: li.note,
+        addons: ((li.addons ?? []) as Record<string, unknown>[]).map((a) => ({
+          label: String(a.label),
+          price: Number(a.price),
+        })),
+        /**
+         * The struck-through "was" figure, ALREADY computed here and sent
+         * only when the consultant chose to show it.
+         *
+         * Both decisions are made server-side on purpose: this route is
+         * unauthenticated, so a `base_unit_price` sent for the page to
+         * hide with CSS would be public the moment it left the Worker.
+         * `null` means print nothing.
+         */
+        original_line_total: li.show_original_price
+          ? originalLineTotal({
+            base_unit_price:
+              li.base_unit_price === null || li.base_unit_price === undefined
+                ? null
+                : Number(li.base_unit_price),
+            quantity: Number(li.quantity),
+            addons: ((li.addons ?? []) as Record<string, unknown>[]).map((a) => ({
+              label: String(a.label),
+              price: Number(a.price),
+            })),
+          })
+          : null,
+        /**
+         * Per-type attributes are formatted HERE, server-side, and the raw
+         * blob is deliberately NOT forwarded.
+         *
+         * This endpoint is unauthenticated — the capability token is the
+         * only gate — so anything spread into this object is public the
+         * moment it exists. Sending `attributes` wholesale would publish
+         * every future internal-only field automatically and silently,
+         * including retroactively for orders already sent. Forwarding the
+         * rendered label/value pairs instead means a new field reaches the
+         * customer only if its type's `describeAttributes` chose to return
+         * it.
+         *
+         * Do NOT replace this with a spread.
+         */
+        attribute_lines: getBlindType(String(li.blinds_type ?? ''))
+          .describeAttributes(
+            (li.attributes ?? {}) as Record<string, string | number | boolean>
+          )
+          .map((a) => `${a.label}: ${a.value}`),
         quantity: li.quantity,
         unit_price: li.unit_price,
         line_total: li.line_total,

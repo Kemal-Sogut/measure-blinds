@@ -31,6 +31,8 @@
 
 import { PDFDocument, PDFFont, PDFPage, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { displayName } from './customerName';
+import { getBlindType } from './blindTypes';
+import { originalLineTotal, type Addon } from './lineItemAdjustments';
 
 /** A single recorded payment, printed on invoices. */
 export interface PdfPayment {
@@ -72,6 +74,30 @@ export interface PdfDocumentData {
     color?: string | null;
     description: string | null;
     note?: string | null;
+    /**
+     * Per-blind-type inputs, rendered through that type's own
+     * `describeAttributes`. Optional and nullable here — unlike on
+     * `LineItem`, where it is required — because warranty and receipt
+     * payloads are assembled elsewhere in the codebase and an older
+     * assembled object must never break document generation.
+     */
+    attributes?: Record<string, string | number | boolean> | null;
+    /**
+     * Headline for a flat item. Optional and nullable for the same reason
+     * `attributes` is — warranty and receipt payloads are assembled
+     * elsewhere, and an older assembled object must never break document
+     * generation. Every reader falls back to `description`.
+     */
+    title?: string | null;
+    /** Consultant-added extras, each printed with its own price. */
+    addons?: Array<{ label: string; price: number }> | null;
+    /**
+     * The calculated unit price this item's charged price replaced, or
+     * null/absent when nothing was overridden. Present only when the
+     * consultant chose to show it: the CALLER strips it otherwise, so a
+     * hidden original never reaches the document at all.
+     */
+    base_unit_price?: number | null;
     quantity: number;
     unit_price: number;
     line_total: number;
@@ -180,6 +206,10 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
   title: string;
   attrs: string[];
 } {
+  // Add-ons print last on BOTH kinds of item, after the specification and
+  // after the free-text note, so a reader meets the thing being bought
+  // before the extras attached to it.
+  const addonLines = (li.addons ?? []).map((a) => `${a.label} — ${money(a.price)}`);
   if (li.item_type === 'blind') {
     const title = [li.room_name || 'Blind', li.blinds_type].filter(Boolean).join(' — ');
     const attrs = [
@@ -191,11 +221,31 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
+      // The blind type's own inputs, formatted by the type itself so the
+      // PDF, the manufacturer copy and the customer page cannot disagree
+      // about labels. Positioned with the other SPECIFICATION lines; the
+      // free-text note stays last, where readers look for it.
+      ...getBlindType(li.blinds_type)
+        .describeAttributes(li.attributes ?? {})
+        .map((a) => `${a.label}: ${a.value}`),
       li.note?.trim() ? `Note: ${li.note.trim()}` : null,
+      ...addonLines,
     ].filter((x): x is string => Boolean(x));
     return { title, attrs };
   }
-  return { title: li.description || 'Item', attrs: [] };
+  // A flat item's title is the heading and its description the detail
+  // block beneath it. A row saved before titles existed carries only a
+  // description, and promoting that to the heading is what keeps
+  // historical documents printing a name instead of "Item".
+  const titled = li.title?.trim();
+  const body = titled ? (li.description ?? '') : '';
+  return {
+    title: titled || li.description || 'Item',
+    attrs: [
+      ...body.split('\n').map((l) => l.trim()).filter(Boolean),
+      ...addonLines,
+    ],
+  };
 }
 
 /**
@@ -511,8 +561,30 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
   /* ── Line items: title + qty + total, attributes indented ─────── */
   for (const li of data.line_items) {
     const { title, attrs } = itemContent(li);
-    cur.ensure(16 + attrs.length * 12);
-    const rowTop = cur.y;
+    // What this line would have cost at its calculated price. Null unless
+    // the consultant both overrode the price AND chose to show it — the
+    // caller has already stripped `base_unit_price` otherwise.
+    const original = originalLineTotal({
+      base_unit_price: li.base_unit_price ?? null,
+      quantity: li.quantity,
+      addons: (li.addons ?? []) as Addon[],
+    });
+    cur.ensure(16 + attrs.length * 12 + (original === null ? 0 : 12));
+    let rowTop = cur.y;
+    if (original !== null) {
+      const wasText = money(original);
+      const wasWidth = font.widthOfTextAtSize(wasText, 9);
+      drawRight(cur.page, wasText, rightEdge, rowTop, font, 9, MUTED);
+      // pdf-lib has no strikethrough primitive: the rule is drawn by hand
+      // across the text run, at roughly its vertical midpoint.
+      cur.page.drawLine({
+        start: { x: rightEdge - wasWidth, y: rowTop - 5 },
+        end: { x: rightEdge, y: rowTop - 5 },
+        thickness: 0.7,
+        color: MUTED,
+      });
+      rowTop -= 12;
+    }
     drawRight(cur.page, money(li.line_total), rightEdge, rowTop, bold, 10);
     drawRight(cur.page, `x ${li.quantity}`, rightEdge - 70, rowTop, font, 10, SOFT);
     cur.wrapped(title, MARGIN, CONTENT_W - 130, bold, 10);

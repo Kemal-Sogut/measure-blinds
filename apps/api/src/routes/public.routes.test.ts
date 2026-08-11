@@ -263,6 +263,51 @@ describe('GET /public/estimate/:token', () => {
     expect(res.status).toBe(404);
   });
 
+  it('never forwards the raw attribute blob, only formatted lines', async () => {
+    // This endpoint is UNAUTHENTICATED — the capability token is the only
+    // gate — so anything spread into the payload is public the moment it
+    // exists. The blob is formatted server-side through the blind type's
+    // own describeAttributes, which decides what a customer may see; the
+    // raw object must never cross the boundary, or a future internal-only
+    // field would be published automatically and retroactively for orders
+    // already sent.
+    db.order = {
+      ...sentOrder(),
+      line_items: [
+        {
+          item_type: 'blind',
+          room_name: 'Living Room',
+          blinds_type: 'Roller',
+          panels: [140],
+          height_cm: 200,
+          material_name: 'Blackout White',
+          cassette_name: 'Standard',
+          bottom_rail_name: 'Regular',
+          control_name: 'Chain',
+          color: 'White',
+          description: '',
+          note: '',
+          attributes: { internal_cost_code: 'SUPPLIER-SECRET-123' },
+          quantity: 1,
+          unit_price: 100,
+          line_total: 100,
+        },
+      ],
+    };
+    const res = await req(`/estimate/${TOKEN}`);
+    const raw = await res.text();
+
+    // The strongest form of the assertion: the value never appears in the
+    // response bytes at all, by any route.
+    expect(raw).not.toContain('internal_cost_code');
+    expect(raw).not.toContain('SUPPLIER-SECRET-123');
+
+    const body = JSON.parse(raw) as { data: { line_items: Record<string, unknown>[] } };
+    const li = body.data.line_items[0];
+    expect(li).not.toHaveProperty('attributes');
+    expect(Array.isArray(li.attribute_lines)).toBe(true);
+  });
+
   it('defensively expires a stale sent order on read', async () => {
     db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
     const res = await req(`/estimate/${TOKEN}`);

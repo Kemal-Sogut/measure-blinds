@@ -1,5 +1,67 @@
 # Bug Fixes History
 
+## 2026-08-10 — A re-opened order silently dropped its per-type options on the second save
+- **Issue:** found while wiring Curtains, but latent since the attributes scaffold shipped.
+  Save an item with per-type options → reopen the order → save again, and the whole
+  `attributes` blob came back `{}`. The first save was correct; the second quietly wiped it,
+  with no error anywhere and a price that changed under the user.
+- **Cause:** `toDrafts` stringifies the PERSISTED blob into the draft, and that blob carries
+  the Worker's snapshot keys (`pleat_name`, `pleat_multiplier`, …) alongside the ids the
+  client originally sent. `parseDraftAttributes` then re-parsed the draft through the type's
+  `.strict()` schema, which does not declare those keys — deliberately, since declaring them
+  would let a client set a price. The parse failed, and its failure signal is `null`, which
+  the payload builder reads as "no attributes".
+- **Fix:** `parseDraftAttributes` filters the draft down to `blindType.inputKeys()` (the
+  schema's declared keys) before parsing. Same call also stops a resolved price being echoed
+  back to the server at all.
+- **Note:** this changed an existing assertion. An undeclared key is now DROPPED client-side
+  rather than making the parse return `null`; the test was rewritten to say so, and a
+  companion case pins that an invalid value on a *declared* key still returns `null`. The
+  server-side gate is unchanged and is the one that matters.
+- **Lesson:** a validation schema that is deliberately narrower than the stored shape needs
+  an explicit narrowing step on the way back in. Round-tripping through it is not symmetric,
+  and a parser whose failure mode is a falsy value will lose data quietly rather than loudly.
+  Any type with a server-written key would have hit this — Curtains just got there first.
+
+## 2026-08-10 — Three new tests passed before the feature existed
+- **Issue:** while writing the Curtains pricing suite, three assertions went green against
+  the OLD base formula, so they proved nothing about the code they were written for.
+- **Cause:** arithmetic coincidence in the chosen fixture. With a 200cm height the base area
+  formula is `W × 0.8` and the Curtains formula is `W × 0.4 × multiplier` — identical
+  whenever the multiplier is exactly **2**. A 250cm height with a 2.5 multiplier collides the
+  same way (`300 × 250 × 40 / 10000 = 3.0 × 2.5 × 40 = 300`).
+- **Fix:** re-fixtured to a 200cm height with a 2.5 multiplier so the two formulas differ
+  (240 vs 300), and the reasoning is written into the helper's doc comment so the next person
+  does not "tidy" it back. Confirmed all seven then failed before the module was written.
+- **Lesson:** run a new test against the unchanged code and watch it fail for the RIGHT
+  reason — "it failed" is not enough when several tests share one fixture. Round numbers in
+  a pricing fixture are exactly where formulas coincide.
+
+## 2026-08-09 — Wrapping a `wrap-anywhere` span in `flex flex-col` destroyed its wrapping
+- **Issue:** adding the per-blind-type attribute line to the order item rows, the first
+  attempt put the name and the new line side by side in a `flex min-w-0 flex-1 flex-col`
+  wrapper, moving `min-w-0 flex-1 wrap-anywhere` off the name span onto the wrapper. Measured
+  at 375px with a 120-character unbroken name: the name span went from **238px over 5 lines
+  (height 98px) to 1252px on a single line**, dragging the row from 342px to **1356px**.
+- **Why it hid:** the page's `scrollWidth` stayed at 375 in BOTH cases, so the usual
+  "does the page scroll horizontally" check passed. An ancestor's `overflow-x-clip` was
+  swallowing the overflow — the row was not scrolling the page, it was being cut off.
+  Adding `min-w-0` back onto the inner span did NOT fix it; the flex-column context itself
+  was the cause.
+- **Fix:** do not wrap. Keep the original span with its exact classes and nest the attribute
+  line INSIDE it as `<span className="mt-0.5 block …">`, inheriting `wrap-anywhere` (an
+  inherited property) and the parent's intrinsic-width behaviour. Markup is then
+  byte-identical (2647 chars) while no type declares attributes, and the 120-character stress
+  case reproduces the old geometry exactly.
+- **Detection:** A/B in a signed-in browser — capture geometry, `git checkout HEAD -- <file>`,
+  let vite reload, capture again, restore. Comparing `getBoundingClientRect` between the two
+  builds is what turned "looks fine" into a number.
+- **Lesson:** `scrollWidth === clientWidth` is NOT proof a layout contains itself when an
+  ancestor clips overflow — measure the element, not just the page. And moving a layout class
+  from a child onto a new parent is not a no-op: `wrap-anywhere`'s effect on min-content width
+  depends on the box it sits on. This is the same family of trap as the 2026-08-03
+  `truncate`-vs-`wrap-anywhere` finding.
+
 ## 2026-08-09 — `public.routes.test.ts` made REAL calls to Resend on every test run
 - **Issue:** the api suite failed at random on a clean tree. Different tests each time —
   `customer action logs > logs the confirm as a customer action` (5013ms),
@@ -515,3 +577,45 @@ displayed, so it composites no frames and time-driven CSS transitions never prog
   condition ("this order has not hydrated"), not on the state the other effect is about to
   change. Symptom shape to remember: the bug only bites the case that has no recomputation
   rule to paper over it.
+
+---
+
+## Add-on rows: `w-24` never beat `w-full`, collapsing the description field (2026-08-10)
+
+**Symptom (owner report):** in the add-on list, "the first box is only clickable — not sure
+what it does, it does nothing", and the × button "extends the form, requires dragging to
+the right".
+
+**Cause.** One line, two symptoms:
+
+```tsx
+className={`${INPUT} w-24 shrink-0`}   // INPUT already contains w-full
+```
+
+`w-full` and `w-24` are both width utilities of equal specificity, so which one applies is
+decided by their order in the GENERATED STYLESHEET, not by the order they appear in the
+class attribute. `w-full` won. The price input was therefore 100% wide AND `shrink-0`, so
+it could not give any of that width back:
+
+- the × button was pushed past the right edge of the popup — the horizontal drag;
+- the description input, the row's only shrinkable item (`min-w-0`, default `shrink:1`),
+  absorbed the entire overflow and collapsed to a sliver. It was never broken and its
+  `onChange` was never wrong — it simply had no width to render what you typed.
+
+**Fix.** Widths now come from a grid template instead of from competing utilities. The
+add-on rows use the same `grid-cols-2 gap-3.5` as the Calculated-price/Override and
+Quantity/Unit-price pairs, with the remove button INSIDE the second column beside its price
+— a third column would have knocked both fields out of alignment with every other field in
+the form. `fields.tsx` gained `INPUT_BASE` (every input token except a width) for controls
+sized by their container; `INPUT` is now `${INPUT_BASE} w-full`.
+
+**Rule this leaves behind:** never compose `INPUT` with another width class. Use
+`INPUT_BASE` plus the container's own sizing. The same trap was caught a second time in the
+same edit, in `${LABEL} mb-0`.
+
+**Verified in a browser**, not just by tsc: the real component was mounted against the real
+stylesheet at the popup's 420px width and measured. No horizontal overflow
+(`scrollWidth === clientWidth === 417`); description cells span 18→203, exactly matching the
+Calculated-price cell; price input + remove button span 217→402, exactly matching the
+Override input; typing into the description updates state (the remove button's aria-label
+follows it).

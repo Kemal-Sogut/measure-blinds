@@ -3,10 +3,15 @@
 
 /**
  * Settings route group — company info, catalog entities (cassette
- * options, bottom rail options, control options, preset line items,
- * blind types), Materials (a catalog with many-to-many blind-type
- * links), and the company logo upload. Mounted at `/api/settings`
- * behind `requireAuth`.
+ * options, bottom rail options, control options, pleat types,
+ * installation options, preset line items, blind types), Materials (a
+ * catalog with many-to-many blind-type links), and the company logo
+ * upload. Mounted at `/api/settings` behind `requireAuth`.
+ *
+ * Pleat types and installation options are Curtains-only catalogs: a
+ * curtain's price depends on the pleat's fullness ratio and carries a
+ * fixed rod/track charge. Both are resolved from ids server-side when an
+ * order is saved (see `resolveLineItems`), never sent by a client.
  *
  * Every write is Zod-validated before touching the database. The simple
  * catalog entities share one route factory since they differ only in
@@ -180,6 +185,26 @@ const catalogs: CatalogConfig[] = [
   {
     path: 'control-options',
     table: 'control_options',
+    schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
+    orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+  },
+  {
+    // Curtains fullness ratios. NOT the shared `price` fragment: that
+    // allows 0, and a 0 multiplier would zero the whole curtain line.
+    path: 'pleat-types',
+    table: 'pleat_types',
+    schema: z.object({
+      name,
+      multiplier: z.number().positive('Multiplier must be greater than 0').max(20).finite(),
+      active,
+      sort_order: sortOrder,
+    }),
+    orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+  },
+  {
+    // Rod / track, charged once per curtain rather than per metre.
+    path: 'installation-options',
+    table: 'installation_options',
     schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
   },

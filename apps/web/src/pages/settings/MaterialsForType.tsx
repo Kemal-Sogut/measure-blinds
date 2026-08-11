@@ -8,7 +8,8 @@
  * the blind type chosen on the Materials landing page, and lets the user
  * add new Materials (created and linked to THIS type), rename/reprice
  * them, toggle active, or delete them. A CSV import (two columns —
- * material name and price per m²) bulk-creates Materials linked to this
+ * material name and price per m² — per running metre for Curtains, see
+ * below) bulk-creates Materials linked to this
  * type; a leading header row and malformed rows are skipped.
  *
  * A Material is stored once (shared table) but scoped to types via the
@@ -17,12 +18,22 @@
  * links to other types are preserved. Deleting removes the Material
  * everywhere (existing estimates keep their snapshotted prices). All tap
  * targets are ≥44px.
+ *
+ * The price column means something different for Curtains. Every other
+ * type prices fabric by AREA (`$ / m²`); Curtains prices it by the
+ * RUNNING METRE, because the amount of fabric a curtain uses depends on
+ * its pleat fullness rather than its drop. The same `price_per_sqm`
+ * column stores both, so this page relabels itself — input placeholders,
+ * list rows, the CSV hint and the CSV error — whenever the type resolves
+ * to Curtains, and links to the Pleat Types catalog that supplies the
+ * multiplier.
  */
 
 import { useState, type ChangeEvent } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
+import { getBlindType } from '../../lib/blindTypes';
 import {
   useCatalogList,
   useCreateCatalogItem,
@@ -158,6 +169,21 @@ export default function MaterialsForType() {
   /** Materials scoped to this blind type (linked-only). */
   const scoped = (materials ?? []).filter((m) => m.blind_type_ids.includes(blindTypeId));
 
+  /**
+   * Curtains price fabric by the RUNNING METRE, not by area — the shared
+   * `price_per_sqm` column holds a per-metre rate for this type alone
+   * (see `lib/blindTypes/curtains.ts`). Relabelling is load-bearing, not
+   * cosmetic: an m² price entered here would under-quote every curtain by
+   * roughly its drop in metres.
+   *
+   * Resolved through the canonical label rather than a raw string compare
+   * so aliases and legacy spellings behave the same way they do in the
+   * pricing engine.
+   */
+  const isCurtains = getBlindType(type?.name).blindType === 'Curtains';
+  const priceLabel = isCurtains ? 'Price / m' : 'Price / m²';
+  const priceSuffix = isCurtains ? 'per m' : 'per m²';
+
   /** Validates and creates a Material linked to this blind type. */
   function handleAdd() {
     if (!draft.name.trim()) return toast.error('Enter a name.');
@@ -180,7 +206,8 @@ export default function MaterialsForType() {
   }
 
   /**
-   * Reads a chosen CSV file (columns: name, price per m²) and creates a
+   * Reads a chosen CSV file (columns: name, price per m² — per running
+   * metre for Curtains) and creates a
    * Material linked to this type for each valid row. Reports how many
    * were imported, skipped (header/malformed), or failed on the server.
    */
@@ -192,7 +219,7 @@ export default function MaterialsForType() {
     try {
       const { valid, skipped } = parseMaterialsCsv(await file.text());
       if (valid.length === 0) {
-        toast.error('No valid rows found. Expected columns: name, price per m².');
+        toast.error(`No valid rows found. Expected columns: name, ${priceSuffix.replace('per ', 'price per ')}.`);
         return;
       }
       let ok = 0;
@@ -281,7 +308,7 @@ export default function MaterialsForType() {
             />
             <div className="flex gap-2">
               <input
-                placeholder="Price / m²"
+                placeholder={priceLabel}
                 inputMode="decimal"
                 value={draft.price}
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
@@ -310,7 +337,8 @@ export default function MaterialsForType() {
             {/* CSV bulk import — columns: name, price per m², optional width cm */}
             <div className="mt-1 flex items-center justify-between gap-2 border-t border-border-light pt-3">
               <span className="min-w-0 text-xs text-text-muted">
-                Or import a CSV — columns: name, price per m², width cm (optional) (e.g.{' '}
+                Or import a CSV — columns: name, {priceSuffix.replace('per ', 'price per ')}, width
+                cm (optional) (e.g.{' '}
                 <span className="font-mono">Blackout White, 55, 250</span>)
               </span>
               <label
@@ -330,6 +358,24 @@ export default function MaterialsForType() {
             </div>
           </div>
         </div>
+
+        {/* Pleat types — Curtains only; a pleat is meaningless without fabric */}
+        {isCurtains && (
+          <Link
+            to="/settings/pleat-types"
+            className="mb-6 flex min-h-11 items-center justify-between gap-2 rounded-xl border border-border-light bg-surface px-4 py-3 shadow-md"
+          >
+            <span className="min-w-0">
+              <span className="block text-[15px] font-bold text-text-primary">Pleat Types</span>
+              <span className="block text-xs text-text-muted">
+                Fullness ratios — how much fabric each pleat style uses
+              </span>
+            </span>
+            <span aria-hidden="true" className="text-text-muted">
+              ›
+            </span>
+          </Link>
+        )}
 
         {/* Materials for this type */}
         {isLoading && <p className="p-4 text-text-muted">Loading…</p>}
@@ -357,7 +403,7 @@ export default function MaterialsForType() {
                       inputMode="decimal"
                       value={editDraft.price}
                       onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
-                      placeholder="Price / m²"
+                      placeholder={priceLabel}
                       className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
                     />
                     <input
@@ -388,7 +434,7 @@ export default function MaterialsForType() {
                     <span className="block truncate font-medium text-text-primary">{material.name}</span>
                     <span className="text-sm text-text-secondary">
                       ${Number(material.price_per_sqm).toFixed(2)}{' '}
-                      <span className="text-text-muted">per m²</span>
+                      <span className="text-text-muted">{priceSuffix}</span>
                       {material.width_cm != null && (
                         <>
                           {' · '}

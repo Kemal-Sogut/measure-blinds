@@ -101,6 +101,7 @@ import {
   downloadWarrantyPdf,
   type OrderInput,
   type LineItemInput,
+  type AdjustmentInputFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
@@ -112,16 +113,24 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
+  type BulkEditState,
+} from './LineItemEditor';
+import { getBlindType } from '../../lib/blindTypes';
+import {
   blindDraftPrice,
+  canOverridePrice,
   flatDraftPrice,
+  parseAddons,
+  parseDraftAttributes,
+  parseOverride,
   parsePositive,
   type BlindDraft,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type BulkEditState,
-} from './LineItemEditor';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
+  type PriceAdjustmentDraft,
+} from './lineItemDrafts';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
  * Panel treatment shared by this screen's hand-rolled bottom sheets.
@@ -240,17 +249,55 @@ function toDrafts(order: Order): ItemDraft[] {
         control_id: li.control_id ?? '',
         color: li.color ?? '',
         note: li.note ?? '',
+        // The persisted blob is typed; the draft holds strings.
+        attributes: Object.fromEntries(
+          Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
+        ),
         quantity: String(li.quantity),
+        ...toAdjustmentDraft(li),
       } satisfies BlindDraft;
     }
     return {
       key: nextKey(),
       item_type: li.item_type,
+      title: li.title,
       description: li.description,
+      preset_id: li.preset_id,
       quantity: String(li.quantity),
-      unit_price: String(li.unit_price),
+      // `unit_price` is the price CHARGED, so an overridden item's draft
+      // must show the CALCULATED figure here and the charged one in the
+      // override box. Reading `unit_price` into the base would silently
+      // promote the override on every reopen and lose the original.
+      unit_price: String(li.base_unit_price ?? li.unit_price),
+      ...toAdjustmentDraft(li),
     } satisfies FlatDraft;
   });
+}
+
+/** A freshly added item is never overridden and carries no add-ons. */
+const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
+  unit_price_override: '',
+  show_original_price: true,
+  addons: [],
+};
+
+/**
+ * The three adjustment fields of a persisted item, as draft strings.
+ *
+ * An item is overridden exactly when `base_unit_price` is set, and the
+ * charged `unit_price` is then what the consultant typed — so that is
+ * what goes back into the override box.
+ */
+function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
+  return {
+    unit_price_override: li.base_unit_price === null ? '' : String(li.unit_price),
+    show_original_price: li.show_original_price,
+    addons: (li.addons ?? []).map((a) => ({
+      key: nextKey(),
+      label: a.label,
+      price: String(a.price),
+    })),
+  };
 }
 
 /** Short label for a draft in the live-pricing rail. */
@@ -437,6 +484,10 @@ export default function OrderDetail() {
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
   const bottomRailsQ = useCatalogList<BottomRailOption>('bottom-rail-options');
   const controlsQ = useCatalogList<ControlOption>('control-options');
+  // Curtains-only catalogs. Fetched unconditionally: the blind type can
+  // change mid-edit, and the preview must price the moment it does.
+  const pleatTypesQ = useCatalogList<PleatType>('pleat-types');
+  const installationQ = useCatalogList<InstallationOption>('installation-options');
   const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
   const { data: company } = useCompanySettings();
@@ -624,8 +675,18 @@ export default function OrderDetail() {
       bottomRails: bottomRailsQ.data ?? [],
       controls: controlsQ.data ?? [],
       blindTypes: blindTypesQ.data ?? [],
+      pleatTypes: pleatTypesQ.data ?? [],
+      installationOptions: installationQ.data ?? [],
     }),
-    [materialsQ.data, cassettesQ.data, bottomRailsQ.data, controlsQ.data, blindTypesQ.data]
+    [
+      materialsQ.data,
+      cassettesQ.data,
+      bottomRailsQ.data,
+      controlsQ.data,
+      blindTypesQ.data,
+      pleatTypesQ.data,
+      installationQ.data,
+    ]
   );
 
   // ── Live totals (client preview; server recomputes on save) ────
@@ -700,7 +761,11 @@ export default function OrderDetail() {
       control_id: findOptionIdByName(catalogs.controls, 'Chain'),
       color: '',
       note: '',
+      // Empty until a blind type is chosen — the type dropdown seeds this
+      // from the newly selected type's `defaultAttributes()`.
+      attributes: {},
       quantity: '1',
+      ...NO_ADJUSTMENTS,
     };
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -711,9 +776,15 @@ export default function OrderDetail() {
       {
         key: nextKey(),
         item_type: 'preset',
-        description: preset.description ? `${preset.name} — ${preset.description}` : preset.name,
+        // The catalog name becomes the headline and its description the
+        // body. These used to be concatenated into one string, which left
+        // no way to emphasise the name on a document.
+        title: preset.name,
+        description: preset.description ?? '',
+        preset_id: preset.id,
         quantity: '1',
         unit_price: String(preset.unit_price),
+        ...NO_ADJUSTMENTS,
       },
     ]);
     setSheet('none');
@@ -722,9 +793,12 @@ export default function OrderDetail() {
     const draft: FlatDraft = {
       key: nextKey(),
       item_type: 'custom',
+      title: '',
       description: '',
+      preset_id: null,
       quantity: '1',
       unit_price: '',
+      ...NO_ADJUSTMENTS,
     };
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -801,9 +875,15 @@ export default function OrderDetail() {
       list.map((it) => {
         if (!selected.has(it.key) || it.item_type !== 'blind') return it;
         const patch: Partial<BlindDraft> = {};
+        // A bulk selection can mix blind types, and a hardware slot only
+        // applies to the types that use it — pushing a cassette onto a
+        // curtain here would make the whole order unsavable.
+        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
         if (bulkState.material_id) patch.material_id = bulkState.material_id;
-        if (bulkState.cassette_id) patch.cassette_id = bulkState.cassette_id;
-        if (bulkState.bottom_rail_id) patch.bottom_rail_id = bulkState.bottom_rail_id;
+        if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
+        if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
+          patch.bottom_rail_id = bulkState.bottom_rail_id;
+        }
         if (bulkState.control_id) patch.control_id = bulkState.control_id;
         return { ...it, ...patch };
       })
@@ -820,6 +900,24 @@ export default function OrderDetail() {
     if (!customer) return 'Select a customer first.';
     if (!expiryDate) return 'Pick an expiry date.';
     const line_items: LineItemInput[] = [];
+
+    /**
+     * The three adjustment fields, validated once for any item type.
+     * Returns a message string when the override does not parse, matching
+     * this function's error convention.
+     *
+     * `unit_price_override` is left OFF the payload where the item cannot
+     * be overridden — the Worker rejects the field on a custom item.
+     */
+    function adjustmentsFor(it: ItemDraft, index: number): AdjustmentInputFields | string {
+      const override = parseOverride(it.unit_price_override);
+      if (!override.valid) return `Item ${index + 1}: enter a valid override price.`;
+      return {
+        ...(canOverridePrice(it) ? { unit_price_override: override.value } : {}),
+        show_original_price: it.show_original_price,
+        addons: parseAddons(it.addons),
+      };
+    }
     for (const [i, it] of items.entries()) {
       if (it.item_type === 'blind') {
         const panels = it.panels.map(parsePositive);
@@ -828,9 +926,23 @@ export default function OrderDetail() {
         if (panels.some((p) => p === null) || !panels.length)
           return `Item ${i + 1}: enter every panel width.`;
         if (!height) return `Item ${i + 1}: enter a height.`;
-        if (!it.material_id || !it.cassette_id || !it.bottom_rail_id || !it.control_id)
-          return `Item ${i + 1}: choose material, cassette, bottom rail, and control.`;
+        // Which hardware a blind needs is the TYPE's call: Curtains has
+        // neither a cassette nor a bottom rail, and demanding them here
+        // would make a curtain unsavable.
+        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
+        if (!it.material_id || !it.control_id)
+          return `Item ${i + 1}: choose material and control.`;
+        if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
+        if (uses.has('bottom_rail') && !it.bottom_rail_id)
+          return `Item ${i + 1}: choose a bottom rail.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
+        // Convert once, here. Failing now gives a readable message instead
+        // of a 400 from the server's own re-parse.
+        const attributes = parseDraftAttributes(it);
+        if (attributes === null)
+          return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
+        const adj = adjustmentsFor(it, i);
+        if (typeof adj === 'string') return adj;
         line_items.push({
           item_type: 'blind',
           room_name: it.room_name.trim(),
@@ -838,25 +950,61 @@ export default function OrderDetail() {
           panels: panels as number[],
           height_cm: height,
           material_id: it.material_id,
-          cassette_id: it.cassette_id,
-          bottom_rail_id: it.bottom_rail_id,
+          // Null, not '' — the API accepts a uuid or null for a slot the
+          // type does not use, and rejects an id for one it does not.
+          cassette_id: it.cassette_id || null,
+          bottom_rail_id: it.bottom_rail_id || null,
           control_id: it.control_id,
           color: it.color.trim(),
           note: it.note.trim(),
+          attributes,
           quantity: Math.round(qty),
+          ...adj,
         });
       } else {
         const qty = parsePositive(it.quantity);
         const unit = Number(it.unit_price);
-        if (!it.description.trim()) return `Item ${i + 1}: enter a description.`;
+        if (!it.title.trim() && !it.description.trim())
+          return `Item ${i + 1}: enter a title or a description.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-        line_items.push({
-          item_type: it.item_type,
-          description: it.description.trim(),
-          quantity: Math.round(qty),
-          unit_price: unit,
-        });
+        const adj = adjustmentsFor(it, i);
+        if (typeof adj === 'string') return adj;
+        if (it.item_type === 'preset' && it.preset_id) {
+          // Priced by the Worker from the catalog. Sending a figure would
+          // be ignored, and sending one that disagreed would be a lie the
+          // consultant could read on screen.
+          line_items.push({
+            item_type: 'preset',
+            preset_id: it.preset_id,
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            ...adj,
+          });
+        } else if (it.item_type === 'preset') {
+          // Legacy preset: no provenance, so its stored price still
+          // travels and the Worker keeps honouring it.
+          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
+          line_items.push({
+            item_type: 'preset',
+            preset_id: null,
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            unit_price: unit,
+            ...adj,
+          });
+        } else {
+          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
+          line_items.push({
+            item_type: 'custom',
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            unit_price: unit,
+            ...adj,
+          });
+        }
       }
     }
     return {
@@ -2111,6 +2259,13 @@ export default function OrderDetail() {
                             .filter(Boolean)
                             .join(' — ')
                           : it.description || `Item ${i + 1}`;
+                      const attrLine =
+                        it.item_type === 'blind'
+                          ? getBlindType(it.blinds_type)
+                            .describeAttributes(parseDraftAttributes(it) ?? {})
+                            .map((a) => `${a.label}: ${a.value}`)
+                            .join(' · ')
+                          : '';
 
                       return (
                         <li
@@ -2166,15 +2321,52 @@ export default function OrderDetail() {
                             */}
                             <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
                               {name}
+                              {/*
+                                The blind type's own inputs, formatted by
+                                the type itself so this row, the PDF, the
+                                manufacturer copy and the customer page
+                                cannot disagree about labels. Read from the
+                                DRAFT, not the persisted item, because this
+                                list shows unsaved edits.
+
+                                Nested INSIDE the name span as a block, not
+                                beside it in a flex column. Wrapping the two
+                                in `flex flex-col` was measured to break the
+                                name's wrapping outright — a 120-character
+                                unbroken name went from 238px over 5 lines
+                                to 1252px on one, dragging the row to
+                                1356px inside a 375px viewport. Inheriting
+                                this span's `wrap-anywhere` and `min-w-0`
+                                keeps the original intrinsic-width
+                                behaviour, and renders byte-identical
+                                markup while no type declares attributes.
+                              */}
+                              {attrLine && (
+                                <span className="mt-0.5 block text-xs text-text-muted">
+                                  {attrLine}
+                                </span>
+                              )}
                             </span>
                           </div>
 
                           {/* Line 2 on phones: price left, actions right. On
                               `sm+` this collapses back into the single row. */}
                           <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-                            {/* Total */}
-                            <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                            {/*
+                              Total, with an amber dot marking a price the
+                              consultant overrode. Staff-only: the
+                              customer's signal is the struck-through
+                              original on the documents, not this.
+                            */}
+                            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary">
                               {price ? `$${price.total.toFixed(2)}` : '—'}
+                              {price && price.unit !== price.base && (
+                                <span
+                                  title="Price overridden"
+                                  aria-label="Price overridden"
+                                  className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                                />
+                              )}
                             </span>
 
                             {/* Edit / Duplicate / Delete — hidden in read-only.

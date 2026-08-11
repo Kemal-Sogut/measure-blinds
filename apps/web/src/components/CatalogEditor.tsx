@@ -3,15 +3,20 @@
 
 /**
  * Generic CRUD editor for simple settings catalog entities (cassette
- * options, control options, presets, blind types). Materials are NOT
- * handled here — they carry blind-type links and have their own page.
+ * options, control options, pleat types, installation options, presets,
+ * blind types). Materials are NOT handled here — they carry blind-type
+ * links and have their own page.
  *
- * All these entities are "name + one price + active flag (+ optional
+ * All these entities are "name + one number + active flag (+ optional
  * description)" lists, so one component handles them: an add form at
  * the top, then a card per row with inline edit, active toggle, and
- * delete (with confirm). The price column key/label and description
- * support are configured per page — the pages themselves stay ~20
- * lines each, keeping one file per responsibility.
+ * delete (with confirm). The numeric column's key, label, unit, minimum
+ * and description support are configured per page — the pages themselves
+ * stay ~20 lines each, keeping one file per responsibility.
+ *
+ * That number is not always money. Pleat types store a fullness RATIO,
+ * rendered `2.50×` rather than `$2.50` and required to be positive, so
+ * `priceUnit`/`priceMin` exist to keep one component honest about both.
  *
  * Numeric inputs use inputMode="decimal" for mobile keyboards; all
  * tap targets are ≥44px.
@@ -41,6 +46,19 @@ export interface CatalogEditorConfig {
   noun: string;
   /** Whether the entity has a description field (presets only) */
   hasDescription?: boolean;
+  /**
+   * How the numeric column is displayed and validated. 'currency' (the
+   * default) renders `$12.00`; 'plain' renders `2.50×` for a value that
+   * is a ratio rather than money. Pleat multipliers use 'plain'.
+   */
+  priceUnit?: 'currency' | 'plain';
+  /**
+   * Smallest accepted value, defaulting to 0. The pleat catalog sets
+   * 0.01 because a 0 multiplier would zero the whole curtain line.
+   */
+  priceMin?: number;
+  /** Standing note rendered under the add form. */
+  note?: string;
 }
 
 /** Catalog row with the dynamic price column and optional description. */
@@ -55,10 +73,16 @@ interface Draft {
 
 const EMPTY_DRAFT: Draft = { name: '', price: '', description: '' };
 
-/** Parses a draft price string; returns null when invalid. */
-function parsePrice(value: string): number | null {
+/**
+ * Parses a draft numeric string; returns null when it is not a finite
+ * number or falls below `min`. The minimum is configurable because not
+ * every catalog's numeric column is money: a price of 0 is legitimate
+ * (both shipped bottom rails ship at 0), but a pleat multiplier of 0
+ * would zero the whole curtain line.
+ */
+function parseAmount(value: string, min: number): number | null {
   const n = Number(value);
-  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+  return Number.isFinite(n) && n >= min ? Math.round(n * 100) / 100 : null;
 }
 
 export default function CatalogEditor({ config }: { config: CatalogEditorConfig }) {
@@ -71,14 +95,17 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
+  const priceMin = config.priceMin ?? 0;
+  const invalidAmount =
+    config.priceUnit === 'plain' ? 'Enter a multiplier greater than 0.' : 'Enter a valid price.';
 
   /** Validates and submits the "add new" form. */
   function handleAdd() {
     if (!draft.name.trim()) return toast.error('Enter a name.');
     let price: number | null = null;
     if (hasPrice) {
-      price = parsePrice(draft.price);
-      if (price === null) return toast.error('Enter a valid price.');
+      price = parseAmount(draft.price, priceMin);
+      if (price === null) return toast.error(invalidAmount);
     }
     create.mutate(
       {
@@ -108,8 +135,8 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
     if (!editDraft.name.trim()) return toast.error('Enter a name.');
     let price: number | null = null;
     if (hasPrice) {
-      price = parsePrice(editDraft.price);
-      if (price === null) return toast.error('Enter a valid price.');
+      price = parseAmount(editDraft.price, priceMin);
+      if (price === null) return toast.error(invalidAmount);
     }
     update.mutate(
       {
@@ -179,6 +206,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
             </button>
           </div>
         </div>
+        {config.note && <p className="mt-2 text-xs text-text-muted">{config.note}</p>}
       </div>
 
       {/* Rows */}
@@ -241,7 +269,9 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                   ) : null}
                   {hasPrice && (
                     <span className="text-sm text-text-secondary">
-                      ${Number(row[config.priceKey as string]).toFixed(2)}{' '}
+                      {config.priceUnit === 'plain'
+                        ? `${Number(row[config.priceKey as string]).toFixed(2)}×`
+                        : `$${Number(row[config.priceKey as string]).toFixed(2)}`}{' '}
                       <span className="text-text-muted">{config.priceLabel}</span>
                     </span>
                   )}
