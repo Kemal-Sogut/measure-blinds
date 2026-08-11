@@ -81,6 +81,88 @@ beforeEach(() => {
   db.inserts = {};
 });
 
+describe('blind-type scoped catalogs', () => {
+  /** PUTs a JSON body to one catalog row. */
+  function put(path: string, body: unknown) {
+    return settingsApp.request(
+      path,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  const TYPE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+
+  it('flattens the join embed into blind_type_ids and hides the join table', async () => {
+    db.responses['cassette_options.select'] = [
+      {
+        id: 'cas-1',
+        name: 'Standard',
+        price_per_m: 20,
+        active: true,
+        sort_order: 0,
+        cassette_option_blind_types: [{ blind_type_id: TYPE }],
+      },
+    ];
+    const res = await settingsApp.request('/cassette-options', {}, ENV);
+    expect(res.status).toBe(200);
+    const row = ((await res.json()) as { data: Record<string, unknown>[] }).data[0];
+    expect(row.blind_type_ids).toEqual([TYPE]);
+    expect(row.cassette_option_blind_types).toBeUndefined();
+  });
+
+  it('reports an unlinked option as scoped to nothing', async () => {
+    db.responses['control_options.select'] = [
+      { id: 'ctl-1', name: 'Chain', price_per_item: 0, active: true, sort_order: 0 },
+    ];
+    const res = await settingsApp.request('/control-options', {}, ENV);
+    const row = ((await res.json()) as { data: Record<string, unknown>[] }).data[0];
+    expect(row.blind_type_ids).toEqual([]);
+  });
+
+  it('writes the links on create', async () => {
+    db.responses['cassette_options.insert'] = [{ id: 'cas-9', name: 'New', price_per_m: 5 }];
+    const res = await post('/cassette-options', {
+      name: 'New',
+      price_per_m: 5,
+      blind_type_ids: [TYPE],
+    });
+    expect(res.status).toBe(201);
+    expect(db.inserts['cassette_option_blind_types']?.[0]).toEqual([
+      { cassette_option_id: 'cas-9', blind_type_id: TYPE },
+    ]);
+  });
+
+  it('creates without blind_type_ids — an option offered nowhere yet', async () => {
+    db.responses['bottom_rail_options.insert'] = [{ id: 'rail-9', name: 'Pear', price_per_m: 0 }];
+    const res = await post('/bottom-rail-options', { name: 'Pear', price_per_m: 0 });
+    expect(res.status).toBe(201);
+    // Nothing inserted into the join table: no links means no rows.
+    expect(db.inserts['bottom_rail_option_blind_types']).toBeUndefined();
+  });
+
+  it('replaces the links on update', async () => {
+    db.responses['installation_options.select'] = [
+      { id: 'ins-1', name: 'Rod', price_per_item: 45, active: true, sort_order: 0 },
+    ];
+    const res = await put('/installation-options/ins-1', { blind_type_ids: [TYPE] });
+    expect(res.status).toBe(200);
+    expect(db.inserts['installation_option_blind_types']?.[0]).toEqual([
+      { installation_option_id: 'ins-1', blind_type_id: TYPE },
+    ]);
+  });
+
+  it('rejects blind_type_ids on an unscoped catalog', async () => {
+    const res = await post('/pleat-types', {
+      name: 'Pinch',
+      multiplier: 2,
+      blind_type_ids: [TYPE],
+    });
+    expect(res.status).toBe(400);
+    expect(db.inserts['pleat_types']).toBeUndefined();
+  });
+});
+
 describe('pleat types catalog', () => {
   it('lists rows at /pleat-types', async () => {
     db.responses['pleat_types.select'] = [
