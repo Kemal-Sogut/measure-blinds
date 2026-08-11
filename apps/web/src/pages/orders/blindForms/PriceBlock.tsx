@@ -26,7 +26,8 @@
  * edge of a phone screen.
  */
 
-import { INPUT, LABEL } from './fields';
+import { Fragment } from 'react';
+import { INPUT, INPUT_BASE, LABEL } from './fields';
 import type { DraftAddon, DraftPrice, PriceAdjustmentDraft } from '../lineItemDrafts';
 
 /** The server's cap; the add-on button disables rather than 400s. */
@@ -73,7 +74,7 @@ export function PriceBlock({
     <div className="flex min-w-0 flex-col gap-3 border-t border-border-light pt-3">
       {canOverride && (
         <div className="flex min-w-0 flex-col gap-2">
-          <div className="grid min-w-0 grid-cols-2 gap-3">
+          <div className="grid min-w-0 grid-cols-2 gap-3.5">
             <div className="min-w-0">
               <span className={LABEL}>Calculated price</span>
               <p className="h-11 rounded-md border border-border-light bg-surface-sunken px-3 py-3 font-mono text-sm text-text-muted">
@@ -116,10 +117,23 @@ export function PriceBlock({
         </div>
       )}
 
-      <div className="flex min-w-0 flex-col gap-2">
+      {/*
+        Add-on rows share the two-column grid the pairs above use, so a
+        description lines up under "Calculated price"/"Quantity" and a
+        price under "Override"/"Unit price". The remove button lives
+        INSIDE the second column beside its price rather than taking a
+        third column of its own — a third column would push both fields
+        out of alignment with every other field in the form.
+      */}
+      <div className="grid min-w-0 grid-cols-2 gap-x-3.5 gap-y-2">
         <span className={LABEL}>Add-ons</span>
+        {/* Column header only once there is a row under it to label. */}
+        <span className={LABEL}>{adjustments.addons.length > 0 ? 'Price ($)' : ''}</span>
         {adjustments.addons.map((addon) => (
-          <div key={addon.key} className="flex min-w-0 items-center gap-2">
+          // Fragment, not a wrapper: the two cells are direct children of
+          // the grid above, which is what keeps every row's columns on the
+          // same two tracks.
+          <Fragment key={addon.key}>
             <input
               placeholder="What is it?"
               value={addon.label}
@@ -127,28 +141,30 @@ export function PriceBlock({
               aria-label="Add-on description"
               className={INPUT}
             />
-            <input
-              inputMode="decimal"
-              placeholder="0.00"
-              value={addon.price}
-              onChange={(e) => setAddon(addon.key, { price: e.target.value })}
-              aria-label="Add-on price"
-              className={`${INPUT} w-24 shrink-0 font-mono`}
-            />
-            <button
-              type="button"
-              onClick={() =>
-                onChange({
-                  ...adjustments,
-                  addons: adjustments.addons.filter((a) => a.key !== addon.key),
-                })
-              }
-              aria-label={`Remove add-on ${addon.label}`.trim()}
-              className="h-11 w-11 shrink-0 rounded-md border border-border-input text-lg text-text-secondary hover:bg-surface-sunken"
-            >
-              ×
-            </button>
-          </div>
+            <div className="flex min-w-0 items-center gap-2">
+              <input
+                inputMode="decimal"
+                placeholder="0.00"
+                value={addon.price}
+                onChange={(e) => setAddon(addon.key, { price: e.target.value })}
+                aria-label="Add-on price"
+                className={`${INPUT_BASE} min-w-0 flex-1 font-mono`}
+              />
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...adjustments,
+                    addons: adjustments.addons.filter((a) => a.key !== addon.key),
+                  })
+                }
+                aria-label={`Remove add-on ${addon.label}`.trim()}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border-input text-lg leading-none text-text-secondary hover:bg-surface-sunken"
+              >
+                ×
+              </button>
+            </div>
+          </Fragment>
         ))}
         <button
           type="button"
@@ -159,7 +175,7 @@ export function PriceBlock({
               addons: [...adjustments.addons, { key: nextAddonKey(), label: '', price: '' }],
             })
           }
-          className="self-start rounded-md border border-border-input px-2.5 py-1.5 text-[13px] text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+          className="col-span-2 justify-self-start rounded-md border border-border-input px-2.5 py-1.5 text-[13px] text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
         >
           + Add add-on
         </button>

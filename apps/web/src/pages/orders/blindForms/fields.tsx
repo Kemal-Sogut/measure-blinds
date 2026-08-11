@@ -30,8 +30,18 @@ import { materialsForType, parsePositive, type BlindDraft, type Catalogs } from 
 /* Tokens                                                              */
 /* ------------------------------------------------------------------ */
 
-export const INPUT =
-  'h-11 w-full min-w-0 rounded-md border border-border-input bg-surface px-3 text-sm text-text-primary';
+/**
+ * Every input token EXCEPT a width, for the rare control whose width
+ * comes from its container instead — a grid track or a flex `flex-1`.
+ *
+ * Composing `INPUT` with another width class does NOT work: both are
+ * width utilities of equal specificity, so which one applies is decided
+ * by their order in the generated stylesheet, not by the order they were
+ * written in the class attribute. Reach for this instead.
+ */
+export const INPUT_BASE =
+  'h-11 min-w-0 rounded-md border border-border-input bg-surface px-3 text-sm text-text-primary';
+export const INPUT = `${INPUT_BASE} w-full`;
 export const LABEL = 'mb-1.5 block text-xs font-medium text-text-secondary';
 
 /** Props every per-type blind form receives. */
