@@ -32,6 +32,7 @@ export interface LabelLineItem {
   cassette_name: string | null;
   bottom_rail_name: string | null;
   control_name: string | null;
+  installation_name: string | null;
   quantity: number;
 }
 
@@ -162,6 +163,16 @@ const BOTTOM_RAIL_CODES: CodeTable = [
 ];
 
 /**
+ * Installation codes — the catalog ships exactly Rod and Track. Printed
+ * only when the blind type has an installation option scoped to it, so
+ * this segment is simply absent on everything but curtains today.
+ */
+const INSTALLATION_CODES: CodeTable = [
+  [/rod/i, 'R'],
+  [/track/i, 'T'],
+];
+
+/**
  * Control codes. Chain is "R" (the shop's word for it is the regular
  * control), and the two motor variants are told apart because they are
  * different parts to pick: "MB" is Bluetooth, plain "M" is not. The
@@ -207,6 +218,7 @@ function hardwareOf(item: LabelLineItem): string {
     ['Cassette', codeOf(item.cassette_name, CASSETTE_CODES)],
     ['Bottom Rail', codeOf(item.bottom_rail_name, BOTTOM_RAIL_CODES)],
     ['Control', codeOf(item.control_name, CONTROL_CODES)],
+    ['Installation', codeOf(item.installation_name, INSTALLATION_CODES)],
   ]
     .filter(([, code]) => code)
     .map(([caption, code]) => `${caption}: ${code}`)
