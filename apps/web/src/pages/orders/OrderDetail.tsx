@@ -101,6 +101,7 @@ import {
   downloadWarrantyPdf,
   type OrderInput,
   type LineItemInput,
+  type AdjustmentInputFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
@@ -117,15 +118,19 @@ import {
 import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
+  canOverridePrice,
   flatDraftPrice,
+  parseAddons,
   parseDraftAttributes,
+  parseOverride,
   parsePositive,
   type BlindDraft,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
+  type PriceAdjustmentDraft,
 } from './lineItemDrafts';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
  * Panel treatment shared by this screen's hand-rolled bottom sheets.
@@ -249,16 +254,50 @@ function toDrafts(order: Order): ItemDraft[] {
           Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
         ),
         quantity: String(li.quantity),
+        ...toAdjustmentDraft(li),
       } satisfies BlindDraft;
     }
     return {
       key: nextKey(),
       item_type: li.item_type,
+      title: li.title,
       description: li.description,
+      preset_id: li.preset_id,
       quantity: String(li.quantity),
-      unit_price: String(li.unit_price),
+      // `unit_price` is the price CHARGED, so an overridden item's draft
+      // must show the CALCULATED figure here and the charged one in the
+      // override box. Reading `unit_price` into the base would silently
+      // promote the override on every reopen and lose the original.
+      unit_price: String(li.base_unit_price ?? li.unit_price),
+      ...toAdjustmentDraft(li),
     } satisfies FlatDraft;
   });
+}
+
+/** A freshly added item is never overridden and carries no add-ons. */
+const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
+  unit_price_override: '',
+  show_original_price: true,
+  addons: [],
+};
+
+/**
+ * The three adjustment fields of a persisted item, as draft strings.
+ *
+ * An item is overridden exactly when `base_unit_price` is set, and the
+ * charged `unit_price` is then what the consultant typed — so that is
+ * what goes back into the override box.
+ */
+function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
+  return {
+    unit_price_override: li.base_unit_price === null ? '' : String(li.unit_price),
+    show_original_price: li.show_original_price,
+    addons: (li.addons ?? []).map((a) => ({
+      key: nextKey(),
+      label: a.label,
+      price: String(a.price),
+    })),
+  };
 }
 
 /** Short label for a draft in the live-pricing rail. */
@@ -726,6 +765,7 @@ export default function OrderDetail() {
       // from the newly selected type's `defaultAttributes()`.
       attributes: {},
       quantity: '1',
+      ...NO_ADJUSTMENTS,
     };
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -736,9 +776,15 @@ export default function OrderDetail() {
       {
         key: nextKey(),
         item_type: 'preset',
-        description: preset.description ? `${preset.name} — ${preset.description}` : preset.name,
+        // The catalog name becomes the headline and its description the
+        // body. These used to be concatenated into one string, which left
+        // no way to emphasise the name on a document.
+        title: preset.name,
+        description: preset.description ?? '',
+        preset_id: preset.id,
         quantity: '1',
         unit_price: String(preset.unit_price),
+        ...NO_ADJUSTMENTS,
       },
     ]);
     setSheet('none');
@@ -747,9 +793,12 @@ export default function OrderDetail() {
     const draft: FlatDraft = {
       key: nextKey(),
       item_type: 'custom',
+      title: '',
       description: '',
+      preset_id: null,
       quantity: '1',
       unit_price: '',
+      ...NO_ADJUSTMENTS,
     };
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -851,6 +900,24 @@ export default function OrderDetail() {
     if (!customer) return 'Select a customer first.';
     if (!expiryDate) return 'Pick an expiry date.';
     const line_items: LineItemInput[] = [];
+
+    /**
+     * The three adjustment fields, validated once for any item type.
+     * Returns a message string when the override does not parse, matching
+     * this function's error convention.
+     *
+     * `unit_price_override` is left OFF the payload where the item cannot
+     * be overridden — the Worker rejects the field on a custom item.
+     */
+    function adjustmentsFor(it: ItemDraft, index: number): AdjustmentInputFields | string {
+      const override = parseOverride(it.unit_price_override);
+      if (!override.valid) return `Item ${index + 1}: enter a valid override price.`;
+      return {
+        ...(canOverridePrice(it) ? { unit_price_override: override.value } : {}),
+        show_original_price: it.show_original_price,
+        addons: parseAddons(it.addons),
+      };
+    }
     for (const [i, it] of items.entries()) {
       if (it.item_type === 'blind') {
         const panels = it.panels.map(parsePositive);
@@ -874,6 +941,8 @@ export default function OrderDetail() {
         const attributes = parseDraftAttributes(it);
         if (attributes === null)
           return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
+        const adj = adjustmentsFor(it, i);
+        if (typeof adj === 'string') return adj;
         line_items.push({
           item_type: 'blind',
           room_name: it.room_name.trim(),
@@ -890,19 +959,52 @@ export default function OrderDetail() {
           note: it.note.trim(),
           attributes,
           quantity: Math.round(qty),
+          ...adj,
         });
       } else {
         const qty = parsePositive(it.quantity);
         const unit = Number(it.unit_price);
-        if (!it.description.trim()) return `Item ${i + 1}: enter a description.`;
+        if (!it.title.trim() && !it.description.trim())
+          return `Item ${i + 1}: enter a title or a description.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-        line_items.push({
-          item_type: it.item_type,
-          description: it.description.trim(),
-          quantity: Math.round(qty),
-          unit_price: unit,
-        });
+        const adj = adjustmentsFor(it, i);
+        if (typeof adj === 'string') return adj;
+        if (it.item_type === 'preset' && it.preset_id) {
+          // Priced by the Worker from the catalog. Sending a figure would
+          // be ignored, and sending one that disagreed would be a lie the
+          // consultant could read on screen.
+          line_items.push({
+            item_type: 'preset',
+            preset_id: it.preset_id,
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            ...adj,
+          });
+        } else if (it.item_type === 'preset') {
+          // Legacy preset: no provenance, so its stored price still
+          // travels and the Worker keeps honouring it.
+          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
+          line_items.push({
+            item_type: 'preset',
+            preset_id: null,
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            unit_price: unit,
+            ...adj,
+          });
+        } else {
+          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
+          line_items.push({
+            item_type: 'custom',
+            title: it.title.trim(),
+            description: it.description.trim(),
+            quantity: Math.round(qty),
+            unit_price: unit,
+            ...adj,
+          });
+        }
       }
     }
     return {
@@ -2250,9 +2352,21 @@ export default function OrderDetail() {
                           {/* Line 2 on phones: price left, actions right. On
                               `sm+` this collapses back into the single row. */}
                           <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-                            {/* Total */}
-                            <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                            {/*
+                              Total, with an amber dot marking a price the
+                              consultant overrode. Staff-only: the
+                              customer's signal is the struck-through
+                              original on the documents, not this.
+                            */}
+                            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary">
                               {price ? `$${price.total.toFixed(2)}` : '—'}
+                              {price && price.unit !== price.base && (
+                                <span
+                                  title="Price overridden"
+                                  aria-label="Price overridden"
+                                  className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                                />
+                              )}
                             </span>
 
                             {/* Edit / Duplicate / Delete — hidden in read-only.

@@ -41,8 +41,29 @@ export type OrderTab =
   | 'installed'
   | 'expired';
 
-/** Blind line item payload — measurements + option ids, no prices. */
-export interface BlindItemInput {
+/** One flat-priced extra sent with a line item. */
+export interface AddonInput {
+  label: string;
+  price: number;
+}
+
+/**
+ * The adjustment fields every line item may send.
+ *
+ * `unit_price_override` and `addons[].price` are, alongside a custom
+ * item's own `unit_price`, the only money a client may dictate. The
+ * Worker clamps both and writes every change to the order's activity
+ * log — sending them is a declared exception to server-authoritative
+ * pricing, not a hole in it.
+ */
+export interface AdjustmentInputFields {
+  unit_price_override?: number | null;
+  show_original_price?: boolean;
+  addons?: AddonInput[];
+}
+
+/** Blind line item payload — measurements + option ids, no base price. */
+export interface BlindItemInput extends AdjustmentInputFields {
   item_type: 'blind';
   room_name: string;
   blinds_type: string;
@@ -61,15 +82,35 @@ export interface BlindItemInput {
   quantity: number;
 }
 
-/** Preset/custom line item payload. */
-export interface FlatItemInput {
-  item_type: 'preset' | 'custom';
+/** Preset line item payload — a catalog reference the Worker prices. */
+export interface PresetItemInput extends AdjustmentInputFields {
+  item_type: 'preset';
+  /** Null only for legacy rows saved before provenance existed. */
+  preset_id: string | null;
+  title: string;
+  description: string;
+  quantity: number;
+  /** Sent ONLY when `preset_id` is null; otherwise the catalog wins. */
+  unit_price?: number;
+}
+
+/**
+ * Custom line item payload — free text and a freely typed price.
+ *
+ * `unit_price_override` is deliberately omitted from the inherited
+ * fields: the Worker rejects it on a custom item with a 400, and letting
+ * the type carry it would make that a runtime surprise instead of a
+ * compile error.
+ */
+export interface CustomItemInput extends Omit<AdjustmentInputFields, 'unit_price_override'> {
+  item_type: 'custom';
+  title: string;
   description: string;
   quantity: number;
   unit_price: number;
 }
 
-export type LineItemInput = BlindItemInput | FlatItemInput;
+export type LineItemInput = BlindItemInput | PresetItemInput | CustomItemInput;
 
 /** Payload for POST /api/orders and PUT /api/orders/:id. */
 export interface OrderInput {
