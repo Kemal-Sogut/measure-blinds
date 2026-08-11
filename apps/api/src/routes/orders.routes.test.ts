@@ -1373,3 +1373,118 @@ describe('preset pricing', () => {
     expect(insertedRows()[0].preset_id).toBeNull();
   });
 });
+
+/**
+ * Overrides and add-ons as they land on the row: `unit_price` is always
+ * the price CHARGED, `base_unit_price` is non-null only while overridden,
+ * and add-on prices are added once per line rather than per unit.
+ */
+describe('price overrides and add-ons', () => {
+  const PRESET = { id: '88888888-8888-4888-8888-888888888888', name: 'Installation', unit_price: 75 };
+
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  function insertedRows() {
+    return (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, unknown>[];
+  }
+
+  beforeEach(() => {
+    db.responses['preset_line_items.select'] = [PRESET];
+  });
+
+  it('charges the override and records the calculated price as the original', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 2,
+        unit_price_override: 50,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(50);
+    expect(insertedRows()[0].base_unit_price).toBe(75);
+    expect(insertedRows()[0].line_total).toBe(100);
+  });
+
+  it('ignores an override on a legacy preset with no catalog provenance', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        title: 'Installation',
+        description: '',
+        quantity: 1,
+        unit_price: 60,
+        unit_price_override: 10,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(60);
+    expect(insertedRows()[0].base_unit_price).toBeNull();
+  });
+
+  it('overrides a blind price and keeps the formula figure as the original', async () => {
+    const blind = { ...payload().line_items[0], unit_price_override: 100 };
+    const res = await postItems([blind]);
+    expect(res.status).toBe(201);
+    // material 154 + cassette 28 + control 0 = 182 calculated, 100 charged.
+    expect(insertedRows()[0].unit_price).toBe(100);
+    expect(insertedRows()[0].base_unit_price).toBe(182);
+    expect(insertedRows()[0].line_total).toBe(200); // 100 x qty 2
+  });
+
+  it('adds add-on prices once to the line total and snapshots them', async () => {
+    const res = await postItems([
+      {
+        item_type: 'custom',
+        title: 'Extra work',
+        description: '',
+        quantity: 3,
+        unit_price: 100,
+        addons: [{ label: 'Rush fee', price: 50 }],
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].line_total).toBe(350); // 100 x 3 + 50, not 100 x 3 + 150
+    expect(insertedRows()[0].addons).toEqual([{ label: 'Rush fee', price: 50 }]);
+  });
+
+  it('carries show_original_price onto the row', async () => {
+    const res = await postItems([
+      {
+        item_type: 'custom',
+        title: 'Extra work',
+        description: '',
+        quantity: 1,
+        unit_price: 10,
+        show_original_price: false,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].show_original_price).toBe(false);
+  });
+
+  it('gives blind and flat rows an identical column set', async () => {
+    // The PostgREST bulk-insert rule: a key missing from one row is
+    // NULL-filled across the batch and violates a not-null default.
+    const res = await postItems([
+      payload().line_items[0],
+      { item_type: 'custom', title: 'Extra work', description: '', quantity: 1, unit_price: 40 },
+    ]);
+    expect(res.status).toBe(201);
+    const rows = insertedRows();
+    expect(rows.length).toBe(2);
+    expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
+  });
+});

@@ -66,6 +66,7 @@ import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type { CatalogResolver } from '../lib/blindTypes/base';
 import { calculateTotals } from '../lib/totals';
+import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../lib/pdf';
@@ -401,7 +402,17 @@ async function resolveLineItems(
       } else {
         base = it.unit_price ?? 0;
       }
-      const unit = Math.round(base * 100) / 100;
+      // A custom item's price is already typed by the consultant, and a
+      // legacy preset has no catalog default to return to — in both cases
+      // `base` IS the typed figure, so an override would be a second name
+      // for one number.
+      const canOverride = it.item_type === 'preset' && it.preset_id !== null;
+      const adjusted = applyPriceAdjustments({
+        base,
+        quantity: it.quantity,
+        override: canOverride ? it.unit_price_override : null,
+        addons: it.addons as Addon[],
+      });
       return {
         item_type: it.item_type,
         position,
@@ -432,10 +443,10 @@ async function resolveLineItems(
         attributes: {},
         quantity: it.quantity,
         show_original_price: it.show_original_price,
-        unit_price: unit,
-        base_unit_price: null,
-        addons: [],
-        line_total: Math.round(unit * it.quantity * 100) / 100,
+        unit_price: adjusted.unit_price,
+        base_unit_price: adjusted.base_unit_price,
+        addons: adjusted.addons,
+        line_total: adjusted.line_total,
       };
     }
     const blindType = getBlindType(it.blinds_type);
@@ -489,7 +500,7 @@ async function resolveLineItems(
 
     // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
-    const unit_price = calculateBlindUnitPriceForType(it.blinds_type, {
+    const base = calculateBlindUnitPriceForType(it.blinds_type, {
       panels: it.panels,
       height_cm: it.height_cm,
       material_price_per_sqm: material.price,
@@ -497,6 +508,12 @@ async function resolveLineItems(
       bottom_rail_price_per_m: bottomRail?.price ?? 0,
       control_price_per_item: control.price,
       attributes,
+    });
+    const adjusted = applyPriceAdjustments({
+      base,
+      quantity: it.quantity,
+      override: it.unit_price_override,
+      addons: it.addons as Addon[],
     });
     return {
       item_type: 'blind',
@@ -525,10 +542,10 @@ async function resolveLineItems(
       attributes,
       quantity: it.quantity,
       show_original_price: it.show_original_price,
-      unit_price,
-      base_unit_price: null,
-      addons: [],
-      line_total: Math.round(unit_price * it.quantity * 100) / 100,
+      unit_price: adjusted.unit_price,
+      base_unit_price: adjusted.base_unit_price,
+      addons: adjusted.addons,
+      line_total: adjusted.line_total,
     };
   });
 }
