@@ -67,6 +67,7 @@ import { getBlindType } from '../lib/blindTypes';
 import type { CatalogResolver } from '../lib/blindTypes/base';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
+import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../lib/pdf';
@@ -766,9 +767,12 @@ app.put('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = createSupabaseAdmin(c.env);
 
+  // The line items come along so the hand-entered money on them can be
+  // diffed against what is about to replace them; they are read BEFORE
+  // the wholesale delete below, which is the only chance to see them.
   const { data: existing } = await sb
     .from('orders')
-    .select('id, status, expiry_date')
+    .select('id, status, expiry_date, line_items(position, unit_price, base_unit_price, addons)')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
@@ -816,6 +820,26 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+
+  // Hand-entered money is the one thing on an order that no formula can
+  // explain afterwards, so every override and add-on change gets its own
+  // line in the trail. Ordered by position, matching the editor.
+  const previousItems = ((existing.line_items ?? []) as Record<string, unknown>[])
+    .slice()
+    .sort((a, b) => Number(a.position) - Number(b.position))
+    .map((li) => ({
+      unit_price: Number(li.unit_price),
+      base_unit_price: li.base_unit_price === null ? null : Number(li.base_unit_price),
+      addons: (li.addons ?? []) as Addon[],
+    }));
+  const nextItems = rows.map((r) => ({
+    unit_price: Number(r.unit_price),
+    base_unit_price: r.base_unit_price === null ? null : Number(r.base_unit_price),
+    addons: (r.addons ?? []) as Addon[],
+  }));
+  for (const message of describePriceChanges(previousItems, nextItems)) {
+    await logOrderEvent(sb, id, message);
+  }
 
   const { data: full, error: readError } = await readDetail(sb, id);
   if (readError) return c.json({ error: readError.message }, 500);
