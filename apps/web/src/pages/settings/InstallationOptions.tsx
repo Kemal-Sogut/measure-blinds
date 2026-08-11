@@ -2,9 +2,14 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Installation options settings page — rod and track for Curtains,
- * charged as a FIXED amount per curtain rather than per metre of width
- * like the cassette and bottom rail.
+ * Installation options settings page — rod and track, charged as a FIXED
+ * amount per blind rather than per metre of width like the cassette and
+ * bottom rail.
+ *
+ * Seeded as Curtains-only, but that is DATA now: migration 35 made
+ * installation a shared hardware slot, so scoping an option to another
+ * blind type here is all it takes to offer it there. A type with no
+ * installation option scoped to it has no Installation dropdown at all.
  *
  * Both shipped options are seeded at 0, so editing a price here is what
  * first makes installation cost anything; only orders saved AFTER that
@@ -23,8 +28,10 @@ export default function InstallationOptions() {
         config={{
           path: 'installation-options',
           priceKey: 'price_per_item',
-          priceLabel: 'per curtain',
+          priceLabel: 'per blind',
           noun: 'installation option',
+          scoped: true,
+          note: 'An installation option is offered only for the blind types picked here. Leave a type off every option and the Installation dropdown disappears for it.',
         }}
       />
     </div>
