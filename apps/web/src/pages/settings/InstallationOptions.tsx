@@ -27,11 +27,11 @@ export default function InstallationOptions() {
       <CatalogEditor
         config={{
           path: 'installation-options',
-          priceKey: 'price_per_item',
-          priceLabel: 'per blind',
+          priceKey: 'price',
+          basis: true,
           noun: 'installation option',
           scoped: true,
-          note: 'An installation option is offered only for the blind types picked here. Leave a type off every option and the Installation dropdown disappears for it.',
+          note: 'An installation option is offered only for the blind types picked here. Leave a type off every option and the Installation dropdown disappears for it. Each option also chooses how its price is charged — per m, per m², per unit or per panel.',
         }}
       />
     </div>

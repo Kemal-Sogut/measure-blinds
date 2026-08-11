@@ -20,11 +20,11 @@ export default function ControlOptions() {
       <CatalogEditor
         config={{
           path: 'control-options',
-          priceKey: 'price_per_item',
-          priceLabel: 'per panel',
+          priceKey: 'price',
+          basis: true,
           noun: 'control option',
           scoped: true,
-          note: 'A control is offered only for the blind types picked here. Leave a type off every control and the Control dropdown disappears for it.',
+          note: 'A control is offered only for the blind types picked here. Leave a type off every control and the Control dropdown disappears for it. Each option also chooses how its price is charged — per m, per m², per unit or per panel.',
         }}
       />
     </div>
