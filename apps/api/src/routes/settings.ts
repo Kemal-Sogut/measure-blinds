@@ -198,11 +198,33 @@ const price = z.number().min(0, 'Price cannot be negative').finite();
 const active = z.boolean();
 const sortOrder = z.number().int().min(0);
 
+/**
+ * How a hardware option's price is charged. Mirrors the `price_basis`
+ * check constraint added by migration 36 and the `PriceBasis` union the
+ * pricing modules switch on — all three must list the same members, or a
+ * row could be saved that the formula cannot price.
+ */
+const priceBasis = z.enum(['per_m', 'per_sqm', 'per_unit', 'per_panel']);
+
+/**
+ * The shape shared by all four hardware catalogs since migration 36:
+ * a name, one rate, the basis that rate is charged on, and the usual
+ * flags. Identical across the four, which is also what lets the Worker
+ * resolve them through a single lookup.
+ */
+const hardwareSchema = z.object({
+  name,
+  price,
+  price_basis: priceBasis,
+  active,
+  sort_order: sortOrder,
+});
+
 const catalogs: CatalogConfig[] = [
   {
     path: 'cassette-options',
     table: 'cassette_options',
-    schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
     links: { table: 'cassette_option_blind_types', fk: 'cassette_option_id' },
   },
@@ -210,14 +232,14 @@ const catalogs: CatalogConfig[] = [
     // Priced per linear metre of width, the same basis as the cassette.
     path: 'bottom-rail-options',
     table: 'bottom_rail_options',
-    schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
     links: { table: 'bottom_rail_option_blind_types', fk: 'bottom_rail_option_id' },
   },
   {
     path: 'control-options',
     table: 'control_options',
-    schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
     links: { table: 'control_option_blind_types', fk: 'control_option_id' },
   },
@@ -238,7 +260,7 @@ const catalogs: CatalogConfig[] = [
     // Rod / track, charged once per blind rather than per metre.
     path: 'installation-options',
     table: 'installation_options',
-    schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
     links: { table: 'installation_option_blind_types', fk: 'installation_option_id' },
   },

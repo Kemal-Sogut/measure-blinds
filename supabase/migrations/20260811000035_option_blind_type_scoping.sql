@@ -24,6 +24,11 @@
 -- curtains.ts no longer declares installation_id, its attributeSchema is
 -- strict, and the editor re-parses a re-opened order's blob -- a key left
 -- behind would be a 400 on the second save.
+--
+-- RE-RUNNABLE. Every statement is guarded, because this file was applied
+-- once through the Supabase MCP before being run again from the CLI. The
+-- backfill's guard is stronger than the rest (see section 2): a second run
+-- must not re-seed links the shop has since deleted in Settings.
 
 /* ------------------------------------------------------------------ */
 /* 1. Join tables                                                      */
@@ -75,19 +80,19 @@ alter table public.control_option_blind_types       enable row level security;
 alter table public.installation_option_blind_types  enable row level security;
 
 do $$ begin
-  if not exists (select 1 from pg_policies where tablename = 'cassette_option_blind_types' and policyname = 'authenticated_full_access') then
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'cassette_option_blind_types' and policyname = 'authenticated_full_access') then
     create policy authenticated_full_access on public.cassette_option_blind_types
       for all to authenticated using (true) with check (true);
   end if;
-  if not exists (select 1 from pg_policies where tablename = 'bottom_rail_option_blind_types' and policyname = 'authenticated_full_access') then
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'bottom_rail_option_blind_types' and policyname = 'authenticated_full_access') then
     create policy authenticated_full_access on public.bottom_rail_option_blind_types
       for all to authenticated using (true) with check (true);
   end if;
-  if not exists (select 1 from pg_policies where tablename = 'control_option_blind_types' and policyname = 'authenticated_full_access') then
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'control_option_blind_types' and policyname = 'authenticated_full_access') then
     create policy authenticated_full_access on public.control_option_blind_types
       for all to authenticated using (true) with check (true);
   end if;
-  if not exists (select 1 from pg_policies where tablename = 'installation_option_blind_types' and policyname = 'authenticated_full_access') then
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'installation_option_blind_types' and policyname = 'authenticated_full_access') then
     create policy authenticated_full_access on public.installation_option_blind_types
       for all to authenticated using (true) with check (true);
   end if;
@@ -97,6 +102,13 @@ end $$;
 /* 2. Backfill -- reproduces the hardcoded requiredCatalogs exactly     */
 /* ------------------------------------------------------------------ */
 
+-- ONE-SHOT, and the `not exists` guards are what make it so. This file is
+-- re-runnable, and `on conflict do nothing` alone would not be enough: once
+-- the shop has unscoped an option in Settings, re-running would silently
+-- RESURRECT the link it deleted, switching a hardware slot back on behind
+-- their back. Seeding only into an empty table means a re-run is a true
+-- no-op, and the first run is the only one that decides anything.
+
 -- Cassette and bottom rail: every type EXCEPT Curtains (whose module
 -- declared requiredCatalogs = ['control']).
 insert into public.cassette_option_blind_types (cassette_option_id, blind_type_id)
@@ -104,6 +116,7 @@ select o.id, t.id
   from public.cassette_options o
  cross join public.blind_types t
  where t.name <> 'Curtains'
+   and not exists (select 1 from public.cassette_option_blind_types)
  on conflict do nothing;
 
 insert into public.bottom_rail_option_blind_types (bottom_rail_option_id, blind_type_id)
@@ -111,6 +124,7 @@ select o.id, t.id
   from public.bottom_rail_options o
  cross join public.blind_types t
  where t.name <> 'Curtains'
+   and not exists (select 1 from public.bottom_rail_option_blind_types)
  on conflict do nothing;
 
 -- Control: every blind type, without exception.
@@ -118,6 +132,7 @@ insert into public.control_option_blind_types (control_option_id, blind_type_id)
 select o.id, t.id
   from public.control_options o
  cross join public.blind_types t
+ where not exists (select 1 from public.control_option_blind_types)
  on conflict do nothing;
 
 -- Installation: Curtains only, matching the attribute it replaces.
@@ -126,6 +141,7 @@ select o.id, t.id
   from public.installation_options o
  cross join public.blind_types t
  where t.name = 'Curtains'
+   and not exists (select 1 from public.installation_option_blind_types)
  on conflict do nothing;
 
 /* ------------------------------------------------------------------ */

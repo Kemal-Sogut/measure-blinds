@@ -8,10 +8,12 @@
  * Curtain fabric is bought by the running metre and the amount needed is
  * set by the pleat style's fullness, not by the drop, so:
  *
- *   fabric  = width_m x pleat multiplier x material price per metre
- *   hems    = panels x 0.5 m x material price per metre
- *   control = panels x control price per panel   (base behaviour)
- *   install = a fixed charge for the rod or track
+ *   fabric = width_m x pleat multiplier x material price per metre
+ *   hems   = panels x 0.5 m x material price per metre
+ *
+ * Those two lines are the WHOLE override — `materialCost` and nothing
+ * else. The control and the rod/track charge are ordinary hardware,
+ * summed by the base on whatever basis their catalog rows declare.
  *
  * Height is measured and reaches the manufacturer copy, but does NOT
  * price. For Curtains materials the shared `material_price_per_sqm`
@@ -94,26 +96,28 @@ export class CurtainsBlindType extends BaseBlindType {
 
   /**
    * Fabric by the running metre x fullness, plus a per-panel making
-   * allowance, the per-panel control charge and the one-off installation
-   * charge. The cassette and bottom rail prices are ignored outright
-   * rather than routed through a hook: this type has neither, and the
-   * Worker stores null for both.
+   * allowance. HEIGHT IS IGNORED — a curtain's fabric is bought by the
+   * running metre of finished width, so the drop does not price it.
+   *
+   * This is the ONLY leg Curtains overrides. The control and the
+   * installation charge are ordinary hardware now, summed by the base on
+   * whatever basis their catalog rows declare; duplicating that maths
+   * here is what used to let the two drift apart. A cassette or bottom
+   * rail simply never reaches this type, because none is scoped to it in
+   * Settings — and if one ever were, it would now be charged rather than
+   * silently ignored.
    *
    * The allowance is `HEM_ALLOWANCE_M` of fabric for every panel — side
    * hems and returns are cut once per finished panel — so it is charged
    * per panel COUNT and deliberately NOT multiplied by the fullness: a
    * hem does not get wider because the curtain is gathered more.
    */
-  calculateUnitPrice(item: BlindPricingInputs): number {
-    const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
+  protected materialCost(item: BlindPricingInputs, widthCm: number, _heightCm: number): number {
     const pleat = numericOr(item.attributes.pleat_multiplier, 1);
-    const install = this.installationCost(item.installation_price_per_item);
-    const total =
-      (width / 100) * pleat * item.material_price_per_sqm +
-      item.panels.length * HEM_ALLOWANCE_M * item.material_price_per_sqm +
-      this.controlCost(item.panels.length, item.control_price_per_item) +
-      install;
-    return Math.round(total * 100) / 100;
+    return (
+      (widthCm / 100) * pleat * item.material_price_per_sqm +
+      item.panels.length * HEM_ALLOWANCE_M * item.material_price_per_sqm
+    );
   }
 }
 

@@ -14,6 +14,7 @@
 | RLS on every table | Defense-in-depth; even if Worker is bypassed somehow, RLS blocks unauthorized access |
 | Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
 | Snapshot pricing on line items | Material/cassette/control/installation prices stored on line item at creation time to prevent retroactive price changes |
+| Per-option price basis | How a hardware option is charged (per m / m2 / unit / panel) lives on the catalog ROW, not in the formula; one function interprets it |
 | Catalog scoping join tables | Which hardware slots a blind type uses is DATA (`<catalog>_blind_types`), not a code constant — the shop switches a slot off per type from Settings without a deploy |
 | UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
 | No anon RLS on estimates | Public estimate view served only by the Worker (service role, single-row lookup by token); anon key grants zero data access, preventing enumeration |

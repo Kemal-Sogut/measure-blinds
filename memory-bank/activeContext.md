@@ -1115,3 +1115,32 @@ from `main`. Full detail in `engine_features.md` 2026-08-11.
 - **Not verified in a browser.** Port 5173 was held by another session's dev server and
   the settings pages sit behind Supabase auth. Covered by types, tests and a production
   build only — the chip UI and the slot-hiding behaviour still want a manual pass.
+
+## Current Focus — 2026-08-11 (later): per-option price basis
+
+Owner spec: each cassette / bottom rail / control / installation option can be charged per
+metre, per m², per unit or per panel, chosen next to the price. Branch
+`feat/option-price-basis`. Full detail in `engine_features.md` 2026-08-11 (second entry).
+
+- **One function interprets a basis: `BaseBlindType.hardwareCost`.** The four per-slot cost
+  hooks are gone. Its switch is exhaustive — adding a basis makes the compiler list what
+  else needs updating.
+- **`calculateUnitPrice` must NOT be overridden.** `materialCost(item, widthCm, heightCm)`
+  is the only divergence point a blind type gets. Curtains overrides that alone now; it
+  used to re-implement the whole formula and carried its own copy of the control and
+  installation maths.
+- **`hardware` is a map, and an absent slot means NO CHARGE** — not a zero one. Both the
+  Worker and `blindDraftPrice` build it gated on the scoping, so a stale id from a previous
+  blind type is not charged.
+- **The catalogs share one shape now** (`price` + `price_basis`), which is why there is one
+  `hardwareLookup` on the server and one `hardwareSchema` in settings.
+- **Standing hazards added by this work:**
+  - `price_basis` is spelled out in FIVE places that must agree: the check constraint
+    (migration 36), the Zod enum in `settings.ts`, `PriceBasis` in both blindTypes twins,
+    `PriceBasis` in `apps/web/src/types`, and `BASIS_OPTIONS` in `CatalogEditor`.
+  - `line_items.*_price_per_m` / `*_price_per_item` keep their names but no longer imply a
+    basis. Read the `*_price_basis` sibling with them, always.
+  - Curtains will now CHARGE a cassette or bottom rail if one is ever scoped to it. Nothing
+    is today, so this is unreachable from the UI.
+- **Not verified in a browser** — same as the scoping work: the settings pages sit behind
+  Supabase auth. Covered by types, tests and a production build.

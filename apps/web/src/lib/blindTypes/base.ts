@@ -6,12 +6,12 @@
  * today for every blind type, and the extension point each type builds
  * on. Each supported blind type has its own module
  * (`apps/web/src/lib/blindTypes/<type>.ts`) that EXTENDS this class; for
- * now they all inherit the default formula unchanged. A subclass
- * diverges by overriding one of the granular cost
- * hooks (`materialCost` / `cassetteCost` / `bottomRailCost` /
- * `controlCost` / `installationCost`), the minimum rules (`applyWidthMinimum` /
- * `applyHeightMinimum`), or the whole `calculateUnitPrice` — whichever is
- * the smallest correct change.
+ * now all but Curtains inherit the default formula unchanged. A subclass
+ * diverges by overriding `materialCost` (the fabric leg) or the minimum
+ * rules (`applyWidthMinimum` / `applyHeightMinimum`) — whichever is the
+ * smallest correct change. It must NOT override `calculateUnitPrice`:
+ * the hardware sum has to mean the same thing for every type, or a price
+ * basis would be interpreted two ways.
  *
  * This client class is the twin of the AUTHORITATIVE server-side
  * `apps/api/src/lib/blindTypes/base.ts`, which recalculates and
@@ -20,13 +20,21 @@
  * encodes the same expected values so any drift fails a suite.
  *
  * Formula (IMPLEMENTATION.md §5), all costs summed then rounded to 2dp:
- *   material   = W × H × price_per_sqm / 10000   (cm² → m²)
- *   cassette   = W / 100 × price_per_m           (per linear metre of width)
- *   bottomRail = W / 100 × price_per_m           (per linear metre of width)
- *   control    = panelCount × price_per_item     (per panel)
- *   install    = price_per_item                 (flat, once per blind)
+ *   material = W × H × price_per_sqm / 10000     (cm² → m²)
+ *   hardware = the sum of every charge the blind carries, each on the
+ *              basis its own catalog row declares:
+ *                per_m     = W / 100 × price     (per linear metre of width)
+ *                per_sqm   = W × H / 10000 × price
+ *                per_panel = panelCount × price
+ *                per_unit  = price               (flat, once per blind)
  * with the width minimum (raise <100cm to 100cm) and the tiered height
- * minimum (<100→100, 100–199→200, ≥200→actual) applied first.
+ * minimum (<100→100, 100–199→200, ≥200→actual) applied first — the
+ * hardware legs are charged on those same minimised figures.
+ *
+ * Until migration 36 the basis was hardcoded per slot (a cassette was
+ * always per-metre, a control always per-panel). It is data now, chosen
+ * next to the price in Settings, which is why there is one cost function
+ * rather than one per slot.
  */
 
 import { z } from 'zod';
@@ -51,6 +59,28 @@ export type BlindAttributes = Record<string, string | number | boolean>;
  * `apps/api/src/lib/optionScoping.ts`.
  */
 export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control' | 'installation';
+
+/**
+ * How a hardware option's price is charged. Stored per catalog ROW
+ * (`<catalog>.price_basis`, migration 36) rather than baked into the
+ * formula, because the shop buys some parts by the metre, some by the
+ * square metre, some outright and some per panel.
+ *
+ * Mirrored by the `price_basis` check constraint on all four catalogs.
+ * Adding a member here means adding it there, and `hardwareCost`'s switch
+ * is exhaustive so the compiler will point at what else needs saying.
+ */
+export type PriceBasis = 'per_m' | 'per_sqm' | 'per_unit' | 'per_panel';
+
+/**
+ * One hardware charge: a server-fetched rate and the basis it is charged
+ * on. Never assembled by a client — `resolveLineItems` reads both columns
+ * from the catalog row itself.
+ */
+export interface HardwareCharge {
+  price: number;
+  basis: PriceBasis;
+}
 
 /**
  * A declaration that one attribute key holds the id of a row in a priced
@@ -99,38 +129,28 @@ export interface BlindPricingInputs {
   height_cm: number;
   /** Material cost per m² (server-fetched snapshot). */
   material_price_per_sqm: number;
-  /** Cassette cost per linear metre of width (server-fetched snapshot). */
-  cassette_price_per_m: number;
   /**
-   * Bottom-rail cost per linear metre of width (server-fetched snapshot).
-   * REQUIRED, not optional: every blind row carries a rail (migration 28
-   * backfilled the historical ones to Regular at 0), so an absent value
-   * would mean a caller forgot to pass it rather than "no rail fitted" —
-   * and a silent 0 there would under-price the blind.
-   */
-  bottom_rail_price_per_m: number;
-  /** Control cost per panel (server-fetched snapshot). */
-  control_price_per_item: number;
-  /**
-   * Installation (rod / track) charge — a FIXED amount per blind, not
-   * per panel like the control and not per linear metre like the
-   * cassette and the rail (server-fetched snapshot).
+   * The hardware charges this blind actually carries, keyed by slot.
    *
-   * REQUIRED, not optional, for the same reason `bottom_rail_price_per_m`
-   * is: an optional member would let a caller silently drop the charge
-   * and still get a plausible-looking price back with no error at all.
-   * Pass 0 for a blind type with no installation option scoped to it.
+   * A slot is PRESENT only when the blind type has an option of that
+   * catalog scoped to it and one was chosen (see `optionScoping.ts` on the
+   * server, `slotsForType` in the editor). An absent slot contributes
+   * nothing — there is no "0 charge" to pass, because there is no charge.
+   *
+   * Each entry carries its own basis, so nothing here assumes a cassette
+   * is per-metre or a control is per-panel; migration 36 moved that
+   * decision onto the catalog row.
    */
-  installation_price_per_item: number;
+  hardware: Partial<Record<CatalogSlot, HardwareCharge>>;
   /**
    * The blind type's own extra inputs, already validated by that type's
    * `attributeSchema`. `{}` for every type that has not diverged. Read it
    * only from a subclass that declared the key — the base formula ignores
    * it entirely, which is why every historical row prices unchanged.
    *
-   * REQUIRED, not optional, for the same reason `bottom_rail_price_per_m`
-   * is: an optional member would let a caller silently drop a type's
-   * inputs and get the base price back with no error at all.
+   * REQUIRED, not optional: an optional member would let a caller
+   * silently drop a type's inputs and get the base price back with no
+   * error at all.
    */
   attributes: BlindAttributes;
 }
@@ -261,55 +281,66 @@ export class BaseBlindType {
     return heightCm;
   }
 
-  /** Material cost for the (already-minimised) width and height. */
-  protected materialCost(widthCm: number, heightCm: number, pricePerSqm: number): number {
-    return (widthCm * heightCm * pricePerSqm) / 10000;
-  }
-
-  /** Cassette cost, charged per linear metre of the effective width. */
-  protected cassetteCost(widthCm: number, pricePerM: number): number {
-    return (widthCm / 100) * pricePerM;
-  }
-
   /**
-   * Bottom-rail cost, charged per linear metre of the effective width —
-   * the same basis as the cassette, because both are cut to the blind's
-   * width. Kept as its own hook rather than folded into `cassetteCost` so
-   * a blind type can diverge on one without touching the other.
+   * Material cost for the (already-minimised) width and height.
+   *
+   * Takes the WHOLE input rather than a rate, because this is the one leg
+   * a blind type is expected to diverge on and a type that prices fabric
+   * differently generally needs its panel count or its own attributes to
+   * do it — Curtains multiplies by a pleat fullness and adds a per-panel
+   * hem allowance. Overriding this is now the ONLY thing a type has to do
+   * to change its formula; `calculateUnitPrice` is no longer a valid
+   * override point, because the hardware sum below must stay identical
+   * across every type or a basis would mean two different things.
    */
-  protected bottomRailCost(widthCm: number, pricePerM: number): number {
-    return (widthCm / 100) * pricePerM;
-  }
-
-  /** Control cost, charged per panel. */
-  protected controlCost(panelCount: number, pricePerItem: number): number {
-    return panelCount * pricePerItem;
+  protected materialCost(item: BlindPricingInputs, widthCm: number, heightCm: number): number {
+    return (widthCm * heightCm * item.material_price_per_sqm) / 10000;
   }
 
   /**
-   * Installation cost, charged ONCE per blind — neither per panel like
-   * the control nor per metre of width like the cassette and the rail.
-   * Its own hook so a type can diverge on the rod/track charge without
-   * touching any other component.
+   * Cost of ONE hardware charge, on its own basis. The single place any
+   * basis is interpreted — cassette, bottom rail, control and installation
+   * all come through here, so "per m²" cannot mean one thing for a rail
+   * and another for a control.
+   *
+   * `ctx` carries the MINIMISED width and height, the same figures the
+   * material leg is charged on: two lines of one quote must not be priced
+   * off different dimensions.
    */
-  protected installationCost(pricePerItem: number): number {
-    return pricePerItem;
+  protected hardwareCost(
+    charge: HardwareCharge,
+    ctx: { widthCm: number; heightCm: number; panelCount: number }
+  ): number {
+    switch (charge.basis) {
+      case 'per_m':
+        return (ctx.widthCm / 100) * charge.price;
+      case 'per_sqm':
+        return (ctx.widthCm * ctx.heightCm * charge.price) / 10000;
+      case 'per_panel':
+        return ctx.panelCount * charge.price;
+      case 'per_unit':
+        return charge.price;
+    }
   }
 
   /**
-   * Unit price of one blind: material + cassette + bottom rail + control
-   * + installation, with the width/height minimums applied first, rounded
-   * to 2 decimals.
+   * Unit price of one blind: the material leg plus every hardware charge
+   * it carries, each on its own basis, with the width/height minimums
+   * applied first and the sum rounded to 2 decimals.
+   *
+   * Deliberately NOT an override point any more. A type that needs a
+   * different formula overrides `materialCost`; one that reaches in here
+   * would be free to reinterpret a basis, which is exactly the drift this
+   * shape exists to prevent.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
-    const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
-    const height = this.applyHeightMinimum(item.height_cm);
-    const total =
-      this.materialCost(width, height, item.material_price_per_sqm) +
-      this.cassetteCost(width, item.cassette_price_per_m) +
-      this.bottomRailCost(width, item.bottom_rail_price_per_m) +
-      this.controlCost(item.panels.length, item.control_price_per_item) +
-      this.installationCost(item.installation_price_per_item);
-    return Math.round(total * 100) / 100;
+    const widthCm = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
+    const heightCm = this.applyHeightMinimum(item.height_cm);
+    const ctx = { widthCm, heightCm, panelCount: item.panels.length };
+    const hardware = Object.values(item.hardware).reduce(
+      (sum, charge) => sum + (charge ? this.hardwareCost(charge, ctx) : 0),
+      0
+    );
+    return Math.round((this.materialCost(item, widthCm, heightCm) + hardware) * 100) / 100;
   }
 }

@@ -20,11 +20,11 @@ export default function CassetteOptions() {
       <CatalogEditor
         config={{
           path: 'cassette-options',
-          priceKey: 'price_per_m',
-          priceLabel: 'per m',
+          priceKey: 'price',
+          basis: true,
           noun: 'cassette option',
           scoped: true,
-          note: 'A cassette is offered only for the blind types picked here. Leave a type off every cassette and the Cassette dropdown disappears for it.',
+          note: 'A cassette is offered only for the blind types picked here. Leave a type off every cassette and the Cassette dropdown disappears for it. Each option also chooses how its price is charged — per m, per m², per unit or per panel.',
         }}
       />
     </div>

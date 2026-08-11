@@ -64,7 +64,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
-import type { CatalogResolver, CatalogSlot } from '../lib/blindTypes/base';
+import type {
+  CatalogResolver,
+  CatalogSlot,
+  HardwareCharge,
+  PriceBasis,
+} from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
@@ -369,13 +374,42 @@ async function resolveLineItems(
     );
   }
 
+  /**
+   * Fetches id → {name, price, basis} for one HARDWARE catalog.
+   *
+   * All four share the same two column names since migration 36, which is
+   * what lets one helper serve them where there used to be four calls
+   * differing only in a price column. The basis comes from the row and is
+   * never client-supplied — it decides what the rate MEANS, so a client
+   * that could pick it could pick the price.
+   */
+  async function hardwareLookup(table: string, idSet: Set<string>) {
+    const empty = new Map<string, { name: string; price: number; basis: PriceBasis }>();
+    if (idSet.size === 0) return empty;
+    const { data, error } = await sb
+      .from(table)
+      .select('id, name, price, price_basis')
+      .in('id', [...idSet]);
+    if (error) throw new Error(error.message);
+    return new Map(
+      (data as unknown as Record<string, unknown>[]).map((r) => [
+        String(r.id),
+        {
+          name: String(r.name),
+          price: Number(r.price),
+          basis: String(r.price_basis) as PriceBasis,
+        },
+      ])
+    );
+  }
+
   const [materials, cassettes, bottomRails, controls, installations, presets, scoping] =
     await Promise.all([
       lookup('materials', ids.materials, 'price_per_sqm'),
-      lookup('cassette_options', ids.cassette_options, 'price_per_m'),
-      lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
-      lookup('control_options', ids.control_options, 'price_per_item'),
-      lookup('installation_options', ids.installation_options, 'price_per_item'),
+      hardwareLookup('cassette_options', ids.cassette_options),
+      hardwareLookup('bottom_rail_options', ids.bottom_rail_options),
+      hardwareLookup('control_options', ids.control_options),
+      hardwareLookup('installation_options', ids.installation_options),
       lookup('preset_line_items', presetIds, 'unit_price'),
       // Which hardware slots each blind type uses. Data, not code — see
       // `lib/optionScoping.ts` and migration 35.
@@ -443,15 +477,19 @@ async function resolveLineItems(
         cassette_id: null,
         cassette_name: null,
         cassette_price_per_m: null,
+        cassette_price_basis: null,
         bottom_rail_id: null,
         bottom_rail_name: null,
         bottom_rail_price_per_m: null,
+        bottom_rail_price_basis: null,
         control_id: null,
         control_name: null,
         control_price_per_item: null,
+        control_price_basis: null,
         installation_id: null,
         installation_name: null,
         installation_price_per_item: null,
+        installation_price_basis: null,
         title: it.title,
         preset_id: it.item_type === 'preset' ? it.preset_id : null,
         description: it.description,
@@ -547,16 +585,25 @@ async function resolveLineItems(
       resolveRef
     );
 
+    // The charges this blind actually carries, each with the basis its
+    // own catalog row declares. A slot with no chosen option is ABSENT
+    // rather than zeroed — there is no charge to make, and a 0 entry
+    // would claim there was one at no cost.
+    const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
+    if (cassette) hardware.cassette = { price: cassette.price, basis: cassette.basis };
+    if (bottomRail) hardware.bottom_rail = { price: bottomRail.price, basis: bottomRail.basis };
+    if (control) hardware.control = { price: control.price, basis: control.basis };
+    if (installation) {
+      hardware.installation = { price: installation.price, basis: installation.basis };
+    }
+
     // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
     const base = calculateBlindUnitPriceForType(it.blinds_type, {
       panels: it.panels,
       height_cm: it.height_cm,
       material_price_per_sqm: material.price,
-      cassette_price_per_m: cassette?.price ?? 0,
-      bottom_rail_price_per_m: bottomRail?.price ?? 0,
-      control_price_per_item: control?.price ?? 0,
-      installation_price_per_item: installation?.price ?? 0,
+      hardware,
       attributes,
     });
     const adjusted = applyPriceAdjustments({
@@ -575,18 +622,26 @@ async function resolveLineItems(
       material_id: it.material_id,
       material_name: material.name,
       material_price_per_sqm: material.price,
+      // The rate columns keep their original names (migration 36 left
+      // them alone: nothing reads them, and renaming would rewrite the
+      // audit trail). The basis beside each is what makes the rate
+      // readable — "$12" alone says nothing about what was charged.
       cassette_id: it.cassette_id,
       cassette_name: cassette?.name ?? null,
       cassette_price_per_m: cassette?.price ?? null,
+      cassette_price_basis: cassette?.basis ?? null,
       bottom_rail_id: it.bottom_rail_id,
       bottom_rail_name: bottomRail?.name ?? null,
       bottom_rail_price_per_m: bottomRail?.price ?? null,
+      bottom_rail_price_basis: bottomRail?.basis ?? null,
       control_id: it.control_id,
       control_name: control?.name ?? null,
       control_price_per_item: control?.price ?? null,
+      control_price_basis: control?.basis ?? null,
       installation_id: it.installation_id,
       installation_name: installation?.name ?? null,
       installation_price_per_item: installation?.price ?? null,
+      installation_price_basis: installation?.basis ?? null,
       title: '',
       preset_id: null,
       description: '',

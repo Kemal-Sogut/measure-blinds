@@ -39,7 +39,7 @@ import {
   type CatalogPath,
   type CatalogRow,
 } from '../hooks/useSettings';
-import type { BlindType } from '../types';
+import type { BlindType, PriceBasis } from '../types';
 
 /** Per-entity configuration provided by each settings page. */
 export interface CatalogEditorConfig {
@@ -79,6 +79,29 @@ export interface CatalogEditorConfig {
    * guessable from the controls.
    */
   scoped?: boolean;
+  /**
+   * Whether each row chooses how its price is charged (`price_basis`).
+   * Set for the four hardware catalogs; absent for pleat types (a ratio,
+   * not money) and presets (a flat line price).
+   *
+   * When set, `priceLabel` is IGNORED for the row readout — the unit comes
+   * from the row's own basis, because a page-wide label would contradict
+   * any row that is not on the catalog's original basis.
+   */
+  basis?: boolean;
+}
+
+/** The four bases, with the label each renders as. */
+const BASIS_OPTIONS: { value: PriceBasis; label: string }[] = [
+  { value: 'per_m', label: 'per m' },
+  { value: 'per_sqm', label: 'per m²' },
+  { value: 'per_unit', label: 'per unit' },
+  { value: 'per_panel', label: 'per panel' },
+];
+
+/** Renders one basis as its unit label; falls back to the raw value. */
+function basisLabel(value: unknown): string {
+  return BASIS_OPTIONS.find((b) => b.value === value)?.label ?? String(value ?? '');
 }
 
 /** Catalog row with the dynamic price column and optional description. */
@@ -91,9 +114,47 @@ interface Draft {
   description: string;
   /** Blind types this option is offered for; only used when `scoped`. */
   blindTypeIds: string[];
+  /** How the price is charged; only used when `basis`. */
+  priceBasis: PriceBasis;
 }
 
-const EMPTY_DRAFT: Draft = { name: '', price: '', description: '', blindTypeIds: [] };
+/**
+ * `per_m` is the seed default only because it is the commonest of the
+ * four in this shop's catalog. Nothing depends on it — every existing row
+ * carries the basis migration 36 backfilled, and this value is only ever
+ * the starting position of the dropdown on a brand-new option.
+ */
+const EMPTY_DRAFT: Draft = {
+  name: '',
+  price: '',
+  description: '',
+  blindTypeIds: [],
+  priceBasis: 'per_m',
+};
+
+/** Dropdown choosing how a hardware option's price is charged. */
+function BasisSelect({
+  value,
+  onChange,
+}: {
+  value: PriceBasis;
+  onChange: (next: PriceBasis) => void;
+}) {
+  return (
+    <select
+      aria-label="Price basis"
+      value={value}
+      onChange={(e) => onChange(e.target.value as PriceBasis)}
+      className="h-11 min-w-0 rounded-md border border-border-input bg-surface px-2 text-base"
+    >
+      {BASIS_OPTIONS.map((b) => (
+        <option key={b.value} value={b.value}>
+          {b.label}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 /**
  * Toggle-chip picker for an option's blind types.
@@ -206,6 +267,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
         ...(hasPrice ? { [config.priceKey as string]: price } : {}),
         ...(config.hasDescription ? { description: draft.description.trim() } : {}),
         ...(config.scoped ? { blind_type_ids: draft.blindTypeIds } : {}),
+        ...(config.basis ? { price_basis: draft.priceBasis } : {}),
       } as Partial<Row>,
       {
         onSuccess: () => setDraft(EMPTY_DRAFT),
@@ -222,6 +284,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
       price: hasPrice ? String(row[config.priceKey as string] ?? '') : '',
       description: String(row.description ?? ''),
       blindTypeIds: idsOf(row),
+      priceBasis: (row.price_basis as PriceBasis) ?? 'per_m',
     });
   }
 
@@ -241,6 +304,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
           ...(hasPrice ? { [config.priceKey as string]: price } : {}),
           ...(config.hasDescription ? { description: editDraft.description.trim() } : {}),
           ...(config.scoped ? { blind_type_ids: editDraft.blindTypeIds } : {}),
+          ...(config.basis ? { price_basis: editDraft.priceBasis } : {}),
         } as Partial<Row>,
       },
       {
@@ -291,11 +355,17 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
           <div className="flex gap-2">
             {hasPrice && (
               <input
-                placeholder={config.priceLabel}
+                placeholder={config.priceLabel ?? 'Price'}
                 inputMode="decimal"
                 value={draft.price}
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                 className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
+              />
+            )}
+            {config.basis && (
+              <BasisSelect
+                value={draft.priceBasis}
+                onChange={(priceBasis) => setDraft({ ...draft, priceBasis })}
               />
             )}
             <button
@@ -352,6 +422,12 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                       className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
                     />
                   )}
+                  {config.basis && (
+                    <BasisSelect
+                      value={editDraft.priceBasis}
+                      onChange={(priceBasis) => setEditDraft({ ...editDraft, priceBasis })}
+                    />
+                  )}
                   <button
                     onClick={() => handleSaveEdit(row.id)}
                     className={`h-11 rounded-md shadow-sm bg-brand-600 px-4 font-semibold text-white hover:bg-brand-700 ${
@@ -382,7 +458,9 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                       {config.priceUnit === 'plain'
                         ? `${Number(row[config.priceKey as string]).toFixed(2)}×`
                         : `$${Number(row[config.priceKey as string]).toFixed(2)}`}{' '}
-                      <span className="text-text-muted">{config.priceLabel}</span>
+                      <span className="text-text-muted">
+                        {config.basis ? basisLabel(row.price_basis) : config.priceLabel}
+                      </span>
                     </span>
                   )}
                   {config.scoped && (

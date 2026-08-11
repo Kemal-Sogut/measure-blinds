@@ -102,15 +102,15 @@ const ENV = {
 };
 
 const MATERIAL = { id: '11111111-1111-4111-8111-111111111111', name: 'Blackout White', price_per_sqm: 55 };
-const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price_per_m: 20, active: true };
-const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price_per_item: 0, active: true };
+const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price: 20, price_basis: 'per_m', active: true };
+const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price: 0, price_basis: 'per_panel', active: true };
 // Priced at 0, mirroring the production seed, so every pre-existing money
 // assertion in this file still holds. The priced case is exercised below.
-const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price_per_m: 0, active: true };
+const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price: 0, price_basis: 'per_m', active: true };
 // Curtains catalogs. Both carry non-identity values so a test that
 // accidentally priced with the fallbacks would show a different number.
 const PLEAT = { id: '66666666-6666-4666-8666-666666666666', name: 'Pinch', multiplier: 2.5 };
-const INSTALL = { id: '77777777-7777-4777-8777-777777777777', name: 'Rod', price_per_item: 45, active: true };
+const INSTALL = { id: '77777777-7777-4777-8777-777777777777', name: 'Rod', price: 45, price_basis: 'per_unit', active: true };
 
 /** The two blind types the fixtures below are scoped to. */
 const TYPE_ROLLER = { id: '88888888-8888-4888-8888-888888888881', name: 'Roller' };
@@ -347,7 +347,7 @@ describe('POST /api/orders', () => {
   it('adds the bottom rail to the unit price at its catalog rate', async () => {
     // 140cm of width at $15/m = $21 per blind, ×2 blinds = $42 over the
     // 389 baseline asserted above.
-    db.responses['bottom_rail_options.select'] = [{ ...BOTTOM_RAIL, price_per_m: 15 }];
+    db.responses['bottom_rail_options.select'] = [{ ...BOTTOM_RAIL, price: 15 }];
     db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
     const res = await ordersApp.request('/', {
       method: 'POST',

@@ -20,6 +20,7 @@ import {
   calculateBlindLineTotal,
   type BlindInputs,
 } from './pricing';
+import type { PriceBasis } from './blindTypes/base';
 import { getBlindType } from './blindTypes';
 
 /** Builds a baseline blind input; individual tests override single fields. */
@@ -28,10 +29,7 @@ function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
     panels: [140],
     height_cm: 200,
     material_price_per_sqm: 50,
-    cassette_price_per_m: 0,
-    bottom_rail_price_per_m: 0,
-    control_price_per_item: 0,
-    installation_price_per_item: 0,
+    hardware: {},
     attributes: {},
     quantity: 1,
     ...overrides,
@@ -74,26 +72,28 @@ describe('calculateBlindUnitPrice', () => {
 
   it('sums panel widths before pricing', () => {
     // Two 70cm panels ≡ one 140cm width for material/cassette purposes
-    const twoPanel = blind({ panels: [70, 70], control_price_per_item: 0 });
+    const twoPanel = blind({ panels: [70, 70] });
     expect(calculateBlindUnitPrice(twoPanel)).toBe(140);
   });
 
   it('charges controls per panel, not per blind', () => {
     const price = calculateBlindUnitPrice(
-      blind({ panels: [70, 70], control_price_per_item: 10 })
+      blind({ panels: [70, 70], hardware: { control: { price: 10, basis: 'per_panel' } } })
     );
     expect(price).toBe(140 + 2 * 10);
   });
 
   it('charges cassette per linear meter of width', () => {
-    const price = calculateBlindUnitPrice(blind({ cassette_price_per_m: 20 }));
+    const price = calculateBlindUnitPrice(
+      blind({ hardware: { cassette: { price: 20, basis: 'per_m' } } })
+    );
     expect(price).toBe(140 + (140 / 100) * 20); // 140 + 28
   });
 
   it('applies the width minimum to material and cassette cost', () => {
     // 60cm wide → priced as 100cm: material 100×200×50/10000 = 100, cassette 1m×20 = 20
     const price = calculateBlindUnitPrice(
-      blind({ panels: [60], cassette_price_per_m: 20 })
+      blind({ panels: [60], hardware: { cassette: { price: 20, basis: 'per_m' } } })
     );
     expect(price).toBe(100 + 20);
   });
@@ -122,7 +122,13 @@ describe('calculateBlindUnitPriceForType (type dispatch)', () => {
   });
 
   it('prices identically to the default for every type that inherits it', () => {
-    const base = blind({ panels: [70, 70], cassette_price_per_m: 20, control_price_per_item: 10 });
+    const base = blind({
+      panels: [70, 70],
+      hardware: {
+        cassette: { price: 20, basis: 'per_m' },
+        control: { price: 10, basis: 'per_panel' },
+      },
+    });
     const expected = calculateBlindUnitPrice(base);
     // Curtains is excluded on purpose — it is the one type that has
     // diverged. Adding a type here that has its own formula would make
@@ -133,11 +139,18 @@ describe('calculateBlindUnitPriceForType (type dispatch)', () => {
   });
 
   it('Curtains does NOT price like the default', () => {
-    const base = blind({ panels: [70, 70], cassette_price_per_m: 20, control_price_per_item: 10 });
+    const base = blind({
+      panels: [70, 70],
+      hardware: {
+        cassette: { price: 20, basis: 'per_m' },
+        control: { price: 10, basis: 'per_panel' },
+      },
+    });
     // Fabric by the metre with no pleat chosen: 1.4 × 1 × 50 = 70, plus
     // 2 panels × 0.5 m × $50 hem allowance = 50, plus 2 panels × $10
-    // control = 140 — and no cassette charge at all.
-    expect(calculateBlindUnitPriceForType('Curtains', base)).toBe(140);
+    // control = 20, plus 1.4 m × $20 cassette = 28 → 168. The default
+    // prices the same inputs at 188 (its material leg is the m² area).
+    expect(calculateBlindUnitPriceForType('Curtains', base)).toBe(168);
     expect(calculateBlindUnitPriceForType('Curtains', base)).not.toBe(
       calculateBlindUnitPrice(base)
     );
@@ -160,15 +173,23 @@ describe('calculateBlindLineTotal', () => {
 describe('bottomRailCost', () => {
   it('charges the bottom rail per metre of the minimised width, like the cassette', () => {
     // 140cm wide → 1.4m. A $15/m rail adds $21 on top of the $140 material.
-    expect(calculateBlindUnitPrice(blind({ bottom_rail_price_per_m: 15 }))).toBe(161);
+    expect(
+      calculateBlindUnitPrice(blind({ hardware: { bottom_rail: { price: 15, basis: 'per_m' } } }))
+    ).toBe(161);
     // The width MINIMUM applies first: 60cm is charged as 100cm = 1m.
     expect(
       calculateBlindUnitPrice(
-        blind({ panels: [60], material_price_per_sqm: 0, bottom_rail_price_per_m: 15 })
+        blind({
+          panels: [60],
+          material_price_per_sqm: 0,
+          hardware: { bottom_rail: { price: 15, basis: 'per_m' } },
+        })
       )
     ).toBe(15);
     // A zero-priced rail (the seeded default) must not move the price.
-    expect(calculateBlindUnitPrice(blind({ bottom_rail_price_per_m: 0 }))).toBe(140);
+    expect(
+      calculateBlindUnitPrice(blind({ hardware: { bottom_rail: { price: 0, basis: 'per_m' } } }))
+    ).toBe(140);
   });
 });
 
@@ -178,18 +199,27 @@ describe('installationCost', () => {
     // metre of width like the cassette and the rail.
     expect(
       calculateBlindUnitPrice(
-        blind({ material_price_per_sqm: 0, installation_price_per_item: 45 })
+        blind({
+          material_price_per_sqm: 0,
+          hardware: { installation: { price: 45, basis: 'per_unit' } },
+        })
       )
     ).toBe(45);
     expect(
       calculateBlindUnitPrice(
-        blind({ panels: [70, 70], material_price_per_sqm: 0, installation_price_per_item: 45 })
+        blind({
+          panels: [70, 70],
+          material_price_per_sqm: 0,
+          hardware: { installation: { price: 45, basis: 'per_unit' } },
+        })
       )
     ).toBe(45);
   });
 
   it('leaves the price untouched at 0 — every non-installed blind', () => {
-    expect(calculateBlindUnitPrice(blind({ installation_price_per_item: 0 }))).toBe(140);
+    expect(
+      calculateBlindUnitPrice(blind({ hardware: { installation: { price: 0, basis: 'per_unit' } } }))
+    ).toBe(140);
   });
 });
 
@@ -211,10 +241,7 @@ describe('Curtains', () => {
       panels: [300],
       height_cm: 200,
       material_price_per_sqm: 40,
-      cassette_price_per_m: 0,
-      bottom_rail_price_per_m: 0,
-      control_price_per_item: 0,
-      installation_price_per_item: 0,
+      hardware: {},
       attributes,
       quantity: 1,
     };
@@ -241,7 +268,7 @@ describe('Curtains', () => {
     expect(
       calculateBlindUnitPriceForType('Curtains', {
         ...curtain({ pleat_multiplier: 2 }),
-        installation_price_per_item: 45,
+        hardware: { installation: { price: 45, basis: 'per_unit' } },
       })
     ).toBe(305);
   });
@@ -255,7 +282,7 @@ describe('Curtains', () => {
       calculateBlindUnitPriceForType('Curtains', {
         ...curtain({ pleat_multiplier: 2.5 }),
         panels: [150, 150],
-        control_price_per_item: 30,
+        hardware: { control: { price: 30, basis: 'per_panel' } },
       })
     ).toBe(400);
   });
@@ -282,14 +309,23 @@ describe('Curtains', () => {
     expect(full).toBe(260);
   });
 
-  it('charges nothing for a cassette or bottom rail even when priced', () => {
+  it('charges a cassette or bottom rail if one is ever scoped to it', () => {
+    // Curtains used to IGNORE these outright. It no longer does: it
+    // overrides the fabric leg only, and the base sums whatever hardware
+    // the blind carries. In practice none is scoped to Curtains, so this
+    // is unreachable from the UI — but a silent zero would be a quote the
+    // shop could not explain.
+    // fabric 3.0 × 2 × 40 = 240, + 20 hem = 260, + 3.0 m × $99 cassette
+    // = 297, + 3.0 m × $99 rail = 297.
     expect(
       calculateBlindUnitPriceForType('Curtains', {
         ...curtain({ pleat_multiplier: 2 }),
-        cassette_price_per_m: 99,
-        bottom_rail_price_per_m: 99,
+        hardware: {
+          cassette: { price: 99, basis: 'per_m' as const },
+          bottom_rail: { price: 99, basis: 'per_m' as const },
+        },
       })
-    ).toBe(260);
+    ).toBe(854);
   });
 
   it('treats a legacy {} row as flat fabric with no installation', () => {
@@ -308,5 +344,110 @@ describe('Curtains', () => {
         panels: [60],
       })
     ).toBe(120);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Price basis matrix                                                  */
+/* ------------------------------------------------------------------ */
+
+describe('hardware price basis', () => {
+  /**
+   * One blind, no material charge, one hardware slot at $10 — so the unit
+   * price IS the hardware leg and each basis is read directly.
+   *
+   * Dimensions chosen to make the four answers distinct: 200cm across two
+   * panels, 300cm drop. Both are at or above the minimums, so nothing is
+   * rounded up underneath the assertion.
+   *
+   * This block is the contract for what a basis MEANS. It is mirrored
+   * verbatim in the twin suite; if the two ever disagree, one of them is
+   * quoting a price the other would not.
+   */
+  function charged(basis: PriceBasis, price = 10): number {
+    return calculateBlindUnitPrice({
+      panels: [100, 100],
+      height_cm: 300,
+      material_price_per_sqm: 0,
+      hardware: { cassette: { price, basis } },
+      attributes: {},
+      quantity: 1,
+    });
+  }
+
+  it('per_m charges by the linear metre of width', () => {
+    // 200cm = 2.0 m × $10
+    expect(charged('per_m')).toBe(20);
+  });
+
+  it('per_sqm charges by the square metre of width × height', () => {
+    // 200 × 300 / 10000 = 6.0 m² × $10
+    expect(charged('per_sqm')).toBe(60);
+  });
+
+  it('per_panel charges once for each panel', () => {
+    // 2 panels × $10
+    expect(charged('per_panel')).toBe(20);
+  });
+
+  it('per_unit charges once for the blind, whatever its size', () => {
+    expect(charged('per_unit')).toBe(10);
+  });
+
+  it('charges every slot on its OWN basis in one blind', () => {
+    // A blind whose four slots disagree about how they are charged is the
+    // whole point of migration 36, and the case a per-slot hardcoded
+    // basis could not express.
+    const price = calculateBlindUnitPrice({
+      panels: [100, 100],
+      height_cm: 300,
+      material_price_per_sqm: 0,
+      hardware: {
+        cassette: { price: 10, basis: 'per_m' },        // 2.0 m  → 20
+        bottom_rail: { price: 10, basis: 'per_sqm' },   // 6.0 m² → 60
+        control: { price: 10, basis: 'per_panel' },     // 2      → 20
+        installation: { price: 10, basis: 'per_unit' }, // once   → 10
+      },
+      attributes: {},
+      quantity: 1,
+    });
+    expect(price).toBe(110);
+  });
+
+  it('charges the basis legs on the MINIMISED dimensions', () => {
+    // 60cm wide, 80cm drop → charged as 100cm × 100cm, the same figures
+    // the material leg uses. A hardware leg on the raw measurement would
+    // price two lines of one quote off different dimensions.
+    const perM = calculateBlindUnitPrice({
+      panels: [60],
+      height_cm: 80,
+      material_price_per_sqm: 0,
+      hardware: { cassette: { price: 10, basis: 'per_m' } },
+      attributes: {},
+      quantity: 1,
+    });
+    const perSqm = calculateBlindUnitPrice({
+      panels: [60],
+      height_cm: 80,
+      material_price_per_sqm: 0,
+      hardware: { cassette: { price: 10, basis: 'per_sqm' } },
+      attributes: {},
+      quantity: 1,
+    });
+    expect(perM).toBe(10); // 1.0 m
+    expect(perSqm).toBe(10); // 1.0 m²
+  });
+
+  it('charges nothing for a slot the blind does not carry', () => {
+    expect(
+      calculateBlindUnitPrice({
+        panels: [100, 100],
+        height_cm: 300,
+        material_price_per_sqm: 0,
+        hardware: {},
+        attributes: {},
+        quantity: 1,
+      })
+    ).toBe(0);
   });
 });

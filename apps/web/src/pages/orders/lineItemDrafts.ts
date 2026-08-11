@@ -25,7 +25,12 @@
 import { calculateBlindUnitPriceForType } from '../../lib/pricing';
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { getBlindType } from '../../lib/blindTypes';
-import type { BlindAttributes, CatalogResolver, CatalogSlot } from '../../lib/blindTypes/base';
+import type {
+  BlindAttributes,
+  CatalogResolver,
+  CatalogSlot,
+  HardwareCharge,
+} from '../../lib/blindTypes/base';
 import type {
   Material,
   CassetteOption,
@@ -276,16 +281,16 @@ export function parseDraftAttributes(draft: BlindDraft): BlindAttributes | null 
  * This is the ONLY place the web maps a catalog table name to a list. It
  * lives here rather than in a blind-type module because the modules are
  * api/web twins and must not know how either side stores its catalogs.
+ *
+ * Pleat types are the only entry: they are the last catalog still
+ * referenced from `attributes`. Installation used to be here too, until
+ * migration 35 promoted it to a real hardware slot resolved from a column.
  */
 function catalogResolver(catalogs: Catalogs): CatalogResolver {
   return (table, id) => {
     if (table === 'pleat_types') {
       const hit = catalogs.pleatTypes.find((p) => p.id === id);
       return hit ? { name: hit.name, value: Number(hit.multiplier) } : undefined;
-    }
-    if (table === 'installation_options') {
-      const hit = catalogs.installationOptions.find((o) => o.id === id);
-      return hit ? { name: hit.name, value: Number(hit.price_per_item) } : undefined;
     }
     return undefined;
   };
@@ -365,6 +370,28 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
   const attributes = parseDraftAttributes(draft);
   if (attributes === null) return null;
 
+  // The charges this blind carries, each on the basis its own catalog row
+  // declares. A slot with no chosen option is ABSENT rather than zeroed —
+  // exactly as the Worker builds it, so the preview and the save agree.
+  //
+  // Gated on `uses` as well as on the id, because a draft keeps whatever
+  // id the PREVIOUS blind type left behind. The Worker rejects an id for a
+  // slot the type does not use, so a preview that charged one would quote
+  // a price the save refuses.
+  const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
+  if (uses.has('cassette') && cassette) {
+    hardware.cassette = { price: Number(cassette.price), basis: cassette.price_basis };
+  }
+  if (uses.has('bottom_rail') && bottomRail) {
+    hardware.bottom_rail = { price: Number(bottomRail.price), basis: bottomRail.price_basis };
+  }
+  if (uses.has('control') && control) {
+    hardware.control = { price: Number(control.price), basis: control.price_basis };
+  }
+  if (uses.has('installation') && installation) {
+    hardware.installation = { price: Number(installation.price), basis: installation.price_basis };
+  }
+
   // Mirrors the Worker: ids in, snapshot name/value out. A chosen row
   // that is not in the cache throws, which here means "not ready yet".
   let resolved: BlindAttributes;
@@ -379,10 +406,7 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
     panels: panels as number[],
     height_cm: height,
     material_price_per_sqm: Number(material.price_per_sqm),
-    cassette_price_per_m: Number(cassette?.price_per_m ?? 0),
-    bottom_rail_price_per_m: Number(bottomRail?.price_per_m ?? 0),
-    control_price_per_item: Number(control?.price_per_item ?? 0),
-    installation_price_per_item: Number(installation?.price_per_item ?? 0),
+    hardware,
     quantity: qty,
     attributes: resolved,
   });

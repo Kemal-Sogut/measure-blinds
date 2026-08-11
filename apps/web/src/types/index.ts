@@ -270,13 +270,22 @@ export interface LineItem {
   material_price_per_sqm: number | null;
   cassette_id: string | null;
   cassette_name: string | null;
+  /**
+   * The rate charged, and the basis it was charged on. The column names
+   * predate migration 36 and are deliberately unchanged — nothing reads
+   * them, they are an audit trail, and renaming would rewrite history.
+   * The basis is what makes the rate readable: "$12" alone says nothing.
+   */
   cassette_price_per_m: number | null;
+  cassette_price_basis: PriceBasis | null;
   bottom_rail_id: string | null;
   bottom_rail_name: string | null;
   bottom_rail_price_per_m: number | null;
+  bottom_rail_price_basis: PriceBasis | null;
   control_id: string | null;
   control_name: string | null;
   control_price_per_item: number | null;
+  control_price_basis: PriceBasis | null;
   /**
    * Rod/track slot, promoted out of `attributes` by migration 35. Null on
    * flat items and on any blind whose type has no installation option
@@ -286,6 +295,7 @@ export interface LineItem {
   installation_id: string | null;
   installation_name: string | null;
   installation_price_per_item: number | null;
+  installation_price_basis: PriceBasis | null;
   description: string;
   note: string;
   /** Free-text colour label (display-only; no pricing effect). */
@@ -372,11 +382,34 @@ interface BlindTypeScoped {
   blind_type_ids: string[];
 }
 
-/** Cassette option from settings — price per linear meter (width). */
-export interface CassetteOption extends BlindTypeScoped {
+/**
+ * How a hardware option's price is charged. Mirrors the `PriceBasis`
+ * union the pricing modules switch on and the `price_basis` check
+ * constraint on all four catalogs — the three must list the same members
+ * or a row could be saved that the formula cannot price.
+ */
+export type PriceBasis = 'per_m' | 'per_sqm' | 'per_unit' | 'per_panel';
+
+/**
+ * The shape shared by all four hardware catalogs since migration 36: one
+ * rate plus the basis it is charged on, and the blind types it is offered
+ * for.
+ *
+ * Before that the basis was implied by the column name — `price_per_m` on
+ * a cassette, `price_per_item` on a control — and could not vary per row.
+ * The shop buys some parts by the metre, some by the square metre, some
+ * outright, so it is chosen next to the price in Settings now.
+ */
+interface HardwarePriced extends BlindTypeScoped {
+  /** The rate. What it BUYS is decided by `price_basis`, never by a name. */
+  price: number;
+  price_basis: PriceBasis;
+}
+
+/** Cassette option from settings — charged on its own . */
+export interface CassetteOption extends HardwarePriced {
   id: string;
   name: string;
-  price_per_m: number;
   active: boolean;
   sort_order: number;
 }
@@ -386,19 +419,17 @@ export interface CassetteOption extends BlindTypeScoped {
  * blind, priced per linear meter of width on the same basis as the
  * cassette. Shipped options are Regular and Pear.
  */
-export interface BottomRailOption extends BlindTypeScoped {
+export interface BottomRailOption extends HardwarePriced {
   id: string;
   name: string;
-  price_per_m: number;
   active: boolean;
   sort_order: number;
 }
 
 /** Control mechanism option from settings — flat price per panel. */
-export interface ControlOption extends BlindTypeScoped {
+export interface ControlOption extends HardwarePriced {
   id: string;
   name: string;
-  price_per_item: number;
   active: boolean;
   sort_order: number;
 }
@@ -429,10 +460,9 @@ export interface PleatType {
  * shared hardware slot and seeded links to Curtains alone, so scoping it
  * to another blind type in Settings is all it takes to offer it there.
  */
-export interface InstallationOption extends BlindTypeScoped {
+export interface InstallationOption extends HardwarePriced {
   id: string;
   name: string;
-  price_per_item: number;
   active: boolean;
   sort_order: number;
 }

@@ -176,19 +176,19 @@ describe('optionsForType / slotsForType', () => {
         },
       ],
       cassettes: [
-        { id: 'c1', name: 'Standard', price_per_m: 20, active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
-        { id: 'cas-off', name: 'Retired', price_per_m: 5, active: false, sort_order: 1, blind_type_ids: [ROLLER.id] },
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+        { id: 'cas-off', name: 'Retired', price: 5, price_basis: 'per_m', active: false, sort_order: 1, blind_type_ids: [ROLLER.id] },
       ],
       bottomRails: [
-        { id: 'b1', name: 'Regular', price_per_m: 0, active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+        { id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
       ],
       controls: [
-        { id: 'ct1', name: 'Chain', price_per_item: 0, active: true, sort_order: 0, blind_type_ids: [ROLLER.id, CURTAINS.id] },
+        { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id, CURTAINS.id] },
       ],
       pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
       installationOptions: [
-        { id: 'ins-1', name: 'Rod', price_per_item: 45, active: true, sort_order: 0, blind_type_ids: [CURTAINS.id] },
-        { id: 'ins-free', name: 'None', price_per_item: 0, active: true, sort_order: 1, blind_type_ids: [CURTAINS.id] },
+        { id: 'ins-1', name: 'Rod', price: 45, price_basis: 'per_unit', active: true, sort_order: 0, blind_type_ids: [CURTAINS.id] },
+        { id: 'ins-free', name: 'None', price: 0, price_basis: 'per_unit', active: true, sort_order: 1, blind_type_ids: [CURTAINS.id] },
       ],
       ...overrides,
     };

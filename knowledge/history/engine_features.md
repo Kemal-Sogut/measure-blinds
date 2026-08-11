@@ -2350,3 +2350,59 @@ Track = T).
 ### Verified
 api 308/308, web 175/175, both `tsc --noEmit` clean, `oxlint` clean, `vite build` clean.
 Migration 35 applied to the live project and its backfill verified by query.
+
+## 2026-08-11: per-option price basis, and one hardware cost function
+
+**What.** Every cassette, bottom rail, control and installation option chooses how its
+price is charged — per m, per m², per unit or per panel — from a dropdown beside the price
+in Settings. The four hardware cost paths in the pricing engine collapsed into one.
+
+**Why.** The basis was a code constant, one per catalog: a cassette was always per linear
+metre, a control always per panel, an installation option always a flat charge. The shop
+buys some of these by the square metre and some by the unit, and there was no way to say so.
+
+**How.** Migration 36 renames `price_per_m` / `price_per_item` to `price` on all four
+catalogs and adds `price_basis text` with a check constraint, defaulted per catalog to the
+constant it replaces. `line_items` gains a `*_price_basis` sibling for each rate snapshot.
+In the pricing twins, `PriceBasis` + `HardwareCharge` are new, `BlindPricingInputs` swaps
+its four scalar price fields for one `hardware: Partial<Record<CatalogSlot, HardwareCharge>>`
+map, and `cassetteCost` / `bottomRailCost` / `controlCost` / `installationCost` are replaced
+by a single `hardwareCost(charge, ctx)` switch.
+
+**Every default reproduces the old constant**, so applying migration 36 could not move a
+price — which matters because pricing is recomputed on every save and a mismatched default
+would have silently repriced every order on its next edit.
+
+**`calculateUnitPrice` is no longer an override point.** `materialCost` widened to
+`(item, widthCm, heightCm)` and is now the only leg a blind type may diverge on. Curtains
+overrides that and nothing else; it used to re-implement the entire formula, including its
+own copies of the control and installation maths, which is exactly where a basis change
+would have drifted.
+
+**Behaviour change, deliberate:** Curtains no longer silently ignores a cassette or bottom
+rail. None is scoped to it, so this is unreachable from the UI — but if one ever were
+scoped, it is charged rather than dropped. `pricing.test.ts` pins the new number (854) on
+both sides.
+
+**The bug the refactor surfaced.** `blindDraftPrice` built its hardware map from whatever
+ids the draft held, so a stale id left behind by a previous blind type got charged in the
+preview — a price the Worker would then reject, since it refuses an id for an unused slot.
+The map is now gated on `slotsForType` as well as on the id. Caught by the existing
+"ignores a stale id for a slot the type does not use" test, which only became reachable
+once Curtains stopped ignoring hardware.
+
+**Also:** the settings catalog factory gained a shared `hardwareSchema` (all four are the
+same shape now), which is what lets `resolveLineItems` resolve them through ONE
+`hardwareLookup` instead of four calls differing only in a price column. The `CatalogEditor`
+row readout renders each row's own unit (`$12.00 per m²`) rather than a page-wide
+`priceLabel`, which would contradict any row not on the catalog's original basis.
+
+**Where a basis is interpreted:** exactly one place, `BaseBlindType.hardwareCost`. The
+switch is exhaustive, so adding a fifth basis makes the compiler point at everything that
+needs saying — the Zod enum, the check constraint, the `PriceBasis` unions in both twins
+and in `apps/web/src/types`, and `BASIS_OPTIONS` in the editor.
+
+### Verified
+api 315/315, web 183/183, both `tsc --noEmit` clean, `oxlint` clean, `vite build` clean.
+Migration 36 applied to the live project; renames, defaults and the line-item backfill
+verified by query (0 mismatches).
