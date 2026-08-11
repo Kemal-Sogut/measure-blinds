@@ -1301,3 +1301,75 @@ describe('line item adjustment schemas', () => {
     expect(res.status).toBe(400);
   });
 });
+
+/**
+ * Preset items are priced by the Worker from `preset_line_items`, exactly
+ * like a material — the change that gives an overridden preset something
+ * to reset TO. Rows saved before `preset_id` existed keep the older
+ * client-priced behaviour.
+ */
+describe('preset pricing', () => {
+  const PRESET = { id: '88888888-8888-4888-8888-888888888888', name: 'Installation', unit_price: 75 };
+
+  /** POSTs an order whose line items are exactly `items`. */
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  /** The rows handed to the line_items bulk insert. */
+  function insertedRows() {
+    return (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, unknown>[];
+  }
+
+  beforeEach(() => {
+    db.responses['preset_line_items.select'] = [PRESET];
+  });
+
+  it('prices a preset item from the catalog and ignores any sent price', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 2,
+        unit_price: 5,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(75);
+    expect(insertedRows()[0].line_total).toBe(150);
+    expect(insertedRows()[0].preset_id).toBe(PRESET.id);
+  });
+
+  it('rejects a preset whose catalog row is gone', async () => {
+    db.responses['preset_line_items.select'] = [];
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 1,
+      },
+    ]);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Selected preset item no longer exists.' });
+  });
+
+  it('keeps honouring the sent price for a legacy preset with no preset_id', async () => {
+    const res = await postItems([
+      { item_type: 'preset', title: 'Installation', description: '', quantity: 2, unit_price: 60 },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(60);
+    expect(insertedRows()[0].preset_id).toBeNull();
+  });
+});

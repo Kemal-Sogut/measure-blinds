@@ -315,7 +315,17 @@ async function resolveLineItems(
    * that declares none.
    */
   const refIds = new Map<string, { valueColumn: string; ids: Set<string> }>();
+  /**
+   * Preset items carrying catalog provenance. Collected here so their
+   * prices are fetched in the same batch as every other catalog price —
+   * a preset is no more client-priced than a material is.
+   */
+  const presetIds = new Set<string>();
   for (const it of items) {
+    if (it.item_type === 'preset') {
+      if (it.preset_id) presetIds.add(it.preset_id);
+      continue;
+    }
     if (it.item_type !== 'blind') continue;
     ids.materials.add(it.material_id);
     if (it.cassette_id) ids.cassette_options.add(it.cassette_id);
@@ -349,11 +359,12 @@ async function resolveLineItems(
     );
   }
 
-  const [materials, cassettes, bottomRails, controls] = await Promise.all([
+  const [materials, cassettes, bottomRails, controls, presets] = await Promise.all([
     lookup('materials', ids.materials, 'price_per_sqm'),
     lookup('cassette_options', ids.cassette_options, 'price_per_m'),
     lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
     lookup('control_options', ids.control_options, 'price_per_item'),
+    lookup('preset_line_items', presetIds, 'unit_price'),
   ]);
 
   // One query per referenced catalog table. Empty for every blind type
@@ -377,7 +388,20 @@ async function resolveLineItems(
   // caught by the live E2E run.
   return items.map((it, position) => {
     if (it.item_type !== 'blind') {
-      const unit = Math.round((it.unit_price ?? 0) * 100) / 100;
+      // A preset with provenance is priced by the SERVER from the
+      // catalog; any unit_price the client sent is ignored, exactly as a
+      // material's price is. Only a legacy preset (saved before
+      // preset_id existed) and a custom item fall back to the typed
+      // figure.
+      let base: number;
+      if (it.item_type === 'preset' && it.preset_id) {
+        const preset = presets.get(it.preset_id);
+        if (!preset) throw new Error('Selected preset item no longer exists.');
+        base = preset.price;
+      } else {
+        base = it.unit_price ?? 0;
+      }
+      const unit = Math.round(base * 100) / 100;
       return {
         item_type: it.item_type,
         position,
