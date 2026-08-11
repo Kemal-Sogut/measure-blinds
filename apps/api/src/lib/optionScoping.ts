@@ -107,7 +107,11 @@ export async function loadSlotScoping(
       const cfg = SLOT_TABLES[slot];
       const [optionRes, linkRes] = await Promise.all([
         sb.from(cfg.options).select('id, active'),
-        sb.from(cfg.join).select(`${cfg.fk}, blind_type_id`).in('blind_type_id', typeIds),
+        // `*` rather than the two columns by name: the foreign key is
+        // per-slot, and supabase-js parses the select string at the TYPE
+        // level, so a template literal is not a valid column list there.
+        // These rows are three narrow columns wide.
+        sb.from(cfg.join).select('*').in('blind_type_id', typeIds),
       ]);
       if (optionRes.error) throw new Error(optionRes.error.message);
       if (linkRes.error) throw new Error(linkRes.error.message);
