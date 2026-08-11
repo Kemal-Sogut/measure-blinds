@@ -66,6 +66,20 @@ describe('attribute contract', () => {
       expect(getBlindType(name).describeAttributes({})).toEqual([]);
     }
   });
+
+  it('no type accepts installation_id — it is a column, not an attribute', () => {
+    // Migration 35 promoted installation to a real line-item slot and
+    // stripped the three keys out of every historical blob. A type that
+    // still declared the id would let a client write it back into the
+    // jsonb, where nothing reads it and nothing prices it.
+    for (const name of [...CANONICAL, 'no such type', '']) {
+      expect(() =>
+        getBlindType(name).attributeSchema.parse({
+          installation_id: '77777777-7777-4777-8777-777777777777',
+        })
+      ).toThrow();
+    }
+  });
 });
 
 describe('extension point', () => {
@@ -111,6 +125,7 @@ describe('extension point', () => {
       cassette_price_per_m: 0,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 0,
+      installation_price_per_item: 0,
       attributes: { surcharge: 5 },
     };
     // 100cm × 200cm × $10/m² / 10000 = $20, plus the $5 surcharge.
@@ -145,10 +160,11 @@ describe('generic extension points', () => {
   const resolver = (table: string, id: string) =>
     table === 'widgets' && id === ID ? { name: 'Big Widget', value: 12.5 } : undefined;
 
-  it('defaults to no catalog refs and all three hardware slots', () => {
-    const base = new BaseBlindType();
-    expect(base.catalogRefs).toEqual([]);
-    expect([...base.requiredCatalogs]).toEqual(['cassette', 'bottom_rail', 'control']);
+  it('defaults to no catalog refs', () => {
+    // Hardware slots are NOT declared here any more: migration 35 moved
+    // that decision into the `<catalog>_blind_types` scoping tables, so a
+    // module no longer knows or cares which slots its type uses.
+    expect(new BaseBlindType().catalogRefs).toEqual([]);
   });
 
   it('snapshots the referenced row name and value into the attributes', () => {

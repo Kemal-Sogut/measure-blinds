@@ -19,16 +19,21 @@
  * Materials page relabels the field to match, and an m² price entered
  * there would badly under-quote.
  *
- * Curtains have no cassette and no bottom rail: `requiredCatalogs` drops
- * both, so the Worker stores null for them and rejects an id if one is
- * sent.
+ * Curtains have no cassette and no bottom rail — but that is no longer
+ * declared here. Which hardware slots a type uses is decided by the
+ * `<catalog>_blind_types` scoping tables (migration 35): the shop simply
+ * links no cassette and no rail to Curtains, and the Worker then stores
+ * null for both and rejects an id if one is sent. The installation
+ * charge is likewise a real line-item column now, resolved by the Worker
+ * from the id the client sends, so the pleat multiplier is the only
+ * thing left in the attribute blob.
  *
- * The multiplier and the installation charge are PRICE INPUTS, so the
- * client never sends either. `attributeSchema` declares only the two ids;
- * `catalogRefs` tells the Worker (and the web preview) which table to
- * resolve them against and where to snapshot the result. A client that
- * sends `pleat_multiplier` directly is rejected with a 400, because the
- * schema is strict and does not declare it.
+ * That multiplier is a PRICE INPUT, so the client never sends it.
+ * `attributeSchema` declares only `pleat_type_id`; `catalogRefs` tells
+ * the Worker (and the web preview) which table to resolve it against and
+ * where to snapshot the result. A client that sends `pleat_multiplier`
+ * directly is rejected with a 400, because the schema is strict and does
+ * not declare it.
  *
  * AUTHORITATIVE twin of `apps/web/src/lib/blindTypes/curtains.ts`; the
  * mirrored `pricing.test.ts` suites fail on any drift.
@@ -50,14 +55,17 @@ export class CurtainsBlindType extends BaseBlindType {
   readonly aliases = ['curtain'];
 
   /**
-   * Both ids are OPTIONAL: migration 29 left every historical row at `{}`
-   * and `attributes.test.ts` asserts that still parses. The fallbacks in
-   * `calculateUnitPrice` are the identity values, so an old row re-saves
+   * The id is OPTIONAL: migration 29 left every historical row at `{}`
+   * and `attributes.test.ts` asserts that still parses. The fallback in
+   * `calculateUnitPrice` is the identity value, so an old row re-saves
    * at exactly today's price.
+   *
+   * `installation_id` is deliberately ABSENT: migration 35 promoted it to
+   * a real line-item column and stripped it out of every historical blob,
+   * so a client sending it here is now a 400.
    */
   readonly attributeSchema = BaseBlindType.attrs({
     pleat_type_id: z.string().uuid().optional(),
-    installation_id: z.string().uuid().optional(),
   });
 
   readonly catalogRefs = [
@@ -69,28 +77,17 @@ export class CurtainsBlindType extends BaseBlindType {
       valueKey: 'pleat_multiplier',
       noun: 'pleat type',
     },
-    {
-      attrKey: 'installation_id',
-      table: 'installation_options',
-      valueColumn: 'price_per_item',
-      nameKey: 'installation_name',
-      valueKey: 'installation_price',
-      noun: 'installation option',
-    },
   ] as const;
 
-  readonly requiredCatalogs = ['control'] as const;
-
   /**
-   * Customer-facing lines. Deliberately the snapshot NAMES only — the
-   * multiplier and the installation charge are internal pricing detail
-   * and are never printed on an estimate, invoice or customer page.
+   * Customer-facing lines. Deliberately the snapshot NAME only — the
+   * multiplier is internal pricing detail and is never printed on an
+   * estimate, invoice or customer page. Installation is no longer listed
+   * here: it is a column now, printed from `installation_name` beside the
+   * cassette and the bottom rail on every document.
    */
   describeAttributes(attrs: BlindAttributes): { label: string; value: string }[] {
     const out: { label: string; value: string }[] = [];
-    if (attrs.installation_name) {
-      out.push({ label: 'Installation', value: String(attrs.installation_name) });
-    }
     if (attrs.pleat_name) out.push({ label: 'Pleat', value: String(attrs.pleat_name) });
     return out;
   }
@@ -110,7 +107,7 @@ export class CurtainsBlindType extends BaseBlindType {
   calculateUnitPrice(item: BlindPricingInputs): number {
     const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
     const pleat = numericOr(item.attributes.pleat_multiplier, 1);
-    const install = numericOr(item.attributes.installation_price, 0);
+    const install = this.installationCost(item.installation_price_per_item);
     const total =
       (width / 100) * pleat * item.material_price_per_sqm +
       item.panels.length * HEM_ALLOWANCE_M * item.material_price_per_sqm +
