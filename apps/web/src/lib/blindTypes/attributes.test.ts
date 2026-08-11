@@ -122,10 +122,7 @@ describe('extension point', () => {
       panels: [100],
       height_cm: 200,
       material_price_per_sqm: 10,
-      cassette_price_per_m: 0,
-      bottom_rail_price_per_m: 0,
-      control_price_per_item: 0,
-      installation_price_per_item: 0,
+      hardware: {},
       attributes: { surcharge: 5 },
     };
     // 100cm × 200cm × $10/m² / 10000 = $20, plus the $5 surcharge.
