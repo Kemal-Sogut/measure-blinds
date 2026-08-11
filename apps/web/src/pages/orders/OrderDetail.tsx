@@ -124,6 +124,7 @@ import {
   parseDraftAttributes,
   parseOverride,
   parsePositive,
+  slotsForType,
   type BlindDraft,
   type FlatDraft,
   type ItemDraft,
@@ -247,6 +248,7 @@ function toDrafts(order: Order): ItemDraft[] {
         cassette_id: li.cassette_id ?? '',
         bottom_rail_id: li.bottom_rail_id ?? '',
         control_id: li.control_id ?? '',
+        installation_id: li.installation_id ?? '',
         color: li.color ?? '',
         note: li.note ?? '',
         // The persisted blob is typed; the draft holds strings.
@@ -535,7 +537,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -756,9 +758,13 @@ export default function OrderDetail() {
       height_cm: '',
       material_id: '',
       // Sensible defaults from the catalog (fall back to unset if absent).
+      // No blind type is chosen yet, so nothing is scoped and nothing can
+      // be validated against a slot — the type dropdown clears whichever
+      // of these the chosen type turns out not to use.
       cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
       bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
       control_id: findOptionIdByName(catalogs.controls, 'Chain'),
+      installation_id: '',
       color: '',
       note: '',
       // Empty until a blind type is chosen — the type dropdown seeds this
@@ -866,7 +872,7 @@ export default function OrderDetail() {
 
   // ── Bulk edit (material / cassette / bottom rail / control only) ──
   function openBulkEdit() {
-    setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '' });
+    setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
     setSheet('bulkEdit');
   }
 
@@ -878,13 +884,16 @@ export default function OrderDetail() {
         // A bulk selection can mix blind types, and a hardware slot only
         // applies to the types that use it — pushing a cassette onto a
         // curtain here would make the whole order unsavable.
-        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
+        const uses = slotsForType(catalogs, it.blinds_type);
         if (bulkState.material_id) patch.material_id = bulkState.material_id;
         if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
         if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
           patch.bottom_rail_id = bulkState.bottom_rail_id;
         }
-        if (bulkState.control_id) patch.control_id = bulkState.control_id;
+        if (bulkState.control_id && uses.has('control')) patch.control_id = bulkState.control_id;
+        if (bulkState.installation_id && uses.has('installation')) {
+          patch.installation_id = bulkState.installation_id;
+        }
         return { ...it, ...patch };
       })
     );
@@ -926,15 +935,19 @@ export default function OrderDetail() {
         if (panels.some((p) => p === null) || !panels.length)
           return `Item ${i + 1}: enter every panel width.`;
         if (!height) return `Item ${i + 1}: enter a height.`;
-        // Which hardware a blind needs is the TYPE's call: Curtains has
-        // neither a cassette nor a bottom rail, and demanding them here
+        // Which hardware a blind needs comes from the SCOPING, the same
+        // rule the form renders from and the Worker validates against:
+        // Curtains has no cassette scoped to it, and demanding one here
         // would make a curtain unsavable.
-        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
-        if (!it.material_id || !it.control_id)
-          return `Item ${i + 1}: choose material and control.`;
+        const uses = slotsForType(catalogs, it.blinds_type);
+        if (!it.material_id) return `Item ${i + 1}: choose a material.`;
         if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
         if (uses.has('bottom_rail') && !it.bottom_rail_id)
           return `Item ${i + 1}: choose a bottom rail.`;
+        if (uses.has('control') && !it.control_id)
+          return `Item ${i + 1}: choose a control option.`;
+        if (uses.has('installation') && !it.installation_id)
+          return `Item ${i + 1}: choose an installation option.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
         // Convert once, here. Failing now gives a readable message instead
         // of a 400 from the server's own re-parse.
@@ -954,7 +967,8 @@ export default function OrderDetail() {
           // type does not use, and rejects an id for one it does not.
           cassette_id: it.cassette_id || null,
           bottom_rail_id: it.bottom_rail_id || null,
-          control_id: it.control_id,
+          control_id: it.control_id || null,
+          installation_id: it.installation_id || null,
           color: it.color.trim(),
           note: it.note.trim(),
           attributes,
@@ -3108,7 +3122,7 @@ export default function OrderDetail() {
               </button>
               <button
                 onClick={applyBulkEdit}
-                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id}
+                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
                 className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
               >
                 Apply to selected

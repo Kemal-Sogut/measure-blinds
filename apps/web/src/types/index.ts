@@ -277,6 +277,15 @@ export interface LineItem {
   control_id: string | null;
   control_name: string | null;
   control_price_per_item: number | null;
+  /**
+   * Rod/track slot, promoted out of `attributes` by migration 35. Null on
+   * flat items and on any blind whose type has no installation option
+   * scoped to it. The charge is FIXED per blind, unlike the cassette and
+   * the rail, which are per linear metre of width.
+   */
+  installation_id: string | null;
+  installation_name: string | null;
+  installation_price_per_item: number | null;
   description: string;
   note: string;
   /** Free-text colour label (display-only; no pricing effect). */
@@ -349,8 +358,22 @@ export interface Material {
   blind_type_ids: string[];
 }
 
+/**
+ * Blind-type scoping carried by the four hardware option catalogs.
+ *
+ * EMPTY MEANS NONE — the opposite of `Material.blind_type_ids`, and
+ * deliberately so: it is what lets Settings switch a hardware slot off
+ * for a blind type entirely. The line-item form renders a slot's dropdown
+ * only while at least one ACTIVE option is scoped to the selected type
+ * (`slotsForType`), and the Worker enforces the save on the same rule.
+ */
+interface BlindTypeScoped {
+  /** Blind-type ids this option is offered for; empty = offered nowhere. */
+  blind_type_ids: string[];
+}
+
 /** Cassette option from settings — price per linear meter (width). */
-export interface CassetteOption {
+export interface CassetteOption extends BlindTypeScoped {
   id: string;
   name: string;
   price_per_m: number;
@@ -363,7 +386,7 @@ export interface CassetteOption {
  * blind, priced per linear meter of width on the same basis as the
  * cassette. Shipped options are Regular and Pear.
  */
-export interface BottomRailOption {
+export interface BottomRailOption extends BlindTypeScoped {
   id: string;
   name: string;
   price_per_m: number;
@@ -372,7 +395,7 @@ export interface BottomRailOption {
 }
 
 /** Control mechanism option from settings — flat price per panel. */
-export interface ControlOption {
+export interface ControlOption extends BlindTypeScoped {
   id: string;
   name: string;
   price_per_item: number;
@@ -397,12 +420,16 @@ export interface PleatType {
 }
 
 /**
- * Installation method from settings — rod or track, a Curtains-only
- * catalog. Charged as a FIXED amount per curtain, unlike the cassette and
- * bottom rail, which are charged per linear metre of width. Like the
- * pleat multiplier, the price is resolved server-side from the id.
+ * Installation method from settings — rod or track. Charged as a FIXED
+ * amount per blind, unlike the cassette and bottom rail, which are
+ * charged per linear metre of width. The price is resolved server-side
+ * from the id.
+ *
+ * Curtains-only by DATA, not by rule: migration 35 promoted this to a
+ * shared hardware slot and seeded links to Curtains alone, so scoping it
+ * to another blind type in Settings is all it takes to offer it there.
  */
-export interface InstallationOption {
+export interface InstallationOption extends BlindTypeScoped {
   id: string;
   name: string;
   price_per_item: number;
