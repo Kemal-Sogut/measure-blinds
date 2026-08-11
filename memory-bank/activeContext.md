@@ -1080,3 +1080,38 @@ default deliberately matches no chip.
 there is no id, or the order has already hydrated. Without that guard it raced the
 hydration effect in the same commit — `company` arriving flipped its deps — and clobbered a
 hand-picked expiry date.
+
+## Current Focus — 2026-08-11: blind-type scoping for the option catalogs
+
+Owner spec: pick which blind types each cassette / bottom rail / control / installation
+option shows up for and calculates towards. Branch `feat/option-blind-type-scoping`, cut
+from `main`. Full detail in `engine_features.md` 2026-08-11.
+
+- **Scoping is the source of truth for hardware slots.** `BaseBlindType.requiredCatalogs`
+  is DELETED. A type uses a slot iff ≥1 ACTIVE option is linked to it in the matching
+  `<catalog>_blind_types` table. Do not reintroduce a per-type declaration — the form, the
+  price preview and the Worker all read the one rule, and a second source would let them
+  disagree.
+- **EMPTY MEANS NONE, unlike Materials.** An option with no blind types picked is offered
+  nowhere. `material_blind_types` still means the opposite (no links = every type). Two
+  contradictory conventions live in this codebase on purpose; that is why Materials keeps
+  its own settings handlers instead of joining the generic catalog factory.
+- **Installation is a real line-item slot now**, not a Curtains attribute:
+  `line_items.installation_id / installation_name / installation_price_per_item`, and the
+  three `installation_*` keys were stripped out of `attributes`. `curtains.ts` no longer
+  declares `installation_id`; sending it is a 400.
+- **`control_id` is nullable** in the order payload. A type with no control scoped prices
+  its control at 0 and stores null.
+- **Standing hazards added by this work:**
+  - `apps/api/src/lib/optionScoping.ts` and `slotsForType` in
+    `apps/web/src/pages/orders/lineItemDrafts.ts` are an UNTWINNED pair — same rule, two
+    implementations (server reads Postgres, web reads the TanStack cache). Change one,
+    change the other, or the form offers what the save rejects.
+  - In `resolveLineItems`, existence checks MUST stay above the slot gates. Deleting an
+    option cascades its links away, so a slot-first order reports a deleted cassette as
+    "this type does not take a cassette".
+  - The settings catalog factory's create schema is `.strict()` now. A page sending a field
+    its catalog does not declare gets a 400 rather than a silent strip.
+- **Not verified in a browser.** Port 5173 was held by another session's dev server and
+  the settings pages sit behind Supabase auth. Covered by types, tests and a production
+  build only — the chip UI and the slot-hiding behaviour still want a manual pass.

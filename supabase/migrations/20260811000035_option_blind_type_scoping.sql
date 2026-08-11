@@ -29,44 +29,44 @@
 /* 1. Join tables                                                      */
 /* ------------------------------------------------------------------ */
 
-create table public.cassette_option_blind_types (
+create table if not exists public.cassette_option_blind_types (
   cassette_option_id uuid not null references public.cassette_options (id) on delete cascade,
   blind_type_id      uuid not null references public.blind_types (id)     on delete cascade,
   created_at         timestamptz not null default now(),
   primary key (cassette_option_id, blind_type_id)
 );
 
-create index cassette_option_blind_types_blind_type_idx
+create index if not exists cassette_option_blind_types_blind_type_idx
   on public.cassette_option_blind_types (blind_type_id);
 
-create table public.bottom_rail_option_blind_types (
+create table if not exists public.bottom_rail_option_blind_types (
   bottom_rail_option_id uuid not null references public.bottom_rail_options (id) on delete cascade,
   blind_type_id         uuid not null references public.blind_types (id)         on delete cascade,
   created_at            timestamptz not null default now(),
   primary key (bottom_rail_option_id, blind_type_id)
 );
 
-create index bottom_rail_option_blind_types_blind_type_idx
+create index if not exists bottom_rail_option_blind_types_blind_type_idx
   on public.bottom_rail_option_blind_types (blind_type_id);
 
-create table public.control_option_blind_types (
+create table if not exists public.control_option_blind_types (
   control_option_id uuid not null references public.control_options (id) on delete cascade,
   blind_type_id     uuid not null references public.blind_types (id)     on delete cascade,
   created_at        timestamptz not null default now(),
   primary key (control_option_id, blind_type_id)
 );
 
-create index control_option_blind_types_blind_type_idx
+create index if not exists control_option_blind_types_blind_type_idx
   on public.control_option_blind_types (blind_type_id);
 
-create table public.installation_option_blind_types (
+create table if not exists public.installation_option_blind_types (
   installation_option_id uuid not null references public.installation_options (id) on delete cascade,
   blind_type_id          uuid not null references public.blind_types (id)          on delete cascade,
   created_at             timestamptz not null default now(),
   primary key (installation_option_id, blind_type_id)
 );
 
-create index installation_option_blind_types_blind_type_idx
+create index if not exists installation_option_blind_types_blind_type_idx
   on public.installation_option_blind_types (blind_type_id);
 
 alter table public.cassette_option_blind_types      enable row level security;
@@ -74,14 +74,24 @@ alter table public.bottom_rail_option_blind_types   enable row level security;
 alter table public.control_option_blind_types       enable row level security;
 alter table public.installation_option_blind_types  enable row level security;
 
-create policy authenticated_full_access on public.cassette_option_blind_types
-  for all to authenticated using (true) with check (true);
-create policy authenticated_full_access on public.bottom_rail_option_blind_types
-  for all to authenticated using (true) with check (true);
-create policy authenticated_full_access on public.control_option_blind_types
-  for all to authenticated using (true) with check (true);
-create policy authenticated_full_access on public.installation_option_blind_types
-  for all to authenticated using (true) with check (true);
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename = 'cassette_option_blind_types' and policyname = 'authenticated_full_access') then
+    create policy authenticated_full_access on public.cassette_option_blind_types
+      for all to authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'bottom_rail_option_blind_types' and policyname = 'authenticated_full_access') then
+    create policy authenticated_full_access on public.bottom_rail_option_blind_types
+      for all to authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'control_option_blind_types' and policyname = 'authenticated_full_access') then
+    create policy authenticated_full_access on public.control_option_blind_types
+      for all to authenticated using (true) with check (true);
+  end if;
+  if not exists (select 1 from pg_policies where tablename = 'installation_option_blind_types' and policyname = 'authenticated_full_access') then
+    create policy authenticated_full_access on public.installation_option_blind_types
+      for all to authenticated using (true) with check (true);
+  end if;
+end $$;
 
 /* ------------------------------------------------------------------ */
 /* 2. Backfill -- reproduces the hardcoded requiredCatalogs exactly     */
@@ -93,35 +103,39 @@ insert into public.cassette_option_blind_types (cassette_option_id, blind_type_i
 select o.id, t.id
   from public.cassette_options o
  cross join public.blind_types t
- where t.name <> 'Curtains';
+ where t.name <> 'Curtains'
+ on conflict do nothing;
 
 insert into public.bottom_rail_option_blind_types (bottom_rail_option_id, blind_type_id)
 select o.id, t.id
   from public.bottom_rail_options o
  cross join public.blind_types t
- where t.name <> 'Curtains';
+ where t.name <> 'Curtains'
+ on conflict do nothing;
 
 -- Control: every blind type, without exception.
 insert into public.control_option_blind_types (control_option_id, blind_type_id)
 select o.id, t.id
   from public.control_options o
- cross join public.blind_types t;
+ cross join public.blind_types t
+ on conflict do nothing;
 
 -- Installation: Curtains only, matching the attribute it replaces.
 insert into public.installation_option_blind_types (installation_option_id, blind_type_id)
 select o.id, t.id
   from public.installation_options o
  cross join public.blind_types t
- where t.name = 'Curtains';
+ where t.name = 'Curtains'
+ on conflict do nothing;
 
 /* ------------------------------------------------------------------ */
 /* 3. Installation becomes a real slot                                 */
 /* ------------------------------------------------------------------ */
 
 alter table public.line_items
-  add column installation_id uuid references public.installation_options (id) on delete set null,
-  add column installation_name text,
-  add column installation_price_per_item numeric(10,2);
+  add column if not exists installation_id uuid references public.installation_options (id) on delete set null,
+  add column if not exists installation_name text,
+  add column if not exists installation_price_per_item numeric(10,2);
 
 -- Historical Curtains rows: move the snapshot out of the jsonb, then
 -- remove the three keys so the strict attributeSchema still accepts the

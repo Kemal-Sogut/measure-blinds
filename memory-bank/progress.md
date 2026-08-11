@@ -796,3 +796,30 @@ were never affected — their recompute rule hid the race.
 **Verified:** web `pnpm check` clean, `pnpm test` 98/98, `pnpm lint` = the 4 pre-existing
 `LineItemEditor.tsx` warnings. The race itself is a mount-timing effect that the unit tests
 cannot reach — no browser run, `/orders/:id` needs a Supabase session.
+
+## Blind-type scoping for the option catalogs (2026-08-11)
+Branch `feat/option-blind-type-scoping`, 9 commits from `main`.
+
+**Works:** each cassette, bottom rail, control and installation option carries the blind
+types it is offered for, edited as toggle chips on its settings page. The line-item form
+renders a hardware dropdown only while that type has ≥1 active scoped option, lists only
+the scoped options inside it, clears a stale id when the blind type changes, and prices
+from exactly the slots it showed. The Worker enforces the same rule on save and snapshots
+the chosen installation option onto its own columns. Installation prints on the PDF, the
+customer page, the order overview and the shop label.
+
+Migration 35 is applied to the live project. Its backfill reproduces the old hardcoded
+`requiredCatalogs` exactly (cassette + rail on every type but Curtains, control on every
+type, installation on Curtains only), so nothing a user can see changed on application —
+verified by query: Curtains 0/0/5/2, every other type 4/2/5/0.
+
+api 308/17, web 175/14, both `tsc --noEmit` clean, oxlint 0 warnings, `vite build` clean.
+
+**Known gaps:**
+- Option MEMBERSHIP is not enforced server-side — the Worker checks a chosen option exists,
+  not that it is scoped to the type. Deliberate: it mirrors Materials and keeps a re-save
+  working after an option is unscoped. The UI is the only filter.
+- An unknown/legacy `blinds_type` is unconstrained: no slot is demanded and none refused,
+  so a pre-dropdown order stays savable.
+- The settings chip UI and the slot-hiding form behaviour have NOT been exercised in a
+  browser (port conflict + auth). Worth a manual pass before merge.
