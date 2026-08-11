@@ -33,7 +33,8 @@
 
 import { getBlindForm } from './blindForms';
 import { INPUT, LABEL, OptionSelect, type BlindFormProps } from './blindForms/fields';
-import { flatDraftPrice, type Catalogs, type FlatDraft } from './lineItemDrafts';
+import { PriceBlock } from './blindForms/PriceBlock';
+import { canOverridePrice, flatDraftPrice, type Catalogs, type FlatDraft } from './lineItemDrafts';
 
 /* ------------------------------------------------------------------ */
 /* Edit forms (used inside popup modals)                               */
@@ -55,7 +56,14 @@ export function BlindEditForm({ draft, catalogs, onChange, footer }: BlindFormPr
   return <Form draft={draft} catalogs={catalogs} onChange={onChange} footer={footer} />;
 }
 
-/** Full preset/custom editing form. */
+/**
+ * Full preset/custom editing form.
+ *
+ * A preset carrying catalog provenance shows its price READ-ONLY: the
+ * Worker prices it from `preset_line_items`, so a figure typed here would
+ * be ignored on save and the field would be lying. Changing such a price
+ * is what the override inside `PriceBlock` is for.
+ */
 export function FlatEditForm({
   draft,
   onChange,
@@ -64,15 +72,32 @@ export function FlatEditForm({
   onChange: (next: FlatDraft) => void;
 }) {
   const price = flatDraftPrice(draft);
+  const fromCatalog = draft.item_type === 'preset' && draft.preset_id !== null;
   return (
     <div className="flex min-w-0 flex-col gap-3.5">
       <label className="block min-w-0">
-        <span className={LABEL}>Description</span>
+        <span className={LABEL}>Title</span>
         <input
-          placeholder="Description"
+          placeholder="Title"
+          value={draft.title}
+          onChange={(e) => onChange({ ...draft, title: e.target.value })}
+          className={INPUT}
+        />
+      </label>
+      <label className="block min-w-0">
+        <span className={LABEL}>Description</span>
+        {/*
+          A textarea, not an input: the description prints as separate
+          lines on the estimate, the customer page and the manufacturer
+          copy, so the consultant has to be able to see and type those
+          line breaks while writing it.
+        */}
+        <textarea
+          rows={4}
+          placeholder="Description — one line per point"
           value={draft.description}
           onChange={(e) => onChange({ ...draft, description: e.target.value })}
-          className={INPUT}
+          className="w-full min-w-0 rounded-md border border-border-input bg-surface px-3 py-2 text-sm text-text-primary"
         />
       </label>
       <div className="grid min-w-0 grid-cols-2 gap-3.5">
@@ -89,17 +114,19 @@ export function FlatEditForm({
           <span className={LABEL}>Unit price ($)</span>
           <input
             inputMode="decimal"
+            readOnly={fromCatalog}
             value={draft.unit_price}
             onChange={(e) => onChange({ ...draft, unit_price: e.target.value })}
-            className={`${INPUT} font-mono`}
+            className={`${INPUT} font-mono ${fromCatalog ? 'bg-surface-sunken text-text-muted' : ''}`}
           />
         </label>
       </div>
-      <div className="flex justify-end border-t border-border pt-3 text-[13px]">
-        <span className="font-semibold text-text-primary">
-          Total: <span className="font-mono">{price ? `$${price.total.toFixed(2)}` : '—'}</span>
-        </span>
-      </div>
+      <PriceBlock
+        price={price}
+        adjustments={draft}
+        canOverride={canOverridePrice(draft)}
+        onChange={(adj) => onChange({ ...draft, ...adj })}
+      />
     </div>
   );
 }

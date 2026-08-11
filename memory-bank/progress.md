@@ -1,5 +1,39 @@
 # Progress
 
+## Line item price adjustments (2026-08-10)
+Branch `feat/line-item-price-adjustments`, 15 commits from `feat/curtains-pricing`.
+
+**Works:** a consultant can override the calculated unit price of a blind or a
+catalog-backed preset, optionally show the customer the original struck through, and reset
+to the calculated price at any time; preset and custom items carry a title plus a
+multi-line description; any line item can carry up to ten `{label, price}` add-ons whose
+prices land once each in the line total. Overridden prices are marked with an amber dot on
+staff surfaces, printed with a hand-drawn strikethrough on PDFs (pdf-lib has no such
+primitive), and shown struck through on the customer page. Every hand-typed money change
+writes its own order-activity line.
+
+Presets are now server-priced from `preset_line_items` via a snapshotted `preset_id`, which
+tightens the server-authoritative money rule and is what gives an override a default to
+reset to. The three client money fields (`unit_price_override`, `addons[].price`, and a
+custom item's own `unit_price`) are the whole carve-out, each clamped and logged.
+
+api 289/16, web 164/14, both `tsc --noEmit` clean, oxlint 0 warnings. `lineItemAdjustments`
+twin bodies byte-identical below the header.
+
+**Fixed along the way:** an uncommitted Curtains formula edit was multiplying the SUMMED
+PANEL WIDTH by 0.5 instead of the panel count, pricing the standard 300cm test curtain at
+$15,300 and leaving the web twin out of sync with the api one. Finished as a per-panel hem
+allowance outside the pleat multiplier, mirrored into both twins, with tests pinning both
+the per-panel reading and the fullness exclusion.
+
+**Not done:** migration 31 is written but NOT applied — the maintainer applies it, and the
+Worker will fail on unknown columns until it is live. Nothing has been rendered in a
+browser; `/orders/:id` is behind `ProtectedRoute`.
+
+**Known limitation:** preset items saved before migration 31 have no `preset_id`. They keep
+their historical client-sent price and cannot be overridden or reset until re-picked from
+the preset sheet — there is no catalog default to return to.
+
 ## Curtains pricing (2026-08-10)
 Branch `feat/curtains-pricing`, 9 commits from `origin/main` at `4dedf24`. The first use of
 the blind-type module scaffold below, and the first type to leave the shared formula.

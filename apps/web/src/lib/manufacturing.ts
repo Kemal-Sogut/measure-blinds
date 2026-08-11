@@ -378,9 +378,15 @@ export function buildManufacturingPlan(
 
   for (const item of items) {
     if (item.item_type !== 'blind') {
+      // The title is the item's name; the description drops to the detail
+      // line beside it. A row saved before titles existed has only a
+      // description, which keeps its place as the name — otherwise every
+      // historical order would list unnamed items on the workshop sheet.
+      const kind = item.item_type === 'preset' ? 'Preset item' : 'Custom item';
+      const titled = item.title?.trim();
       asIs.push({
-        label: item.description || 'Custom item',
-        detail: item.item_type === 'preset' ? 'Preset item' : 'Custom item',
+        label: titled || item.description || 'Custom item',
+        detail: titled && item.description ? item.description : kind,
         quantity: item.quantity,
       });
       continue;

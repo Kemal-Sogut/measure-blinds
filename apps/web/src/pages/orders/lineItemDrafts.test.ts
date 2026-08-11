@@ -12,11 +12,27 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseDraftAttributes, type BlindDraft } from './lineItemDrafts';
+import {
+  canOverridePrice,
+  flatDraftPrice,
+  parseAddons,
+  parseDraftAttributes,
+  parseOverride,
+  type BlindDraft,
+  type FlatDraft,
+} from './lineItemDrafts';
 
-/** A complete, valid blind draft — the baseline each case mutates. */
+/**
+ * A complete, valid blind draft — the baseline each case mutates. The
+ * adjustment fields sit at their neutral values (no override, no
+ * add-ons), so a case that does not mention them prices from the formula
+ * alone.
+ */
 function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
   return {
+    unit_price_override: '',
+    show_original_price: true,
+    addons: [],
     key: 'd1',
     item_type: 'blind',
     room_name: 'Living Room',
@@ -115,5 +131,134 @@ describe('parseDraftAttributes round-trip', () => {
     const parsed = parseDraftAttributes(reopenedCurtain()) ?? {};
     expect(parsed).not.toHaveProperty('pleat_multiplier');
     expect(parsed).not.toHaveProperty('installation_price');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Price adjustments                                                   */
+/* ------------------------------------------------------------------ */
+
+/** A complete, valid custom draft — the baseline each case mutates. */
+function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
+  return {
+    key: 'f1',
+    item_type: 'custom',
+    title: 'Extra work',
+    description: '',
+    preset_id: null,
+    quantity: '2',
+    unit_price: '100',
+    unit_price_override: '',
+    show_original_price: true,
+    addons: [],
+    ...overrides,
+  };
+}
+
+describe('parseOverride', () => {
+  it('reads an empty string as no override', () => {
+    expect(parseOverride('')).toEqual({ valid: true, value: null });
+  });
+
+  it('reads whitespace as no override', () => {
+    expect(parseOverride('   ')).toEqual({ valid: true, value: null });
+  });
+
+  it('reads zero as a real override', () => {
+    // A line given away is an override, not an absent one.
+    expect(parseOverride('0')).toEqual({ valid: true, value: 0 });
+  });
+
+  it('rejects a negative figure', () => {
+    expect(parseOverride('-5')).toEqual({ valid: false });
+  });
+
+  it('rejects text', () => {
+    expect(parseOverride('abc')).toEqual({ valid: false });
+  });
+});
+
+describe('parseAddons', () => {
+  it('drops rows with a blank label', () => {
+    expect(parseAddons([{ key: 'a', label: '  ', price: '50' }])).toEqual([]);
+  });
+
+  it('treats a blank or unparsable price as zero so typing never blanks the preview', () => {
+    expect(parseAddons([{ key: 'a', label: 'Rush fee', price: '' }])).toEqual([
+      { label: 'Rush fee', price: 0 },
+    ]);
+    expect(parseAddons([{ key: 'a', label: 'Rush fee', price: 'ab' }])).toEqual([
+      { label: 'Rush fee', price: 0 },
+    ]);
+  });
+
+  it('trims labels', () => {
+    expect(parseAddons([{ key: 'a', label: ' Rush fee ', price: '50' }])).toEqual([
+      { label: 'Rush fee', price: 50 },
+    ]);
+  });
+
+  it('strips the React list key from the payload shape', () => {
+    expect(parseAddons([{ key: 'a', label: 'Rush fee', price: '50' }])[0]).not.toHaveProperty('key');
+  });
+});
+
+describe('canOverridePrice', () => {
+  it('is false for a custom item', () => {
+    expect(canOverridePrice(flat())).toBe(false);
+  });
+
+  it('is false for a legacy preset with no provenance', () => {
+    expect(canOverridePrice(flat({ item_type: 'preset', preset_id: null }))).toBe(false);
+  });
+
+  it('is true for a preset with provenance', () => {
+    expect(canOverridePrice(flat({ item_type: 'preset', preset_id: 'p1' }))).toBe(true);
+  });
+
+  it('is true for a blind', () => {
+    expect(canOverridePrice(draft())).toBe(true);
+  });
+});
+
+describe('flatDraftPrice', () => {
+  it('returns the typed price as both base and unit when not overridden', () => {
+    expect(flatDraftPrice(flat())).toEqual({ base: 100, unit: 100, addonsTotal: 0, total: 200 });
+  });
+
+  it('ignores an override on a custom item', () => {
+    expect(flatDraftPrice(flat({ unit_price_override: '10' }))?.unit).toBe(100);
+  });
+
+  it('applies an override on a preset with provenance', () => {
+    const price = flatDraftPrice(
+      flat({ item_type: 'preset', preset_id: 'p1', unit_price_override: '80' })
+    );
+    expect(price).toEqual({ base: 100, unit: 80, addonsTotal: 0, total: 160 });
+  });
+
+  it('adds add-ons once, on top of the override', () => {
+    const price = flatDraftPrice(
+      flat({
+        item_type: 'preset',
+        preset_id: 'p1',
+        unit_price_override: '80',
+        addons: [{ key: 'a', label: 'Rush fee', price: '50' }],
+      })
+    );
+    expect(price?.addonsTotal).toBe(50);
+    expect(price?.total).toBe(210); // 80 x 2 + 50
+  });
+
+  it('blanks the preview when the override does not parse', () => {
+    expect(
+      flatDraftPrice(flat({ item_type: 'preset', preset_id: 'p1', unit_price_override: 'abc' }))
+    ).toBeNull();
+  });
+
+  it('does not blank the preview for a half-typed add-on', () => {
+    expect(
+      flatDraftPrice(flat({ addons: [{ key: 'a', label: 'Rush fee', price: '' }] }))?.total
+    ).toBe(200);
   });
 });

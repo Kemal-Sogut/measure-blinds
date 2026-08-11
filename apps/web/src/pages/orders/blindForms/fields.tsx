@@ -24,13 +24,7 @@
 
 import type { ReactNode } from 'react';
 import { getBlindType } from '../../../lib/blindTypes';
-import {
-  blindDraftPrice,
-  materialsForType,
-  parsePositive,
-  type BlindDraft,
-  type Catalogs,
-} from '../lineItemDrafts';
+import { materialsForType, parsePositive, type BlindDraft, type Catalogs } from '../lineItemDrafts';
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -381,25 +375,6 @@ export function QuantityStepper({ draft, onChange }: Pick<BlindFormProps, 'draft
           +
         </button>
       </div>
-    </div>
-  );
-}
-
-/**
- * Unit + line total readout. Shows em dashes until the draft is complete
- * enough to price — including its type's own attributes, so the preview
- * never quotes a figure the server would reject.
- */
-export function PriceReadout({ draft, catalogs }: Pick<BlindFormProps, 'draft' | 'catalogs'>) {
-  const price = blindDraftPrice(draft, catalogs);
-  return (
-    <div className="flex justify-between border-t border-border-light pt-3 text-[13px]">
-      <span className="text-text-muted">
-        Unit: <span className="font-mono">{price ? `$${price.unit.toFixed(2)}` : '—'}</span>
-      </span>
-      <span className="font-semibold text-text-primary">
-        Total: <span className="font-mono">{price ? `$${price.total.toFixed(2)}` : '—'}</span>
-      </span>
     </div>
   );
 }

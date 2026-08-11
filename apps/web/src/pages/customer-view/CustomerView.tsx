@@ -87,8 +87,19 @@ interface PublicLineItem {
    */
   attribute_lines?: string[] | null;
   color: string | null;
+  /** Headline for a flat item; `''` on blinds and pre-title rows. */
+  title?: string | null;
   description: string | null;
   note: string | null;
+  /** Consultant-added extras, each shown with its own price. */
+  addons?: Array<{ label: string; price: number }> | null;
+  /**
+   * What this line would have cost before the consultant reduced it, or
+   * null to print nothing. The Worker decides whether this exists at all
+   * — a hidden original never reaches this page, so there is nothing here
+   * to reveal by inspecting the markup.
+   */
+  original_line_total?: number | null;
   quantity: number;
   unit_price: number;
   line_total: number;
@@ -170,6 +181,9 @@ function receiptDate(iso: string): string {
 
 /** Title + attribute lines for one item (mirrors the PDF layout). */
 function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
+  // Add-ons come last on both kinds of item, matching the PDF, so the two
+  // documents a customer may hold side by side read the same way.
+  const addonLines = (li.addons ?? []).map((a) => `${a.label} — $${a.price.toFixed(2)}`);
   if (li.item_type === 'blind') {
     return {
       title: [li.room_name || 'Blind', li.blinds_type].filter(Boolean).join(' — '),
@@ -185,10 +199,19 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
         // Already formatted server-side; same position as on the PDF.
         ...(li.attribute_lines ?? []),
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',
+        ...addonLines,
       ].filter(Boolean),
     };
   }
-  return { title: li.description || 'Item', attrs: [] };
+  // Title heads the row; the description hangs beneath it. A row saved
+  // before titles existed has only a description, which takes the heading
+  // so historical orders still name their items.
+  const titled = li.title?.trim();
+  const body = titled ? (li.description ?? '') : '';
+  return {
+    title: titled || li.description || 'Item',
+    attrs: [...body.split('\n').map((l) => l.trim()).filter(Boolean), ...addonLines],
+  };
 }
 
 /**
@@ -229,7 +252,16 @@ function LineItemRow({
     <>
       <span className="min-w-0 flex-1 text-left font-medium text-text-primary">{title}</span>
       <span className="whitespace-nowrap text-text-muted">× {item.quantity}</span>
-      <span className="w-20 text-right font-mono font-medium text-text-primary">
+      {/*
+        Wider than the other columns' 20 because it may carry two figures:
+        the original struck through, then the price actually charged.
+      */}
+      <span className="w-28 text-right font-mono font-medium text-text-primary">
+        {item.original_line_total != null && (
+          <span className="mr-1.5 font-normal text-text-muted line-through">
+            ${item.original_line_total.toFixed(2)}
+          </span>
+        )}
         ${Number(item.line_total).toFixed(2)}
       </span>
     </>
