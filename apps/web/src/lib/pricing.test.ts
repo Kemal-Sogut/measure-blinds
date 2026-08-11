@@ -120,12 +120,25 @@ describe('calculateBlindUnitPriceForType (type dispatch)', () => {
     expect(getBlindType('unknown').blindType).toBe('Default');
   });
 
-  it('prices identically to the default while every type inherits it', () => {
+  it('prices identically to the default for every type that inherits it', () => {
     const base = blind({ panels: [70, 70], cassette_price_per_m: 20, control_price_per_item: 10 });
     const expected = calculateBlindUnitPrice(base);
-    for (const type of ['Roller', 'Honeycomb', 'Curtains', '']) {
+    // Curtains is excluded on purpose — it is the one type that has
+    // diverged. Adding a type here that has its own formula would make
+    // this assertion demand the divergence be undone.
+    for (const type of ['Roller', 'Honeycomb', '']) {
       expect(calculateBlindUnitPriceForType(type, base)).toBe(expected);
     }
+  });
+
+  it('Curtains does NOT price like the default', () => {
+    const base = blind({ panels: [70, 70], cassette_price_per_m: 20, control_price_per_item: 10 });
+    // Fabric by the metre with no pleat chosen: 1.4 × 1 × 50 = 70, plus
+    // 2 panels × $10 control = 90 — and no cassette charge at all.
+    expect(calculateBlindUnitPriceForType('Curtains', base)).toBe(90);
+    expect(calculateBlindUnitPriceForType('Curtains', base)).not.toBe(
+      calculateBlindUnitPrice(base)
+    );
   });
 });
 
@@ -154,5 +167,91 @@ describe('bottomRailCost', () => {
     ).toBe(15);
     // A zero-priced rail (the seeded default) must not move the price.
     expect(calculateBlindUnitPrice(blind({ bottom_rail_price_per_m: 0 }))).toBe(140);
+  });
+});
+
+describe('Curtains', () => {
+  /**
+   * One 300cm panel of $40/m fabric with no hardware charges. The
+   * material rate is per RUNNING METRE for this type, not per m².
+   *
+   * The 200cm height is chosen so the base area formula and the Curtains
+   * formula disagree (240 vs 300): at 250cm they coincide, and every
+   * assertion below would pass without the override existing.
+   *
+   * `quantity` is the one field the api twin's copy of this block does
+   * not carry: the web `BlindInputs` includes it so the same object can
+   * feed `calculateBlindLineTotal`. It does not affect the unit price.
+   */
+  function curtain(attributes: Record<string, string | number | boolean>): BlindInputs {
+    return {
+      panels: [300],
+      height_cm: 200,
+      material_price_per_sqm: 40,
+      cassette_price_per_m: 0,
+      bottom_rail_price_per_m: 0,
+      control_price_per_item: 0,
+      attributes,
+      quantity: 1,
+    };
+  }
+
+  it('prices fabric by the running metre times the pleat multiplier', () => {
+    // 3.0 m × 2.5 × $40 = $300.00
+    expect(calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2.5 }))).toBe(300);
+  });
+
+  it('ignores height entirely', () => {
+    expect(
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2.5 }),
+        height_cm: 100,
+      })
+    ).toBe(300);
+  });
+
+  it('adds the fixed installation charge once, not per panel', () => {
+    // 3.0 × 2 × 40 = 240, + 45 = 285
+    expect(
+      calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2, installation_price: 45 }))
+    ).toBe(285);
+  });
+
+  it('adds the control charge per panel', () => {
+    // width 300 → 3.0 × 2.5 × 40 = 300, + 2 panels × 30 = 360.
+    // A multiplier of exactly 2 would make this equal the base formula
+    // at a 200cm height, so the assertion would hold without the override.
+    expect(
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2.5 }),
+        panels: [150, 150],
+        control_price_per_item: 30,
+      })
+    ).toBe(360);
+  });
+
+  it('charges nothing for a cassette or bottom rail even when priced', () => {
+    expect(
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2 }),
+        cassette_price_per_m: 99,
+        bottom_rail_price_per_m: 99,
+      })
+    ).toBe(240);
+  });
+
+  it('treats a legacy {} row as flat fabric with no installation', () => {
+    // Migration 29 left every historical row at {}. 3.0 × 1 × 40 = 120.
+    expect(calculateBlindUnitPriceForType('Curtains', curtain({}))).toBe(120);
+  });
+
+  it('applies the 100cm width minimum', () => {
+    // 60cm raised to 100cm → 1.0 × 2.5 × 40 = 100 (the base formula gives 80).
+    expect(
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2.5 }),
+        panels: [60],
+      })
+    ).toBe(100);
   });
 });
