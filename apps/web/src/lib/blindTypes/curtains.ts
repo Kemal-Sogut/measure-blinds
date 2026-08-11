@@ -93,11 +93,12 @@ export class CurtainsBlindType extends BaseBlindType {
    * this type has neither, and the Worker stores null for both.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
+    const panels = item.panels.reduce((a, b) => a + b, 0);
     const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
     const pleat = numericOr(item.attributes.pleat_multiplier, 1);
     const install = numericOr(item.attributes.installation_price, 0);
     const total =
-      (width / 100) * pleat * item.material_price_per_sqm +
+      ((width / 100) + panels * 0.5) * pleat * item.material_price_per_sqm +
       this.controlCost(item.panels.length, item.control_price_per_item) +
       install;
     return Math.round(total * 100) / 100;
