@@ -6,7 +6,8 @@
  *
  * Covers the company settings singleton (read / partial update / logo
  * upload) and the catalog entities (materials, cassette options,
- * control options, presets, blind types) through a shared hook factory.
+ * bottom rail options, control options, pleat types, installation
+ * options, presets, blind types) through a shared hook factory.
  * Materials additionally carry `blind_type_ids`, passed straight through
  * the generic create/update mutations to the Materials API.
  *
@@ -44,6 +45,8 @@ export type CatalogPath =
   | 'cassette-options'
   | 'bottom-rail-options'
   | 'control-options'
+  | 'pleat-types'
+  | 'installation-options'
   | 'presets'
   | 'blind-types';
 

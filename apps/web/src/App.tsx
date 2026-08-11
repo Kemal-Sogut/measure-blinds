@@ -39,6 +39,8 @@ const MaterialsForType = lazy(() => import('./pages/settings/MaterialsForType'))
 const CassetteOptions = lazy(() => import('./pages/settings/CassetteOptions'));
 const BottomRailOptions = lazy(() => import('./pages/settings/BottomRailOptions'));
 const ControlOptions = lazy(() => import('./pages/settings/ControlOptions'));
+const PleatTypes = lazy(() => import('./pages/settings/PleatTypes'));
+const InstallationOptions = lazy(() => import('./pages/settings/InstallationOptions'));
 const PresetLineItems = lazy(() => import('./pages/settings/PresetLineItems'));
 const TermsAndConditions = lazy(() => import('./pages/settings/TermsAndConditions'));
 const CustomerView = lazy(() => import('./pages/customer-view/CustomerView'));
@@ -115,6 +117,8 @@ export default function App() {
             <Route path="/settings/cassette" element={guard(<Layout><CassetteOptions /></Layout>)} />
             <Route path="/settings/bottom-rail" element={guard(<Layout><BottomRailOptions /></Layout>)} />
             <Route path="/settings/controls" element={guard(<Layout><ControlOptions /></Layout>)} />
+            <Route path="/settings/pleat-types" element={guard(<Layout><PleatTypes /></Layout>)} />
+            <Route path="/settings/installation" element={guard(<Layout><InstallationOptions /></Layout>)} />
             <Route path="/settings/presets" element={guard(<Layout><PresetLineItems /></Layout>)} />
             <Route path="/settings/terms" element={guard(<Layout><TermsAndConditions /></Layout>)} />
 

@@ -336,6 +336,36 @@ export interface ControlOption {
   sort_order: number;
 }
 
+/**
+ * Pleat style from settings — a Curtains-only catalog. `multiplier` is a
+ * fullness RATIO, not money: metres of fabric consumed per metre of
+ * finished curtain width, so 2.5 means a 3 m curtain uses 7.5 m of
+ * fabric. It multiplies the fabric cost, which makes it a price input —
+ * the client only ever sends the row id and the Worker resolves the
+ * ratio itself.
+ */
+export interface PleatType {
+  id: string;
+  name: string;
+  multiplier: number;
+  active: boolean;
+  sort_order: number;
+}
+
+/**
+ * Installation method from settings — rod or track, a Curtains-only
+ * catalog. Charged as a FIXED amount per curtain, unlike the cassette and
+ * bottom rail, which are charged per linear metre of width. Like the
+ * pleat multiplier, the price is resolved server-side from the id.
+ */
+export interface InstallationOption {
+  id: string;
+  name: string;
+  price_per_item: number;
+  active: boolean;
+  sort_order: number;
+}
+
 /** Blind type option from settings — a label only, no price. */
 export interface BlindType {
   id: string;
