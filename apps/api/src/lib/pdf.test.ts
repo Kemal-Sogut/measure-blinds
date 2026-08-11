@@ -303,3 +303,108 @@ describe('itemContent color', () => {
     });
   });
 });
+
+/**
+ * Flat items on a document: the title heads the row, the description
+ * becomes indented detail lines, and add-ons print with their prices.
+ */
+describe('itemContent for flat items and add-ons', () => {
+  /** A preset/custom item; each case overrides what it cares about. */
+  function flatItem(
+    overrides: Partial<PdfDocumentData['line_items'][number]> = {}
+  ): PdfDocumentData['line_items'][number] {
+    return {
+      item_type: 'custom',
+      room_name: null,
+      blinds_type: null,
+      panels: null,
+      height_cm: null,
+      material_name: null,
+      cassette_name: null,
+      bottom_rail_name: null,
+      control_name: null,
+      color: null,
+      description: '',
+      note: null,
+      quantity: 1,
+      unit_price: 0,
+      line_total: 0,
+      ...overrides,
+    };
+  }
+
+  it('uses the title as the heading and the description as detail lines', () => {
+    const { title, attrs } = itemContent(
+      flatItem({ title: 'Installation', description: 'Ground floor\nSecond floor' })
+    );
+    expect(title).toBe('Installation');
+    expect(attrs).toEqual(['Ground floor', 'Second floor']);
+  });
+
+  it('falls back to the description when a legacy row has no title', () => {
+    // Rows written before titles existed must still print a name.
+    const { title, attrs } = itemContent(flatItem({ title: '', description: 'Installation' }));
+    expect(title).toBe('Installation');
+    expect(attrs).toEqual([]);
+  });
+
+  it('drops blank lines from a description', () => {
+    const { attrs } = itemContent(
+      flatItem({ title: 'Installation', description: 'Ground floor\n\n  \nSecond floor' })
+    );
+    expect(attrs).toEqual(['Ground floor', 'Second floor']);
+  });
+
+  it('prints each add-on with its price, after the description', () => {
+    const { attrs } = itemContent(
+      flatItem({
+        title: 'Installation',
+        description: 'Ground floor',
+        addons: [{ label: 'Rush fee', price: 50 }],
+      })
+    );
+    expect(attrs).toEqual(['Ground floor', 'Rush fee — $50.00']);
+  });
+
+  it('prints add-ons on blind items too, last of all', () => {
+    const { attrs } = itemContent({
+      item_type: 'blind',
+      room_name: 'Living Room',
+      blinds_type: 'Roller',
+      panels: [70],
+      height_cm: 200,
+      material_name: 'Blackout White',
+      cassette_name: null,
+      bottom_rail_name: null,
+      control_name: null,
+      color: null,
+      description: '',
+      note: 'Inside mount',
+      quantity: 1,
+      unit_price: 0,
+      line_total: 0,
+      addons: [{ label: 'Rush fee', price: 50 }],
+    });
+    expect(attrs[attrs.length - 1]).toBe('Rush fee — $50.00');
+    // The free-text note stays immediately above them, where readers look.
+    expect(attrs[attrs.length - 2]).toBe('Note: Inside mount');
+  });
+
+  it('renders a document whose items carry titles, add-ons and an original price', async () => {
+    // The bytes are opaque, so this only proves the strikethrough path
+    // does not throw and still produces a well-formed document.
+    const data: PdfDocumentData = { ...SAMPLE, line_items: [
+      flatItem({
+        title: 'Installation',
+        description: 'Ground floor',
+        addons: [{ label: 'Rush fee', price: 50 }],
+        quantity: 2,
+        unit_price: 100,
+        base_unit_price: 130,
+        line_total: 250,
+      }),
+    ] };
+    const bytes = await buildDocumentPdf(data);
+    expect(bytes.byteLength).toBeGreaterThan(1000);
+  });
+});

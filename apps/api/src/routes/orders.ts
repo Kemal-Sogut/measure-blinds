@@ -925,6 +925,18 @@ async function toPdfData(
       unit_price: Number(li.unit_price),
       line_total: Number(li.line_total),
       height_cm: li.height_cm === null ? null : Number(li.height_cm),
+      addons: (li.addons ?? []).map((a: Record<string, any>) => ({
+        label: String(a.label),
+        price: Number(a.price),
+      })),
+      // Honour the per-item toggle HERE, at the single assembly point for
+      // every document. The spread above would otherwise carry a hidden
+      // original into the PDF, and a PDF's text layer is extractable
+      // whether or not the figure was drawn.
+      base_unit_price:
+        li.show_original_price && li.base_unit_price !== null && li.base_unit_price !== undefined
+          ? Number(li.base_unit_price)
+          : null,
     })),
     customer: order.customer,
     company: {
