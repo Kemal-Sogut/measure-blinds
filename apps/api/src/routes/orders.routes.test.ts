@@ -1211,3 +1211,93 @@ describe('Curtains line items', () => {
     expect(res.status).toBe(400);
   });
 });
+
+/**
+ * Line-item adjustment schemas: the three named money fields a client may
+ * send, and the cross-field rules that no single field can express.
+ */
+describe('line item adjustment schemas', () => {
+  /** A minimal valid custom item — the baseline each case mutates. */
+  function customItem(extra: Record<string, unknown> = {}) {
+    return {
+      item_type: 'custom',
+      title: 'Extra work',
+      description: '',
+      quantity: 1,
+      unit_price: 40,
+      ...extra,
+    };
+  }
+
+  /** POSTs an order whose line items are exactly `items`. */
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  it('rejects an override on a custom item', async () => {
+    const res = await postItems([customItem({ unit_price_override: 10 })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects more than ten add-ons', async () => {
+    const addons = Array.from({ length: 11 }, (_, i) => ({ label: `a${i}`, price: 1 }));
+    const res = await postItems([customItem({ addons })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a negative add-on price', async () => {
+    const res = await postItems([customItem({ addons: [{ label: 'a', price: -1 }] })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an add-on with an undeclared key', async () => {
+    const res = await postItems([
+      customItem({ addons: [{ label: 'a', price: 1, taxable: true }] }),
+    ]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an add-on with a blank label', async () => {
+    const res = await postItems([customItem({ addons: [{ label: '', price: 1 }] })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a flat item with neither title nor description', async () => {
+    const res = await postItems([customItem({ title: '', description: '' })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a flat item whose title and description are only whitespace', async () => {
+    const res = await postItems([customItem({ title: '   ', description: '\n' })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a preset item with neither preset_id nor unit_price', async () => {
+    const res = await postItems([
+      { item_type: 'preset', title: 'Install', description: '', quantity: 1 },
+    ]);
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a flat item titled but not described', async () => {
+    const res = await postItems([customItem({ title: 'Extra work', description: '' })]);
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts a flat item described but not titled', async () => {
+    const res = await postItems([customItem({ title: '', description: 'Extra work' })]);
+    expect(res.status).toBe(201);
+  });
+
+  it('still rejects an undeclared key on a flat item', async () => {
+    const res = await postItems([customItem({ cost: 5 })]);
+    expect(res.status).toBe(400);
+  });
+});

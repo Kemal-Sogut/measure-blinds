@@ -94,10 +94,42 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 
 /**
+ * One consultant-added extra on a line item.
+ *
+ * `addons[].price` and `unit_price_override` below are, alongside a
+ * custom item's own `unit_price`, the ONLY money a client may dictate —
+ * a deliberate, named widening of AI_GUIDELINES rule 1 rather than a
+ * loosened schema. The bounds here are the whole guard, and every value
+ * that gets through is written to the order activity log on save.
+ *
+ * `.strict()` is what stops a future `taxable` or `cost` field from
+ * riding along inside an add-on unnoticed.
+ */
+const addonSchema = z
+  .object({
+    label: z.string().min(1, 'Add-on needs a label').max(200),
+    price: z.number().min(0).max(1_000_000),
+  })
+  .strict();
+
+/** Adjustment fields shared by every line-item shape. */
+const adjustmentFields = {
+  addons: z.array(addonSchema).max(10, 'At most 10 add-ons per item').default([]),
+  show_original_price: z.boolean().default(true),
+};
+
+/**
+ * Consultant-typed unit price replacing the calculated one. Absent from
+ * `customItemBase` on purpose — a custom item's price is already freely
+ * typed, so a second price field would be two names for one number.
+ */
+const overrideField = z.number().min(0).max(1_000_000).nullable().default(null);
+
+/**
  * Blind line item: measurements + catalog option ids — deliberately
  * `.strict()` so any client-supplied money field (unit_price etc.) is
  * REJECTED with 400 rather than silently stripped; pricing is
- * exclusively server-side.
+ * exclusively server-side apart from the declared adjustment fields.
  */
 const blindItemSchema = z
   .object({
@@ -131,20 +163,74 @@ const blindItemSchema = z
      */
     attributes: z.record(z.unknown()).default({}),
     quantity: z.number().int().min(1).max(999),
+    unit_price_override: overrideField,
+    ...adjustmentFields,
   })
   .strict();
 
-/** Preset/custom line item: consultant-entered description + price. */
-const flatItemSchema = z
+/**
+ * Preset line item: a catalog reference the Worker prices itself.
+ *
+ * `unit_price` survives ONLY for rows created before `preset_id` existed
+ * — an order saved back with a legacy preset item still has to
+ * round-trip. When `preset_id` is present the sent `unit_price` is
+ * ignored entirely and the catalog price wins, which is what makes
+ * "reset to calculated" mean something on a preset.
+ *
+ * Left UN-refined: `z.discriminatedUnion` requires each member to be a
+ * plain object schema, and `.refine()` would return a `ZodEffects` it
+ * refuses. The cross-field rules live on the union's `superRefine`.
+ */
+const presetItemBase = z
   .object({
-    item_type: z.enum(['preset', 'custom']),
-    description: z.string().min(1, 'Description is required').max(1000),
+    item_type: z.literal('preset'),
+    preset_id: z.string().uuid().nullable().default(null),
+    title: z.string().max(200).default(''),
+    description: z.string().max(2000).default(''),
+    quantity: z.number().int().min(1).max(999),
+    unit_price: z.number().min(0).max(1_000_000).optional(),
+    unit_price_override: overrideField,
+    ...adjustmentFields,
+  })
+  .strict();
+
+/** Custom line item: free-form title, multi-line description, typed price. */
+const customItemBase = z
+  .object({
+    item_type: z.literal('custom'),
+    title: z.string().max(200).default(''),
+    description: z.string().max(2000).default(''),
     quantity: z.number().int().min(1).max(999),
     unit_price: z.number().min(0).max(1_000_000),
+    ...adjustmentFields,
   })
   .strict();
 
-const lineItemSchema = z.discriminatedUnion('item_type', [blindItemSchema, flatItemSchema]);
+/**
+ * The three item shapes, plus the rules that span two fields at once and
+ * therefore cannot live on either field alone.
+ */
+const lineItemSchema = z
+  .discriminatedUnion('item_type', [blindItemSchema, presetItemBase, customItemBase])
+  .superRefine((it, ctx) => {
+    if (it.item_type === 'blind') return;
+    // A flat item with no text at all would print as a nameless row on
+    // every document. Either field alone is enough.
+    if (it.title.trim() === '' && it.description.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Give the item a title or a description',
+      });
+    }
+    // A preset is priced from the catalog OR carries a legacy typed
+    // price. With neither there is nothing to charge.
+    if (it.item_type === 'preset' && it.preset_id === null && it.unit_price === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Preset item needs a preset or a price',
+      });
+    }
+  });
 
 /** Payload for POST / and PUT /:id. */
 const orderSchema = z
@@ -291,7 +377,7 @@ async function resolveLineItems(
   // caught by the live E2E run.
   return items.map((it, position) => {
     if (it.item_type !== 'blind') {
-      const unit = Math.round(it.unit_price * 100) / 100;
+      const unit = Math.round((it.unit_price ?? 0) * 100) / 100;
       return {
         item_type: it.item_type,
         position,
@@ -311,6 +397,8 @@ async function resolveLineItems(
         control_id: null,
         control_name: null,
         control_price_per_item: null,
+        title: it.title,
+        preset_id: it.item_type === 'preset' ? it.preset_id : null,
         description: it.description,
         note: '',
         color: '',
@@ -319,7 +407,10 @@ async function resolveLineItems(
         // any row missing one, and `attributes` is not-null.
         attributes: {},
         quantity: it.quantity,
+        show_original_price: it.show_original_price,
         unit_price: unit,
+        base_unit_price: null,
+        addons: [],
         line_total: Math.round(unit * it.quantity * 100) / 100,
       };
     }
@@ -402,12 +493,17 @@ async function resolveLineItems(
       control_id: it.control_id,
       control_name: control.name,
       control_price_per_item: control.price,
+      title: '',
+      preset_id: null,
       description: '',
       note: it.note,
       color: it.color,
       attributes,
       quantity: it.quantity,
+      show_original_price: it.show_original_price,
       unit_price,
+      base_unit_price: null,
+      addons: [],
       line_total: Math.round(unit_price * it.quantity * 100) / 100,
     };
   });
