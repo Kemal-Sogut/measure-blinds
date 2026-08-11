@@ -106,6 +106,51 @@ function TableCard({
 }
 
 /**
+ * An item's add-ons as indented sub-lines, or nothing when it has none.
+ *
+ * Rendered under the row's descriptive column rather than as extra rows,
+ * so the money columns keep lining up with one line per line item.
+ */
+function AddonLines({ item }: { item: LineItem }) {
+  return (
+    <>
+      {item.addons.map((addon, j) => (
+        <span key={j} className="mt-0.5 block text-xs text-text-muted">
+          + {addon.label} {money(addon.price)}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The charged unit price, preceded by the struck-through calculated one
+ * and followed by the amber dot whenever the consultant overrode it.
+ *
+ * The dot repeats the strikethrough's information deliberately: it is the
+ * same marker the editor uses, so "amber dot = someone typed this price"
+ * reads identically on both screens.
+ */
+function UnitPrice({ item }: { item: LineItem }) {
+  const overridden = item.base_unit_price !== null;
+  return (
+    <>
+      {overridden && (
+        <span className="mr-1.5 text-text-muted line-through">{money(item.base_unit_price!)}</span>
+      )}
+      {money(item.unit_price)}
+      {overridden && (
+        <span
+          title="Price overridden"
+          aria-label="Price overridden"
+          className="ml-1.5 inline-block h-2 w-2 rounded-full bg-amber-500 align-middle"
+        />
+      )}
+    </>
+  );
+}
+
+/**
  * One blind type's table — a row per blind with one column per field.
  * Width and height are separate columns in cm (multi-panel widths join
  * as `120 + 80`); option names are the pricing-time snapshots stored on
@@ -136,7 +181,10 @@ function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) 
             const widths = item.panels.filter((w) => w > 0);
             return (
               <tr key={item.id}>
-                <Td>{item.room_name || `Blind ${i + 1}`}</Td>
+                <Td>
+                  <span className="block">{item.room_name || `Blind ${i + 1}`}</span>
+                  <AddonLines item={item} />
+                </Td>
                 <Td right mono>
                   {widths.length ? widths.join(' + ') : '—'}
                 </Td>
@@ -152,7 +200,7 @@ function BlindTypeTable({ title, items }: { title: string; items: LineItem[] }) 
                   {item.quantity}
                 </Td>
                 <Td right mono>
-                  {money(item.unit_price)}
+                  <UnitPrice item={item} />
                 </Td>
                 <Td right mono>
                   {money(item.line_total)}
@@ -185,12 +233,22 @@ function FlatItemsTable({ items }: { items: LineItem[] }) {
           {items.map((item, i) => (
             <tr key={item.id}>
               <Td>{item.item_type === 'preset' ? 'Preset' : 'Custom'}</Td>
-              <Td>{item.description || `Item ${i + 1}`}</Td>
+              <Td>
+                {/* Title heads the cell; a row saved before titles existed
+                    has only a description, which takes its place. */}
+                <span className="block">{item.title || item.description || `Item ${i + 1}`}</span>
+                {item.title && item.description && (
+                  <span className="mt-0.5 block whitespace-pre-line text-xs text-text-muted">
+                    {item.description}
+                  </span>
+                )}
+                <AddonLines item={item} />
+              </Td>
               <Td right mono>
                 {item.quantity}
               </Td>
               <Td right mono>
-                {money(item.unit_price)}
+                <UnitPrice item={item} />
               </Td>
               <Td right mono>
                 {money(item.line_total)}
