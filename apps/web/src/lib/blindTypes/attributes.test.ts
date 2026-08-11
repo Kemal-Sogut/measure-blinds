@@ -118,3 +118,59 @@ describe('extension point', () => {
     expect(t.calculateUnitPrice({ ...inputs, attributes: {} })).toBe(20);
   });
 });
+
+describe('generic extension points', () => {
+  /**
+   * A throwaway type exercising `catalogRefs` without touching a real
+   * one, so these stay true no matter which blind types have diverged.
+   */
+  class RefBlindType extends BaseBlindType {
+    readonly blindType = 'RefTest';
+    readonly attributeSchema = BaseBlindType.attrs({
+      widget_id: z.string().uuid().optional(),
+    });
+    readonly catalogRefs = [
+      {
+        attrKey: 'widget_id',
+        table: 'widgets',
+        valueColumn: 'price_per_item',
+        nameKey: 'widget_name',
+        valueKey: 'widget_price',
+        noun: 'widget',
+      },
+    ] as const;
+  }
+
+  const ID = '99999999-9999-4999-8999-999999999999';
+  const resolver = (table: string, id: string) =>
+    table === 'widgets' && id === ID ? { name: 'Big Widget', value: 12.5 } : undefined;
+
+  it('defaults to no catalog refs and all three hardware slots', () => {
+    const base = new BaseBlindType();
+    expect(base.catalogRefs).toEqual([]);
+    expect([...base.requiredCatalogs]).toEqual(['cassette', 'bottom_rail', 'control']);
+  });
+
+  it('snapshots the referenced row name and value into the attributes', () => {
+    const out = new RefBlindType().resolveCatalogRefs({ widget_id: ID }, resolver);
+    expect(out).toEqual({ widget_id: ID, widget_name: 'Big Widget', widget_price: 12.5 });
+  });
+
+  it('leaves the blob untouched when the id is absent', () => {
+    expect(new RefBlindType().resolveCatalogRefs({}, resolver)).toEqual({});
+  });
+
+  it('throws a readable error when the referenced row is gone', () => {
+    expect(() =>
+      new RefBlindType().resolveCatalogRefs(
+        { widget_id: '11111111-1111-4111-8111-111111111111' },
+        resolver
+      )
+    ).toThrow(/widget no longer exists/);
+  });
+
+  it('reports only the schema-declared keys as inputs', () => {
+    expect(new RefBlindType().inputKeys()).toEqual(['widget_id']);
+    expect(new BaseBlindType().inputKeys()).toEqual([]);
+  });
+});

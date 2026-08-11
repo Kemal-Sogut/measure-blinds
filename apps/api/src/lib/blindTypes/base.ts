@@ -38,6 +38,48 @@ import { z } from 'zod';
  */
 export type BlindAttributes = Record<string, string | number | boolean>;
 
+/** The three shared hardware catalogs a blind type may or may not use. */
+export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control';
+
+/**
+ * A declaration that one attribute key holds the id of a row in a priced
+ * catalog table, plus where that row's name and numeric value get
+ * snapshotted to.
+ *
+ * This is how a blind type takes a PRICE INPUT without ever accepting one
+ * from the client: the client sends `attrKey` (an id), the Worker looks
+ * the row up itself, and writes `nameKey`/`valueKey` into the stored blob
+ * afterwards. `attributeSchema` deliberately does NOT declare the two
+ * snapshot keys, so a client that sends them gets a 400.
+ */
+export interface CatalogRef {
+  /** Attribute key holding the row id (declared in `attributeSchema`). */
+  readonly attrKey: string;
+  /** Postgres table the id points at. */
+  readonly table: string;
+  /** Numeric column to snapshot (e.g. 'multiplier', 'price_per_item'). */
+  readonly valueColumn: string;
+  /** Attribute key the row's name is written to. Never client-supplied. */
+  readonly nameKey: string;
+  /** Attribute key the numeric value is written to. Never client-supplied. */
+  readonly valueKey: string;
+  /** Lowercase noun for the "no longer exists" error (e.g. 'pleat type'). */
+  readonly noun: string;
+}
+
+/** One resolved catalog row: the two fields a `CatalogRef` snapshots. */
+export interface CatalogSnapshot {
+  name: string;
+  value: number;
+}
+
+/**
+ * Looks up one catalog row. The Worker backs this with rows it fetched
+ * from Postgres; the web preview backs it with the lists TanStack Query
+ * already holds, so both sides resolve the same ids the same way.
+ */
+export type CatalogResolver = (table: string, id: string) => CatalogSnapshot | undefined;
+
 /** Inputs required to price a single blind line item. */
 export interface BlindPricingInputs {
   /** Individual panel widths in cm (summed for the effective width). */
@@ -117,6 +159,61 @@ export class BaseBlindType {
    * cast the parse result to `BlindAttributes`.
    */
   readonly attributeSchema: z.ZodTypeAny = BaseBlindType.attrs({});
+
+  /**
+   * Catalog rows this type's attributes point at. Empty for every type
+   * that prices purely from the shared hardware options, which is why
+   * adding this changed no existing type's behaviour.
+   */
+  readonly catalogRefs: readonly CatalogRef[] = [];
+
+  /**
+   * Which of the three shared hardware catalogs this type actually uses.
+   * The Worker requires an id for each slot listed and REJECTS one for a
+   * slot that is not: a curtain has no cassette, and silently storing one
+   * would name it on the documents while contributing nothing to the
+   * price, so the form and the total would disagree.
+   */
+  readonly requiredCatalogs: readonly CatalogSlot[] = ['cassette', 'bottom_rail', 'control'];
+
+  /**
+   * Attribute keys this type accepts FROM A CLIENT — the keys declared in
+   * `attributeSchema`, which by construction excludes every key the
+   * Worker writes itself.
+   *
+   * The web editor uses this to strip a re-opened order's snapshot keys
+   * out of a draft before re-parsing it. Without that strip the strict
+   * schema would reject the round-tripped blob and the item would lose
+   * its options on the second save.
+   */
+  inputKeys(): string[] {
+    const shape = (this.attributeSchema as unknown as { shape?: Record<string, unknown> }).shape;
+    return shape ? Object.keys(shape) : [];
+  }
+
+  /**
+   * Returns a copy of `attrs` with every declared `CatalogRef` resolved —
+   * the row's name and numeric value written to the ref's snapshot keys.
+   * A ref whose id is absent is skipped, so the caller's fallback applies;
+   * an id that no longer resolves throws, matching how a deleted material
+   * or control option already behaves.
+   *
+   * Callers MUST run this AFTER parsing through `attributeSchema`, never
+   * before: the parse is what proves the client sent no price, and this
+   * overwrite is what puts the real one in.
+   */
+  resolveCatalogRefs(attrs: BlindAttributes, resolve: CatalogResolver): BlindAttributes {
+    const out: BlindAttributes = { ...attrs };
+    for (const ref of this.catalogRefs) {
+      const id = attrs[ref.attrKey];
+      if (typeof id !== 'string' || id === '') continue;
+      const hit = resolve(ref.table, id);
+      if (!hit) throw new Error(`The selected ${ref.noun} no longer exists.`);
+      out[ref.nameKey] = hit.name;
+      out[ref.valueKey] = hit.value;
+    }
+    return out;
+  }
 
   /**
    * Seed values for a freshly added blind of this type. Must satisfy
