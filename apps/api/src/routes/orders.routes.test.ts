@@ -1157,8 +1157,9 @@ describe('Curtains line items', () => {
       installation_price: 45,
     });
     // MATERIAL is $55 per running metre here: 3.0 × 2.5 × 55 = 412.50,
-    // control $0, installation $45.
-    expect(rows[0].unit_price).toBe(457.5);
+    // + 1 panel × 0.5 m × 55 = 27.50 hem allowance, control $0,
+    // installation $45.
+    expect(rows[0].unit_price).toBe(485);
     expect(rows[0].cassette_id).toBeNull();
     expect(rows[0].cassette_name).toBeNull();
     expect(rows[0].cassette_price_per_m).toBeNull();
@@ -1192,8 +1193,8 @@ describe('Curtains line items', () => {
     const res = await create(curtainPayload({ attributes: {} }));
     expect(res.status).toBe(201);
     const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
-    // 3.0 × 1 × 55 = 165, and no installation charge.
-    expect(rows[0].unit_price).toBe(165);
+    // 3.0 × 1 × 55 = 165, + 27.50 hem allowance, and no installation charge.
+    expect(rows[0].unit_price).toBe(192.5);
     expect(rows[0].attributes).toEqual({});
   });
 
@@ -1208,5 +1209,282 @@ describe('Curtains line items', () => {
     p.line_items[0].cassette_id = null;
     const res = await create(p);
     expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * Line-item adjustment schemas: the three named money fields a client may
+ * send, and the cross-field rules that no single field can express.
+ */
+describe('line item adjustment schemas', () => {
+  /** A minimal valid custom item — the baseline each case mutates. */
+  function customItem(extra: Record<string, unknown> = {}) {
+    return {
+      item_type: 'custom',
+      title: 'Extra work',
+      description: '',
+      quantity: 1,
+      unit_price: 40,
+      ...extra,
+    };
+  }
+
+  /** POSTs an order whose line items are exactly `items`. */
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  it('rejects an override on a custom item', async () => {
+    const res = await postItems([customItem({ unit_price_override: 10 })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects more than ten add-ons', async () => {
+    const addons = Array.from({ length: 11 }, (_, i) => ({ label: `a${i}`, price: 1 }));
+    const res = await postItems([customItem({ addons })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a negative add-on price', async () => {
+    const res = await postItems([customItem({ addons: [{ label: 'a', price: -1 }] })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an add-on with an undeclared key', async () => {
+    const res = await postItems([
+      customItem({ addons: [{ label: 'a', price: 1, taxable: true }] }),
+    ]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects an add-on with a blank label', async () => {
+    const res = await postItems([customItem({ addons: [{ label: '', price: 1 }] })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a flat item with neither title nor description', async () => {
+    const res = await postItems([customItem({ title: '', description: '' })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a flat item whose title and description are only whitespace', async () => {
+    const res = await postItems([customItem({ title: '   ', description: '\n' })]);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a preset item with neither preset_id nor unit_price', async () => {
+    const res = await postItems([
+      { item_type: 'preset', title: 'Install', description: '', quantity: 1 },
+    ]);
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a flat item titled but not described', async () => {
+    const res = await postItems([customItem({ title: 'Extra work', description: '' })]);
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts a flat item described but not titled', async () => {
+    const res = await postItems([customItem({ title: '', description: 'Extra work' })]);
+    expect(res.status).toBe(201);
+  });
+
+  it('still rejects an undeclared key on a flat item', async () => {
+    const res = await postItems([customItem({ cost: 5 })]);
+    expect(res.status).toBe(400);
+  });
+});
+
+/**
+ * Preset items are priced by the Worker from `preset_line_items`, exactly
+ * like a material — the change that gives an overridden preset something
+ * to reset TO. Rows saved before `preset_id` existed keep the older
+ * client-priced behaviour.
+ */
+describe('preset pricing', () => {
+  const PRESET = { id: '88888888-8888-4888-8888-888888888888', name: 'Installation', unit_price: 75 };
+
+  /** POSTs an order whose line items are exactly `items`. */
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  /** The rows handed to the line_items bulk insert. */
+  function insertedRows() {
+    return (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, unknown>[];
+  }
+
+  beforeEach(() => {
+    db.responses['preset_line_items.select'] = [PRESET];
+  });
+
+  it('prices a preset item from the catalog and ignores any sent price', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 2,
+        unit_price: 5,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(75);
+    expect(insertedRows()[0].line_total).toBe(150);
+    expect(insertedRows()[0].preset_id).toBe(PRESET.id);
+  });
+
+  it('rejects a preset whose catalog row is gone', async () => {
+    db.responses['preset_line_items.select'] = [];
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 1,
+      },
+    ]);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Selected preset item no longer exists.' });
+  });
+
+  it('keeps honouring the sent price for a legacy preset with no preset_id', async () => {
+    const res = await postItems([
+      { item_type: 'preset', title: 'Installation', description: '', quantity: 2, unit_price: 60 },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(60);
+    expect(insertedRows()[0].preset_id).toBeNull();
+  });
+});
+
+/**
+ * Overrides and add-ons as they land on the row: `unit_price` is always
+ * the price CHARGED, `base_unit_price` is non-null only while overridden,
+ * and add-on prices are added once per line rather than per unit.
+ */
+describe('price overrides and add-ons', () => {
+  const PRESET = { id: '88888888-8888-4888-8888-888888888888', name: 'Installation', unit_price: 75 };
+
+  function postItems(items: unknown[]) {
+    db.orderInsertResults = [{ data: { id: 'c1', subtotal: 0 } }];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = items;
+    return ordersApp.request(
+      '/',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  function insertedRows() {
+    return (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, unknown>[];
+  }
+
+  beforeEach(() => {
+    db.responses['preset_line_items.select'] = [PRESET];
+  });
+
+  it('charges the override and records the calculated price as the original', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        preset_id: PRESET.id,
+        title: 'Installation',
+        description: '',
+        quantity: 2,
+        unit_price_override: 50,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(50);
+    expect(insertedRows()[0].base_unit_price).toBe(75);
+    expect(insertedRows()[0].line_total).toBe(100);
+  });
+
+  it('ignores an override on a legacy preset with no catalog provenance', async () => {
+    const res = await postItems([
+      {
+        item_type: 'preset',
+        title: 'Installation',
+        description: '',
+        quantity: 1,
+        unit_price: 60,
+        unit_price_override: 10,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].unit_price).toBe(60);
+    expect(insertedRows()[0].base_unit_price).toBeNull();
+  });
+
+  it('overrides a blind price and keeps the formula figure as the original', async () => {
+    const blind = { ...payload().line_items[0], unit_price_override: 100 };
+    const res = await postItems([blind]);
+    expect(res.status).toBe(201);
+    // material 154 + cassette 28 + control 0 = 182 calculated, 100 charged.
+    expect(insertedRows()[0].unit_price).toBe(100);
+    expect(insertedRows()[0].base_unit_price).toBe(182);
+    expect(insertedRows()[0].line_total).toBe(200); // 100 x qty 2
+  });
+
+  it('adds add-on prices once to the line total and snapshots them', async () => {
+    const res = await postItems([
+      {
+        item_type: 'custom',
+        title: 'Extra work',
+        description: '',
+        quantity: 3,
+        unit_price: 100,
+        addons: [{ label: 'Rush fee', price: 50 }],
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].line_total).toBe(350); // 100 x 3 + 50, not 100 x 3 + 150
+    expect(insertedRows()[0].addons).toEqual([{ label: 'Rush fee', price: 50 }]);
+  });
+
+  it('carries show_original_price onto the row', async () => {
+    const res = await postItems([
+      {
+        item_type: 'custom',
+        title: 'Extra work',
+        description: '',
+        quantity: 1,
+        unit_price: 10,
+        show_original_price: false,
+      },
+    ]);
+    expect(res.status).toBe(201);
+    expect(insertedRows()[0].show_original_price).toBe(false);
+  });
+
+  it('gives blind and flat rows an identical column set', async () => {
+    // The PostgREST bulk-insert rule: a key missing from one row is
+    // NULL-filled across the batch and violates a not-null default.
+    const res = await postItems([
+      payload().line_items[0],
+      { item_type: 'custom', title: 'Extra work', description: '', quantity: 1, unit_price: 40 },
+    ]);
+    expect(res.status).toBe(201);
+    const rows = insertedRows();
+    expect(rows.length).toBe(2);
+    expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
   });
 });

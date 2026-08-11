@@ -66,6 +66,8 @@ import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type { CatalogResolver } from '../lib/blindTypes/base';
 import { calculateTotals } from '../lib/totals';
+import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
+import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../lib/pdf';
@@ -94,10 +96,42 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
 
 /**
+ * One consultant-added extra on a line item.
+ *
+ * `addons[].price` and `unit_price_override` below are, alongside a
+ * custom item's own `unit_price`, the ONLY money a client may dictate —
+ * a deliberate, named widening of AI_GUIDELINES rule 1 rather than a
+ * loosened schema. The bounds here are the whole guard, and every value
+ * that gets through is written to the order activity log on save.
+ *
+ * `.strict()` is what stops a future `taxable` or `cost` field from
+ * riding along inside an add-on unnoticed.
+ */
+const addonSchema = z
+  .object({
+    label: z.string().min(1, 'Add-on needs a label').max(200),
+    price: z.number().min(0).max(1_000_000),
+  })
+  .strict();
+
+/** Adjustment fields shared by every line-item shape. */
+const adjustmentFields = {
+  addons: z.array(addonSchema).max(10, 'At most 10 add-ons per item').default([]),
+  show_original_price: z.boolean().default(true),
+};
+
+/**
+ * Consultant-typed unit price replacing the calculated one. Absent from
+ * `customItemBase` on purpose — a custom item's price is already freely
+ * typed, so a second price field would be two names for one number.
+ */
+const overrideField = z.number().min(0).max(1_000_000).nullable().default(null);
+
+/**
  * Blind line item: measurements + catalog option ids — deliberately
  * `.strict()` so any client-supplied money field (unit_price etc.) is
  * REJECTED with 400 rather than silently stripped; pricing is
- * exclusively server-side.
+ * exclusively server-side apart from the declared adjustment fields.
  */
 const blindItemSchema = z
   .object({
@@ -131,20 +165,74 @@ const blindItemSchema = z
      */
     attributes: z.record(z.unknown()).default({}),
     quantity: z.number().int().min(1).max(999),
+    unit_price_override: overrideField,
+    ...adjustmentFields,
   })
   .strict();
 
-/** Preset/custom line item: consultant-entered description + price. */
-const flatItemSchema = z
+/**
+ * Preset line item: a catalog reference the Worker prices itself.
+ *
+ * `unit_price` survives ONLY for rows created before `preset_id` existed
+ * — an order saved back with a legacy preset item still has to
+ * round-trip. When `preset_id` is present the sent `unit_price` is
+ * ignored entirely and the catalog price wins, which is what makes
+ * "reset to calculated" mean something on a preset.
+ *
+ * Left UN-refined: `z.discriminatedUnion` requires each member to be a
+ * plain object schema, and `.refine()` would return a `ZodEffects` it
+ * refuses. The cross-field rules live on the union's `superRefine`.
+ */
+const presetItemBase = z
   .object({
-    item_type: z.enum(['preset', 'custom']),
-    description: z.string().min(1, 'Description is required').max(1000),
+    item_type: z.literal('preset'),
+    preset_id: z.string().uuid().nullable().default(null),
+    title: z.string().max(200).default(''),
+    description: z.string().max(2000).default(''),
+    quantity: z.number().int().min(1).max(999),
+    unit_price: z.number().min(0).max(1_000_000).optional(),
+    unit_price_override: overrideField,
+    ...adjustmentFields,
+  })
+  .strict();
+
+/** Custom line item: free-form title, multi-line description, typed price. */
+const customItemBase = z
+  .object({
+    item_type: z.literal('custom'),
+    title: z.string().max(200).default(''),
+    description: z.string().max(2000).default(''),
     quantity: z.number().int().min(1).max(999),
     unit_price: z.number().min(0).max(1_000_000),
+    ...adjustmentFields,
   })
   .strict();
 
-const lineItemSchema = z.discriminatedUnion('item_type', [blindItemSchema, flatItemSchema]);
+/**
+ * The three item shapes, plus the rules that span two fields at once and
+ * therefore cannot live on either field alone.
+ */
+const lineItemSchema = z
+  .discriminatedUnion('item_type', [blindItemSchema, presetItemBase, customItemBase])
+  .superRefine((it, ctx) => {
+    if (it.item_type === 'blind') return;
+    // A flat item with no text at all would print as a nameless row on
+    // every document. Either field alone is enough.
+    if (it.title.trim() === '' && it.description.trim() === '') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Give the item a title or a description',
+      });
+    }
+    // A preset is priced from the catalog OR carries a legacy typed
+    // price. With neither there is nothing to charge.
+    if (it.item_type === 'preset' && it.preset_id === null && it.unit_price === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Preset item needs a preset or a price',
+      });
+    }
+  });
 
 /** Payload for POST / and PUT /:id. */
 const orderSchema = z
@@ -229,7 +317,17 @@ async function resolveLineItems(
    * that declares none.
    */
   const refIds = new Map<string, { valueColumn: string; ids: Set<string> }>();
+  /**
+   * Preset items carrying catalog provenance. Collected here so their
+   * prices are fetched in the same batch as every other catalog price —
+   * a preset is no more client-priced than a material is.
+   */
+  const presetIds = new Set<string>();
   for (const it of items) {
+    if (it.item_type === 'preset') {
+      if (it.preset_id) presetIds.add(it.preset_id);
+      continue;
+    }
     if (it.item_type !== 'blind') continue;
     ids.materials.add(it.material_id);
     if (it.cassette_id) ids.cassette_options.add(it.cassette_id);
@@ -263,11 +361,12 @@ async function resolveLineItems(
     );
   }
 
-  const [materials, cassettes, bottomRails, controls] = await Promise.all([
+  const [materials, cassettes, bottomRails, controls, presets] = await Promise.all([
     lookup('materials', ids.materials, 'price_per_sqm'),
     lookup('cassette_options', ids.cassette_options, 'price_per_m'),
     lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
     lookup('control_options', ids.control_options, 'price_per_item'),
+    lookup('preset_line_items', presetIds, 'unit_price'),
   ]);
 
   // One query per referenced catalog table. Empty for every blind type
@@ -291,7 +390,30 @@ async function resolveLineItems(
   // caught by the live E2E run.
   return items.map((it, position) => {
     if (it.item_type !== 'blind') {
-      const unit = Math.round(it.unit_price * 100) / 100;
+      // A preset with provenance is priced by the SERVER from the
+      // catalog; any unit_price the client sent is ignored, exactly as a
+      // material's price is. Only a legacy preset (saved before
+      // preset_id existed) and a custom item fall back to the typed
+      // figure.
+      let base: number;
+      if (it.item_type === 'preset' && it.preset_id) {
+        const preset = presets.get(it.preset_id);
+        if (!preset) throw new Error('Selected preset item no longer exists.');
+        base = preset.price;
+      } else {
+        base = it.unit_price ?? 0;
+      }
+      // A custom item's price is already typed by the consultant, and a
+      // legacy preset has no catalog default to return to — in both cases
+      // `base` IS the typed figure, so an override would be a second name
+      // for one number.
+      const canOverride = it.item_type === 'preset' && it.preset_id !== null;
+      const adjusted = applyPriceAdjustments({
+        base,
+        quantity: it.quantity,
+        override: canOverride ? it.unit_price_override : null,
+        addons: it.addons as Addon[],
+      });
       return {
         item_type: it.item_type,
         position,
@@ -311,6 +433,8 @@ async function resolveLineItems(
         control_id: null,
         control_name: null,
         control_price_per_item: null,
+        title: it.title,
+        preset_id: it.item_type === 'preset' ? it.preset_id : null,
         description: it.description,
         note: '',
         color: '',
@@ -319,8 +443,11 @@ async function resolveLineItems(
         // any row missing one, and `attributes` is not-null.
         attributes: {},
         quantity: it.quantity,
-        unit_price: unit,
-        line_total: Math.round(unit * it.quantity * 100) / 100,
+        show_original_price: it.show_original_price,
+        unit_price: adjusted.unit_price,
+        base_unit_price: adjusted.base_unit_price,
+        addons: adjusted.addons,
+        line_total: adjusted.line_total,
       };
     }
     const blindType = getBlindType(it.blinds_type);
@@ -374,7 +501,7 @@ async function resolveLineItems(
 
     // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
-    const unit_price = calculateBlindUnitPriceForType(it.blinds_type, {
+    const base = calculateBlindUnitPriceForType(it.blinds_type, {
       panels: it.panels,
       height_cm: it.height_cm,
       material_price_per_sqm: material.price,
@@ -382,6 +509,12 @@ async function resolveLineItems(
       bottom_rail_price_per_m: bottomRail?.price ?? 0,
       control_price_per_item: control.price,
       attributes,
+    });
+    const adjusted = applyPriceAdjustments({
+      base,
+      quantity: it.quantity,
+      override: it.unit_price_override,
+      addons: it.addons as Addon[],
     });
     return {
       item_type: 'blind',
@@ -402,13 +535,18 @@ async function resolveLineItems(
       control_id: it.control_id,
       control_name: control.name,
       control_price_per_item: control.price,
+      title: '',
+      preset_id: null,
       description: '',
       note: it.note,
       color: it.color,
       attributes,
       quantity: it.quantity,
-      unit_price,
-      line_total: Math.round(unit_price * it.quantity * 100) / 100,
+      show_original_price: it.show_original_price,
+      unit_price: adjusted.unit_price,
+      base_unit_price: adjusted.base_unit_price,
+      addons: adjusted.addons,
+      line_total: adjusted.line_total,
     };
   });
 }
@@ -629,9 +767,12 @@ app.put('/:id', async (c) => {
   const id = c.req.param('id');
   const sb = createSupabaseAdmin(c.env);
 
+  // The line items come along so the hand-entered money on them can be
+  // diffed against what is about to replace them; they are read BEFORE
+  // the wholesale delete below, which is the only chance to see them.
   const { data: existing } = await sb
     .from('orders')
-    .select('id, status, expiry_date')
+    .select('id, status, expiry_date, line_items(position, unit_price, base_unit_price, addons)')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
@@ -679,6 +820,26 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+
+  // Hand-entered money is the one thing on an order that no formula can
+  // explain afterwards, so every override and add-on change gets its own
+  // line in the trail. Ordered by position, matching the editor.
+  const previousItems = ((existing.line_items ?? []) as Record<string, unknown>[])
+    .slice()
+    .sort((a, b) => Number(a.position) - Number(b.position))
+    .map((li) => ({
+      unit_price: Number(li.unit_price),
+      base_unit_price: li.base_unit_price === null ? null : Number(li.base_unit_price),
+      addons: (li.addons ?? []) as Addon[],
+    }));
+  const nextItems = rows.map((r) => ({
+    unit_price: Number(r.unit_price),
+    base_unit_price: r.base_unit_price === null ? null : Number(r.base_unit_price),
+    addons: (r.addons ?? []) as Addon[],
+  }));
+  for (const message of describePriceChanges(previousItems, nextItems)) {
+    await logOrderEvent(sb, id, message);
+  }
 
   const { data: full, error: readError } = await readDetail(sb, id);
   if (readError) return c.json({ error: readError.message }, 500);

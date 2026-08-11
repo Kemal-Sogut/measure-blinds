@@ -9,6 +9,7 @@
  * set by the pleat style's fullness, not by the drop, so:
  *
  *   fabric  = width_m x pleat multiplier x material price per metre
+ *   hems    = panels x 0.5 m x material price per metre
  *   control = panels x control price per panel   (base behaviour)
  *   install = a fixed charge for the rod or track
  *
@@ -35,6 +36,14 @@
 
 import { z } from 'zod';
 import { BaseBlindType, type BlindAttributes, type BlindPricingInputs } from './base';
+
+/**
+ * Fabric consumed by the side hems and returns of ONE finished panel, in
+ * running metres. Charged per panel and outside the fullness multiplier —
+ * a hem is cut on the finished panel, so gathering the curtain more does
+ * not make it wider.
+ */
+const HEM_ALLOWANCE_M = 0.5;
 
 export class CurtainsBlindType extends BaseBlindType {
   readonly blindType = 'Curtains';
@@ -87,10 +96,16 @@ export class CurtainsBlindType extends BaseBlindType {
   }
 
   /**
-   * Fabric by the running metre x fullness, plus the per-panel control
-   * charge and the one-off installation charge. The cassette and bottom
-   * rail prices are ignored outright rather than routed through a hook:
-   * this type has neither, and the Worker stores null for both.
+   * Fabric by the running metre x fullness, plus a per-panel making
+   * allowance, the per-panel control charge and the one-off installation
+   * charge. The cassette and bottom rail prices are ignored outright
+   * rather than routed through a hook: this type has neither, and the
+   * Worker stores null for both.
+   *
+   * The allowance is `HEM_ALLOWANCE_M` of fabric for every panel — side
+   * hems and returns are cut once per finished panel — so it is charged
+   * per panel COUNT and deliberately NOT multiplied by the fullness: a
+   * hem does not get wider because the curtain is gathered more.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
     const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
@@ -98,6 +113,7 @@ export class CurtainsBlindType extends BaseBlindType {
     const install = numericOr(item.attributes.installation_price, 0);
     const total =
       (width / 100) * pleat * item.material_price_per_sqm +
+      item.panels.length * HEM_ALLOWANCE_M * item.material_price_per_sqm +
       this.controlCost(item.panels.length, item.control_price_per_item) +
       install;
     return Math.round(total * 100) / 100;
