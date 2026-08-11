@@ -49,8 +49,10 @@ export interface BlindItemInput {
   panels: number[];
   height_cm: number;
   material_id: string;
-  cassette_id: string;
-  bottom_rail_id: string;
+  /** Null for a blind type with no cassette (Curtains). */
+  cassette_id: string | null;
+  /** Null for a blind type with no bottom rail (Curtains). */
+  bottom_rail_id: string | null;
   control_id: string;
   color: string;
   note: string;

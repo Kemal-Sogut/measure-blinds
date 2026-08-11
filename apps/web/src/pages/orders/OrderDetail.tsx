@@ -125,7 +125,7 @@ import {
   type ItemDraft,
   type Catalogs,
 } from './lineItemDrafts';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment } from '../../types';
 
 /**
  * Panel treatment shared by this screen's hand-rolled bottom sheets.
@@ -445,6 +445,10 @@ export default function OrderDetail() {
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
   const bottomRailsQ = useCatalogList<BottomRailOption>('bottom-rail-options');
   const controlsQ = useCatalogList<ControlOption>('control-options');
+  // Curtains-only catalogs. Fetched unconditionally: the blind type can
+  // change mid-edit, and the preview must price the moment it does.
+  const pleatTypesQ = useCatalogList<PleatType>('pleat-types');
+  const installationQ = useCatalogList<InstallationOption>('installation-options');
   const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
   const { data: company } = useCompanySettings();
@@ -632,8 +636,18 @@ export default function OrderDetail() {
       bottomRails: bottomRailsQ.data ?? [],
       controls: controlsQ.data ?? [],
       blindTypes: blindTypesQ.data ?? [],
+      pleatTypes: pleatTypesQ.data ?? [],
+      installationOptions: installationQ.data ?? [],
     }),
-    [materialsQ.data, cassettesQ.data, bottomRailsQ.data, controlsQ.data, blindTypesQ.data]
+    [
+      materialsQ.data,
+      cassettesQ.data,
+      bottomRailsQ.data,
+      controlsQ.data,
+      blindTypesQ.data,
+      pleatTypesQ.data,
+      installationQ.data,
+    ]
   );
 
   // ── Live totals (client preview; server recomputes on save) ────
@@ -839,8 +853,15 @@ export default function OrderDetail() {
         if (panels.some((p) => p === null) || !panels.length)
           return `Item ${i + 1}: enter every panel width.`;
         if (!height) return `Item ${i + 1}: enter a height.`;
-        if (!it.material_id || !it.cassette_id || !it.bottom_rail_id || !it.control_id)
-          return `Item ${i + 1}: choose material, cassette, bottom rail, and control.`;
+        // Which hardware a blind needs is the TYPE's call: Curtains has
+        // neither a cassette nor a bottom rail, and demanding them here
+        // would make a curtain unsavable.
+        const uses = new Set<string>(getBlindType(it.blinds_type).requiredCatalogs);
+        if (!it.material_id || !it.control_id)
+          return `Item ${i + 1}: choose material and control.`;
+        if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
+        if (uses.has('bottom_rail') && !it.bottom_rail_id)
+          return `Item ${i + 1}: choose a bottom rail.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
         // Convert once, here. Failing now gives a readable message instead
         // of a 400 from the server's own re-parse.
@@ -854,8 +875,10 @@ export default function OrderDetail() {
           panels: panels as number[],
           height_cm: height,
           material_id: it.material_id,
-          cassette_id: it.cassette_id,
-          bottom_rail_id: it.bottom_rail_id,
+          // Null, not '' — the API accepts a uuid or null for a slot the
+          // type does not use, and rejects an id for one it does not.
+          cassette_id: it.cassette_id || null,
+          bottom_rail_id: it.bottom_rail_id || null,
           control_id: it.control_id,
           color: it.color.trim(),
           note: it.note.trim(),

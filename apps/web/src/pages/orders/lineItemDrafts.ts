@@ -24,8 +24,16 @@
 
 import { calculateBlindUnitPriceForType } from '../../lib/pricing';
 import { getBlindType } from '../../lib/blindTypes';
-import type { BlindAttributes } from '../../lib/blindTypes/base';
-import type { Material, CassetteOption, BottomRailOption, ControlOption, BlindType } from '../../types';
+import type { BlindAttributes, CatalogResolver } from '../../lib/blindTypes/base';
+import type {
+  Material,
+  CassetteOption,
+  BottomRailOption,
+  ControlOption,
+  BlindType,
+  PleatType,
+  InstallationOption,
+} from '../../types';
 
 /* ------------------------------------------------------------------ */
 /* Draft models                                                        */
@@ -72,6 +80,10 @@ export interface Catalogs {
   bottomRails: BottomRailOption[];
   controls: ControlOption[];
   blindTypes: BlindType[];
+  /** Curtains fullness ratios — see `lib/blindTypes/curtains.ts`. */
+  pleatTypes: PleatType[];
+  /** Curtains rod/track charges — a fixed amount per curtain. */
+  installationOptions: InstallationOption[];
 }
 
 /**
@@ -108,47 +120,92 @@ export function parsePositive(value: string): number | null {
  * components read and write draft strings only and never parse.
  */
 export function parseDraftAttributes(draft: BlindDraft): BlindAttributes | null {
+  const blindType = getBlindType(draft.blinds_type);
+  // Keep ONLY the keys the type accepts from a client. A re-opened order
+  // carries the Worker's snapshot keys (pleat_name, pleat_multiplier, …)
+  // in its draft, and the strict schema would reject the whole blob — the
+  // item would silently lose its options on the second save. Filtering
+  // here is also what stops a resolved PRICE from being echoed back.
+  const inputs = new Set(blindType.inputKeys());
   const filled: Record<string, string> = {};
   for (const [k, v] of Object.entries(draft.attributes)) {
-    if (v.trim() !== '') filled[k] = v.trim();
+    if (inputs.has(k) && v.trim() !== '') filled[k] = v.trim();
   }
-  const result = getBlindType(draft.blinds_type).attributeSchema.safeParse(filled);
+  const result = blindType.attributeSchema.safeParse(filled);
   return result.success ? (result.data as BlindAttributes) : null;
 }
 
 /**
- * Live price preview for a blind draft. Returns null until every
- * required field (panels, height, all four options) is filled.
+ * Backs `resolveCatalogRefs` with the catalog lists already in the React
+ * Query cache, so the keystroke preview resolves the same ids the Worker
+ * will resolve against Postgres on save.
+ *
+ * This is the ONLY place the web maps a catalog table name to a list. It
+ * lives here rather than in a blind-type module because the modules are
+ * api/web twins and must not know how either side stores its catalogs.
+ */
+function catalogResolver(catalogs: Catalogs): CatalogResolver {
+  return (table, id) => {
+    if (table === 'pleat_types') {
+      const hit = catalogs.pleatTypes.find((p) => p.id === id);
+      return hit ? { name: hit.name, value: Number(hit.multiplier) } : undefined;
+    }
+    if (table === 'installation_options') {
+      const hit = catalogs.installationOptions.find((o) => o.id === id);
+      return hit ? { name: hit.name, value: Number(hit.price_per_item) } : undefined;
+    }
+    return undefined;
+  };
+}
+
+/**
+ * Live price preview for a blind draft. Returns null until every field
+ * the SELECTED TYPE requires is filled — which hardware options those
+ * are is the type's own call (`requiredCatalogs`), because Curtains has
+ * neither a cassette nor a bottom rail and would otherwise never price.
  */
 export function blindDraftPrice(
   draft: BlindDraft,
   catalogs: Catalogs
 ): { unit: number; total: number } | null {
+  const blindType = getBlindType(draft.blinds_type);
+  const uses = new Set<string>(blindType.requiredCatalogs);
   const panels = draft.panels.map(parsePositive);
   const height = parsePositive(draft.height_cm);
   const qty = parsePositive(draft.quantity);
   const material = catalogs.materials.find((m) => m.id === draft.material_id);
+  const control = catalogs.controls.find((x) => x.id === draft.control_id);
   const cassette = catalogs.cassettes.find((x) => x.id === draft.cassette_id);
   const bottomRail = catalogs.bottomRails.find((x) => x.id === draft.bottom_rail_id);
-  const control = catalogs.controls.find((x) => x.id === draft.control_id);
   if (panels.some((p) => p === null) || panels.length === 0) return null;
-  if (!height || !qty || !material || !cassette || !bottomRail || !control) return null;
+  if (!height || !qty || !material || !control) return null;
+  if (uses.has('cassette') && !cassette) return null;
+  if (uses.has('bottom_rail') && !bottomRail) return null;
 
   // The type's own inputs must parse too, or the preview would show a
   // price the server is about to reject.
   const attributes = parseDraftAttributes(draft);
   if (attributes === null) return null;
 
+  // Mirrors the Worker: ids in, snapshot name/value out. A chosen row
+  // that is not in the cache throws, which here means "not ready yet".
+  let resolved: BlindAttributes;
+  try {
+    resolved = blindType.resolveCatalogRefs(attributes, catalogResolver(catalogs));
+  } catch {
+    return null;
+  }
+
   // Dispatch to the selected blind type's module (default fallback).
   const unit = calculateBlindUnitPriceForType(draft.blinds_type, {
     panels: panels as number[],
     height_cm: height,
     material_price_per_sqm: Number(material.price_per_sqm),
-    cassette_price_per_m: Number(cassette.price_per_m),
-    bottom_rail_price_per_m: Number(bottomRail.price_per_m),
+    cassette_price_per_m: Number(cassette?.price_per_m ?? 0),
+    bottom_rail_price_per_m: Number(bottomRail?.price_per_m ?? 0),
     control_price_per_item: Number(control.price_per_item),
     quantity: qty,
-    attributes,
+    attributes: resolved,
   });
   return { unit, total: Math.round(unit * qty * 100) / 100 };
 }

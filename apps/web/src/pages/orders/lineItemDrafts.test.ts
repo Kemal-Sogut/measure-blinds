@@ -44,8 +44,19 @@ describe('parseDraftAttributes', () => {
     expect(parseDraftAttributes(draft({ blinds_type: 'Something Old' }))).toEqual({});
   });
 
-  it('returns null when a value is not valid for the type', () => {
-    expect(parseDraftAttributes(draft({ attributes: { nope: 'x' } }))).toBeNull();
+  it('drops a key the type does not declare', () => {
+    // Dropped rather than rejected: a draft carries whatever keys the
+    // previously selected type left behind, and the payload builder must
+    // still be able to save. The SERVER is the gate that matters — it
+    // re-parses through the same strict schema and 400s on a key the
+    // client should not have sent.
+    expect(parseDraftAttributes(draft({ attributes: { nope: 'x' } }))).toEqual({});
+  });
+
+  it('returns null when a DECLARED key holds an invalid value', () => {
+    expect(
+      parseDraftAttributes(draft({ blinds_type: 'Curtains', attributes: { pleat_type_id: 'Pinch' } }))
+    ).toBeNull();
   });
 
   it('drops blank strings rather than sending empty values', () => {
@@ -58,5 +69,51 @@ describe('parseDraftAttributes', () => {
 
   it('trims surrounding whitespace before parsing', () => {
     expect(parseDraftAttributes(draft({ attributes: { nope: '   ' } }))).toEqual({});
+  });
+});
+
+describe('parseDraftAttributes round-trip', () => {
+  const PLEAT_ID = '66666666-6666-4666-8666-666666666666';
+  const INSTALL_ID = '77777777-7777-4777-8777-777777777777';
+
+  /**
+   * A saved curtain re-opened for editing. `toDrafts` stringifies the
+   * PERSISTED blob, which carries the Worker's snapshot keys alongside
+   * the two ids the client originally sent.
+   */
+  function reopenedCurtain(): BlindDraft {
+    return draft({
+      blinds_type: 'Curtains',
+      attributes: {
+        pleat_type_id: PLEAT_ID,
+        pleat_name: 'Pinch',
+        pleat_multiplier: '2.5',
+        installation_id: INSTALL_ID,
+        installation_name: 'Rod',
+        installation_price: '45',
+      },
+    });
+  }
+
+  it('keeps the ids and drops the server-written snapshot keys', () => {
+    expect(parseDraftAttributes(reopenedCurtain())).toEqual({
+      pleat_type_id: PLEAT_ID,
+      installation_id: INSTALL_ID,
+    });
+  });
+
+  it('does not return null for a re-opened curtain', () => {
+    // Regression: the strict schema rejects the snapshot keys, so an
+    // unfiltered draft parsed to null and the curtain silently lost its
+    // pleat and installation on the second save.
+    expect(parseDraftAttributes(reopenedCurtain())).not.toBeNull();
+  });
+
+  it('never lets a client re-send a resolved price', () => {
+    // The multiplier is in the draft but must not survive into the
+    // payload — it is a price, and only the Worker may set it.
+    const parsed = parseDraftAttributes(reopenedCurtain()) ?? {};
+    expect(parsed).not.toHaveProperty('pleat_multiplier');
+    expect(parsed).not.toHaveProperty('installation_price');
   });
 });
