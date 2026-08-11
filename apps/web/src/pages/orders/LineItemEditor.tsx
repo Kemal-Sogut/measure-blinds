@@ -132,17 +132,22 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — only material, cassette, bottom rail and control are
- * exposed. Each starts as "" (no change); only non-empty selections are
- * applied by the parent when the user clicks Apply. The Material list is
- * not type-filtered here because a bulk selection may span several blind
- * types; every Material is offered.
+ * Bulk-edit form — material, cassette, bottom rail, control and
+ * installation. Each starts as "" (no change); only non-empty selections
+ * are applied by the parent when the user clicks Apply.
+ *
+ * NOTHING here is filtered by blind type, unlike the per-item form: a
+ * bulk selection may span several types at once, so every option of every
+ * catalog is offered. The parent is what skips an item whose type does
+ * not use the slot, on the same `slotsForType` rule the item form renders
+ * from.
  */
 export interface BulkEditState {
   material_id: string;
   cassette_id: string;
   bottom_rail_id: string;
   control_id: string;
+  installation_id: string;
 }
 
 export function BulkEditForm({
@@ -187,6 +192,13 @@ export function BulkEditForm({
           value={state.control_id}
           onChange={(id) => onChange({ ...state, control_id: id })}
           options={catalogs.controls}
+          placeholder="No change"
+        />
+        <OptionSelect
+          label="Installation"
+          value={state.installation_id}
+          onChange={(id) => onChange({ ...state, installation_id: id })}
+          options={catalogs.installationOptions}
           placeholder="No change"
         />
       </div>

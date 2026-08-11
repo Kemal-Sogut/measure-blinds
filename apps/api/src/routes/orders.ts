@@ -64,7 +64,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
-import type { CatalogResolver } from '../lib/blindTypes/base';
+import type { CatalogResolver, CatalogSlot } from '../lib/blindTypes/base';
+import { loadSlotScoping } from '../lib/optionScoping';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
@@ -142,17 +143,22 @@ const blindItemSchema = z
     height_cm: z.number().positive().max(1000),
     material_id: z.string().uuid(),
     /**
-     * Nullable because a blind type may not use these slots at all —
+     * All four nullable because a blind type may not use a slot at all —
      * Curtains has neither a cassette nor a bottom rail. WHICH slots a
-     * type requires is declared by its module (`requiredCatalogs`) and
-     * enforced in `resolveLineItems`, not here: Zod cannot branch on the
-     * sibling `blinds_type` field. Sending an id for a slot the type does
-     * not use is rejected there, so the form and the price cannot
-     * disagree.
+     * type uses is DATA (the `<catalog>_blind_types` join tables,
+     * migration 35) and is enforced in `resolveLineItems` via
+     * `loadSlotScoping`, not here: Zod cannot branch on the sibling
+     * `blinds_type` field. Sending an id for a slot the type does not use
+     * is rejected there, so the form and the price cannot disagree.
+     *
+     * `control_id` joined the nullable set with migration 35: a type with
+     * no control option scoped to it prices its control at 0 and stores
+     * null, exactly as the cassette already did.
      */
     cassette_id: z.string().uuid().nullable().default(null),
     bottom_rail_id: z.string().uuid().nullable().default(null),
-    control_id: z.string().uuid(),
+    control_id: z.string().uuid().nullable().default(null),
+    installation_id: z.string().uuid().nullable().default(null),
     color: z.string().max(100).default(''),
     note: z.string().max(1000).default(''),
     /**
@@ -308,6 +314,7 @@ async function resolveLineItems(
     cassette_options: new Set<string>(),
     bottom_rail_options: new Set<string>(),
     control_options: new Set<string>(),
+    installation_options: new Set<string>(),
   };
   /**
    * Ids referenced from `attributes` rather than from a column, keyed by
@@ -332,7 +339,8 @@ async function resolveLineItems(
     ids.materials.add(it.material_id);
     if (it.cassette_id) ids.cassette_options.add(it.cassette_id);
     if (it.bottom_rail_id) ids.bottom_rail_options.add(it.bottom_rail_id);
-    ids.control_options.add(it.control_id);
+    if (it.control_id) ids.control_options.add(it.control_id);
+    if (it.installation_id) ids.installation_options.add(it.installation_id);
     for (const ref of getBlindType(it.blinds_type).catalogRefs) {
       const raw = (it.attributes as Record<string, unknown>)[ref.attrKey];
       if (typeof raw !== 'string' || raw === '') continue;
@@ -361,13 +369,21 @@ async function resolveLineItems(
     );
   }
 
-  const [materials, cassettes, bottomRails, controls, presets] = await Promise.all([
-    lookup('materials', ids.materials, 'price_per_sqm'),
-    lookup('cassette_options', ids.cassette_options, 'price_per_m'),
-    lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
-    lookup('control_options', ids.control_options, 'price_per_item'),
-    lookup('preset_line_items', presetIds, 'unit_price'),
-  ]);
+  const [materials, cassettes, bottomRails, controls, installations, presets, scoping] =
+    await Promise.all([
+      lookup('materials', ids.materials, 'price_per_sqm'),
+      lookup('cassette_options', ids.cassette_options, 'price_per_m'),
+      lookup('bottom_rail_options', ids.bottom_rail_options, 'price_per_m'),
+      lookup('control_options', ids.control_options, 'price_per_item'),
+      lookup('installation_options', ids.installation_options, 'price_per_item'),
+      lookup('preset_line_items', presetIds, 'unit_price'),
+      // Which hardware slots each blind type uses. Data, not code — see
+      // `lib/optionScoping.ts` and migration 35.
+      loadSlotScoping(
+        sb,
+        items.flatMap((it) => (it.item_type === 'blind' ? [it.blinds_type] : []))
+      ),
+    ]);
 
   // One query per referenced catalog table. Empty for every blind type
   // that declares no refs, which today is all of them but Curtains.
@@ -433,6 +449,9 @@ async function resolveLineItems(
         control_id: null,
         control_name: null,
         control_price_per_item: null,
+        installation_id: null,
+        installation_name: null,
+        installation_price_per_item: null,
         title: it.title,
         preset_id: it.item_type === 'preset' ? it.preset_id : null,
         description: it.description,
@@ -453,36 +472,65 @@ async function resolveLineItems(
     const blindType = getBlindType(it.blinds_type);
     const label = it.blinds_type || 'this blind type';
     const material = materials.get(it.material_id);
-    const control = controls.get(it.control_id);
     if (!material) throw new Error('Selected material no longer exists.');
-    if (!control) throw new Error('Selected control option no longer exists.');
+
+    // Resolve the chosen rows FIRST. An id that no longer resolves is
+    // reported as the deletion it is; deferring this behind the slot
+    // gates below would report a deleted option as "this type does not
+    // take one", because deleting the row cascades its scoping links away
+    // and the slot goes quiet in the same breath.
+    const cassette = it.cassette_id ? cassettes.get(it.cassette_id) : null;
+    const bottomRail = it.bottom_rail_id ? bottomRails.get(it.bottom_rail_id) : null;
+    const control = it.control_id ? controls.get(it.control_id) : null;
+    const installation = it.installation_id ? installations.get(it.installation_id) : null;
+    if (it.cassette_id && !cassette) throw new Error('Selected cassette option no longer exists.');
+    if (it.bottom_rail_id && !bottomRail) {
+      throw new Error('Selected bottom rail option no longer exists.');
+    }
+    if (it.control_id && !control) throw new Error('Selected control option no longer exists.');
+    if (it.installation_id && !installation) {
+      throw new Error('Selected installation option no longer exists.');
+    }
 
     // A type either uses a hardware slot or it does not. Storing an id
     // for a slot the type has no formula for would name that option on
     // every document while contributing nothing to the price, so the
     // form and the total would disagree.
-    const uses = new Set<string>(blindType.requiredCatalogs);
-    if (uses.has('cassette') !== Boolean(it.cassette_id)) {
+    //
+    // An UNKNOWN blind type — legacy free text, or one since deleted from
+    // Settings — has no scoping rows to consult and is left unconstrained:
+    // demanding ids it never carried would make every pre-dropdown order
+    // permanently unsavable.
+    const enforced = scoping.isKnownType(it.blinds_type);
+    const uses = (slot: CatalogSlot) => scoping.usesSlot(it.blinds_type, slot);
+    if (enforced && uses('cassette') !== Boolean(it.cassette_id)) {
       throw new Error(
         it.cassette_id
           ? `Item ${position + 1}: ${label} does not take a cassette.`
           : `Item ${position + 1}: a cassette option is required.`
       );
     }
-    if (uses.has('bottom_rail') !== Boolean(it.bottom_rail_id)) {
+    if (enforced && uses('bottom_rail') !== Boolean(it.bottom_rail_id)) {
       throw new Error(
         it.bottom_rail_id
           ? `Item ${position + 1}: ${label} does not take a bottom rail.`
           : `Item ${position + 1}: a bottom rail option is required.`
       );
     }
-    const cassette = it.cassette_id ? cassettes.get(it.cassette_id) : null;
-    const bottomRail = it.bottom_rail_id ? bottomRails.get(it.bottom_rail_id) : null;
-    if (it.cassette_id && !cassette) throw new Error('Selected cassette option no longer exists.');
-    if (it.bottom_rail_id && !bottomRail) {
-      throw new Error('Selected bottom rail option no longer exists.');
+    if (enforced && uses('control') !== Boolean(it.control_id)) {
+      throw new Error(
+        it.control_id
+          ? `Item ${position + 1}: ${label} does not take a control option.`
+          : `Item ${position + 1}: a control option is required.`
+      );
     }
-
+    if (enforced && uses('installation') !== Boolean(it.installation_id)) {
+      throw new Error(
+        it.installation_id
+          ? `Item ${position + 1}: ${label} does not take an installation option.`
+          : `Item ${position + 1}: an installation option is required.`
+      );
+    }
     // Second, type-aware gate: the loose `z.record` on the payload schema
     // only proved the blob is an object. This parses it through the blind
     // type's own strict schema, so an undeclared key — a price above all
@@ -507,7 +555,8 @@ async function resolveLineItems(
       material_price_per_sqm: material.price,
       cassette_price_per_m: cassette?.price ?? 0,
       bottom_rail_price_per_m: bottomRail?.price ?? 0,
-      control_price_per_item: control.price,
+      control_price_per_item: control?.price ?? 0,
+      installation_price_per_item: installation?.price ?? 0,
       attributes,
     });
     const adjusted = applyPriceAdjustments({
@@ -533,8 +582,11 @@ async function resolveLineItems(
       bottom_rail_name: bottomRail?.name ?? null,
       bottom_rail_price_per_m: bottomRail?.price ?? null,
       control_id: it.control_id,
-      control_name: control.name,
-      control_price_per_item: control.price,
+      control_name: control?.name ?? null,
+      control_price_per_item: control?.price ?? null,
+      installation_id: it.installation_id,
+      installation_name: installation?.name ?? null,
+      installation_price_per_item: installation?.price ?? null,
       title: '',
       preset_id: null,
       description: '',

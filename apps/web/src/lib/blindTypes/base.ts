@@ -9,7 +9,7 @@
  * now they all inherit the default formula unchanged. A subclass
  * diverges by overriding one of the granular cost
  * hooks (`materialCost` / `cassetteCost` / `bottomRailCost` /
- * `controlCost`), the minimum rules (`applyWidthMinimum` /
+ * `controlCost` / `installationCost`), the minimum rules (`applyWidthMinimum` /
  * `applyHeightMinimum`), or the whole `calculateUnitPrice` — whichever is
  * the smallest correct change.
  *
@@ -24,6 +24,7 @@
  *   cassette   = W / 100 × price_per_m           (per linear metre of width)
  *   bottomRail = W / 100 × price_per_m           (per linear metre of width)
  *   control    = panelCount × price_per_item     (per panel)
+ *   install    = price_per_item                 (flat, once per blind)
  * with the width minimum (raise <100cm to 100cm) and the tiered height
  * minimum (<100→100, 100–199→200, ≥200→actual) applied first.
  */
@@ -39,8 +40,17 @@ import { z } from 'zod';
  */
 export type BlindAttributes = Record<string, string | number | boolean>;
 
-/** The three shared hardware catalogs a blind type may or may not use. */
-export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control';
+/**
+ * The four shared hardware catalogs a blind type may or may not use.
+ *
+ * WHICH of them a given type uses is DATA, not code: an option is linked
+ * to a blind type in a `<catalog>_blind_types` join table (migration 35),
+ * and a type uses a slot exactly when at least one ACTIVE option is
+ * linked to it. This union only names the slots — `slotsForType` in the
+ * line-item editor answers the question, mirroring the server's
+ * `apps/api/src/lib/optionScoping.ts`.
+ */
+export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control' | 'installation';
 
 /**
  * A declaration that one attribute key holds the id of a row in a priced
@@ -101,6 +111,17 @@ export interface BlindPricingInputs {
   bottom_rail_price_per_m: number;
   /** Control cost per panel (server-fetched snapshot). */
   control_price_per_item: number;
+  /**
+   * Installation (rod / track) charge — a FIXED amount per blind, not
+   * per panel like the control and not per linear metre like the
+   * cassette and the rail (server-fetched snapshot).
+   *
+   * REQUIRED, not optional, for the same reason `bottom_rail_price_per_m`
+   * is: an optional member would let a caller silently drop the charge
+   * and still get a plausible-looking price back with no error at all.
+   * Pass 0 for a blind type with no installation option scoped to it.
+   */
+  installation_price_per_item: number;
   /**
    * The blind type's own extra inputs, already validated by that type's
    * `attributeSchema`. `{}` for every type that has not diverged. Read it
@@ -167,15 +188,6 @@ export class BaseBlindType {
    * adding this changed no existing type's behaviour.
    */
   readonly catalogRefs: readonly CatalogRef[] = [];
-
-  /**
-   * Which of the three shared hardware catalogs this type actually uses.
-   * The Worker requires an id for each slot listed and REJECTS one for a
-   * slot that is not: a curtain has no cassette, and silently storing one
-   * would name it on the documents while contributing nothing to the
-   * price, so the form and the total would disagree.
-   */
-  readonly requiredCatalogs: readonly CatalogSlot[] = ['cassette', 'bottom_rail', 'control'];
 
   /**
    * Attribute keys this type accepts FROM A CLIENT — the keys declared in
@@ -275,8 +287,19 @@ export class BaseBlindType {
   }
 
   /**
+   * Installation cost, charged ONCE per blind — neither per panel like
+   * the control nor per metre of width like the cassette and the rail.
+   * Its own hook so a type can diverge on the rod/track charge without
+   * touching any other component.
+   */
+  protected installationCost(pricePerItem: number): number {
+    return pricePerItem;
+  }
+
+  /**
    * Unit price of one blind: material + cassette + bottom rail + control
-   * with the width/height minimums applied first, rounded to 2 decimals.
+   * + installation, with the width/height minimums applied first, rounded
+   * to 2 decimals.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
     const width = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
@@ -285,7 +308,8 @@ export class BaseBlindType {
       this.materialCost(width, height, item.material_price_per_sqm) +
       this.cassetteCost(width, item.cassette_price_per_m) +
       this.bottomRailCost(width, item.bottom_rail_price_per_m) +
-      this.controlCost(item.panels.length, item.control_price_per_item);
+      this.controlCost(item.panels.length, item.control_price_per_item) +
+      this.installationCost(item.installation_price_per_item);
     return Math.round(total * 100) / 100;
   }
 }

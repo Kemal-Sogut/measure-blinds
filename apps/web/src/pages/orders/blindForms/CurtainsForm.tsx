@@ -5,20 +5,19 @@
  * Curtains blind form — the first per-type form to diverge from
  * `DefaultForm`.
  *
- * Curtains have no cassette and no bottom rail, so `HardwareRow` is
- * replaced by a row of Installation / Pleat / Control. Dropping those two
- * pickers is safe because `lib/blindTypes/curtains.ts` declares
- * `requiredCatalogs = ['control']`: the save guard, the price preview and
- * the Worker all read that same declaration, so none of them waits on a
- * cassette this type does not have.
+ * The only structural difference left is the Pleat picker. Curtains has
+ * no cassette and no bottom rail, but nothing here says so: `HardwareRow`
+ * renders whichever slots Settings has scoped to the selected type
+ * (migration 35), so linking a cassette to Curtains would make one appear
+ * without touching this file. Installation used to be a Curtains-only
+ * attribute and is now one of those scoped slots.
  *
- * The two new selects write only a catalog ROW ID into the draft. The
- * Worker resolves the pleat multiplier and the installation charge
- * itself, which is why neither number appears anywhere in this file.
+ * The Pleat select writes only a catalog ROW ID into the draft. The
+ * Worker resolves the multiplier itself, which is why no number appears
+ * anywhere in this file.
  *
- * Both `attrKey` values below are declared in
- * `lib/blindTypes/curtains.ts`. Adding an input here without declaring it
- * there is a 400 on save.
+ * The `attrKey` below is declared in `lib/blindTypes/curtains.ts`. Adding
+ * an input here without declaring it there is a 400 on save.
  *
  * Height is still collected: it is a manufacturing measurement that
  * reaches the manufacturer copy, and it does NOT enter the price.
@@ -29,10 +28,10 @@ import {
   BlindTypeSelect,
   FormSection,
   FormSplitter,
+  HardwareRow,
   HeightField,
   MaterialAndColor,
   NoteField,
-  OptionSelect,
   PanelWidths,
   QuantityStepper,
   RoomField,
@@ -57,28 +56,14 @@ export default function CurtainsForm({ draft, catalogs, onChange, footer }: Blin
       {/* ── 2. Options ──────────────────────────────────────────────── */}
       <FormSection title="Options">
         <MaterialAndColor draft={draft} catalogs={catalogs} onChange={onChange} />
-        <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-3">
-          <AttributeSelect
-            draft={draft}
-            onChange={onChange}
-            attrKey="installation_id"
-            label="Installation"
-            options={catalogs.installationOptions}
-          />
-          <AttributeSelect
-            draft={draft}
-            onChange={onChange}
-            attrKey="pleat_type_id"
-            label="Pleat"
-            options={catalogs.pleatTypes}
-          />
-          <OptionSelect
-            label="Control"
-            value={draft.control_id}
-            onChange={(id) => onChange({ ...draft, control_id: id })}
-            options={catalogs.controls}
-          />
-        </div>
+        <AttributeSelect
+          draft={draft}
+          onChange={onChange}
+          attrKey="pleat_type_id"
+          label="Pleat"
+          options={catalogs.pleatTypes}
+        />
+        <HardwareRow draft={draft} catalogs={catalogs} onChange={onChange} />
       </FormSection>
 
       <FormSplitter />

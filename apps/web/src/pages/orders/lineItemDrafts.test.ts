@@ -13,12 +13,16 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  blindDraftPrice,
   canOverridePrice,
   flatDraftPrice,
+  optionsForType,
   parseAddons,
   parseDraftAttributes,
   parseOverride,
+  slotsForType,
   type BlindDraft,
+  type Catalogs,
   type FlatDraft,
 } from './lineItemDrafts';
 
@@ -43,6 +47,7 @@ function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
     cassette_id: 'c1',
     bottom_rail_id: 'b1',
     control_id: 'ct1',
+    installation_id: '',
     color: 'White',
     note: '',
     quantity: '1',
@@ -95,7 +100,12 @@ describe('parseDraftAttributes round-trip', () => {
   /**
    * A saved curtain re-opened for editing. `toDrafts` stringifies the
    * PERSISTED blob, which carries the Worker's snapshot keys alongside
-   * the two ids the client originally sent.
+   * the id the client originally sent.
+   *
+   * The three `installation_*` keys are kept in this fixture on purpose
+   * even though migration 35 stripped them from every stored row: a blob
+   * that somehow still holds them must be filtered out rather than
+   * re-sent, because the strict schema no longer declares them.
    */
   function reopenedCurtain(): BlindDraft {
     return draft({
@@ -111,11 +121,10 @@ describe('parseDraftAttributes round-trip', () => {
     });
   }
 
-  it('keeps the ids and drops the server-written snapshot keys', () => {
-    expect(parseDraftAttributes(reopenedCurtain())).toEqual({
-      pleat_type_id: PLEAT_ID,
-      installation_id: INSTALL_ID,
-    });
+  it('keeps the pleat id and drops the server-written snapshot keys', () => {
+    // `installation_id` is a COLUMN since migration 35, so it is not an
+    // attribute the type declares and does not survive the parse.
+    expect(parseDraftAttributes(reopenedCurtain())).toEqual({ pleat_type_id: PLEAT_ID });
   });
 
   it('does not return null for a re-opened curtain', () => {
@@ -131,6 +140,129 @@ describe('parseDraftAttributes round-trip', () => {
     const parsed = parseDraftAttributes(reopenedCurtain()) ?? {};
     expect(parsed).not.toHaveProperty('pleat_multiplier');
     expect(parsed).not.toHaveProperty('installation_price');
+    expect(parsed).not.toHaveProperty('installation_id');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Blind-type scoping                                                  */
+/* ------------------------------------------------------------------ */
+
+describe('optionsForType / slotsForType', () => {
+  const ROLLER = { id: 'bt-roller', name: 'Roller', active: true, sort_order: 0 };
+  const CURTAINS = { id: 'bt-curtains', name: 'Curtains', active: true, sort_order: 1 };
+  /** Curtains declares `pleat_type_id` as a uuid, so the fixture needs one. */
+  const PLEAT_ID = '66666666-6666-4666-8666-666666666666';
+
+  /**
+   * Catalogs scoped the way migration 35's backfill leaves them: Roller
+   * takes a cassette, a rail and a control; Curtains takes a control and
+   * an installation option. `cas-off` is linked to Roller but INACTIVE,
+   * and `ins-free` is a second, zero-priced installation option used to
+   * isolate the charge.
+   */
+  function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
+    return {
+      blindTypes: [ROLLER, CURTAINS],
+      materials: [
+        {
+          id: 'm1',
+          name: 'Blackout',
+          price_per_sqm: 50,
+          active: true,
+          sort_order: 0,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id, CURTAINS.id],
+        },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price_per_m: 20, active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+        { id: 'cas-off', name: 'Retired', price_per_m: 5, active: false, sort_order: 1, blind_type_ids: [ROLLER.id] },
+      ],
+      bottomRails: [
+        { id: 'b1', name: 'Regular', price_per_m: 0, active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      controls: [
+        { id: 'ct1', name: 'Chain', price_per_item: 0, active: true, sort_order: 0, blind_type_ids: [ROLLER.id, CURTAINS.id] },
+      ],
+      pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
+      installationOptions: [
+        { id: 'ins-1', name: 'Rod', price_per_item: 45, active: true, sort_order: 0, blind_type_ids: [CURTAINS.id] },
+        { id: 'ins-free', name: 'None', price_per_item: 0, active: true, sort_order: 1, blind_type_ids: [CURTAINS.id] },
+      ],
+      ...overrides,
+    };
+  }
+
+  it('offers only the options scoped to the selected type', () => {
+    expect(optionsForType(catalogs().cassettes, catalogs().blindTypes, 'Roller').map((o) => o.id))
+      .toEqual(['c1']);
+    expect(optionsForType(catalogs().cassettes, catalogs().blindTypes, 'Curtains')).toEqual([]);
+  });
+
+  it('offers nothing for an empty or unknown type name', () => {
+    expect(optionsForType(catalogs().cassettes, catalogs().blindTypes, '')).toEqual([]);
+    expect(
+      optionsForType(catalogs().cassettes, catalogs().blindTypes, 'Venetian (legacy)')
+    ).toEqual([]);
+  });
+
+  it('reports exactly the slots with at least one scoped active option', () => {
+    expect([...slotsForType(catalogs(), 'Roller')].sort()).toEqual([
+      'bottom_rail',
+      'cassette',
+      'control',
+    ]);
+    expect([...slotsForType(catalogs(), 'Curtains')].sort()).toEqual(['control', 'installation']);
+    expect([...slotsForType(catalogs(), 'Venetian (legacy)')]).toEqual([]);
+  });
+
+  it('excludes an inactive option from the slot decision', () => {
+    const onlyRetired = catalogs({
+      cassettes: catalogs().cassettes.filter((c) => c.id === 'cas-off'),
+    });
+    expect(slotsForType(onlyRetired, 'Roller').has('cassette')).toBe(false);
+  });
+
+  describe('blindDraftPrice', () => {
+    /** A Roller draft with every slot Roller uses filled. */
+    const roller = draft({ blinds_type: 'Roller', panels: ['100'], height_cm: '200' });
+    /** A Curtains draft: no cassette, no rail, control and installation. */
+    const curtain = draft({
+      blinds_type: 'Curtains',
+      panels: ['100'],
+      height_cm: '200',
+      cassette_id: '',
+      bottom_rail_id: '',
+      attributes: { pleat_type_id: PLEAT_ID },
+    });
+
+    it('returns null while a scoped slot is unfilled', () => {
+      expect(blindDraftPrice({ ...roller, cassette_id: '' }, catalogs())).toBeNull();
+      expect(blindDraftPrice({ ...curtain, installation_id: '' }, catalogs())).toBeNull();
+    });
+
+    it('prices a type whose control slot is unscoped with no control chosen', () => {
+      const noControls = catalogs({ controls: [] });
+      expect(blindDraftPrice({ ...roller, control_id: '' }, noControls)).not.toBeNull();
+    });
+
+    it('adds the installation charge for a type that has the slot', () => {
+      // `DraftPrice.base` is the calculated unit price before overrides
+      // and add-ons; `ins-free` is priced at 0, so the gap is the charge.
+      const priced = blindDraftPrice({ ...curtain, installation_id: 'ins-1' }, catalogs());
+      const free = blindDraftPrice({ ...curtain, installation_id: 'ins-free' }, catalogs());
+      expect(priced!.base).toBe(free!.base + 45);
+    });
+
+    it('ignores a stale id for a slot the type does not use', () => {
+      // Switching type can leave an id behind; the slot is gone, so it
+      // must not be charged — the Worker would reject it outright.
+      const stale = { ...curtain, installation_id: 'ins-free', cassette_id: 'c1' };
+      expect(blindDraftPrice(stale, catalogs())!.base).toBe(
+        blindDraftPrice({ ...curtain, installation_id: 'ins-free' }, catalogs())!.base
+      );
+    });
   });
 });
 

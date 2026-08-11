@@ -31,6 +31,7 @@ function blind(overrides: Partial<BlindInputs> = {}): BlindInputs {
     cassette_price_per_m: 0,
     bottom_rail_price_per_m: 0,
     control_price_per_item: 0,
+    installation_price_per_item: 0,
     attributes: {},
     quantity: 1,
     ...overrides,
@@ -171,6 +172,27 @@ describe('bottomRailCost', () => {
   });
 });
 
+describe('installationCost', () => {
+  it('adds the flat installation price once per unit in the base formula', () => {
+    // Charged per BLIND: not per panel like the control, and not per
+    // metre of width like the cassette and the rail.
+    expect(
+      calculateBlindUnitPrice(
+        blind({ material_price_per_sqm: 0, installation_price_per_item: 45 })
+      )
+    ).toBe(45);
+    expect(
+      calculateBlindUnitPrice(
+        blind({ panels: [70, 70], material_price_per_sqm: 0, installation_price_per_item: 45 })
+      )
+    ).toBe(45);
+  });
+
+  it('leaves the price untouched at 0 — every non-installed blind', () => {
+    expect(calculateBlindUnitPrice(blind({ installation_price_per_item: 0 }))).toBe(140);
+  });
+});
+
 describe('Curtains', () => {
   /**
    * One 300cm panel of $40/m fabric with no hardware charges. The
@@ -192,6 +214,7 @@ describe('Curtains', () => {
       cassette_price_per_m: 0,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 0,
+      installation_price_per_item: 0,
       attributes,
       quantity: 1,
     };
@@ -212,9 +235,14 @@ describe('Curtains', () => {
   });
 
   it('adds the fixed installation charge once, not per panel', () => {
-    // 3.0 × 2 × 40 = 240, + 20 hem, + 45 = 305
+    // 3.0 × 2 × 40 = 240, + 20 hem, + 45 = 305. The charge arrives as a
+    // pricing INPUT now (migration 35 made installation a real slot), not
+    // as a snapshot inside the attribute blob.
     expect(
-      calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2, installation_price: 45 }))
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2 }),
+        installation_price_per_item: 45,
+      })
     ).toBe(305);
   });
 

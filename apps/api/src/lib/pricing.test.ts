@@ -31,6 +31,7 @@ describe('pricing (server)', () => {
         cassette_price_per_m: 0,
         bottom_rail_price_per_m: 0,
         control_price_per_item: 0,
+        installation_price_per_item: 0,
         attributes: {},
       })
     ).toBe(140);
@@ -50,6 +51,7 @@ describe('pricing (server)', () => {
       cassette_price_per_m: 20,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
+      installation_price_per_item: 0,
       attributes: {},
     });
     expect(price).toBe(140 + 28 + 20);
@@ -62,6 +64,7 @@ describe('pricing (server)', () => {
       material_price_per_sqm: 50,
       cassette_price_per_m: 0,
       control_price_per_item: 0,
+      installation_price_per_item: 0,
       attributes: {},
     };
     // 140cm wide → 1.4m. A $15/m rail adds $21 on top of the $140 material.
@@ -77,6 +80,26 @@ describe('pricing (server)', () => {
     ).toBe(15);
     // A zero-priced rail (the seeded default) must not move the price.
     expect(calculateBlindUnitPrice({ ...base, bottom_rail_price_per_m: 0 })).toBe(140);
+  });
+
+  it('adds the flat installation charge once per blind, not per panel', () => {
+    // Charged per BLIND: not per panel like the control, and not per
+    // metre of width like the cassette and the rail. Migration 35 made
+    // installation a real slot, so it reaches the formula as an input.
+    const base = {
+      height_cm: 200,
+      material_price_per_sqm: 0,
+      cassette_price_per_m: 0,
+      bottom_rail_price_per_m: 0,
+      control_price_per_item: 0,
+      installation_price_per_item: 45,
+      attributes: {},
+    };
+    expect(calculateBlindUnitPrice({ ...base, panels: [140] })).toBe(45);
+    expect(calculateBlindUnitPrice({ ...base, panels: [70, 70] })).toBe(45);
+    expect(
+      calculateBlindUnitPrice({ ...base, panels: [140], installation_price_per_item: 0 })
+    ).toBe(0);
   });
 });
 
@@ -111,6 +134,7 @@ describe('blind-type module registry', () => {
       cassette_price_per_m: 20,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
+      installation_price_per_item: 0,
       attributes: {},
     };
     const expected = calculateBlindUnitPrice(inputs);
@@ -130,6 +154,7 @@ describe('blind-type module registry', () => {
       cassette_price_per_m: 20,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 10,
+      installation_price_per_item: 0,
       attributes: {},
     };
     // Fabric by the metre with no pleat chosen: 1.4 × 1 × 50 = 70, plus
@@ -187,6 +212,7 @@ describe('Curtains', () => {
       cassette_price_per_m: 0,
       bottom_rail_price_per_m: 0,
       control_price_per_item: 0,
+      installation_price_per_item: 0,
       attributes,
     };
   }
@@ -206,9 +232,14 @@ describe('Curtains', () => {
   });
 
   it('adds the fixed installation charge once, not per panel', () => {
-    // 3.0 × 2 × 40 = 240, + 20 hem, + 45 = 305
+    // 3.0 × 2 × 40 = 240, + 20 hem, + 45 = 305. The charge arrives as a
+    // pricing INPUT now (migration 35 made installation a real slot), not
+    // as a snapshot inside the attribute blob.
     expect(
-      calculateBlindUnitPriceForType('Curtains', curtain({ pleat_multiplier: 2, installation_price: 45 }))
+      calculateBlindUnitPriceForType('Curtains', {
+        ...curtain({ pleat_multiplier: 2 }),
+        installation_price_per_item: 45,
+      })
     ).toBe(305);
   });
 

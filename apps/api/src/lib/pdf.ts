@@ -71,6 +71,8 @@ export interface PdfDocumentData {
     cassette_name: string | null;
     bottom_rail_name: string | null;
     control_name: string | null;
+    /** Rod/track slot; null for a type with none scoped to it. */
+    installation_name?: string | null;
     color?: string | null;
     description: string | null;
     note?: string | null;
@@ -221,6 +223,7 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
       li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
       li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : null,
       li.control_name ? `Control: ${li.control_name}` : null,
+      li.installation_name ? `Installation: ${li.installation_name}` : null,
       // The blind type's own inputs, formatted by the type itself so the
       // PDF, the manufacturer copy and the customer page cannot disagree
       // about labels. Positioned with the other SPECIFICATION lines; the

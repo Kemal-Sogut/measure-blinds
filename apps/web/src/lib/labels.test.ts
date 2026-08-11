@@ -34,6 +34,9 @@ function blind(overrides: Partial<LabelLineItem> = {}): LabelLineItem {
     cassette_name: 'Regular Cassette',
     bottom_rail_name: 'Regular',
     control_name: 'Chain Control',
+    // Null on everything but a curtain: only a blind type with an
+    // installation option scoped to it carries one.
+    installation_name: null,
     quantity: 1,
     ...overrides,
   };
@@ -182,6 +185,24 @@ describe('buildLabels', () => {
       const [label] = buildLabels(order({ line_items: [blind({ control_name: name })] }));
       expect(label.hardware).toBe(`Cassette: R · Bottom Rail: R · Control: ${code}`);
     }
+  });
+
+  it('appends the installation segment when the row carries one', () => {
+    // A curtain: no cassette and no bottom rail scoped to it, a rod
+    // instead. Installation is the fourth hardware slot since migration 35.
+    const [curtain] = buildLabels(
+      order({
+        line_items: [
+          blind({ cassette_name: null, bottom_rail_name: null, installation_name: 'Rod' }),
+        ],
+      })
+    );
+    expect(curtain.hardware).toBe('Control: R · Installation: R');
+
+    const [track] = buildLabels(
+      order({ line_items: [blind({ installation_name: 'Track' })] })
+    );
+    expect(track.hardware).toBe('Cassette: R · Bottom Rail: R · Control: R · Installation: T');
   });
 
   it('drops the segment of any part the row does not carry', () => {
