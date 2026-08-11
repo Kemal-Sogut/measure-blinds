@@ -796,3 +796,27 @@ api 308/17, web 175/14, both `tsc --noEmit` clean, oxlint 0 warnings, `vite buil
   so a pre-dropdown order stays savable.
 - The settings chip UI and the slot-hiding form behaviour have NOT been exercised in a
   browser (port conflict + auth). Worth a manual pass before merge.
+
+## Per-option price basis (2026-08-11)
+Branch `feat/option-price-basis`, 6 commits from the scoping work.
+
+**Works:** every hardware option carries its own basis (per m / per m² / per unit / per
+panel), chosen from a dropdown beside its price in Settings and rendered back on the row as
+its own unit. The Worker resolves price and basis together through one lookup, snapshots
+both onto the line item, and the preview prices identically. The pricing engine interprets
+a basis in exactly one place.
+
+Migration 36 is applied to the live project. Every default reproduces the constant it
+replaced (cassette/rail per_m, control per_panel, installation per_unit), so applying it
+moved no price — verified by query.
+
+api 315/17, web 183/14, both `tsc --noEmit` clean, oxlint 0 warnings, `vite build` clean.
+The basis matrix (4 bases × fixed dimensions, plus a mixed-basis blind and the minimum
+rule) is mirrored verbatim in both pricing suites.
+
+**Known gaps:**
+- Curtains would now charge a cassette or bottom rail if one were scoped to it, instead of
+  ignoring it. Unreachable today — none is scoped.
+- The basis dropdown has NOT been exercised in a browser (auth). Worth a manual pass.
+- `line_items` rate columns still carry their pre-migration-36 names; read them with the
+  `*_price_basis` sibling.
