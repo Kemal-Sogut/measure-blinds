@@ -1,5 +1,48 @@
 # Bug Fixes History
 
+## 2026-08-12 — The installed home-screen app had no way to refresh at all
+- **Issue:** owner reported that the app added to the home screen "doesn't reload when I
+  scroll to the top as on the regular browser". Data went stale with no way to ask for more.
+- **Cause:** not a defect in this codebase — it is what `display: "standalone"` costs.
+  Dropping the browser chrome drops every reload affordance with it: no address bar, no
+  reload button, **and no native overscroll pull-to-refresh**. iOS has never offered the
+  gesture to standalone web apps, and Chrome suppresses its own spinner in `standalone` and
+  `fullscreen` display modes. Nothing in `index.css` was blocking it — there is no
+  `overscroll-behavior` rule anywhere in `apps/web`; the gesture simply is not offered.
+  Compounding it: there is no service worker, so nothing refetches in the background, and iOS
+  keeps a standalone app suspended in memory for days rather than re-launching it.
+- **Fix:** implement the gesture. `hooks/usePullToRefresh.ts` tracks a damped downward drag
+  from the top of the document and, past a 64px threshold, runs the caller's refresh;
+  `components/PullToRefresh.tsx` renders the puck and supplies
+  `queryClient.invalidateQueries()` as the work; `Layout` mounts it once so every
+  authenticated page has it.
+- **Refresh is a refetch, NOT `location.reload()`.** Invalidation reproduces the whole visible
+  effect of a reload without re-running auth boot, re-downloading lazy chunks over a field
+  connection, or discarding a half-entered measurement on `/orders/:id`. Accepted trade: a
+  pull does not pick up a newly deployed build — a cold launch does, since no service worker
+  caches the shell.
+- **Four conditions abort the gesture**, each for a concrete failure it would otherwise cause:
+  `window.scrollY > 0` (the user is reading); `document.body.style.overflow === 'hidden'`,
+  which is how `ui/Modal` locks scroll and which also parks `scrollY` at 0 — exactly the
+  state the gesture starts from, so without this check a drag on a modal body refreshes the
+  page behind it; a touch that started inside an inner scroller with `scrollTop > 0`; and
+  `useSidebar.mobileOpen`, since the phone menu is a full-screen overlay.
+- **`touchmove` must be registered `{ passive: false }`.** `preventDefault` there is the only
+  way to stop iOS rubber-banding the page under the indicator, and a passive listener may not
+  call it. It is called only while actually pulling down at the top, so ordinary scrolling
+  keeps the passive fast path.
+- **Only the indicator moves; the content column is never transformed.** Pulling the page down
+  with it would put a `transform` on an ancestor of every `position: fixed` element in the app
+  — the nav rail, the modal shells and OrderDetail's action bar — which re-bases all of them
+  onto that ancestor and breaks the three at once.
+- **Gated to standalone** (`(display-mode: standalone)` OR the legacy `navigator.standalone`,
+  which is still the only signal on iOS below 16.4). In a browser tab the native gesture
+  already exists, and claiming the same touch would silently swap a reload the user knows for
+  a refetch they did not ask for.
+- **Lesson:** an installed PWA is not the browser minus chrome — it is the browser minus every
+  affordance the chrome carried. Anything the user reached through browser UI (reload, back,
+  share, print) has to be re-provided in-app or it is simply gone once installed.
+
 ## 2026-08-10 — A re-opened order silently dropped its per-type options on the second save
 - **Issue:** found while wiring Curtains, but latent since the attributes scaffold shipped.
   Save an item with per-type options → reopen the order → save again, and the whole

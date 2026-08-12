@@ -27,10 +27,19 @@
  * a full-screen menu that Tab can escape behind is not modal, and
  * `inert` is the one mechanism that removes the background from both
  * the tab order and the accessibility tree.
+ *
+ * `PullToRefresh` is mounted here rather than per page because the
+ * installed home-screen app has no reload affordance anywhere: no
+ * address bar, no reload button, and no native overscroll gesture. One
+ * mount on the shell gives every authenticated page the same refresh.
+ * It renders a `fixed` indicator only and never wraps `children` — see
+ * the file's own header for why the content column must not be
+ * transformed.
  */
 
 import type { ReactNode } from 'react';
 import Sidebar from './Sidebar';
+import PullToRefresh from './PullToRefresh';
 import { useSidebar } from '../hooks/useSidebar';
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -43,6 +52,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       data-rail={collapsed ? 'icons' : 'expanded'}
     >
       <Sidebar />
+      <PullToRefresh />
       <div className="app-shell-main min-w-0" inert={mobileOpen}>
         {children}
       </div>

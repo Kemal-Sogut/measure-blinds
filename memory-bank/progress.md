@@ -1,5 +1,30 @@
 # Progress
 
+## Pull-to-refresh in the installed app (2026-08-12)
+Branch `claude/home-screen-scroll-reload-ekhpd6` off `main`. Web only; no API, schema or
+pricing surface touched.
+
+**Works:** a downward drag from the top of any authenticated page shows a puck that winds up
+with the pull and, past 64px of damped travel, refetches every query via
+`queryClient.invalidateQueries()`. Suppressed while a modal has locked body scroll, while the
+phone menu overlay is open, when the touch started in an inner scroller, and in a normal
+browser tab (where the native gesture already exists). `hooks/usePullToRefresh.ts` +
+`components/PullToRefresh.tsx`, mounted once by `Layout`.
+
+**Verified:** `pnpm --filter web check` clean; web tests 192/192 with 9 new geometry cases;
+`oxlint` exit 0; `pnpm --filter web build` clean.
+
+**Owed:**
+- ⬜ **Install on a real phone and confirm the gesture** — it is gated to standalone display
+  mode, so a browser tab cannot exercise it. Confirm the puck tracks the finger, that iOS does
+  not rubber-band underneath it, and that a drag inside an open modal refreshes nothing.
+- ⬜ **Merge to `main`** — that is what deploys it.
+- ⬜ Decide whether a stale open session should learn about a new deploy. A pull only refetches
+  data; a cold launch is what picks up a new bundle. If it matters, add a build-version check —
+  not a `location.reload()` on the gesture, which would discard in-progress measurements.
+- ⬜ Public customer views (`/customer/:token`, `/appointment/:token`) render outside `Layout`
+  and have no gesture. Left alone as out of scope.
+
 ## Installable home-screen app / PWA (2026-08-11)
 Branch `feat/pwa-home-screen` off `main`. Static assets only; no TS, API, schema or pricing
 surface touched.
