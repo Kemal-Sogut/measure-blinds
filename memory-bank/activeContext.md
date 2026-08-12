@@ -1,5 +1,29 @@
 # Active Context
 
+## Current Focus — 2026-08-12: Pull-to-refresh in the installed app
+Branch `claude/home-screen-scroll-reload-ekhpd6`, cut from `main`. Web only — no API, no
+schema, no pricing surface. Full detail in `engine_features.md` / `bug_fixes.md` 2026-08-12.
+
+- **The reported bug was not a bug in our code.** `display: "standalone"` removes the browser
+  chrome and every reload affordance with it — address bar, reload button, AND the native
+  overscroll pull-to-refresh (iOS never offered it to standalone apps; Chrome suppresses its
+  spinner in standalone/fullscreen). Nothing in `index.css` was blocking it.
+- **Refresh means `queryClient.invalidateQueries()`, never `location.reload()`.** A reload
+  would re-run auth boot over a field connection and discard a half-entered measurement.
+  Accepted cost: a pull does not pick up a new deploy, only a cold launch does.
+- **Three files:** `hooks/usePullToRefresh.ts` (gesture + exported pure geometry),
+  `components/PullToRefresh.tsx` (indicator + the invalidation), `components/Layout.tsx`
+  (one mount for every authenticated page).
+- **Do not make the content column follow the pull.** A `transform` on it re-bases every
+  `position: fixed` descendant — nav rail, modal shells, OrderDetail's action bar.
+- **Do not make `touchmove` passive.** `preventDefault` is what stops iOS rubber-banding
+  under the indicator; it is called only while pulling down at the top.
+- **Verified:** `pnpm --filter web check` clean, tests 192/192 (9 new), `oxlint` clean exit 0,
+  `pnpm --filter web build` clean with `sr-only` and `animate-spin` present in the emitted CSS.
+- **NOT verified: any device.** The gesture is gated to standalone display mode, so it cannot
+  be exercised in a normal browser tab at all — install the app on a phone and confirm before
+  merging. Check specifically that a drag inside an open modal does not refresh behind it.
+
 ## Current Focus — 2026-08-11: Installable home-screen app (PWA)
 Branch `feat/pwa-home-screen`, cut from `main`. Static assets only — no TS, no API, no schema.
 Full detail in `engine_features.md` 2026-08-11.

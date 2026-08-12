@@ -1,5 +1,58 @@
 # Engine Features / Feature History
 
+## 2026-08-12 — Pull-to-refresh for the installed home-screen app
+
+The 2026-08-11 manifest made the app installable; this makes it usable once installed. A
+standalone launch has no reload affordance of any kind, so the shell now provides the
+gesture itself. Root-cause detail is in `bug_fixes.md` 2026-08-12; this entry is the API.
+
+### Files (web only — no API, no schema, no pricing surface)
+
+- **`apps/web/src/hooks/usePullToRefresh.ts`** — the gesture. Registers `touchstart` /
+  `touchmove` / `touchend` / `touchcancel` on `window` and reports
+  `{ distance, armed, refreshing, dragging }`. Renders nothing and moves nothing. Exported
+  pure rules, which are what the tests cover: `pullDistance` (damping + cap), `isPullArmed`
+  (threshold), `isStandaloneDisplay` (the gate).
+- **`apps/web/src/components/PullToRefresh.tsx`** — the indicator, and the one place that
+  decides what refresh MEANS: `queryClient.invalidateQueries()`. Renders a `fixed` puck
+  parked above the viewport at rest, so it costs no layout and cannot be tapped.
+- **`apps/web/src/components/Layout.tsx`** — mounts it once, beside `Sidebar`.
+- **`apps/web/src/hooks/usePullToRefresh.test.ts`** — 9 cases on the geometry.
+
+### The four constants, and why those numbers
+
+| Constant            |  Value | Reason                                                              |
+| ------------------- | -----: | ------------------------------------------------------------------- |
+| `PULL_TRIGGER_PX`   |   64px | Far enough that a flick at the top of the orders list is not a refetch; short enough for one thumb stroke. |
+| `PULL_MAX_PX`       |   96px | A long drag cannot fling the puck down the screen.                   |
+| `PULL_RESISTANCE`   |    0.5 | Native pull-to-refresh drags slower than the finger; matching that is what makes it read as the OS. |
+| `REFRESH_MIN_MS`    |  450ms | A cached invalidation settles in ~30ms, which reads as a flicker.    |
+
+`PULL_TRIGGER_PX <= PULL_MAX_PX` is an invariant, not a coincidence — a trigger above the
+ceiling is unreachable by any drag. There is a test that says so.
+
+### Constraints that shaped it
+
+1. **The gesture is standalone-only.** In a browser tab the native one already exists.
+2. **`touchmove` is non-passive**, and `preventDefault` is called only while pulling down at
+   the top — that call is what suppresses iOS rubber-banding under the puck.
+3. **The content column is never transformed** (it would re-base every `position: fixed`
+   element in the app).
+4. **Modal and menu suppression** is by `document.body.style.overflow` and
+   `useSidebar.mobileOpen` respectively.
+
+### Standing hazards
+
+- **A pull does not pick up a newly deployed build**, only fresh data. Without a service
+  worker a cold launch does fetch the new bundle, so the gap only affects a session left open
+  across a deploy. If that ever matters, the fix is a build-version check, not a
+  `location.reload()` on the gesture — reload discards in-progress measurements.
+- **Untestable in this workspace's runner.** vitest runs in node with no jsdom, so only the
+  pure geometry is covered; the listener wiring has to be verified on a device.
+- **Public customer views (`/customer/:token`, `/appointment/:token`) do not get the
+  gesture** — they render outside `Layout`. Deliberate, and the place to change it if a
+  customer ever installs the app.
+
 ## 2026-08-11 — Installable home-screen app (PWA manifest, real brand icons)
 
 Owner asked whether an `.htaccess` could turn the app into a phone/tablet home-screen
