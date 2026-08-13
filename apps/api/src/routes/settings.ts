@@ -8,19 +8,24 @@
  * catalog with many-to-many blind-type links), and the company logo
  * upload. Mounted at `/api/settings` behind `requireAuth`.
  *
- * Pleat types and installation options are Curtains-only catalogs: a
- * curtain's price depends on the pleat's fullness ratio and carries a
- * fixed rod/track charge. Both are resolved from ids server-side when an
- * order is saved (see `resolveLineItems`), never sent by a client.
+ * Cassette, bottom rail, control and installation options each carry
+ * `blind_type_ids` — the blind types they are offered for — synced into a
+ * `<catalog>_blind_types` join table by the shared factory. An option
+ * with no links is offered for no type, which is how a hardware slot is
+ * switched off for a blind type entirely (migration 35). Pleat types
+ * remain a Curtains-only attribute catalog with no scoping: a curtain's
+ * price depends on the pleat's fullness ratio, resolved from the id
+ * server-side when an order is saved (see `resolveLineItems`) and never
+ * sent by a client.
  *
  * Every write is Zod-validated before touching the database. The simple
  * catalog entities share one route factory since they differ only in
- * table name, price column, and ordering. Materials get their own
- * handlers because each Material also carries `blind_type_ids` (which
- * blind types it appears under), synced into the `material_blind_types`
- * join table; that join logic does not fit the generic factory. All of
- * this is still the single "settings endpoints" responsibility, kept
- * well under the 800-line limit.
+ * table name, price column, ordering, and whether they are scoped.
+ * Materials keep their own handlers: their links carry the OPPOSITE
+ * convention (no links = every blind type), so folding them into the
+ * factory would put two contradictory rules behind one flag. All of this
+ * is still the single "settings endpoints" responsibility, kept well
+ * under the 800-line limit.
  *
  * Responses: `{ data: T }` on success, `{ error: string }` on failure.
  */
@@ -150,6 +155,24 @@ app.post('/company/logo', async (c) => {
 /* blind types)                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Blind-type scoping for a catalog whose options are offered per blind
+ * type — cassette, bottom rail, control and installation.
+ *
+ * An option with NO links is offered for NO blind type. That is the
+ * OPPOSITE of the Materials convention, and deliberately so: it is what
+ * lets the shop switch a whole hardware slot off for a blind type from
+ * the settings page (migration 35). The line-item form renders a slot's
+ * dropdown only while at least one active option is scoped to the type,
+ * and the Worker enforces the save on the same rule.
+ */
+interface CatalogLinks {
+  /** Join table (e.g. 'cassette_option_blind_types'). */
+  table: string;
+  /** Option-side foreign key column in that table. */
+  fk: string;
+}
+
 /** Configuration for one catalog entity handled by the route factory. */
 interface CatalogConfig {
   /** URL segment under /api/settings (e.g. 'cassette-options') */
@@ -160,6 +183,13 @@ interface CatalogConfig {
   schema: z.ZodObject<z.ZodRawShape>;
   /** Column list used for ordering list responses */
   orderBy: { column: string; ascending: boolean }[];
+  /**
+   * Blind-type scoping, for the four catalogs that have it. Present means
+   * rows carry `blind_type_ids` on the way in and out; absent means the
+   * field is rejected, because a pleat type or a preset has no such
+   * notion.
+   */
+  links?: CatalogLinks;
 }
 
 /** Shared field fragments for catalog schemas. */
@@ -168,25 +198,50 @@ const price = z.number().min(0, 'Price cannot be negative').finite();
 const active = z.boolean();
 const sortOrder = z.number().int().min(0);
 
+/**
+ * How a hardware option's price is charged. Mirrors the `price_basis`
+ * check constraint added by migration 36 and the `PriceBasis` union the
+ * pricing modules switch on — all three must list the same members, or a
+ * row could be saved that the formula cannot price.
+ */
+const priceBasis = z.enum(['per_m', 'per_sqm', 'per_unit', 'per_panel']);
+
+/**
+ * The shape shared by all four hardware catalogs since migration 36:
+ * a name, one rate, the basis that rate is charged on, and the usual
+ * flags. Identical across the four, which is also what lets the Worker
+ * resolve them through a single lookup.
+ */
+const hardwareSchema = z.object({
+  name,
+  price,
+  price_basis: priceBasis,
+  active,
+  sort_order: sortOrder,
+});
+
 const catalogs: CatalogConfig[] = [
   {
     path: 'cassette-options',
     table: 'cassette_options',
-    schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+    links: { table: 'cassette_option_blind_types', fk: 'cassette_option_id' },
   },
   {
     // Priced per linear metre of width, the same basis as the cassette.
     path: 'bottom-rail-options',
     table: 'bottom_rail_options',
-    schema: z.object({ name, price_per_m: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+    links: { table: 'bottom_rail_option_blind_types', fk: 'bottom_rail_option_id' },
   },
   {
     path: 'control-options',
     table: 'control_options',
-    schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+    links: { table: 'control_option_blind_types', fk: 'control_option_id' },
   },
   {
     // Curtains fullness ratios. NOT the shared `price` fragment: that
@@ -202,11 +257,12 @@ const catalogs: CatalogConfig[] = [
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
   },
   {
-    // Rod / track, charged once per curtain rather than per metre.
+    // Rod / track, charged once per blind rather than per metre.
     path: 'installation-options',
     table: 'installation_options',
-    schema: z.object({ name, price_per_item: price, active, sort_order: sortOrder }),
+    schema: hardwareSchema,
     orderBy: [{ column: 'sort_order', ascending: true }, { column: 'name', ascending: true }],
+    links: { table: 'installation_option_blind_types', fk: 'installation_option_id' },
   },
   {
     path: 'presets',
@@ -224,45 +280,126 @@ const catalogs: CatalogConfig[] = [
 ];
 
 /**
+ * Replaces one option's blind-type links with the given set, returning an
+ * error message or null.
+ *
+ * Delete-then-insert rather than a diff: the set is a handful of rows, and
+ * a diff would have to reason about a concurrent edit to stay correct.
+ * An empty list deletes everything and inserts nothing, which is exactly
+ * "offered for no blind type".
+ */
+async function syncCatalogLinks(
+  sb: ReturnType<typeof createSupabaseAdmin>,
+  links: CatalogLinks,
+  rowId: string,
+  blindTypeIds: string[]
+): Promise<string | null> {
+  const del = await sb.from(links.table).delete().eq(links.fk, rowId);
+  if (del.error) return del.error.message;
+  if (blindTypeIds.length === 0) return null;
+  const { error } = await sb
+    .from(links.table)
+    .insert(blindTypeIds.map((blind_type_id) => ({ [links.fk]: rowId, blind_type_id })));
+  return error ? error.message : null;
+}
+
+/**
+ * Flattens the join embed a scoped catalog is selected with into a plain
+ * `blind_type_ids: string[]`, so clients never see the join table's shape.
+ */
+function flattenCatalogLinks(
+  row: Record<string, unknown>,
+  links: CatalogLinks
+): Record<string, unknown> {
+  const { [links.table]: embed, ...rest } = row;
+  const ids = ((embed ?? []) as { blind_type_id: string }[]).map((l) => l.blind_type_id);
+  return { ...rest, blind_type_ids: ids };
+}
+
+/**
  * Registers GET (list), POST (create), PUT /:id (update), and
  * DELETE /:id for one catalog entity. Create requires all schema
  * fields except `active`/`sort_order` (defaulted); update is partial.
+ *
+ * A catalog with `links` also accepts and returns `blind_type_ids`, kept
+ * in sync with its join table. A catalog without them REJECTS the field,
+ * because the schemas are strict and a silently ignored scoping list
+ * would look like it had been saved.
  */
 function registerCatalog(target: SettingsApp, cfg: CatalogConfig): void {
-  const createSchema = cfg.schema.partial({ active: true, sort_order: true } as never);
-  const updateSchema = cfg.schema.partial().strict();
+  const links = cfg.links;
+  /** Row shape including the scoping list, when the catalog has one. */
+  const fullSchema = links
+    ? cfg.schema.extend({ blind_type_ids: z.array(z.string().uuid()).max(50) })
+    : cfg.schema;
+  // `.strict()`, so a field this catalog does not have is a 400 rather
+  // than a silent strip — a scoping list sent to an unscoped catalog
+  // would otherwise look saved and simply never take effect.
+  const createSchema = fullSchema
+    .partial({
+      active: true,
+      sort_order: true,
+      ...(links ? { blind_type_ids: true } : {}),
+    } as never)
+    .strict();
+  const updateSchema = fullSchema.partial().strict();
+  const selectCols = links ? `*, ${links.table}(blind_type_id)` : '*';
 
   target.get(`/${cfg.path}`, async (c) => {
     const sb = createSupabaseAdmin(c.env);
-    let query = sb.from(cfg.table).select('*');
+    let query = sb.from(cfg.table).select(selectCols);
     for (const o of cfg.orderBy) query = query.order(o.column, { ascending: o.ascending });
     const { data, error } = await query;
     if (error) return c.json({ error: error.message }, 500);
-    return c.json({ data });
+    if (!links) return c.json({ data });
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
+    return c.json({ data: rows.map((r) => flattenCatalogLinks(r, links)) });
   });
 
   target.post(`/${cfg.path}`, async (c) => {
     const parsed = createSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
     const sb = createSupabaseAdmin(c.env);
-    const { data, error } = await sb.from(cfg.table).insert(parsed.data).select().single();
+    const { blind_type_ids = [], ...fields } = parsed.data as Record<string, unknown> & {
+      blind_type_ids?: string[];
+    };
+    const { data, error } = await sb.from(cfg.table).insert(fields).select().single();
     if (error) return c.json({ error: error.message }, 500);
-    return c.json({ data }, 201);
+    if (!links) return c.json({ data }, 201);
+    const linkError = await syncCatalogLinks(sb, links, (data as { id: string }).id, blind_type_ids);
+    if (linkError) return c.json({ error: linkError }, 500);
+    return c.json({ data: { ...data, blind_type_ids } }, 201);
   });
 
   target.put(`/${cfg.path}/:id`, async (c) => {
     const parsed = updateSchema.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
     const sb = createSupabaseAdmin(c.env);
+    const id = c.req.param('id');
+    const { blind_type_ids, ...fields } = parsed.data as Record<string, unknown> & {
+      blind_type_ids?: string[];
+    };
+
+    // A links-only edit must not issue an empty UPDATE — PostgREST
+    // rejects one, and there is nothing on the row to change.
+    if (Object.keys(fields).length > 0) {
+      const { error } = await sb.from(cfg.table).update(fields).eq('id', id);
+      if (error) return c.json({ error: error.message }, 500);
+    }
+    if (links && blind_type_ids !== undefined) {
+      const linkError = await syncCatalogLinks(sb, links, id, blind_type_ids);
+      if (linkError) return c.json({ error: linkError }, 500);
+    }
+
     const { data, error } = await sb
       .from(cfg.table)
-      .update(parsed.data)
-      .eq('id', c.req.param('id'))
-      .select()
+      .select(selectCols)
+      .eq('id', id)
       .maybeSingle();
     if (error) return c.json({ error: error.message }, 500);
     if (!data) return c.json({ error: 'Not found' }, 404);
-    return c.json({ data });
+    if (!links) return c.json({ data });
+    return c.json({ data: flattenCatalogLinks(data as unknown as Record<string, unknown>, links) });
   });
 
   target.delete(`/${cfg.path}/:id`, async (c) => {

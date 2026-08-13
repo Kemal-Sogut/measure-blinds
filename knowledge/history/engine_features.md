@@ -1,5 +1,116 @@
 # Engine Features / Feature History
 
+## 2026-08-12 — Pull-to-refresh for the installed home-screen app
+
+The 2026-08-11 manifest made the app installable; this makes it usable once installed. A
+standalone launch has no reload affordance of any kind, so the shell now provides the
+gesture itself. Root-cause detail is in `bug_fixes.md` 2026-08-12; this entry is the API.
+
+### Files (web only — no API, no schema, no pricing surface)
+
+- **`apps/web/src/hooks/usePullToRefresh.ts`** — the gesture. Registers `touchstart` /
+  `touchmove` / `touchend` / `touchcancel` on `window` and reports
+  `{ distance, armed, refreshing, dragging }`. Renders nothing and moves nothing. Exported
+  pure rules, which are what the tests cover: `pullDistance` (damping + cap), `isPullArmed`
+  (threshold), `isStandaloneDisplay` (the gate).
+- **`apps/web/src/components/PullToRefresh.tsx`** — the indicator, and the one place that
+  decides what refresh MEANS: `queryClient.invalidateQueries()`. Renders a `fixed` puck
+  parked above the viewport at rest, so it costs no layout and cannot be tapped.
+- **`apps/web/src/components/Layout.tsx`** — mounts it once, beside `Sidebar`.
+- **`apps/web/src/hooks/usePullToRefresh.test.ts`** — 9 cases on the geometry.
+
+### The four constants, and why those numbers
+
+| Constant            |  Value | Reason                                                              |
+| ------------------- | -----: | ------------------------------------------------------------------- |
+| `PULL_TRIGGER_PX`   |   64px | Far enough that a flick at the top of the orders list is not a refetch; short enough for one thumb stroke. |
+| `PULL_MAX_PX`       |   96px | A long drag cannot fling the puck down the screen.                   |
+| `PULL_RESISTANCE`   |    0.5 | Native pull-to-refresh drags slower than the finger; matching that is what makes it read as the OS. |
+| `REFRESH_MIN_MS`    |  450ms | A cached invalidation settles in ~30ms, which reads as a flicker.    |
+
+`PULL_TRIGGER_PX <= PULL_MAX_PX` is an invariant, not a coincidence — a trigger above the
+ceiling is unreachable by any drag. There is a test that says so.
+
+### Constraints that shaped it
+
+1. **The gesture is standalone-only.** In a browser tab the native one already exists.
+2. **`touchmove` is non-passive**, and `preventDefault` is called only while pulling down at
+   the top — that call is what suppresses iOS rubber-banding under the puck.
+3. **The content column is never transformed** (it would re-base every `position: fixed`
+   element in the app).
+4. **Modal and menu suppression** is by `document.body.style.overflow` and
+   `useSidebar.mobileOpen` respectively.
+
+### Standing hazards
+
+- **A pull does not pick up a newly deployed build**, only fresh data. Without a service
+  worker a cold launch does fetch the new bundle, so the gap only affects a session left open
+  across a deploy. If that ever matters, the fix is a build-version check, not a
+  `location.reload()` on the gesture — reload discards in-progress measurements.
+- **Untestable in this workspace's runner.** vitest runs in node with no jsdom, so only the
+  pure geometry is covered; the listener wiring has to be verified on a device.
+- **Public customer views (`/customer/:token`, `/appointment/:token`) do not get the
+  gesture** — they render outside `Layout`. Deliberate, and the place to change it if a
+  customer ever installs the app.
+
+## 2026-08-11 — Installable home-screen app (PWA manifest, real brand icons)
+
+Owner asked whether an `.htaccess` could turn the app into a phone/tablet home-screen
+shortcut with the browser UI hidden. **`.htaccess` does nothing here** — `apps/web` is served
+by a Cloudflare Worker with `[assets]` (`apps/web/wrangler.toml`), so there is no Apache to
+read one. The web-standard equivalent is a manifest, and `display: "standalone"` is the single
+line that drops the address bar and tabs once the app is launched from its icon.
+
+### Files (all static, all web-side — nothing in `apps/api`)
+
+- **`apps/web/public/logo.svg`** — the real Blinds Nisa mark, replacing the purple placeholder
+  that shipped as `favicon.svg`. A blind in a black frame: five slats in a tonal red ramp
+  (`#d1090f → #e96d6f → #f8a9af → #fbd1d6 → #ffffff`) behind a white pull cord with a
+  weighted tassel. `viewBox="0 0 593 1060"`, tight to the mark, no padding.
+  - **The slats overrun the frame (x to 623 against a 593-wide frame) and are cut by
+    `clipPath #frame`.** That is deliberate: it gives them flush square ends against the
+    frame's rounded right edge without anyone hand-matching a curve. The clip path string and
+    the frame's fill path string must stay identical.
+  - Colours are literal hex, not design tokens — browsers and OS icon pipelines fetch this
+    file as a static asset and never resolve CSS variables.
+- **`scripts/generate-icons.mjs`** — the ONLY place icons are padded, plated and rasterised.
+  Reads `logo.svg`, writes `favicon.svg` (square, transparent, 88% fit) plus `icon-192.png`,
+  `icon-512.png` (82% fit), `icon-maskable-512.png` (60% fit) and `apple-touch-icon.png`
+  (180px, 78% fit). Run it after ANY edit to `logo.svg` and commit the output — the geometry
+  must never be hand-copied into a second file.
+- **`apps/web/public/manifest.webmanifest`** — `display: "standalone"`, `start_url`/`scope`
+  `/`, `theme_color` `#2563eb` (matches the existing `theme-color` meta and `--color-brand-600`),
+  `background_color` `#f6f7f9` (matches `--color-surface-muted`, the body background, so the
+  splash does not flash a different colour than the first paint), `orientation: "any"` because
+  staff hold tablets both ways.
+- **`apps/web/index.html`** — `<link rel="manifest">` plus the Apple tags Safari needs
+  instead of the manifest.
+
+### Three constraints that dictated the numbers
+
+1. **Every PNG is an opaque white plate.** iOS composites a transparent `apple-touch-icon`
+   onto BLACK, which would erase this mark's black frame completely; Android theming can do
+   the same on a dark background. Only the SVG keeps transparency, because the tab strip
+   handles it correctly.
+2. **The maskable icon is inset much further (60% vs 82%).** Android crops maskable icons to
+   arbitrary launcher shapes and only guarantees the middle 80%. A portrait mark at 82% loses
+   the top slat and the tassel on round-icon launchers.
+3. **`apple-mobile-web-app-status-bar-style` is `default`, NOT `black-translucent`.**
+   Translucent hands the app the area under the iOS clock/notch, and nothing in `apps/web`
+   styles `env(safe-area-inset-top)` — every existing inset rule is `safe-area-inset-bottom`.
+   Translucent would put the shell header under the status bar. Changing this is a
+   top-inset-pass prerequisite, not a free toggle.
+
+### Standing hazards
+
+- **Installed PWAs cache the manifest.** A bad `start_url` or icon path is not fixed by the
+  next deploy for anyone who already installed — they must remove and re-add the icon. Verify
+  on a real device before merging to `main`.
+- **Android standalone has no browser back button.** Any route reachable without in-app back
+  navigation becomes a dead end once installed. Not audited by this change.
+- **No service worker, so no offline.** Launching still needs network. Offline is not a small
+  follow-up: pricing is server-authoritative, so offline writes would need a queue and a
+  re-price-on-sync story.
 ## 2026-08-10 — Curtains diverges: fabric by the running metre × pleat fullness
 
 The first blind type to leave the shared base formula. Everything below builds on the
@@ -2234,6 +2345,120 @@ members. Cross-field rules (title-or-description required; a preset needs `prese
 ### Verified
 api 289/289, web 164/164, both `tsc --noEmit` clean, `oxlint` clean.
 Migration 31 written but NOT applied — see below.
+
+## 2026-08-11: blind-type scoping for the four option catalogs
+
+**What.** Cassette, bottom rail, control and installation options each carry the blind
+types they are offered for, picked as toggle chips on their settings page. A blind type
+uses a hardware slot exactly when at least one ACTIVE option of that catalog is scoped to
+it; otherwise the line-item form hides the dropdown and the cost leaves the price. In the
+same change, Installation stopped being a Curtains-only attribute and became a real
+line-item slot beside cassette / bottom rail / control.
+
+**Why.** Which slots a type used was a code constant — `BaseBlindType.requiredCatalogs`,
+overridden to `['control']` by Curtains. Turning a cassette off for a type meant a code
+change, a deploy and a test edit. It is data now.
+
+**How.** Migration 35 adds four join tables shaped exactly like `material_blind_types`
+(`cassette_option_blind_types`, `bottom_rail_option_blind_types`,
+`control_option_blind_types`, `installation_option_blind_types`).
+`apps/api/src/lib/optionScoping.ts` answers "does this type use this slot" for the Worker;
+`slotsForType` / `optionsForType` in `apps/web/src/pages/orders/lineItemDrafts.ts` answer
+it for the editor. `requiredCatalogs` is DELETED from both `base.ts` twins and from
+`curtains.ts`.
+
+**The convention trap.** EMPTY MEANS NONE here — the OPPOSITE of `material_blind_types`,
+where an unlinked Material is available for every type. Empty-means-all would make it
+impossible to switch a slot off, which is the entire feature. That is why migration 35's
+backfill is mandatory rather than cosmetic: it seeds cassette + rail to every type except
+Curtains, control to every type, installation to Curtains only — reproducing the old
+hardcoded behaviour exactly, so applying the migration changed nothing a user could see.
+
+**The second trap.** `line_items.attributes` had its three `installation_*` keys STRIPPED
+by the same migration, after copying them into the new columns. `curtains.ts` no longer
+declares `installation_id`, its `attributeSchema` is strict, and the editor re-parses a
+re-opened order's blob — a key left behind would be a 400 on the second save. (In practice
+no production row carried one: the migration moved 0 rows.)
+
+**Order of checks in `resolveLineItems` is load-bearing.** Existence checks run BEFORE the
+slot gates. Deleting an option cascades its scoping links away, so the slot goes quiet in
+the same breath — checking slots first would report a deleted cassette as "this type does
+not take a cassette."
+
+**Deliberately NOT enforced.** The Worker checks that a chosen option EXISTS, not that it
+is scoped to the type. This mirrors Materials (the UI filters, the Worker does not) and
+keeps a re-save working after an option is unscoped mid-life. An unknown `blinds_type` —
+free text from before the dropdown — resolves to no scoping row and is left unconstrained
+entirely, or every pre-dropdown order would become unsavable.
+
+**Also changed.** `control_id` is nullable in the payload schema (a type with no control
+scoped prices it at 0); `BlindPricingInputs` gained a required
+`installation_price_per_item` charged flat per blind by `installationCost`; the settings
+catalog factory grew an optional `links` config plus `syncCatalogLinks` /
+`flattenCatalogLinks`, and its create schema is now `.strict()` so a scoping list sent to
+an unscoped catalog is a 400 instead of a silent strip; Installation prints on the PDF,
+the customer page, the order overview and the shop label (`INSTALLATION_CODES`: Rod = R,
+Track = T).
+
+### Verified
+api 308/308, web 175/175, both `tsc --noEmit` clean, `oxlint` clean, `vite build` clean.
+Migration 35 applied to the live project and its backfill verified by query.
+
+## 2026-08-11: per-option price basis, and one hardware cost function
+
+**What.** Every cassette, bottom rail, control and installation option chooses how its
+price is charged — per m, per m², per unit or per panel — from a dropdown beside the price
+in Settings. The four hardware cost paths in the pricing engine collapsed into one.
+
+**Why.** The basis was a code constant, one per catalog: a cassette was always per linear
+metre, a control always per panel, an installation option always a flat charge. The shop
+buys some of these by the square metre and some by the unit, and there was no way to say so.
+
+**How.** Migration 36 renames `price_per_m` / `price_per_item` to `price` on all four
+catalogs and adds `price_basis text` with a check constraint, defaulted per catalog to the
+constant it replaces. `line_items` gains a `*_price_basis` sibling for each rate snapshot.
+In the pricing twins, `PriceBasis` + `HardwareCharge` are new, `BlindPricingInputs` swaps
+its four scalar price fields for one `hardware: Partial<Record<CatalogSlot, HardwareCharge>>`
+map, and `cassetteCost` / `bottomRailCost` / `controlCost` / `installationCost` are replaced
+by a single `hardwareCost(charge, ctx)` switch.
+
+**Every default reproduces the old constant**, so applying migration 36 could not move a
+price — which matters because pricing is recomputed on every save and a mismatched default
+would have silently repriced every order on its next edit.
+
+**`calculateUnitPrice` is no longer an override point.** `materialCost` widened to
+`(item, widthCm, heightCm)` and is now the only leg a blind type may diverge on. Curtains
+overrides that and nothing else; it used to re-implement the entire formula, including its
+own copies of the control and installation maths, which is exactly where a basis change
+would have drifted.
+
+**Behaviour change, deliberate:** Curtains no longer silently ignores a cassette or bottom
+rail. None is scoped to it, so this is unreachable from the UI — but if one ever were
+scoped, it is charged rather than dropped. `pricing.test.ts` pins the new number (854) on
+both sides.
+
+**The bug the refactor surfaced.** `blindDraftPrice` built its hardware map from whatever
+ids the draft held, so a stale id left behind by a previous blind type got charged in the
+preview — a price the Worker would then reject, since it refuses an id for an unused slot.
+The map is now gated on `slotsForType` as well as on the id. Caught by the existing
+"ignores a stale id for a slot the type does not use" test, which only became reachable
+once Curtains stopped ignoring hardware.
+
+**Also:** the settings catalog factory gained a shared `hardwareSchema` (all four are the
+same shape now), which is what lets `resolveLineItems` resolve them through ONE
+`hardwareLookup` instead of four calls differing only in a price column. The `CatalogEditor`
+row readout renders each row's own unit (`$12.00 per m²`) rather than a page-wide
+`priceLabel`, which would contradict any row not on the catalog's original basis.
+
+**Where a basis is interpreted:** exactly one place, `BaseBlindType.hardwareCost`. The
+switch is exhaustive, so adding a fifth basis makes the compiler point at everything that
+needs saying — the Zod enum, the check constraint, the `PriceBasis` unions in both twins
+and in `apps/web/src/types`, and `BASIS_OPTIONS` in the editor.
+
+### Verified
+api 315/315, web 183/183, both `tsc --noEmit` clean, `oxlint` clean, `vite build` clean.
+Migration 36 applied to the live project; renames, defaults and the line-item backfill
+verified by query (0 mismatches).
 
 ## Estimate visits bookable without a customer email (2026-08-13)
 

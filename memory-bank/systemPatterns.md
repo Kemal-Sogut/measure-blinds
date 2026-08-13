@@ -13,7 +13,9 @@
 | Worker as API gateway | Frontend never calls Supabase directly for data; all goes through Worker with service role key |
 | RLS on every table | Defense-in-depth; even if Worker is bypassed somehow, RLS blocks unauthorized access |
 | Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
-| Snapshot pricing on line items | Material/cassette/control prices stored on line item at creation time to prevent retroactive price changes |
+| Snapshot pricing on line items | Material/cassette/control/installation prices stored on line item at creation time to prevent retroactive price changes |
+| Per-option price basis | How a hardware option is charged (per m / m2 / unit / panel) lives on the catalog ROW, not in the formula; one function interprets it |
+| Catalog scoping join tables | Which hardware slots a blind type uses is DATA (`<catalog>_blind_types`), not a code constant — the shop switches a slot off per type from Settings without a deploy |
 | UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
 | No anon RLS on estimates | Public estimate view served only by the Worker (service role, single-row lookup by token); anon key grants zero data access, preventing enumeration |
 | DB-enforced order_number uniqueness | Count-based generation can race under concurrent saves; UNIQUE index + Worker retry makes duplicates impossible |
@@ -151,13 +153,21 @@ section as the reference implementation for future collapsible UI.
   - `inputKeys()` (the schema's declared keys) is what lets the client strip snapshot keys
     back out of a re-opened draft. Without it the round trip fails the strict parse and the
     options vanish on the second save — see `bug_fixes.md` 2026-08-10.
-- **A type declares which shared hardware it uses: `requiredCatalogs` (2026-08-10).**
-  Cassette / bottom rail / control. The Worker requires an id for each slot listed and
-  REJECTS one for a slot that is not — a stored id for a slot with no formula would be named
-  on every document while contributing nothing to the price. `cassette_id` and
-  `bottom_rail_id` are therefore nullable in the payload schema, and the SAME declaration
-  drives three client paths: the save guard, `BlindTypeSelect` (clears an id the new type
-  does not use) and bulk edit. Miss one and switching type makes the order unsavable.
+- **SETTINGS decides which shared hardware a type uses, not the type (2026-08-11).**
+  Superseded `requiredCatalogs`, which was deleted. Cassette / bottom rail / control /
+  installation options each carry the blind types they are offered for
+  (`<catalog>_blind_types` join tables, migration 35), and a type uses a slot iff at least
+  one ACTIVE option is linked to it. The Worker requires an id for each slot in use and
+  REJECTS one for a slot that is not — a stored id for a slot with no formula would be
+  named on every document while contributing nothing to the price. All four ids are
+  therefore nullable in the payload schema, and ONE rule drives four client paths: the save
+  guard, the price preview, `BlindTypeSelect` (clears an id the new type does not use) and
+  bulk edit. Miss one and switching type makes the order unsavable.
+  - The rule lives twice — `apps/api/src/lib/optionScoping.ts` (reads Postgres) and
+    `slotsForType` in `lineItemDrafts.ts` (reads the TanStack cache). Untwinned by
+    necessity; they must still agree.
+  - EMPTY MEANS NONE, the OPPOSITE of `material_blind_types` (no links = every type). Both
+    conventions are deliberate and both are live.
 - **One column can mean two things, keyed by type (2026-08-10).** `materials.price_per_sqm`
   is dollars per m² for every type except Curtains, where it is dollars per RUNNING METRE.
   Accepted deliberately over a second column; the mitigation is that `MaterialsForType`

@@ -102,15 +102,44 @@ const ENV = {
 };
 
 const MATERIAL = { id: '11111111-1111-4111-8111-111111111111', name: 'Blackout White', price_per_sqm: 55 };
-const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price_per_m: 20 };
-const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price_per_item: 0 };
+const CASSETTE = { id: '22222222-2222-4222-8222-222222222222', name: 'Standard', price: 20, price_basis: 'per_m', active: true };
+const CONTROL = { id: '33333333-3333-4333-8333-333333333333', name: 'Chain', price: 0, price_basis: 'per_panel', active: true };
 // Priced at 0, mirroring the production seed, so every pre-existing money
 // assertion in this file still holds. The priced case is exercised below.
-const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price_per_m: 0 };
-// Curtains-only catalogs. Both carry non-identity values so a test that
+const BOTTOM_RAIL = { id: '55555555-5555-4555-8555-555555555555', name: 'Regular', price: 0, price_basis: 'per_m', active: true };
+// Curtains catalogs. Both carry non-identity values so a test that
 // accidentally priced with the fallbacks would show a different number.
 const PLEAT = { id: '66666666-6666-4666-8666-666666666666', name: 'Pinch', multiplier: 2.5 };
-const INSTALL = { id: '77777777-7777-4777-8777-777777777777', name: 'Rod', price_per_item: 45 };
+const INSTALL = { id: '77777777-7777-4777-8777-777777777777', name: 'Rod', price: 45, price_basis: 'per_unit', active: true };
+
+/** The two blind types the fixtures below are scoped to. */
+const TYPE_ROLLER = { id: '88888888-8888-4888-8888-888888888881', name: 'Roller' };
+const TYPE_CURTAINS = { id: '88888888-8888-4888-8888-888888888882', name: 'Curtains' };
+
+/**
+ * Scoping rows reproducing migration 35's backfill for these fixtures:
+ * Roller takes a cassette, a rail and a control; Curtains takes a control
+ * and an installation option and nothing else. Which slots a type uses is
+ * DATA now, so without these every blind item would be unconstrained.
+ */
+function scopingRows(): Record<string, unknown[]> {
+  return {
+    'blind_types.select': [TYPE_ROLLER, TYPE_CURTAINS],
+    'cassette_option_blind_types.select': [
+      { cassette_option_id: CASSETTE.id, blind_type_id: TYPE_ROLLER.id },
+    ],
+    'bottom_rail_option_blind_types.select': [
+      { bottom_rail_option_id: BOTTOM_RAIL.id, blind_type_id: TYPE_ROLLER.id },
+    ],
+    'control_option_blind_types.select': [
+      { control_option_id: CONTROL.id, blind_type_id: TYPE_ROLLER.id },
+      { control_option_id: CONTROL.id, blind_type_id: TYPE_CURTAINS.id },
+    ],
+    'installation_option_blind_types.select': [
+      { installation_option_id: INSTALL.id, blind_type_id: TYPE_CURTAINS.id },
+    ],
+  };
+}
 
 /** Valid create payload used across tests. */
 function payload() {
@@ -147,10 +176,12 @@ beforeEach(() => {
     'cassette_options.select': [CASSETTE],
     'bottom_rail_options.select': [BOTTOM_RAIL],
     'control_options.select': [CONTROL],
+    'installation_options.select': [INSTALL],
     'company_settings.select': [{ default_expiry_days: 14 }],
     'orders.count': [0],
     'line_items.insert': [{}],
     'orders.select': [],
+    ...scopingRows(),
   };
 });
 
@@ -316,7 +347,7 @@ describe('POST /api/orders', () => {
   it('adds the bottom rail to the unit price at its catalog rate', async () => {
     // 140cm of width at $15/m = $21 per blind, ×2 blinds = $42 over the
     // 389 baseline asserted above.
-    db.responses['bottom_rail_options.select'] = [{ ...BOTTOM_RAIL, price_per_m: 15 }];
+    db.responses['bottom_rail_options.select'] = [{ ...BOTTOM_RAIL, price: 15 }];
     db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
     const res = await ordersApp.request('/', {
       method: 'POST',
@@ -1121,7 +1152,8 @@ describe('Curtains line items', () => {
         control_id: CONTROL.id,
         color: '',
         note: '',
-        attributes: { pleat_type_id: PLEAT.id, installation_id: INSTALL.id },
+        installation_id: INSTALL.id,
+        attributes: { pleat_type_id: PLEAT.id },
         quantity: 1,
         ...overrides,
       },
@@ -1141,21 +1173,22 @@ describe('Curtains line items', () => {
 
   beforeEach(() => {
     db.responses['pleat_types.select'] = [PLEAT];
-    db.responses['installation_options.select'] = [INSTALL];
   });
 
-  it('snapshots the pleat and installation rows into attributes', async () => {
+  it('snapshots the pleat into attributes and the installation onto its columns', async () => {
     const res = await create(curtainPayload());
     expect(res.status).toBe(201);
     const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    // The pleat multiplier is still an attribute; the installation charge
+    // is a real slot since migration 35 and lands in its own columns.
     expect(rows[0].attributes).toEqual({
       pleat_type_id: PLEAT.id,
       pleat_name: 'Pinch',
       pleat_multiplier: 2.5,
-      installation_id: INSTALL.id,
-      installation_name: 'Rod',
-      installation_price: 45,
     });
+    expect(rows[0].installation_id).toBe(INSTALL.id);
+    expect(rows[0].installation_name).toBe('Rod');
+    expect(rows[0].installation_price_per_item).toBe(45);
     // MATERIAL is $55 per running metre here: 3.0 × 2.5 × 55 = 412.50,
     // + 1 panel × 0.5 m × 55 = 27.50 hem allowance, control $0,
     // installation $45.
@@ -1193,9 +1226,67 @@ describe('Curtains line items', () => {
     const res = await create(curtainPayload({ attributes: {} }));
     expect(res.status).toBe(201);
     const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
-    // 3.0 × 1 × 55 = 165, + 27.50 hem allowance, and no installation charge.
-    expect(rows[0].unit_price).toBe(192.5);
+    // 3.0 × 1 × 55 = 165, + 27.50 hem allowance, + the $45 installation
+    // that Curtains still carries — the pleat is what is missing here.
+    expect(rows[0].unit_price).toBe(237.5);
     expect(rows[0].attributes).toEqual({});
+  });
+
+  it('prices a curtain with no installation scoped as fabric alone', async () => {
+    // Unscope every installation option: the slot disappears for Curtains
+    // and the rod/track charge leaves the price with it.
+    db.responses['installation_option_blind_types.select'] = [];
+    const res = await create(curtainPayload({ attributes: {}, installation_id: null }));
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].unit_price).toBe(192.5);
+    expect(rows[0].installation_id).toBeNull();
+    expect(rows[0].installation_price_per_item).toBeNull();
+  });
+
+  it('rejects an installation id on a type with none scoped', async () => {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items[0].installation_id = INSTALL.id;
+    const res = await create(p);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Item 1: Roller does not take an installation option.',
+    });
+  });
+
+  it('saves a blind with no control when none is scoped to its type', async () => {
+    // Unscope every control: the slot disappears, the id must be absent,
+    // and the control simply prices at 0.
+    db.responses['control_option_blind_types.select'] = [];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items[0].control_id = null;
+    const res = await create(p);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].control_id).toBeNull();
+    expect(rows[0].control_name).toBeNull();
+    expect(rows[0].control_price_per_item).toBeNull();
+  });
+
+  it('requires a control while one is still scoped to the type', async () => {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items[0].control_id = null;
+    const res = await create(p);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Item 1: a control option is required.',
+    });
+  });
+
+  it('accepts anything for an unknown legacy blind type', async () => {
+    // Free text from before the blind-type dropdown existed resolves to no
+    // scoping row, so no slot is demanded and none is refused.
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items[0].blinds_type = 'Venetian (legacy)';
+    p.line_items[0].cassette_id = null;
+    p.line_items[0].bottom_rail_id = null;
+    const res = await create(p);
+    expect(res.status).toBe(201);
   });
 
   it('fails when the chosen pleat type has been deleted', async () => {

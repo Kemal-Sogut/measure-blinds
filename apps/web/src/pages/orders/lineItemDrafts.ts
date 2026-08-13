@@ -25,7 +25,12 @@
 import { calculateBlindUnitPriceForType } from '../../lib/pricing';
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { getBlindType } from '../../lib/blindTypes';
-import type { BlindAttributes, CatalogResolver } from '../../lib/blindTypes/base';
+import type {
+  BlindAttributes,
+  CatalogResolver,
+  CatalogSlot,
+  HardwareCharge,
+} from '../../lib/blindTypes/base';
 import type {
   Material,
   CassetteOption,
@@ -78,6 +83,12 @@ export interface BlindDraft extends PriceAdjustmentDraft {
   cassette_id: string;
   bottom_rail_id: string;
   control_id: string;
+  /**
+   * Rod/track slot, a real line-item column since migration 35. `''` when
+   * the selected blind type has no installation option scoped to it —
+   * which is also when the form hides the dropdown entirely.
+   */
+  installation_id: string;
   color: string;
   note: string;
   /**
@@ -140,6 +151,45 @@ export function materialsForType(catalogs: Catalogs, blindsType: string): Materi
   const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
   if (!typeId) return [];
   return catalogs.materials.filter((m) => m.blind_type_ids.includes(typeId));
+}
+
+/**
+ * The options of one hardware catalog offered for a blind-type NAME:
+ * active, and scoped to that type in Settings.
+ *
+ * Empty for an unselected or unknown type name, and empty for an option
+ * scoped to nothing — that convention (unlike Materials, where no links
+ * means every type) is what lets a whole slot be switched off for a type.
+ *
+ * Mirrors the server's rule in `apps/api/src/lib/optionScoping.ts`. The
+ * two MUST agree: this decides what the form offers, that decides what
+ * the save accepts, and a divergence is a form that cannot be saved.
+ */
+export function optionsForType<T extends { active: boolean; blind_type_ids: string[] }>(
+  options: T[],
+  blindTypes: BlindType[],
+  blindsType: string
+): T[] {
+  const typeId = blindTypes.find((t) => t.name === blindsType)?.id;
+  if (!typeId) return [];
+  return options.filter((o) => o.active && o.blind_type_ids.includes(typeId));
+}
+
+/**
+ * The hardware slots a blind type uses: those with at least one active
+ * scoped option. Drives which dropdowns the form renders, which ids a
+ * draft must carry before it can be priced, and which ids are cleared
+ * when the blind type changes.
+ */
+export function slotsForType(catalogs: Catalogs, blindsType: string): Set<CatalogSlot> {
+  const out = new Set<CatalogSlot>();
+  const has = (list: { active: boolean; blind_type_ids: string[] }[]) =>
+    optionsForType(list, catalogs.blindTypes, blindsType).length > 0;
+  if (has(catalogs.cassettes)) out.add('cassette');
+  if (has(catalogs.bottomRails)) out.add('bottom_rail');
+  if (has(catalogs.controls)) out.add('control');
+  if (has(catalogs.installationOptions)) out.add('installation');
+  return out;
 }
 
 /** Parses a positive number from a draft string; null when invalid. */
@@ -231,16 +281,16 @@ export function parseDraftAttributes(draft: BlindDraft): BlindAttributes | null 
  * This is the ONLY place the web maps a catalog table name to a list. It
  * lives here rather than in a blind-type module because the modules are
  * api/web twins and must not know how either side stores its catalogs.
+ *
+ * Pleat types are the only entry: they are the last catalog still
+ * referenced from `attributes`. Installation used to be here too, until
+ * migration 35 promoted it to a real hardware slot resolved from a column.
  */
 function catalogResolver(catalogs: Catalogs): CatalogResolver {
   return (table, id) => {
     if (table === 'pleat_types') {
       const hit = catalogs.pleatTypes.find((p) => p.id === id);
       return hit ? { name: hit.name, value: Number(hit.multiplier) } : undefined;
-    }
-    if (table === 'installation_options') {
-      const hit = catalogs.installationOptions.find((o) => o.id === id);
-      return hit ? { name: hit.name, value: Number(hit.price_per_item) } : undefined;
     }
     return undefined;
   };
@@ -292,12 +342,14 @@ function adjustedDraftPrice(
 /**
  * Live price preview for a blind draft. Returns null until every field
  * the SELECTED TYPE requires is filled — which hardware options those
- * are is the type's own call (`requiredCatalogs`), because Curtains has
- * neither a cassette nor a bottom rail and would otherwise never price.
+ * are comes from `slotsForType`, the same scoping the form renders from
+ * and the Worker validates against, because Curtains has neither a
+ * cassette nor a bottom rail scoped to it and would otherwise never
+ * price. A slot the type does not use contributes 0 rather than blocking.
  */
 export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPrice | null {
   const blindType = getBlindType(draft.blinds_type);
-  const uses = new Set<string>(blindType.requiredCatalogs);
+  const uses = slotsForType(catalogs, draft.blinds_type);
   const panels = draft.panels.map(parsePositive);
   const height = parsePositive(draft.height_cm);
   const qty = parsePositive(draft.quantity);
@@ -305,15 +357,40 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
   const control = catalogs.controls.find((x) => x.id === draft.control_id);
   const cassette = catalogs.cassettes.find((x) => x.id === draft.cassette_id);
   const bottomRail = catalogs.bottomRails.find((x) => x.id === draft.bottom_rail_id);
+  const installation = catalogs.installationOptions.find((x) => x.id === draft.installation_id);
   if (panels.some((p) => p === null) || panels.length === 0) return null;
-  if (!height || !qty || !material || !control) return null;
+  if (!height || !qty || !material) return null;
   if (uses.has('cassette') && !cassette) return null;
   if (uses.has('bottom_rail') && !bottomRail) return null;
+  if (uses.has('control') && !control) return null;
+  if (uses.has('installation') && !installation) return null;
 
   // The type's own inputs must parse too, or the preview would show a
   // price the server is about to reject.
   const attributes = parseDraftAttributes(draft);
   if (attributes === null) return null;
+
+  // The charges this blind carries, each on the basis its own catalog row
+  // declares. A slot with no chosen option is ABSENT rather than zeroed —
+  // exactly as the Worker builds it, so the preview and the save agree.
+  //
+  // Gated on `uses` as well as on the id, because a draft keeps whatever
+  // id the PREVIOUS blind type left behind. The Worker rejects an id for a
+  // slot the type does not use, so a preview that charged one would quote
+  // a price the save refuses.
+  const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
+  if (uses.has('cassette') && cassette) {
+    hardware.cassette = { price: Number(cassette.price), basis: cassette.price_basis };
+  }
+  if (uses.has('bottom_rail') && bottomRail) {
+    hardware.bottom_rail = { price: Number(bottomRail.price), basis: bottomRail.price_basis };
+  }
+  if (uses.has('control') && control) {
+    hardware.control = { price: Number(control.price), basis: control.price_basis };
+  }
+  if (uses.has('installation') && installation) {
+    hardware.installation = { price: Number(installation.price), basis: installation.price_basis };
+  }
 
   // Mirrors the Worker: ids in, snapshot name/value out. A chosen row
   // that is not in the cache throws, which here means "not ready yet".
@@ -329,9 +406,7 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
     panels: panels as number[],
     height_cm: height,
     material_price_per_sqm: Number(material.price_per_sqm),
-    cassette_price_per_m: Number(cassette?.price_per_m ?? 0),
-    bottom_rail_price_per_m: Number(bottomRail?.price_per_m ?? 0),
-    control_price_per_item: Number(control.price_per_item),
+    hardware,
     quantity: qty,
     attributes: resolved,
   });

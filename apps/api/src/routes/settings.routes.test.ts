@@ -81,6 +81,90 @@ beforeEach(() => {
   db.inserts = {};
 });
 
+describe('blind-type scoped catalogs', () => {
+  /** PUTs a JSON body to one catalog row. */
+  function put(path: string, body: unknown) {
+    return settingsApp.request(
+      path,
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  const TYPE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+
+  it('flattens the join embed into blind_type_ids and hides the join table', async () => {
+    db.responses['cassette_options.select'] = [
+      {
+        id: 'cas-1',
+        name: 'Standard',
+        price: 20,
+        price_basis: 'per_m',
+        active: true,
+        sort_order: 0,
+        cassette_option_blind_types: [{ blind_type_id: TYPE }],
+      },
+    ];
+    const res = await settingsApp.request('/cassette-options', {}, ENV);
+    expect(res.status).toBe(200);
+    const row = ((await res.json()) as { data: Record<string, unknown>[] }).data[0];
+    expect(row.blind_type_ids).toEqual([TYPE]);
+    expect(row.cassette_option_blind_types).toBeUndefined();
+  });
+
+  it('reports an unlinked option as scoped to nothing', async () => {
+    db.responses['control_options.select'] = [
+      { id: 'ctl-1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0 },
+    ];
+    const res = await settingsApp.request('/control-options', {}, ENV);
+    const row = ((await res.json()) as { data: Record<string, unknown>[] }).data[0];
+    expect(row.blind_type_ids).toEqual([]);
+  });
+
+  it('writes the links on create', async () => {
+    db.responses['cassette_options.insert'] = [{ id: 'cas-9', name: 'New', price: 5 }];
+    const res = await post('/cassette-options', {
+      name: 'New',
+      price: 5,
+      price_basis: 'per_m',
+      blind_type_ids: [TYPE],
+    });
+    expect(res.status).toBe(201);
+    expect(db.inserts['cassette_option_blind_types']?.[0]).toEqual([
+      { cassette_option_id: 'cas-9', blind_type_id: TYPE },
+    ]);
+  });
+
+  it('creates without blind_type_ids — an option offered nowhere yet', async () => {
+    db.responses['bottom_rail_options.insert'] = [{ id: 'rail-9', name: 'Pear', price: 0 }];
+    const res = await post('/bottom-rail-options', { name: 'Pear', price: 0, price_basis: 'per_m' });
+    expect(res.status).toBe(201);
+    // Nothing inserted into the join table: no links means no rows.
+    expect(db.inserts['bottom_rail_option_blind_types']).toBeUndefined();
+  });
+
+  it('replaces the links on update', async () => {
+    db.responses['installation_options.select'] = [
+      { id: 'ins-1', name: 'Rod', price: 45, price_basis: 'per_unit', active: true, sort_order: 0 },
+    ];
+    const res = await put('/installation-options/ins-1', { blind_type_ids: [TYPE] });
+    expect(res.status).toBe(200);
+    expect(db.inserts['installation_option_blind_types']?.[0]).toEqual([
+      { installation_option_id: 'ins-1', blind_type_id: TYPE },
+    ]);
+  });
+
+  it('rejects blind_type_ids on an unscoped catalog', async () => {
+    const res = await post('/pleat-types', {
+      name: 'Pinch',
+      multiplier: 2,
+      blind_type_ids: [TYPE],
+    });
+    expect(res.status).toBe(400);
+    expect(db.inserts['pleat_types']).toBeUndefined();
+  });
+});
+
 describe('pleat types catalog', () => {
   it('lists rows at /pleat-types', async () => {
     db.responses['pleat_types.select'] = [
@@ -116,7 +200,7 @@ describe('pleat types catalog', () => {
 describe('installation options catalog', () => {
   it('lists rows at /installation-options', async () => {
     db.responses['installation_options.select'] = [
-      { id: 'i1', name: 'Rod', price_per_item: 0, active: true, sort_order: 0 },
+      { id: 'i1', name: 'Rod', price: 0, price_basis: 'per_unit', active: true, sort_order: 0 },
     ];
     const res = await settingsApp.request('/installation-options', {}, ENV);
     expect(res.status).toBe(200);
@@ -125,14 +209,14 @@ describe('installation options catalog', () => {
 
   it('accepts a zero price, the shipped seed value', async () => {
     db.responses['installation_options.insert'] = [
-      { id: 'i2', name: 'Track', price_per_item: 0, active: true, sort_order: 0 },
+      { id: 'i2', name: 'Track', price: 0, price_basis: 'per_unit', active: true, sort_order: 0 },
     ];
-    const res = await post('/installation-options', { name: 'Track', price_per_item: 0 });
+    const res = await post('/installation-options', { name: 'Track', price: 0, price_basis: 'per_unit' });
     expect(res.status).toBe(201);
   });
 
   it('rejects a negative price', async () => {
-    const res = await post('/installation-options', { name: 'Track', price_per_item: -5 });
+    const res = await post('/installation-options', { name: 'Track', price: -5, price_basis: 'per_unit' });
     expect(res.status).toBe(400);
   });
 });

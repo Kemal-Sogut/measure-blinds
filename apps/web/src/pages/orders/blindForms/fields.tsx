@@ -24,7 +24,14 @@
 
 import type { ReactNode } from 'react';
 import { getBlindType } from '../../../lib/blindTypes';
-import { materialsForType, parsePositive, type BlindDraft, type Catalogs } from '../lineItemDrafts';
+import {
+  materialsForType,
+  optionsForType,
+  parsePositive,
+  slotsForType,
+  type BlindDraft,
+  type Catalogs,
+} from '../lineItemDrafts';
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -135,9 +142,11 @@ export function OptionSelect({
  * 2. It RESEEDS `attributes` from the new type's `defaultAttributes()`.
  *    Without this the draft keeps the previous type's keys, which the new
  *    type's schema does not declare.
- * 3. It CLEARS a hardware id the new type does not use. Switching a
- *    Roller to Curtains would otherwise carry the cassette across, and
- *    the Worker rejects an id for a slot the type has no formula for.
+ * 3. It CLEARS every hardware id the new type does not use, per the
+ *    SCOPING (`slotsForType`), not per any declaration on the type's
+ *    module. Switching a Roller to Curtains would otherwise carry the
+ *    cassette across, and the Worker rejects an id for a slot the type
+ *    has no option scoped to.
  */
 export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
   const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
@@ -153,13 +162,15 @@ export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
             (m) => m.id === draft.material_id
           );
           const next = getBlindType(blinds_type);
-          const uses = new Set<string>(next.requiredCatalogs);
+          const uses = slotsForType(catalogs, blinds_type);
           onChange({
             ...draft,
             blinds_type,
             material_id: stillValid ? draft.material_id : '',
             cassette_id: uses.has('cassette') ? draft.cassette_id : '',
             bottom_rail_id: uses.has('bottom_rail') ? draft.bottom_rail_id : '',
+            control_id: uses.has('control') ? draft.control_id : '',
+            installation_id: uses.has('installation') ? draft.installation_id : '',
             attributes: Object.fromEntries(
               Object.entries(next.defaultAttributes()).map(([k, v]) => [k, String(v)])
             ),
@@ -304,28 +315,61 @@ export function MaterialAndColor({ draft, catalogs, onChange }: BlindFormProps) 
   );
 }
 
-/** Cassette / Control / Bottom rail — the three priced hardware options. */
+/**
+ * Cassette / Control / Bottom rail / Installation — the priced hardware
+ * options.
+ *
+ * WHICH of them appear is decided in Settings, not here and not by the
+ * blind type's module: a slot is rendered exactly when at least one
+ * ACTIVE option is scoped to the selected type (`slotsForType`). A type
+ * with nothing scoped renders nothing at all. The same rule decides what
+ * the save requires, so the form can never offer — or omit — a choice the
+ * Worker disagrees with.
+ *
+ * Each dropdown lists only the options scoped to that type, so a cassette
+ * meant for Roller cannot be chosen on a Zebra. `OptionSelect` still
+ * keeps a selected-but-no-longer-offered value visible, so re-opening an
+ * old order never silently drops its hardware.
+ */
 export function HardwareRow({ draft, catalogs, onChange }: BlindFormProps) {
+  const uses = slotsForType(catalogs, draft.blinds_type);
+  if (uses.size === 0) return null;
+  const forType = <T extends { active: boolean; blind_type_ids: string[] }>(list: T[]) =>
+    optionsForType(list, catalogs.blindTypes, draft.blinds_type);
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-3">
-      <OptionSelect
-        label="Cassette"
-        value={draft.cassette_id}
-        onChange={(id) => onChange({ ...draft, cassette_id: id })}
-        options={catalogs.cassettes}
-      />
-      <OptionSelect
-        label="Control"
-        value={draft.control_id}
-        onChange={(id) => onChange({ ...draft, control_id: id })}
-        options={catalogs.controls}
-      />
-      <OptionSelect
-        label="Bottom rail"
-        value={draft.bottom_rail_id}
-        onChange={(id) => onChange({ ...draft, bottom_rail_id: id })}
-        options={catalogs.bottomRails}
-      />
+    <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+      {uses.has('cassette') && (
+        <OptionSelect
+          label="Cassette"
+          value={draft.cassette_id}
+          onChange={(id) => onChange({ ...draft, cassette_id: id })}
+          options={forType(catalogs.cassettes)}
+        />
+      )}
+      {uses.has('control') && (
+        <OptionSelect
+          label="Control"
+          value={draft.control_id}
+          onChange={(id) => onChange({ ...draft, control_id: id })}
+          options={forType(catalogs.controls)}
+        />
+      )}
+      {uses.has('bottom_rail') && (
+        <OptionSelect
+          label="Bottom rail"
+          value={draft.bottom_rail_id}
+          onChange={(id) => onChange({ ...draft, bottom_rail_id: id })}
+          options={forType(catalogs.bottomRails)}
+        />
+      )}
+      {uses.has('installation') && (
+        <OptionSelect
+          label="Installation"
+          value={draft.installation_id}
+          onChange={(id) => onChange({ ...draft, installation_id: id })}
+          options={forType(catalogs.installationOptions)}
+        />
+      )}
     </div>
   );
 }

@@ -70,11 +70,16 @@ export interface BlindItemInput extends AdjustmentInputFields {
   panels: number[];
   height_cm: number;
   material_id: string;
-  /** Null for a blind type with no cassette (Curtains). */
+  /**
+   * Hardware slots, each null when the selected blind type has no option
+   * of that catalog scoped to it in Settings — which is also when the
+   * form hides the dropdown. Sending an id for an unused slot is a 400,
+   * and so is omitting one for a used slot (see `resolveLineItems`).
+   */
   cassette_id: string | null;
-  /** Null for a blind type with no bottom rail (Curtains). */
   bottom_rail_id: string | null;
-  control_id: string;
+  control_id: string | null;
+  installation_id: string | null;
   color: string;
   note: string;
   /** Typed per-type inputs; `{}` when the type declares none. */

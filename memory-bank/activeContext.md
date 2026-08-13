@@ -1,5 +1,52 @@
 # Active Context
 
+## Current Focus — 2026-08-12: Pull-to-refresh in the installed app
+Branch `claude/home-screen-scroll-reload-ekhpd6`, cut from `main`. Web only — no API, no
+schema, no pricing surface. Full detail in `engine_features.md` / `bug_fixes.md` 2026-08-12.
+
+- **The reported bug was not a bug in our code.** `display: "standalone"` removes the browser
+  chrome and every reload affordance with it — address bar, reload button, AND the native
+  overscroll pull-to-refresh (iOS never offered it to standalone apps; Chrome suppresses its
+  spinner in standalone/fullscreen). Nothing in `index.css` was blocking it.
+- **Refresh means `queryClient.invalidateQueries()`, never `location.reload()`.** A reload
+  would re-run auth boot over a field connection and discard a half-entered measurement.
+  Accepted cost: a pull does not pick up a new deploy, only a cold launch does.
+- **Three files:** `hooks/usePullToRefresh.ts` (gesture + exported pure geometry),
+  `components/PullToRefresh.tsx` (indicator + the invalidation), `components/Layout.tsx`
+  (one mount for every authenticated page).
+- **Do not make the content column follow the pull.** A `transform` on it re-bases every
+  `position: fixed` descendant — nav rail, modal shells, OrderDetail's action bar.
+- **Do not make `touchmove` passive.** `preventDefault` is what stops iOS rubber-banding
+  under the indicator; it is called only while pulling down at the top.
+- **Verified:** `pnpm --filter web check` clean, tests 192/192 (9 new), `oxlint` clean exit 0,
+  `pnpm --filter web build` clean with `sr-only` and `animate-spin` present in the emitted CSS.
+- **NOT verified: any device.** The gesture is gated to standalone display mode, so it cannot
+  be exercised in a normal browser tab at all — install the app on a phone and confirm before
+  merging. Check specifically that a drag inside an open modal does not refresh behind it.
+
+## Current Focus — 2026-08-11: Installable home-screen app (PWA)
+Branch `feat/pwa-home-screen`, cut from `main`. Static assets only — no TS, no API, no schema.
+Full detail in `engine_features.md` 2026-08-11.
+
+- **`display: "standalone"` in the manifest is the whole answer to "hide the browser UI".**
+  `.htaccess` is irrelevant — the web app is a Cloudflare Worker with `[assets]`, no Apache.
+- **`logo.svg` is the single source for every icon.** `scripts/generate-icons.mjs` derives
+  `favicon.svg` and the four PNGs from it. Never hand-edit a derived file; re-run the script.
+- **Every PNG is an opaque white plate on purpose** (iOS composites transparency onto black),
+  and the maskable one is inset to 60% (Android crops to launcher shapes).
+- **`apple-mobile-web-app-status-bar-style` is `default`.** `black-translucent` needs
+  `env(safe-area-inset-top)` handling that `apps/web` does not have.
+- **Verified:** `pnpm --filter web build` clean and all six assets present in `dist/`; manifest
+  served as `application/manifest+json`, all icons 200, no console errors; `pnpm check` clean,
+  web tests 98/10 pass. `oxlint` reports 4 pre-existing `only-export-components` warnings in
+  `LineItemEditor.tsx`, untouched by this branch.
+- **NOT verified: a physical device.** Nothing here has been installed on a real phone or
+  tablet. Do that before merging — an installed PWA caches the manifest, so a bad `start_url`
+  or icon path survives the next deploy until users remove and re-add the icon.
+- **Ships by merging to `main`** (Cloudflare builds `apps/web` from GitHub). No API deploy is
+  involved, so the usual API-first ordering does not apply to this branch.
+
+## Current Focus — 2026-08-03: Responsive shell rewrite (rail, hamburger, fluid page track)
 ## Current Focus — 2026-08-13: Estimate visits without a customer email
 Owner report: the appointment wizard's customer step looked misaligned, and customers with
 no email address were unbookable. Emails are now OFF the picker rows entirely (names only)
@@ -1074,3 +1121,67 @@ default deliberately matches no chip.
 there is no id, or the order has already hydrated. Without that guard it raced the
 hydration effect in the same commit — `company` arriving flipped its deps — and clobbered a
 hand-picked expiry date.
+
+## Current Focus — 2026-08-11: blind-type scoping for the option catalogs
+
+Owner spec: pick which blind types each cassette / bottom rail / control / installation
+option shows up for and calculates towards. Branch `feat/option-blind-type-scoping`, cut
+from `main`. Full detail in `engine_features.md` 2026-08-11.
+
+- **Scoping is the source of truth for hardware slots.** `BaseBlindType.requiredCatalogs`
+  is DELETED. A type uses a slot iff ≥1 ACTIVE option is linked to it in the matching
+  `<catalog>_blind_types` table. Do not reintroduce a per-type declaration — the form, the
+  price preview and the Worker all read the one rule, and a second source would let them
+  disagree.
+- **EMPTY MEANS NONE, unlike Materials.** An option with no blind types picked is offered
+  nowhere. `material_blind_types` still means the opposite (no links = every type). Two
+  contradictory conventions live in this codebase on purpose; that is why Materials keeps
+  its own settings handlers instead of joining the generic catalog factory.
+- **Installation is a real line-item slot now**, not a Curtains attribute:
+  `line_items.installation_id / installation_name / installation_price_per_item`, and the
+  three `installation_*` keys were stripped out of `attributes`. `curtains.ts` no longer
+  declares `installation_id`; sending it is a 400.
+- **`control_id` is nullable** in the order payload. A type with no control scoped prices
+  its control at 0 and stores null.
+- **Standing hazards added by this work:**
+  - `apps/api/src/lib/optionScoping.ts` and `slotsForType` in
+    `apps/web/src/pages/orders/lineItemDrafts.ts` are an UNTWINNED pair — same rule, two
+    implementations (server reads Postgres, web reads the TanStack cache). Change one,
+    change the other, or the form offers what the save rejects.
+  - In `resolveLineItems`, existence checks MUST stay above the slot gates. Deleting an
+    option cascades its links away, so a slot-first order reports a deleted cassette as
+    "this type does not take a cassette".
+  - The settings catalog factory's create schema is `.strict()` now. A page sending a field
+    its catalog does not declare gets a 400 rather than a silent strip.
+- **Not verified in a browser.** Port 5173 was held by another session's dev server and
+  the settings pages sit behind Supabase auth. Covered by types, tests and a production
+  build only — the chip UI and the slot-hiding behaviour still want a manual pass.
+
+## Current Focus — 2026-08-11 (later): per-option price basis
+
+Owner spec: each cassette / bottom rail / control / installation option can be charged per
+metre, per m², per unit or per panel, chosen next to the price. Branch
+`feat/option-price-basis`. Full detail in `engine_features.md` 2026-08-11 (second entry).
+
+- **One function interprets a basis: `BaseBlindType.hardwareCost`.** The four per-slot cost
+  hooks are gone. Its switch is exhaustive — adding a basis makes the compiler list what
+  else needs updating.
+- **`calculateUnitPrice` must NOT be overridden.** `materialCost(item, widthCm, heightCm)`
+  is the only divergence point a blind type gets. Curtains overrides that alone now; it
+  used to re-implement the whole formula and carried its own copy of the control and
+  installation maths.
+- **`hardware` is a map, and an absent slot means NO CHARGE** — not a zero one. Both the
+  Worker and `blindDraftPrice` build it gated on the scoping, so a stale id from a previous
+  blind type is not charged.
+- **The catalogs share one shape now** (`price` + `price_basis`), which is why there is one
+  `hardwareLookup` on the server and one `hardwareSchema` in settings.
+- **Standing hazards added by this work:**
+  - `price_basis` is spelled out in FIVE places that must agree: the check constraint
+    (migration 36), the Zod enum in `settings.ts`, `PriceBasis` in both blindTypes twins,
+    `PriceBasis` in `apps/web/src/types`, and `BASIS_OPTIONS` in `CatalogEditor`.
+  - `line_items.*_price_per_m` / `*_price_per_item` keep their names but no longer imply a
+    basis. Read the `*_price_basis` sibling with them, always.
+  - Curtains will now CHARGE a cassette or bottom rail if one is ever scoped to it. Nothing
+    is today, so this is unreachable from the UI.
+- **Not verified in a browser** — same as the scoping work: the settings pages sit behind
+  Supabase auth. Covered by types, tests and a production build.

@@ -14,6 +14,13 @@
  * and description support are configured per page — the pages themselves
  * stay ~20 lines each, keeping one file per responsibility.
  *
+ * A catalog may also be BLIND-TYPE SCOPED (`scoped: true`): cassette,
+ * bottom rail, control and installation options each carry the blind
+ * types they are offered for, edited here as toggle chips. Picking none
+ * means the option is offered nowhere, which is how a whole hardware slot
+ * is switched off for a blind type (migration 35) — the opposite of the
+ * Materials convention, so every scoped page carries a note saying so.
+ *
  * That number is not always money. Pleat types store a fullness RATIO,
  * rendered `2.50×` rather than `$2.50` and required to be positive, so
  * `priceUnit`/`priceMin` exist to keep one component honest about both.
@@ -32,6 +39,7 @@ import {
   type CatalogPath,
   type CatalogRow,
 } from '../hooks/useSettings';
+import type { BlindType, PriceBasis } from '../types';
 
 /** Per-entity configuration provided by each settings page. */
 export interface CatalogEditorConfig {
@@ -59,6 +67,41 @@ export interface CatalogEditorConfig {
   priceMin?: number;
   /** Standing note rendered under the add form. */
   note?: string;
+  /**
+   * Whether this catalog's options are scoped to blind types. When set,
+   * each row carries `blind_type_ids` and the editor renders a blind-type
+   * chip picker in the add and edit forms.
+   *
+   * An option with NO types picked is offered for NO blind type, and the
+   * line-item form then hides that whole hardware slot for every type —
+   * the OPPOSITE of the Materials convention, and the mechanism by which
+   * a slot is switched off (migration 35). Say so in `note`: it is not
+   * guessable from the controls.
+   */
+  scoped?: boolean;
+  /**
+   * Whether each row chooses how its price is charged (`price_basis`).
+   * Set for the four hardware catalogs; absent for pleat types (a ratio,
+   * not money) and presets (a flat line price).
+   *
+   * When set, `priceLabel` is IGNORED for the row readout — the unit comes
+   * from the row's own basis, because a page-wide label would contradict
+   * any row that is not on the catalog's original basis.
+   */
+  basis?: boolean;
+}
+
+/** The four bases, with the label each renders as. */
+const BASIS_OPTIONS: { value: PriceBasis; label: string }[] = [
+  { value: 'per_m', label: 'per m' },
+  { value: 'per_sqm', label: 'per m²' },
+  { value: 'per_unit', label: 'per unit' },
+  { value: 'per_panel', label: 'per panel' },
+];
+
+/** Renders one basis as its unit label; falls back to the raw value. */
+function basisLabel(value: unknown): string {
+  return BASIS_OPTIONS.find((b) => b.value === value)?.label ?? String(value ?? '');
 }
 
 /** Catalog row with the dynamic price column and optional description. */
@@ -69,9 +112,102 @@ interface Draft {
   name: string;
   price: string;
   description: string;
+  /** Blind types this option is offered for; only used when `scoped`. */
+  blindTypeIds: string[];
+  /** How the price is charged; only used when `basis`. */
+  priceBasis: PriceBasis;
 }
 
-const EMPTY_DRAFT: Draft = { name: '', price: '', description: '' };
+/**
+ * `per_m` is the seed default only because it is the commonest of the
+ * four in this shop's catalog. Nothing depends on it — every existing row
+ * carries the basis migration 36 backfilled, and this value is only ever
+ * the starting position of the dropdown on a brand-new option.
+ */
+const EMPTY_DRAFT: Draft = {
+  name: '',
+  price: '',
+  description: '',
+  blindTypeIds: [],
+  priceBasis: 'per_m',
+};
+
+/** Dropdown choosing how a hardware option's price is charged. */
+function BasisSelect({
+  value,
+  onChange,
+}: {
+  value: PriceBasis;
+  onChange: (next: PriceBasis) => void;
+}) {
+  return (
+    <select
+      aria-label="Price basis"
+      value={value}
+      onChange={(e) => onChange(e.target.value as PriceBasis)}
+      className="h-11 min-w-0 rounded-md border border-border-input bg-surface px-2 text-base"
+    >
+      {BASIS_OPTIONS.map((b) => (
+        <option key={b.value} value={b.value}>
+          {b.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * Toggle-chip picker for an option's blind types.
+ *
+ * Each chip is a ≥44px tap target so it works on a phone in the field.
+ * The empty state says out loud what an empty selection means, because
+ * "offered nowhere" is the opposite of what the Materials page — where no
+ * links means every type — trains the user to expect.
+ *
+ * An inactive blind type is hidden unless this option is already scoped
+ * to it, so a historical link stays visible and un-toggleable-away by
+ * accident rather than vanishing from the form.
+ */
+function BlindTypeChips({
+  types,
+  selected,
+  onToggle,
+}: {
+  types: BlindType[];
+  selected: string[];
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div>
+      <span className="mb-1.5 block text-xs font-medium text-text-secondary">Blind types</span>
+      <div className="flex flex-wrap gap-2">
+        {types
+          .filter((t) => t.active || selected.includes(t.id))
+          .map((t) => {
+            const on = selected.includes(t.id);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => onToggle(t.id)}
+                className={`h-11 rounded-md px-3 text-sm font-medium ${
+                  on ? 'bg-brand-100 text-brand-800' : 'bg-surface-muted text-text-secondary'
+                }`}
+              >
+                {t.name}
+              </button>
+            );
+          })}
+      </div>
+      {selected.length === 0 && (
+        <p className="mt-1.5 text-xs text-text-muted">
+          No blind types selected — this option is not offered anywhere.
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Parses a draft numeric string; returns null when it is not a finite
@@ -88,6 +224,9 @@ function parseAmount(value: string, min: number): number | null {
 export default function CatalogEditor({ config }: { config: CatalogEditorConfig }) {
   const hasPrice = Boolean(config.priceKey);
   const { data: rows, isLoading, error } = useCatalogList<Row>(config.path);
+  // Fetched unconditionally: hooks cannot be called conditionally, and the
+  // list is already in the TanStack cache on any page that has shown it.
+  const { data: blindTypes } = useCatalogList<BlindType>('blind-types');
   const create = useCreateCatalogItem<Row>(config.path);
   const update = useUpdateCatalogItem<Row>(config.path);
   const remove = useDeleteCatalogItem(config.path);
@@ -95,6 +234,21 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(EMPTY_DRAFT);
+
+  /** Reads a row's scoping list, tolerating a row saved before it existed. */
+  function idsOf(row: Row): string[] {
+    return Array.isArray(row.blind_type_ids) ? (row.blind_type_ids as string[]) : [];
+  }
+
+  /** Adds or removes one blind type from a draft's selection. */
+  function toggle(d: Draft, set: (next: Draft) => void, id: string) {
+    set({
+      ...d,
+      blindTypeIds: d.blindTypeIds.includes(id)
+        ? d.blindTypeIds.filter((x) => x !== id)
+        : [...d.blindTypeIds, id],
+    });
+  }
   const priceMin = config.priceMin ?? 0;
   const invalidAmount =
     config.priceUnit === 'plain' ? 'Enter a multiplier greater than 0.' : 'Enter a valid price.';
@@ -112,6 +266,8 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
         name: draft.name.trim(),
         ...(hasPrice ? { [config.priceKey as string]: price } : {}),
         ...(config.hasDescription ? { description: draft.description.trim() } : {}),
+        ...(config.scoped ? { blind_type_ids: draft.blindTypeIds } : {}),
+        ...(config.basis ? { price_basis: draft.priceBasis } : {}),
       } as Partial<Row>,
       {
         onSuccess: () => setDraft(EMPTY_DRAFT),
@@ -127,6 +283,8 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
       name: row.name,
       price: hasPrice ? String(row[config.priceKey as string] ?? '') : '',
       description: String(row.description ?? ''),
+      blindTypeIds: idsOf(row),
+      priceBasis: (row.price_basis as PriceBasis) ?? 'per_m',
     });
   }
 
@@ -145,6 +303,8 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
           name: editDraft.name.trim(),
           ...(hasPrice ? { [config.priceKey as string]: price } : {}),
           ...(config.hasDescription ? { description: editDraft.description.trim() } : {}),
+          ...(config.scoped ? { blind_type_ids: editDraft.blindTypeIds } : {}),
+          ...(config.basis ? { price_basis: editDraft.priceBasis } : {}),
         } as Partial<Row>,
       },
       {
@@ -185,14 +345,27 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
               className="h-11 rounded-md border border-border-input bg-surface px-3 text-base"
             />
           )}
+          {config.scoped && (
+            <BlindTypeChips
+              types={blindTypes ?? []}
+              selected={draft.blindTypeIds}
+              onToggle={(id) => toggle(draft, setDraft, id)}
+            />
+          )}
           <div className="flex gap-2">
             {hasPrice && (
               <input
-                placeholder={config.priceLabel}
+                placeholder={config.priceLabel ?? 'Price'}
                 inputMode="decimal"
                 value={draft.price}
                 onChange={(e) => setDraft({ ...draft, price: e.target.value })}
                 className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
+              />
+            )}
+            {config.basis && (
+              <BasisSelect
+                value={draft.priceBasis}
+                onChange={(priceBasis) => setDraft({ ...draft, priceBasis })}
               />
             )}
             <button
@@ -233,6 +406,13 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                     className="h-11 rounded-md border border-border-input bg-surface px-3 text-base"
                   />
                 )}
+                {config.scoped && (
+                  <BlindTypeChips
+                    types={blindTypes ?? []}
+                    selected={editDraft.blindTypeIds}
+                    onToggle={(id) => toggle(editDraft, setEditDraft, id)}
+                  />
+                )}
                 <div className="flex gap-2">
                   {hasPrice && (
                     <input
@@ -240,6 +420,12 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                       value={editDraft.price}
                       onChange={(e) => setEditDraft({ ...editDraft, price: e.target.value })}
                       className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface px-3 text-base"
+                    />
+                  )}
+                  {config.basis && (
+                    <BasisSelect
+                      value={editDraft.priceBasis}
+                      onChange={(priceBasis) => setEditDraft({ ...editDraft, priceBasis })}
                     />
                   )}
                   <button
@@ -272,7 +458,19 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
                       {config.priceUnit === 'plain'
                         ? `${Number(row[config.priceKey as string]).toFixed(2)}×`
                         : `$${Number(row[config.priceKey as string]).toFixed(2)}`}{' '}
-                      <span className="text-text-muted">{config.priceLabel}</span>
+                      <span className="text-text-muted">
+                        {config.basis ? basisLabel(row.price_basis) : config.priceLabel}
+                      </span>
+                    </span>
+                  )}
+                  {config.scoped && (
+                    <span className="block truncate text-sm text-text-muted">
+                      {idsOf(row).length
+                        ? (blindTypes ?? [])
+                            .filter((t) => idsOf(row).includes(t.id))
+                            .map((t) => t.name)
+                            .join(', ')
+                        : 'Not offered for any blind type'}
                     </span>
                   )}
                 </button>

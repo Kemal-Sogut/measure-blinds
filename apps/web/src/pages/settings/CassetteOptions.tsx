@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
-/** Cassette options settings page — CRUD list priced per meter of width. */
+/**
+ * Cassette options settings page — CRUD list priced per meter of width.
+ *
+ * Each option carries the blind types it is offered for. A type with no
+ * cassette scoped to it loses the Cassette dropdown on the line-item form
+ * entirely and stops being charged for one, which is how the slot is
+ * switched off per type (migration 35).
+ */
 
 import PageHeader from '../../components/PageHeader';
 import CatalogEditor from '../../components/CatalogEditor';
@@ -13,9 +20,11 @@ export default function CassetteOptions() {
       <CatalogEditor
         config={{
           path: 'cassette-options',
-          priceKey: 'price_per_m',
-          priceLabel: 'per m',
+          priceKey: 'price',
+          basis: true,
           noun: 'cassette option',
+          scoped: true,
+          note: 'A cassette is offered only for the blind types picked here. Leave a type off every cassette and the Cassette dropdown disappears for it. Each option also chooses how its price is charged — per m, per m², per unit or per panel.',
         }}
       />
     </div>
