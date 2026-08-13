@@ -17,10 +17,14 @@
  * new time for that same appointment through `POST /:id/propose` —
  * the customer keeps the same public link.
  *
- * Every submit EMAILS the customer; there is no quiet calendar-only
- * path. Estimate visits are booked as CONFIRMED immediately (the email
- * is a booking confirmation — no approval step); installations get a
+ * Estimate visits are booked as CONFIRMED immediately (the email is a
+ * booking confirmation — no approval step); installations get a
  * proposal with a confirm / request-another-time link.
+ *
+ * A customer with NO email on file can still be picked for an estimate
+ * visit: the API books it and simply sends nothing, and the success
+ * toast says so. That is why the picker lists names only — an address
+ * is not a requirement, so showing it here would only imply otherwise.
  */
 
 import { useEffect, useState } from 'react';
@@ -113,14 +117,18 @@ export default function AppointmentWizard({
     if (!time) return;
     const appointment_date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
     try {
+      // The saved row carries its joined customer, so the toast can
+      // report what actually happened (an estimate visit for a customer
+      // with no email on file is booked without sending anything).
+      let saved;
       if (repropose) {
-        await reproposeMut.mutateAsync({
+        saved = await reproposeMut.mutateAsync({
           id: repropose.id,
           input: { appointment_date, appointment_time: time },
         });
       } else if (kind === 'estimate') {
         if (!customer) return;
-        await createMut.mutateAsync({
+        saved = await createMut.mutateAsync({
           kind: 'estimate',
           customer_id: customer.id,
           appointment_date,
@@ -128,17 +136,20 @@ export default function AppointmentWizard({
         });
       } else {
         if (!orderId) return;
-        await createMut.mutateAsync({
+        saved = await createMut.mutateAsync({
           kind: 'installation',
           order_id: orderId,
           appointment_date,
           appointment_time: time,
         });
       }
+      const emailed = Boolean(saved.customer?.email);
       toast.success(
         kind === 'installation'
           ? 'Installation proposed — customer emailed'
-          : 'Estimate appointment booked — customer emailed'
+          : emailed
+            ? 'Estimate appointment booked — customer emailed'
+            : 'Estimate appointment booked — no email on file, nothing sent'
       );
       void qc.invalidateQueries({ queryKey: ['orders', 'list'] });
       onClose();
@@ -283,31 +294,27 @@ export default function AppointmentWizard({
                 No customers found — use “+ Add customer” to create one.
               </p>
             )}
-            <div className="flex max-h-72 flex-col gap-2 overflow-y-auto">
-              {(customersQ.data ?? []).map((cust) => {
-                const hasEmail = Boolean(cust.email);
-                return (
-                  <button
-                    key={cust.id}
-                    type="button"
-                    disabled={!hasEmail}
-                    onClick={() => setCustomer(cust)}
-                    title={hasEmail ? undefined : 'This customer has no email address.'}
-                    className={`rounded-lg border p-3 text-left disabled:opacity-40 ${
-                      customer?.id === cust.id
-                        ? 'border-brand-600 bg-brand-100'
-                        : 'border-border-input bg-surface hover:bg-surface-muted'
-                    }`}
-                  >
-                    <span className="block text-sm font-semibold text-text-primary">
-                      {displayName(cust)}
-                    </span>
-                    <span className="mt-0.5 block text-[13px] text-text-secondary">
-                      {hasEmail ? cust.email : 'No email — cannot be emailed the booking'}
-                    </span>
-                  </button>
-                );
-              })}
+            {/* Name-only rows: every row is the same height and the
+                email address is deliberately not shown — a customer
+                without one is just as bookable. `pr-1` keeps the
+                overflow scrollbar off the row borders. */}
+            <div className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
+              {(customersQ.data ?? []).map((cust) => (
+                <button
+                  key={cust.id}
+                  type="button"
+                  onClick={() => setCustomer(cust)}
+                  className={`rounded-lg border p-3 text-left ${
+                    customer?.id === cust.id
+                      ? 'border-brand-600 bg-brand-100'
+                      : 'border-border-input bg-surface hover:bg-surface-muted'
+                  }`}
+                >
+                  <span className="block truncate text-sm font-semibold text-text-primary">
+                    {displayName(cust)}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -384,7 +391,6 @@ export default function AppointmentWizard({
         {/* Quick add-customer pop-up; the new customer is auto-selected. */}
         {addingCustomer && (
           <CustomerCreateModal
-            requireEmail
             onClose={() => setAddingCustomer(false)}
             onCreated={(created) => {
               setCustomer(created);

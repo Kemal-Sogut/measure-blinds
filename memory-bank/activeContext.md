@@ -1,6 +1,23 @@
 # Active Context
 
-## Current Focus — 2026-08-10: Line item price adjustments
+## Current Focus — 2026-08-13: Estimate visits without a customer email
+Owner report: the appointment wizard's customer step looked misaligned, and customers with
+no email address were unbookable. Emails are now OFF the picker rows entirely (names only)
+and a missing address no longer blocks an estimate booking — the API just sends nothing.
+
+- **An address is not a booking requirement for `kind='estimate'`.** `POST /api/appointments`
+  and `POST /:id/propose` skip the send instead of returning 400. The public token is still
+  minted, so the customer page works if an address is added later.
+- **Installations still require an email** (create AND repropose): their flow is the
+  customer confirming or asking for another time, which needs a message to answer.
+- **The success toast reads the SAVED row's joined customer**, not the local selection —
+  the repropose path never sets one, so the local value would falsely read "no email".
+- **Do not put the email back on the picker rows.** Showing it there is what implied it was
+  required; one-line rows are also what keeps the list aligned.
+- **Verified:** api 290/16, web 164/14, both `tsc --noEmit` clean, `oxlint` clean. Not yet
+  seen in a browser (the calendar is behind `ProtectedRoute`).
+
+## Previous Focus — 2026-08-10: Line item price adjustments
 Owner spec: override a line item's price (with the option to show the customer the previous
 price, and to reset to the calculated one), give custom items a title plus a multi-line
 description, and attach custom add-ons with their own pricing shown on PDFs and the

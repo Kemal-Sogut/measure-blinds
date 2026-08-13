@@ -29,6 +29,11 @@
  * the email asks the customer to confirm the window or request another
  * time. Either way the ordering mirrors the order emails: email FIRST,
  * persist after — a failed send leaves the schedule untouched.
+ *
+ * An estimate visit for a customer with NO email on file is booked
+ * silently: nothing is sent, everything else (status, public token) is
+ * identical. Installations still require an email address because their
+ * flow depends on the customer answering the proposal.
  */
 
 import { Hono } from 'hono';
@@ -347,11 +352,13 @@ app.get('/:id', async (c) => {
 });
 
 /**
- * Books a new visit and emails the customer.
+ * Books a new visit and emails the customer when there is an address to
+ * email.
  *
- * kind='estimate': requires `customer_id`; the customer must have an
- * email. NO order is attached — ever. The visit is created CONFIRMED
- * (no approval step) and the email is a booking confirmation.
+ * kind='estimate': requires `customer_id`. NO order is attached — ever.
+ * The visit is created CONFIRMED (no approval step) and the email is a
+ * booking confirmation. A customer with no email on file is booked with
+ * no email sent at all.
  * kind='installation': requires `order_id` pointing at a READY order;
  * the customer comes from the order. An order has at most one
  * installation appointment (unique index) — re-booking replaces the
@@ -378,21 +385,25 @@ app.post('/', async (c) => {
       .is('deleted_at', null)
       .maybeSingle();
     if (!customer) return c.json({ error: 'Customer not found' }, 404);
-    if (!customer.email) return c.json({ error: 'This customer has no email address.' }, 400);
 
     const token = crypto.randomUUID();
-    try {
-      await sendProposalEmail(c.env, {
-        company,
-        customer,
-        kind: 'estimate',
-        dateIso: input.appointment_date,
-        time: input.appointment_time,
-        token,
-        message: input.message,
-      });
-    } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+    // A customer with no email on file is still bookable — the visit is
+    // simply scheduled silently. The token is minted either way so the
+    // public page keeps working if the address is added later.
+    if (customer.email) {
+      try {
+        await sendProposalEmail(c.env, {
+          company,
+          customer,
+          kind: 'estimate',
+          dateIso: input.appointment_date,
+          time: input.appointment_time,
+          token,
+          message: input.message,
+        });
+      } catch (e) {
+        return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+      }
     }
 
     const { data, error } = await sb
@@ -495,9 +506,10 @@ app.post('/', async (c) => {
  * Re-proposes a new time for an existing visit (either kind): clears
  * the customer's previous response and the reminder stamp, keeps the
  * SAME public token (already-emailed links stay valid), and emails a
- * fresh message. Installations reset to `proposed` (the customer
- * confirms again); estimate visits have no approval step, so the new
- * time lands directly as `confirmed`.
+ * fresh message when the customer has an address. Installations reset
+ * to `proposed` (the customer confirms again) and still 400 without an
+ * email; estimate visits have no approval step, so the new time lands
+ * directly as `confirmed` and sends nothing when there is no address.
  */
 app.post('/:id/propose', async (c) => {
   const parsed = reproposeSchema.safeParse(await c.req.json().catch(() => null));
@@ -514,24 +526,32 @@ app.post('/:id/propose', async (c) => {
   const appt = apptRow as Record<string, any> | null;
   if (!appt) return c.json({ error: 'Appointment not found' }, 404);
   const customer = appt.customer as Record<string, any> | null;
-  if (!customer?.email) return c.json({ error: 'This customer has no email address.' }, 400);
+  // Estimate visits are bookable for a customer with no email on file,
+  // so re-timing one must stay possible too — it just sends nothing.
+  // Installations still require an address: their whole point is the
+  // confirm/request-another-time round trip.
+  if (!customer?.email && appt.kind !== 'estimate') {
+    return c.json({ error: 'This customer has no email address.' }, 400);
+  }
 
   const company = await loadCompany(sb);
   if (!company) return c.json({ error: 'Company settings not found' }, 500);
 
-  try {
-    await sendProposalEmail(c.env, {
-      company,
-      customer,
-      kind: appt.kind,
-      orderNumber: (appt.order as Record<string, any> | null)?.order_number,
-      dateIso: input.appointment_date,
-      time: input.appointment_time,
-      token: appt.public_token,
-      message: input.message,
-    });
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+  if (customer?.email) {
+    try {
+      await sendProposalEmail(c.env, {
+        company,
+        customer,
+        kind: appt.kind,
+        orderNumber: (appt.order as Record<string, any> | null)?.order_number,
+        dateIso: input.appointment_date,
+        time: input.appointment_time,
+        token: appt.public_token,
+        message: input.message,
+      });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
+    }
   }
 
   const isEstimate = appt.kind === 'estimate';

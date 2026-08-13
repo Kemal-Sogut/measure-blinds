@@ -9,6 +9,8 @@
  *   - creating an estimate visit requires a customer, REJECTS any
  *     attached order (estimate visits are customer-only by design),
  *     and inserts the row already CONFIRMED — no customer approval step
+ *   - an estimate visit for a customer with NO email on file is booked
+ *     silently (200, row inserted, no send attempted)
  *   - creating an installation requires a READY order (409 otherwise)
  *   - a failed proposal email leaves the schedule untouched (502, no
  *     insert/update after)
@@ -218,6 +220,25 @@ describe('POST /api/appointments (estimate)', () => {
       expect(inserted.confirmed_at).toBeTruthy();
       expect(inserted).not.toHaveProperty('order_id');
     });
+  });
+
+  it('books a customer with NO email without sending anything', async () => {
+    db.responses['company_settings.select'] = COMPANY;
+    db.responses['customers.select'] = [
+      { id: CUSTOMER_ID, first_name: 'Imran', last_name: '', email: null, phone: '416-555-0100' },
+    ];
+    // No withResend stub on purpose: any send attempt would hit the real
+    // fetch and fail the request, which is exactly what must not happen.
+    const res = await post('/', {
+      kind: 'estimate',
+      customer_id: CUSTOMER_ID,
+      appointment_date: '2026-08-07',
+      appointment_time: '09:00',
+    });
+    expect(res.status).toBe(200);
+    const inserted = db.insertPayloads['appointments']?.[0] as Record<string, unknown>;
+    expect(inserted.status).toBe('confirmed');
+    expect(inserted.public_token).toBeTruthy();
   });
 
   it('502 on email failure and never writes to the DB after', async () => {

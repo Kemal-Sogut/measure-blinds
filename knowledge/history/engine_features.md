@@ -2234,3 +2234,32 @@ members. Cross-field rules (title-or-description required; a preset needs `prese
 ### Verified
 api 289/289, web 164/164, both `tsc --noEmit` clean, `oxlint` clean.
 Migration 31 written but NOT applied — see below.
+
+## Estimate visits bookable without a customer email (2026-08-13)
+
+The appointment wizard's customer step used to disable every customer with no email
+address and label the row "No email — cannot be emailed the booking". Those two-line rows
+(name + email) also made the list read as ragged: disabled rows sat at 40% opacity next to
+full-opacity ones and the overflow scrollbar rode on top of the row borders.
+
+**Now:** the picker lists NAMES ONLY (`truncate`, one line per row, `pr-1` on the scroll
+container so the scrollbar clears the borders), no row is disabled, and
+`CustomerCreateModal` is no longer opened with `requireEmail` from this flow.
+
+**API (`apps/api/src/routes/appointments.ts`):**
+- `POST /` kind='estimate' — the `!customer.email` 400 is gone. The public token is still
+  minted and the row is still inserted `confirmed`; the send is simply skipped when there
+  is no address. Email-then-persist ordering is unchanged for customers who DO have one.
+- `POST /:id/propose` — same skip, but only for `kind='estimate'`. Installations keep the
+  400: their whole flow is the customer answering the proposal.
+- `POST /` kind='installation' is untouched — an installation still requires an email.
+
+The success toast reads the SAVED row's joined customer (not the local selection, which is
+null on the repropose path) and says "no email on file, nothing sent" when nothing went
+out. The reminder cron already skipped null emails (`lib/reminders.ts`), so nothing there
+changed.
+
+### Verified
+api 290/290 (new test: books a no-email customer with NO Resend stub installed, so any
+send attempt would fail the request), web 164/164, both `tsc --noEmit` clean, `oxlint`
+clean.

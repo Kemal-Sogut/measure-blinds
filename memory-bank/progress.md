@@ -1,5 +1,21 @@
 # Progress
 
+## Estimate visits without a customer email (2026-08-13)
+
+**Works:** the appointment wizard's customer step lists names only (one line per row, no
+email, no disabled rows, scrollbar clear of the borders) and any customer can be booked for
+an estimate visit. With an address on file nothing changes — the booking confirmation is
+emailed as before, email-then-persist. Without one the visit is created silently and the
+toast says "no email on file, nothing sent". Re-proposing a new time for such a visit works
+the same way. `+ Add customer` from this step no longer forces an email field.
+
+**Unchanged:** installations still require an email address at create AND repropose (400
+otherwise) — the customer has to be able to answer the proposal. The reminder cron already
+skipped customers without an address.
+
+**Status:** api 290/16 and web 164/14 green, `tsc --noEmit` and `oxlint` clean. Not yet
+exercised in a browser — the calendar sits behind `ProtectedRoute`.
+
 ## Line item price adjustments (2026-08-10)
 Branch `feat/line-item-price-adjustments`, 15 commits from `feat/curtains-pricing`.
 
