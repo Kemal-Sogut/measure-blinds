@@ -245,6 +245,58 @@ export function bulkEditSelection(items: ItemDraft[], selected: Set<string>): Bu
   return { ok: true, blindsType, keys: blinds.map((it) => it.key) };
 }
 
+/**
+ * What one run of the bulk-edit form asks for: an id per editable slot,
+ * `''` meaning "no change". It lives here rather than beside the form
+ * because `applyBulkEditToDraft` is the rule that consumes it, and this
+ * module owns the drafts and every pure function over them.
+ */
+export interface BulkEditState {
+  material_id: string;
+  cassette_id: string;
+  bottom_rail_id: string;
+  control_id: string;
+  installation_id: string;
+}
+
+/**
+ * Applies the non-empty bulk fields to ONE blind draft.
+ *
+ * `uses` is the slot set of the type the selection shares
+ * (`slotsForType`); an id for a slot outside it is dropped, because the
+ * Worker rejects one and the whole order would stop saving.
+ *
+ * **The item's price override is CLEARED whenever anything is applied.**
+ * An override pins the unit price to a figure typed against the OLD
+ * options, and it wins over the calculated price on both sides — so
+ * without this, a bulk change of material or hardware would show up on
+ * the item but never reach what is charged, silently voiding the price
+ * change on exactly the lines someone had already negotiated. Add-ons and
+ * `show_original_price` are deliberately left alone: they are additions to
+ * the price rather than a replacement for it, so a re-price does not
+ * invalidate them.
+ *
+ * Returns the draft UNCHANGED (same reference) when nothing applies, so a
+ * run that misses an item cannot drop that item's override as a side
+ * effect.
+ */
+export function applyBulkEditToDraft(
+  draft: BlindDraft,
+  state: BulkEditState,
+  uses: Set<CatalogSlot>
+): BlindDraft {
+  const patch: Partial<BlindDraft> = {};
+  if (state.material_id) patch.material_id = state.material_id;
+  if (state.cassette_id && uses.has('cassette')) patch.cassette_id = state.cassette_id;
+  if (state.bottom_rail_id && uses.has('bottom_rail')) patch.bottom_rail_id = state.bottom_rail_id;
+  if (state.control_id && uses.has('control')) patch.control_id = state.control_id;
+  if (state.installation_id && uses.has('installation')) {
+    patch.installation_id = state.installation_id;
+  }
+  if (Object.keys(patch).length === 0) return draft;
+  return { ...draft, ...patch, unit_price_override: '' };
+}
+
 /** Parses a positive number from a draft string; null when invalid. */
 export function parsePositive(value: string): number | null {
   const n = Number(value);

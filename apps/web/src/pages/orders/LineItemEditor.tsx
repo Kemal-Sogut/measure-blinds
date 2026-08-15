@@ -43,6 +43,7 @@ import {
   materialsForType,
   optionsForType,
   slotsForType,
+  type BulkEditState,
   type Catalogs,
   type FlatDraft,
 } from './lineItemDrafts';
@@ -143,23 +144,6 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form — material, cassette, bottom rail, control and
- * installation. Each starts as "" (no change); only non-empty selections
- * are applied by the parent when the user clicks Apply.
- *
- * Only the FOUR hardware ids exist as slots; which of them are editable
- * at all is per blind type, which is why this form is scoped exactly like
- * the per-item one.
- */
-export interface BulkEditState {
-  material_id: string;
-  cassette_id: string;
-  bottom_rail_id: string;
-  control_id: string;
-  installation_id: string;
-}
-
-/**
  * Bulk-edit form, scoped to ONE blind type.
  *
  * `blindsType` is the type every selected item shares — the caller has
@@ -176,6 +160,10 @@ export interface BulkEditState {
  * A type with no hardware scoped to it (Curtains has neither cassette nor
  * bottom rail) renders those dropdowns not at all rather than greyed out:
  * a control that can only be a no-op is noise on a phone screen.
+ *
+ * The intro warns that applying CLEARS a manual price override on the
+ * items it touches (`applyBulkEditToDraft`) — the consultant has to know
+ * before choosing, because an override is usually a figure they quoted.
  */
 export function BulkEditForm({
   state,
@@ -196,7 +184,9 @@ export function BulkEditForm({
     <div className="flex min-w-0 flex-col gap-3.5">
       <p className="text-[13px] text-text-muted">
         Only the selected options will be changed. Leave a field on "No change" to keep each
-        item's current value.
+        item's current value. Any manual price override on an item this changes is{' '}
+        <span className="font-medium text-text-secondary">reset</span>, so the new options are
+        what it is priced from.
       </p>
       <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <OptionSelect

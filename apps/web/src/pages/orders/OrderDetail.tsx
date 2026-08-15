@@ -113,10 +113,10 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
-  type BulkEditState,
 } from './LineItemEditor';
 import { getBlindType } from '../../lib/blindTypes';
 import {
+  applyBulkEditToDraft,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
@@ -127,6 +127,7 @@ import {
   parsePositive,
   slotsForType,
   type BlindDraft,
+  type BulkEditState,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
@@ -889,9 +890,9 @@ export default function OrderDetail() {
    * Re-reads the verdict rather than trusting the popup being open: the
    * selection is the same state the list renders from, and an item edited
    * behind the sheet could have changed type. Only items of the resolved
-   * type are touched, and a hardware id is written only where that type
-   * uses the slot — the Worker rejects an id for an unused slot, so a
-   * looser patch here would make the whole order unsavable.
+   * type are touched; what each one becomes — including the price
+   * override it loses — is `applyBulkEditToDraft`, so the rule is tested
+   * once and cannot drift from the note the form shows.
    */
   function applyBulkEdit() {
     const selection = bulkEditSelection(items, selected);
@@ -901,17 +902,7 @@ export default function OrderDetail() {
       list.map((it) => {
         if (!selected.has(it.key) || it.item_type !== 'blind') return it;
         if (it.blinds_type !== selection.blindsType) return it;
-        const patch: Partial<BlindDraft> = {};
-        if (bulkState.material_id) patch.material_id = bulkState.material_id;
-        if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
-        if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
-          patch.bottom_rail_id = bulkState.bottom_rail_id;
-        }
-        if (bulkState.control_id && uses.has('control')) patch.control_id = bulkState.control_id;
-        if (bulkState.installation_id && uses.has('installation')) {
-          patch.installation_id = bulkState.installation_id;
-        }
-        return { ...it, ...patch };
+        return applyBulkEditToDraft(it, bulkState, uses);
       })
     );
     setSelected(new Set());

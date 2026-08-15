@@ -11,9 +11,15 @@ pricing surface. Full detail in `engine_features.md` 2026-08-15.
   `applyBulkEdit` all read the same verdict — do not re-derive it inline.
 - **`BulkEditForm` is scoped like the item form**: `materialsForType` + `slotsForType` +
   `optionsForType`. A slot the type does not use is not rendered, not disabled.
-- **`applyBulkEdit` keeps its `slotsForType` gate** even though the selection is single-type
-  — the ids sit in state, and an id for an unused slot is a 400 on save.
-- **Verified:** web `tsc --noEmit` clean, 199/199 tests (7 new), `oxlint` exit 0, `vite build`
+- **Applying CLEARS `unit_price_override` on every item the run changes**
+  (`applyBulkEditToDraft`). An override replaces the calculated price on both sides, so an
+  overridden line would keep money typed for the OLD options and void the re-price. Add-ons
+  and `show_original_price` are kept; an item nothing applies to is returned by reference so
+  it cannot lose its override by accident.
+- **`applyBulkEditToDraft` keeps its `slotsForType` gate** even though the selection is
+  single-type — the ids sit in state, and an id for an unused slot is a 400 on save.
+- **`BulkEditState` now lives in `lineItemDrafts.ts`**, not in the form file.
+- **Verified:** web `tsc --noEmit` clean, 205/205 tests (13 new), `oxlint` exit 0, `vite build`
   clean. **NOT verified in a browser** — the order editor is behind `ProtectedRoute`.
 
 ## Current Focus — 2026-08-12: Pull-to-refresh in the installed app

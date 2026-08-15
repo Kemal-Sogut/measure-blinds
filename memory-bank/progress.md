@@ -10,14 +10,20 @@ it — a Curtains selection shows Material / Control / Installation, a Roller se
 Material / Cassette / Bottom rail / Control. Applying writes only to items of that type, and
 only into slots the type uses.
 
+**Also:** applying a bulk edit RESETS the manual price override on every item it changes, so
+the new options actually reach the total instead of being masked by a figure typed for the
+old ones. Add-ons and the show-original-price flag survive. An item the run does not change
+keeps its override untouched. The form says so above the dropdowns.
+
 **Why:** the old form offered every catalog unfiltered and silently dropped what an item's
 type did not use, so a choice could apply to none of the selected rows — or write an
-out-of-scope id the Worker 400s on save.
+out-of-scope id the Worker 400s on save. And an overridden line kept its old price after a
+bulk re-option, which made the change void where it mattered most.
 
-**Where:** `bulkEditSelection` in `pages/orders/lineItemDrafts.ts` is the single verdict
-read by the toolbar, the popup and `applyBulkEdit`.
+**Where:** `bulkEditSelection` (the verdict) and `applyBulkEditToDraft` (what one item
+becomes, override reset included) in `pages/orders/lineItemDrafts.ts`.
 
-**Status:** web `tsc --noEmit` clean, 199/199 tests (7 new), `oxlint` exit 0, `vite build`
+**Status:** web `tsc --noEmit` clean, 205/205 tests (13 new), `oxlint` exit 0, `vite build`
 clean. Not exercised in a browser — the order editor sits behind `ProtectedRoute`.
 
 ## Estimate visits without a customer email (2026-08-13)

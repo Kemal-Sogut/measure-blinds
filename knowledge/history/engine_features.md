@@ -2532,19 +2532,45 @@ them. A slot the type does not use is not rendered at all rather than greyed out
 shows Material / Control / Installation and nothing else. When a type has neither materials
 nor slots the form says so and points at Settings instead of showing four empty dropdowns.
 
-`applyBulkEdit` keeps its `slotsForType` gate even though the selection is now single-type:
-the ids come from state that a re-render cannot re-validate, and an id for an unused slot is
-a 400 on save.
+### Applying a bulk edit RESETS the price override
+
+`applyBulkEditToDraft(draft, state, uses)` (also in `lineItemDrafts.ts`) is what one item
+becomes. Beyond writing the chosen ids it clears `unit_price_override` on every item it
+actually changes.
+
+**Why:** an override replaces the calculated unit price on both sides (`applyPriceAdjustments`
+in the web preview, `resolveLineItems` in the Worker). It is typed against the options the
+item had at the time — so an overridden line would keep its old figure after a bulk material
+or hardware change, and the whole point of the bulk edit would go void on exactly the lines
+someone had already negotiated. The consultant sees the new options on the item and the old
+money on the total, with nothing saying why.
+
+**What is NOT reset:** add-ons and `show_original_price`. An add-on sits on top of the price
+rather than replacing it, so a re-price does not invalidate it.
+
+**No-op safety:** the function returns the SAME draft object when nothing applies (all fields
+on "No change", or the only chosen id belongs to a slot the type does not use), so a run can
+never drop an override as a side effect of touching nothing. The form's intro states the
+reset in words before the consultant picks anything.
+
+It keeps the `slotsForType` gate even though the selection is now single-type: the ids come
+from state that a re-render cannot re-validate, and an id for an unused slot is a 400 on save.
+
+`BulkEditState` moved from `LineItemEditor.tsx` to `lineItemDrafts.ts` for this — it is a
+draft model consumed by a pure function, which is that module's stated responsibility, and
+the form now imports the type instead of owning it.
 
 ### Files
 
-- `apps/web/src/pages/orders/lineItemDrafts.ts` — `bulkEditSelection`, `BulkEditSelection`,
-  `BulkEditBlocker`.
-- `apps/web/src/pages/orders/LineItemEditor.tsx` — `BulkEditForm` takes `blindsType`, filters.
+- `apps/web/src/pages/orders/lineItemDrafts.ts` — `bulkEditSelection`, `applyBulkEditToDraft`,
+  `BulkEditState`, `BulkEditSelection`, `BulkEditBlocker`.
+- `apps/web/src/pages/orders/LineItemEditor.tsx` — `BulkEditForm` takes `blindsType`, filters,
+  and states the override reset in its intro.
 - `apps/web/src/pages/orders/OrderDetail.tsx` — toolbar verdict + hint, `openBulkEdit` guard,
-  `applyBulkEdit` type check, popup heading and self-close.
-- `apps/web/src/pages/orders/lineItemDrafts.test.ts` — 7 cases on the selection rule.
+  `applyBulkEdit` delegating to `applyBulkEditToDraft`, popup heading and self-close.
+- `apps/web/src/pages/orders/lineItemDrafts.test.ts` — 13 cases (7 selection, 6 application).
 
 ### Verified
-web `tsc --noEmit` clean, tests 199/199 (7 new), `oxlint` exit 0, `vite build` clean. No API,
-schema or pricing surface touched.
+web `tsc --noEmit` clean, tests 205/205 (13 new), `oxlint` exit 0, `vite build` clean. No API,
+schema or pricing surface touched — the override is cleared in the DRAFT, so the Worker simply
+receives `unit_price_override: null` and prices the line from the catalog as it always has.
