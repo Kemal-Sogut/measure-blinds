@@ -2488,3 +2488,89 @@ changed.
 api 290/290 (new test: books a no-email customer with NO Resend stub installed, so any
 send attempt would fail the request), web 164/164, both `tsc --noEmit` clean, `oxlint`
 clean.
+
+## Bulk edit restricted to one blind type (2026-08-15)
+
+Bulk edit used to accept any selection of blind items, mix types included, and offered
+EVERY option of every catalog — the whole materials list, all four hardware dropdowns,
+unfiltered. The parent then quietly dropped whatever the item's type did not use
+(`slotsForType`), so a consultant could pick a Roller cassette with three Zebra rows
+selected and get no feedback that it landed on none of them. Worse, a material or option
+scoped to another type could be written onto an item outright, which the Worker rejects on
+save (`apps/api/src/lib/optionScoping.ts`).
+
+**Now the selection must be blinds of ONE type**, and the form is scoped to that type
+exactly like the per-item form.
+
+### The rule lives in one pure function
+
+`bulkEditSelection(items, selected)` in `apps/web/src/pages/orders/lineItemDrafts.ts`
+returns either `{ ok: true, blindsType, keys }` or `{ ok: false, reason }`, with `reason`
+one of `empty` | `non_blind` | `no_type` | `mixed_types`, checked in that order. Three
+call sites read the same verdict, which is why it is a function and not three inline
+conditions:
+
+- the toolbar's Edit button (enablement AND the `title` that names which rule is broken —
+  "Select blinds of the same type — options differ per type"). The verdict ALSO rides on the
+  count line in a few words ("3 selected · mixed blind types", "2 selected · Roller"),
+  because a phone has no hover and a `title` alone would leave a disabled button unexplained;
+- the popup (heading reads "Editing 3 Roller items"; it renders `null` if the selection
+  stopped qualifying while the sheet was open);
+- `applyBulkEdit`, which re-reads the verdict instead of trusting the open sheet and skips
+  any item whose `blinds_type` is not the resolved one.
+
+A blind with no type chosen yet is `no_type`, not a group: there is no scope to offer
+options from. A legacy free-text type name IS a group like any other — the form simply
+finds nothing scoped to it.
+
+### The form renders per type
+
+`BulkEditForm` (`apps/web/src/pages/orders/LineItemEditor.tsx`) now takes `blindsType` and
+uses the same three scoping helpers the item form does: `materialsForType` for the material
+list, `slotsForType` to decide WHICH hardware dropdowns exist, `optionsForType` to fill
+them. A slot the type does not use is not rendered at all rather than greyed out — Curtains
+shows Material / Control / Installation and nothing else. When a type has neither materials
+nor slots the form says so and points at Settings instead of showing four empty dropdowns.
+
+### Applying a bulk edit RESETS the price override
+
+`applyBulkEditToDraft(draft, state, uses)` (also in `lineItemDrafts.ts`) is what one item
+becomes. Beyond writing the chosen ids it clears `unit_price_override` on every item it
+actually changes.
+
+**Why:** an override replaces the calculated unit price on both sides (`applyPriceAdjustments`
+in the web preview, `resolveLineItems` in the Worker). It is typed against the options the
+item had at the time — so an overridden line would keep its old figure after a bulk material
+or hardware change, and the whole point of the bulk edit would go void on exactly the lines
+someone had already negotiated. The consultant sees the new options on the item and the old
+money on the total, with nothing saying why.
+
+**What is NOT reset:** add-ons and `show_original_price`. An add-on sits on top of the price
+rather than replacing it, so a re-price does not invalidate it.
+
+**No-op safety:** the function returns the SAME draft object when nothing applies (all fields
+on "No change", or the only chosen id belongs to a slot the type does not use), so a run can
+never drop an override as a side effect of touching nothing. The form's intro states the
+reset in words before the consultant picks anything.
+
+It keeps the `slotsForType` gate even though the selection is now single-type: the ids come
+from state that a re-render cannot re-validate, and an id for an unused slot is a 400 on save.
+
+`BulkEditState` moved from `LineItemEditor.tsx` to `lineItemDrafts.ts` for this — it is a
+draft model consumed by a pure function, which is that module's stated responsibility, and
+the form now imports the type instead of owning it.
+
+### Files
+
+- `apps/web/src/pages/orders/lineItemDrafts.ts` — `bulkEditSelection`, `applyBulkEditToDraft`,
+  `BulkEditState`, `BulkEditSelection`, `BulkEditBlocker`.
+- `apps/web/src/pages/orders/LineItemEditor.tsx` — `BulkEditForm` takes `blindsType`, filters,
+  and states the override reset in its intro.
+- `apps/web/src/pages/orders/OrderDetail.tsx` — toolbar verdict + hint, `openBulkEdit` guard,
+  `applyBulkEdit` delegating to `applyBulkEditToDraft`, popup heading and self-close.
+- `apps/web/src/pages/orders/lineItemDrafts.test.ts` — 13 cases (7 selection, 6 application).
+
+### Verified
+web `tsc --noEmit` clean, tests 205/205 (13 new), `oxlint` exit 0, `vite build` clean. No API,
+schema or pricing surface touched — the override is cleared in the DRAFT, so the Worker simply
+receives `unit_price_override: null` and prices the line from the catalog as it always has.
