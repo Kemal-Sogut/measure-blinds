@@ -13,6 +13,11 @@
  * selection that shares a type — so it renders and filters its options
  * exactly like the per-item form.
  *
+ * `BulkMeasureForm` is the opposite pass: room / width / height rows that
+ * each become one blank blind item, so a whole house can be measured
+ * before any fabric or hardware is chosen. It is the only form here that
+ * creates drafts instead of editing them.
+ *
  * `BlindEditForm` is now only a dispatcher: the blind markup lives in
  * `./blindForms/`, one file per type, so a type's layout can change
  * without touching any other type. Shared controls are in
@@ -35,17 +40,20 @@
  */
 
 import { getBlindForm } from './blindForms';
-import { INPUT, LABEL, OptionSelect, type BlindFormProps } from './blindForms/fields';
+import { INPUT, INPUT_BASE, LABEL, OptionSelect, type BlindFormProps } from './blindForms/fields';
 import { PriceBlock } from './blindForms/PriceBlock';
 import {
   canOverridePrice,
+  countMeasurementRows,
   flatDraftPrice,
   materialsForType,
+  measurementRowState,
   optionsForType,
   slotsForType,
   type BulkEditState,
   type Catalogs,
   type FlatDraft,
+  type MeasurementRow,
 } from './lineItemDrafts';
 
 /* ------------------------------------------------------------------ */
@@ -237,6 +245,135 @@ export function BulkEditForm({
         <p className="text-[13px] text-text-muted">
           No materials or options are set up for {blindsType || 'this blind type'} — add them
           under Settings first.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Bulk measurement form: a list of room / width / height rows, one row
+ * per blind to be created.
+ *
+ * This is the measuring pass, not the specification pass. It offers no
+ * blind type, material, hardware or quantity on purpose — on site the
+ * consultant runs the tape over every window first and chooses fabrics
+ * afterwards, and putting a single dropdown here would invite doing both
+ * at once through a form that is laid out for neither.
+ *
+ * Row states come from `measurementRowState`, so what the popup marks red
+ * and what `measurementRowsToDrafts` actually creates cannot disagree.
+ * A half-filled row is flagged rather than ignored: a width typed without
+ * its height is a measurement that was taken, and skipping it silently is
+ * how a window goes missing from an order.
+ *
+ * Every control carries `min-w-0` for the reason given in this module's
+ * header, and the measurement columns are fixed-width tracks so that a
+ * long room name shrinks its own field instead of pushing the numbers off
+ * a phone screen.
+ */
+export function BulkMeasureForm({
+  rows,
+  onChange,
+  onAddRow,
+  onRemoveRow,
+}: {
+  rows: MeasurementRow[];
+  onChange: (next: MeasurementRow[]) => void;
+  onAddRow: () => void;
+  onRemoveRow: (key: string) => void;
+}) {
+  const counts = countMeasurementRows(rows);
+  /** Grid track set shared by the caption row and every input row. */
+  const GRID = 'grid min-w-0 grid-cols-[minmax(0,1fr)_4.5rem_4.5rem_1.75rem] items-center gap-2';
+
+  function setField(key: string, field: 'room_name' | 'width_cm' | 'height_cm', value: string) {
+    onChange(rows.map((row) => (row.key === key ? { ...row, [field]: value } : row)));
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-3">
+      <p className="text-[13px] text-text-muted">
+        One line item per width and height. Room name is optional. Blind type, material and
+        options are left unset — pick them per item afterwards.
+      </p>
+
+      {/* Captions once, above the rows: a label on every row would triple
+          the height of a ten-window list on a phone. */}
+      <div className={GRID}>
+        <span className={`${LABEL} mb-0`}>Room</span>
+        <span className={`${LABEL} mb-0 text-center`}>Width</span>
+        <span className={`${LABEL} mb-0 text-center`}>Height</span>
+        <span aria-hidden="true" />
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-2">
+        {rows.map((row, i) => {
+          const incomplete = measurementRowState(row) === 'incomplete';
+          const measure = `${INPUT_BASE} w-full px-2 text-center font-mono ${
+            incomplete ? 'border-danger' : ''
+          }`;
+          return (
+            <div key={row.key} className={GRID}>
+              <input
+                placeholder={`Room ${i + 1}`}
+                value={row.room_name}
+                onChange={(e) => setField(row.key, 'room_name', e.target.value)}
+                aria-label={`Room name for measurement ${i + 1}`}
+                className={INPUT}
+              />
+              <input
+                inputMode="decimal"
+                value={row.width_cm}
+                onChange={(e) => setField(row.key, 'width_cm', e.target.value)}
+                aria-label={`Width in cm for measurement ${i + 1}`}
+                aria-invalid={incomplete}
+                className={measure}
+              />
+              <input
+                inputMode="decimal"
+                value={row.height_cm}
+                onChange={(e) => setField(row.key, 'height_cm', e.target.value)}
+                // Enter at the end of a row adds the next one, so a whole
+                // house can be entered without reaching for the button.
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onAddRow();
+                  }
+                }}
+                aria-label={`Height in cm for measurement ${i + 1}`}
+                aria-invalid={incomplete}
+                className={measure}
+              />
+              <button
+                type="button"
+                onClick={() => onRemoveRow(row.key)}
+                disabled={rows.length === 1}
+                aria-label={`Remove measurement ${i + 1}`}
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-border-input text-[11px] text-text-muted hover:text-danger disabled:invisible"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={onAddRow}
+        className="h-11 shrink-0 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-brand-600"
+      >
+        + Add row
+      </button>
+
+      {counts.incomplete > 0 && (
+        <p className="text-[13px] text-danger">
+          {counts.incomplete === 1
+            ? '1 row needs both a width and a height.'
+            : `${counts.incomplete} rows need both a width and a height.`}{' '}
+          Complete or clear {counts.incomplete === 1 ? 'it' : 'them'} to continue.
         </p>
       )}
     </div>

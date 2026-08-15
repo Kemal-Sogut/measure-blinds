@@ -1,5 +1,33 @@
 # Progress
 
+## Bulk measurement capture (2026-08-15)
+
+**Works:** "Add Measurements in Bulk" under the item list opens a popup of Room / Width /
+Height rows (five blank ones, "+ Add row", Enter at the end of a row adds the next, ✕ removes
+one). OK appends one blind line item per completed row — no blind type, no material, no
+per-type option, only the house default cassette / bottom rail / control that a single new
+blind already gets. The button counts what it will add ("OK — add 4 items"), and no editor
+opens afterwards, so a whole house is measured in one pass and specified later.
+
+**Refuses rather than drops:** a row with only one measurement, a room name and no numbers,
+or a non-positive value is marked red, counted in a message under the rows, and disables OK
+until it is completed or cleared. Rows with nothing typed at all are ignored. Cancel and a
+backdrop tap confirm before discarding typed rows — the only sheet here that does.
+
+**Also:** `newBlindDraft` is now the single definition of a brand-new blind, shared by the
+"Add Standard Blind" button and the measurement rows, seeded from one `blindDefaults` memo;
+`NO_ADJUSTMENTS` moved into `pages/orders/lineItemDrafts.ts` beside it.
+
+**Where:** `MeasurementRow` / `measurementRowState` / `countMeasurementRows` /
+`measurementRowsToDrafts` in `pages/orders/lineItemDrafts.ts`, `BulkMeasureForm` in
+`pages/orders/LineItemEditor.tsx`, the `bulkMeasure` sheet in `pages/orders/OrderDetail.tsx`.
+
+**Known gap:** items created this way cannot be SAVED until a type and material are chosen —
+`buildPayload` names the first one missing them. That is intended; they are measurements.
+
+**Status:** web `tsc -b --noEmit` clean, 221/221 tests (16 new), `oxlint` exit 0, `vite build`
+clean. Not exercised in a browser — the order editor sits behind `ProtectedRoute`.
+
 ## Bulk edit restricted to one blind type (2026-08-15)
 
 **Works:** the line-item toolbar's Edit button enables only when every ticked row is a blind
