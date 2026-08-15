@@ -7,8 +7,11 @@
  * The old inline BlindItemCard / FlatItemCard have been replaced by
  * BlindEditForm and FlatEditForm which live inside popup modals rather
  * than expanded inline in the page.  BulkEditForm lets the user change
- * only material, cassette, bottom rail, and control across all selected
- * blind items without touching any measurement or quantity fields.
+ * only material, cassette, bottom rail, control and installation across
+ * the selected blind items without touching any measurement or quantity
+ * field. It is scoped to ONE blind type — the caller only opens it for a
+ * selection that shares a type — so it renders and filters its options
+ * exactly like the per-item form.
  *
  * `BlindEditForm` is now only a dispatcher: the blind markup lives in
  * `./blindForms/`, one file per type, so a type's layout can change
@@ -34,7 +37,15 @@
 import { getBlindForm } from './blindForms';
 import { INPUT, LABEL, OptionSelect, type BlindFormProps } from './blindForms/fields';
 import { PriceBlock } from './blindForms/PriceBlock';
-import { canOverridePrice, flatDraftPrice, type Catalogs, type FlatDraft } from './lineItemDrafts';
+import {
+  canOverridePrice,
+  flatDraftPrice,
+  materialsForType,
+  optionsForType,
+  slotsForType,
+  type Catalogs,
+  type FlatDraft,
+} from './lineItemDrafts';
 
 /* ------------------------------------------------------------------ */
 /* Edit forms (used inside popup modals)                               */
@@ -136,11 +147,9 @@ export function FlatEditForm({
  * installation. Each starts as "" (no change); only non-empty selections
  * are applied by the parent when the user clicks Apply.
  *
- * NOTHING here is filtered by blind type, unlike the per-item form: a
- * bulk selection may span several types at once, so every option of every
- * catalog is offered. The parent is what skips an item whose type does
- * not use the slot, on the same `slotsForType` rule the item form renders
- * from.
+ * Only the FOUR hardware ids exist as slots; which of them are editable
+ * at all is per blind type, which is why this form is scoped exactly like
+ * the per-item one.
  */
 export interface BulkEditState {
   material_id: string;
@@ -150,15 +159,39 @@ export interface BulkEditState {
   installation_id: string;
 }
 
+/**
+ * Bulk-edit form, scoped to ONE blind type.
+ *
+ * `blindsType` is the type every selected item shares — the caller has
+ * already refused a mixed or non-blind selection (`bulkEditSelection`).
+ * Because the selection is single-type, this form renders exactly what
+ * the per-item form would for that type:
+ *
+ * - Materials are the ones LINKED to the type (`materialsForType`).
+ * - A hardware dropdown appears only when the type uses that slot
+ *   (`slotsForType`) and lists only the options scoped to it
+ *   (`optionsForType`) — the same rule the Worker validates the save
+ *   against, so a bulk edit can never write an id the server rejects.
+ *
+ * A type with no hardware scoped to it (Curtains has neither cassette nor
+ * bottom rail) renders those dropdowns not at all rather than greyed out:
+ * a control that can only be a no-op is noise on a phone screen.
+ */
 export function BulkEditForm({
   state,
   catalogs,
+  blindsType,
   onChange,
 }: {
   state: BulkEditState;
   catalogs: Catalogs;
+  blindsType: string;
   onChange: (next: BulkEditState) => void;
 }) {
+  const uses = slotsForType(catalogs, blindsType);
+  const forType = <T extends { active: boolean; blind_type_ids: string[] }>(list: T[]) =>
+    optionsForType(list, catalogs.blindTypes, blindsType);
+  const materials = materialsForType(catalogs, blindsType);
   return (
     <div className="flex min-w-0 flex-col gap-3.5">
       <p className="text-[13px] text-text-muted">
@@ -170,38 +203,52 @@ export function BulkEditForm({
           label="Material"
           value={state.material_id}
           onChange={(id) => onChange({ ...state, material_id: id })}
-          options={catalogs.materials}
+          options={materials}
           placeholder="No change"
         />
-        <OptionSelect
-          label="Cassette"
-          value={state.cassette_id}
-          onChange={(id) => onChange({ ...state, cassette_id: id })}
-          options={catalogs.cassettes}
-          placeholder="No change"
-        />
-        <OptionSelect
-          label="Bottom rail"
-          value={state.bottom_rail_id}
-          onChange={(id) => onChange({ ...state, bottom_rail_id: id })}
-          options={catalogs.bottomRails}
-          placeholder="No change"
-        />
-        <OptionSelect
-          label="Control"
-          value={state.control_id}
-          onChange={(id) => onChange({ ...state, control_id: id })}
-          options={catalogs.controls}
-          placeholder="No change"
-        />
-        <OptionSelect
-          label="Installation"
-          value={state.installation_id}
-          onChange={(id) => onChange({ ...state, installation_id: id })}
-          options={catalogs.installationOptions}
-          placeholder="No change"
-        />
+        {uses.has('cassette') && (
+          <OptionSelect
+            label="Cassette"
+            value={state.cassette_id}
+            onChange={(id) => onChange({ ...state, cassette_id: id })}
+            options={forType(catalogs.cassettes)}
+            placeholder="No change"
+          />
+        )}
+        {uses.has('bottom_rail') && (
+          <OptionSelect
+            label="Bottom rail"
+            value={state.bottom_rail_id}
+            onChange={(id) => onChange({ ...state, bottom_rail_id: id })}
+            options={forType(catalogs.bottomRails)}
+            placeholder="No change"
+          />
+        )}
+        {uses.has('control') && (
+          <OptionSelect
+            label="Control"
+            value={state.control_id}
+            onChange={(id) => onChange({ ...state, control_id: id })}
+            options={forType(catalogs.controls)}
+            placeholder="No change"
+          />
+        )}
+        {uses.has('installation') && (
+          <OptionSelect
+            label="Installation"
+            value={state.installation_id}
+            onChange={(id) => onChange({ ...state, installation_id: id })}
+            options={forType(catalogs.installationOptions)}
+            placeholder="No change"
+          />
+        )}
       </div>
+      {materials.length === 0 && uses.size === 0 && (
+        <p className="text-[13px] text-text-muted">
+          No materials or options are set up for {blindsType || 'this blind type'} — add them
+          under Settings first.
+        </p>
+      )}
     </div>
   );
 }

@@ -1,5 +1,25 @@
 # Progress
 
+## Bulk edit restricted to one blind type (2026-08-15)
+
+**Works:** the line-item toolbar's Edit button enables only when every ticked row is a blind
+AND they all share one blind type; its tooltip names the rule that is broken otherwise
+(non-blind row / no type chosen / mixed types). The popup heading states the type and the
+count, and the form offers only that type's materials and only the hardware slots scoped to
+it — a Curtains selection shows Material / Control / Installation, a Roller selection shows
+Material / Cassette / Bottom rail / Control. Applying writes only to items of that type, and
+only into slots the type uses.
+
+**Why:** the old form offered every catalog unfiltered and silently dropped what an item's
+type did not use, so a choice could apply to none of the selected rows — or write an
+out-of-scope id the Worker 400s on save.
+
+**Where:** `bulkEditSelection` in `pages/orders/lineItemDrafts.ts` is the single verdict
+read by the toolbar, the popup and `applyBulkEdit`.
+
+**Status:** web `tsc --noEmit` clean, 199/199 tests (7 new), `oxlint` exit 0, `vite build`
+clean. Not exercised in a browser — the order editor sits behind `ProtectedRoute`.
+
 ## Estimate visits without a customer email (2026-08-13)
 
 **Works:** the appointment wizard's customer step lists names only (one line per row, no

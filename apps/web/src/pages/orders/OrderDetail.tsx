@@ -118,6 +118,7 @@ import {
 import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
+  bulkEditSelection,
   canOverridePrice,
   flatDraftPrice,
   parseAddons,
@@ -870,21 +871,37 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  // ── Bulk edit (material / cassette / bottom rail / control only) ──
+  // ── Bulk edit (material / hardware slots of ONE blind type) ───────
+  /**
+   * Opens the bulk popup for a selection that has already been checked to
+   * be blinds of a single type. Every field starts empty ("No change") on
+   * each open, so a previous run can never re-apply itself.
+   */
   function openBulkEdit() {
+    if (!bulkEditSelection(items, selected).ok) return;
     setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
     setSheet('bulkEdit');
   }
 
+  /**
+   * Writes the non-empty bulk fields onto the selected items.
+   *
+   * Re-reads the verdict rather than trusting the popup being open: the
+   * selection is the same state the list renders from, and an item edited
+   * behind the sheet could have changed type. Only items of the resolved
+   * type are touched, and a hardware id is written only where that type
+   * uses the slot — the Worker rejects an id for an unused slot, so a
+   * looser patch here would make the whole order unsavable.
+   */
   function applyBulkEdit() {
+    const selection = bulkEditSelection(items, selected);
+    if (!selection.ok) return;
+    const uses = slotsForType(catalogs, selection.blindsType);
     setItems((list) =>
       list.map((it) => {
         if (!selected.has(it.key) || it.item_type !== 'blind') return it;
+        if (it.blinds_type !== selection.blindsType) return it;
         const patch: Partial<BlindDraft> = {};
-        // A bulk selection can mix blind types, and a hardware slot only
-        // applies to the types that use it — pushing a cassette onto a
-        // curtain here would make the whole order unsavable.
-        const uses = slotsForType(catalogs, it.blinds_type);
         if (bulkState.material_id) patch.material_id = bulkState.material_id;
         if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
         if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
@@ -2197,10 +2214,29 @@ export default function OrderDetail() {
               <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
                 {/* Bulk toolbar — only in edit mode */}
                 {!readOnly && items.length > 0 && (() => {
-                  const selectionHasNonBlind = [...selected].some(
-                    (k) => items.find((it) => it.key === k)?.item_type !== 'blind'
-                  );
-                  const canBulkEdit = selected.size > 0 && !selectionHasNonBlind;
+                  // Bulk edit is per blind TYPE: every catalog is scoped
+                  // to a type, so a mixed selection has no single set of
+                  // options to offer. The button explains which rule the
+                  // current selection breaks rather than just greying out.
+                  const bulkSelection = bulkEditSelection(items, selected);
+                  const canBulkEdit = bulkSelection.ok;
+                  const bulkEditHint = bulkSelection.ok
+                    ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
+                    : bulkSelection.reason === 'empty'
+                      ? 'Select blind items to bulk edit'
+                      : bulkSelection.reason === 'non_blind'
+                        ? 'Bulk edit is only available for blind items'
+                        : bulkSelection.reason === 'no_type'
+                          ? 'Pick a blind type on the selected items first'
+                          : 'Select blinds of the same type — options differ per type';
+                  // The same verdict in a few words, for the count line.
+                  const bulkBlockedNote = bulkSelection.ok
+                    ? ''
+                    : bulkSelection.reason === 'non_blind'
+                      ? 'not all blinds'
+                      : bulkSelection.reason === 'no_type'
+                        ? 'no blind type yet'
+                        : 'mixed blind types';
                   const canBulkDelete = selected.size > 0;
                   return (
                     <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
@@ -2214,20 +2250,24 @@ export default function OrderDetail() {
                         aria-label="Select all items"
                         className="h-4 w-4 rounded-sm accent-brand-600"
                       />
-                      <span className="flex-1 text-[12px] text-text-muted">
-                        {selected.size > 0 ? `${selected.size} selected` : `${items.length} item${items.length !== 1 ? 's' : ''}`}
+                      {/*
+                        The reason bulk edit is unavailable rides on the
+                        count line as well as on the button's `title`: a
+                        phone has no hover, so a tooltip alone would leave
+                        a disabled button with no explanation at all.
+                      */}
+                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
+                        {selected.size === 0
+                          ? `${items.length} item${items.length !== 1 ? 's' : ''}`
+                          : bulkSelection.ok
+                            ? `${selected.size} selected · ${bulkSelection.blindsType}`
+                            : `${selected.size} selected · ${bulkBlockedNote}`}
                       </span>
                       <button
                         type="button"
                         onClick={openBulkEdit}
                         disabled={!canBulkEdit}
-                        title={
-                          selected.size === 0
-                            ? 'Select blind items to bulk edit'
-                            : selectionHasNonBlind
-                              ? 'Bulk edit is only available for blind items'
-                              : 'Edit material, cassette, bottom rail and control for selected items'
-                        }
+                        title={bulkEditHint}
                         className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -3094,43 +3134,52 @@ export default function OrderDetail() {
         );
       })()}
 
-      {/* Bulk edit popup (material / cassette / bottom rail / control only) */}
-      {sheet === 'bulkEdit' && (
-        <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
-          onClick={() => setSheet('none')}
-        >
+      {/* Bulk edit popup — material and the hardware slots of ONE type */}
+      {sheet === 'bulkEdit' && (() => {
+        // The selection is live state; if it stopped being a single-type
+        // blind selection while the sheet was open there is nothing valid
+        // to edit, so the sheet closes itself rather than offering the
+        // options of a type no selected item still has.
+        const selection = bulkEditSelection(items, selected);
+        if (!selection.ok) return null;
+        return (
           <div
-            className={`${SHEET_PANEL} lg:max-w-lg`}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
+            onClick={() => setSheet('none')}
           >
-            <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
-            <p className="mb-4 text-[13px] text-text-muted">
-              Editing {[...selected].filter((k) => items.find((it) => it.key === k)?.item_type === 'blind').length} blind item(s).
-            </p>
-            <BulkEditForm
-              state={bulkState}
-              catalogs={catalogs}
-              onChange={setBulkState}
-            />
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => setSheet('none')}
-                className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={applyBulkEdit}
-                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
-                className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-              >
-                Apply to selected
-              </button>
+            <div
+              className={`${SHEET_PANEL} lg:max-w-lg`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
+              <p className="mb-4 text-[13px] text-text-muted">
+                {`Editing ${selection.keys.length} ${selection.blindsType} item${selection.keys.length !== 1 ? 's' : ''}.`}
+              </p>
+              <BulkEditForm
+                state={bulkState}
+                catalogs={catalogs}
+                blindsType={selection.blindsType}
+                onChange={setBulkState}
+              />
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyBulkEdit}
+                  disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  Apply to selected
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
 

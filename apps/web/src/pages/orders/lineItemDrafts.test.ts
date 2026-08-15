@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   blindDraftPrice,
+  bulkEditSelection,
   canOverridePrice,
   flatDraftPrice,
   optionsForType,
@@ -24,6 +25,7 @@ import {
   type BlindDraft,
   type Catalogs,
   type FlatDraft,
+  type ItemDraft,
 } from './lineItemDrafts';
 
 /**
@@ -392,5 +394,66 @@ describe('flatDraftPrice', () => {
     expect(
       flatDraftPrice(flat({ addons: [{ key: 'a', label: 'Rush fee', price: '' }] }))?.total
     ).toBe(200);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Bulk-edit selection                                                 */
+/* ------------------------------------------------------------------ */
+
+describe('bulkEditSelection', () => {
+  const roller = draft({ key: 'r1', blinds_type: 'Roller' });
+  const roller2 = draft({ key: 'r2', blinds_type: 'Roller' });
+  const curtain = draft({ key: 'c1', blinds_type: 'Curtains' });
+  const custom = flat({ key: 'f1' });
+
+  /** Shorthand: the verdict for these keys out of this item list. */
+  const verdict = (items: ItemDraft[], ...keys: string[]) =>
+    bulkEditSelection(items, new Set(keys));
+
+  it('refuses an empty selection', () => {
+    expect(verdict([roller])).toEqual({ ok: false, reason: 'empty' });
+  });
+
+  it('refuses a selection containing a preset or custom item', () => {
+    // Neither carries a material or a hardware slot to edit at all.
+    expect(verdict([roller, custom], 'r1', 'f1')).toEqual({ ok: false, reason: 'non_blind' });
+  });
+
+  it('refuses blinds of two different types', () => {
+    // Every catalog is scoped per type, so there is no one set of
+    // options that could serve both rows.
+    expect(verdict([roller, curtain], 'r1', 'c1')).toEqual({ ok: false, reason: 'mixed_types' });
+  });
+
+  it('refuses blinds whose type has not been chosen yet', () => {
+    const blank = draft({ key: 'b1', blinds_type: '' });
+    expect(verdict([blank], 'b1')).toEqual({ ok: false, reason: 'no_type' });
+  });
+
+  it('resolves the shared type and the keys it applies to', () => {
+    expect(verdict([roller, roller2, curtain], 'r1', 'r2')).toEqual({
+      ok: true,
+      blindsType: 'Roller',
+      keys: ['r1', 'r2'],
+    });
+  });
+
+  it('ignores items that are not selected', () => {
+    // A curtain sitting in the same order must not block a Roller-only
+    // selection — only what is ticked is inspected.
+    expect(verdict([curtain, roller], 'r1').ok).toBe(true);
+  });
+
+  it('groups a legacy free-text type like any other', () => {
+    // Nothing is scoped to it, so the form will offer nothing — but the
+    // selection itself is coherent and must not report "mixed".
+    const legacy = draft({ key: 'l1', blinds_type: 'Venetian (legacy)' });
+    const legacy2 = draft({ key: 'l2', blinds_type: 'Venetian (legacy)' });
+    expect(verdict([legacy, legacy2], 'l1', 'l2')).toEqual({
+      ok: true,
+      blindsType: 'Venetian (legacy)',
+      keys: ['l1', 'l2'],
+    });
   });
 });

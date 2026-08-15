@@ -192,6 +192,59 @@ export function slotsForType(catalogs: Catalogs, blindsType: string): Set<Catalo
   return out;
 }
 
+/**
+ * Why a selection cannot be bulk-edited, in the order the check applies:
+ *
+ * - `empty` — nothing is ticked.
+ * - `non_blind` — a preset or custom row is in the selection; those have
+ *   no material or hardware slots at all.
+ * - `no_type` — the selected blinds have no blind type chosen yet, so
+ *   there is no scope to offer options from.
+ * - `mixed_types` — the blinds are of two or more types. Every catalog is
+ *   scoped per type, so one dropdown cannot serve them.
+ */
+export type BulkEditBlocker = 'empty' | 'non_blind' | 'no_type' | 'mixed_types';
+
+/**
+ * The outcome of inspecting a bulk selection: either the ONE blind type
+ * every selected item shares, or the reason the selection is unusable.
+ */
+export type BulkEditSelection =
+  | { ok: true; blindsType: string; keys: string[] }
+  | { ok: false; reason: BulkEditBlocker };
+
+/**
+ * Resolves what a bulk selection may edit.
+ *
+ * Bulk edit is deliberately restricted to blinds of a SINGLE type. Every
+ * catalog — materials and all four hardware slots — is scoped per blind
+ * type in Settings (`materialsForType` / `optionsForType`), and which
+ * slots exist at all differs per type (`slotsForType`). A mixed selection
+ * therefore has no single set of options to render: offering the union
+ * would let a consultant pick a cassette meant for Roller and silently
+ * have it skipped on the Zebra rows next to it, which is exactly the
+ * "did it apply or not?" ambiguity this rule removes.
+ *
+ * Unknown/legacy free-text type names are NOT rejected here — they are a
+ * type like any other for grouping purposes; the form simply finds no
+ * options scoped to them and offers nothing.
+ *
+ * Pure and UI-free so the toolbar's enablement, the popup's heading and
+ * the apply step all read the same verdict.
+ */
+export function bulkEditSelection(items: ItemDraft[], selected: Set<string>): BulkEditSelection {
+  const picked = items.filter((it) => selected.has(it.key));
+  if (picked.length === 0) return { ok: false, reason: 'empty' };
+  if (picked.some((it) => it.item_type !== 'blind')) return { ok: false, reason: 'non_blind' };
+  const blinds = picked as BlindDraft[];
+  const blindsType = blinds[0].blinds_type;
+  if (blinds.some((it) => it.blinds_type !== blindsType)) {
+    return { ok: false, reason: 'mixed_types' };
+  }
+  if (blindsType === '') return { ok: false, reason: 'no_type' };
+  return { ok: true, blindsType, keys: blinds.map((it) => it.key) };
+}
+
 /** Parses a positive number from a draft string; null when invalid. */
 export function parsePositive(value: string): number | null {
   const n = Number(value);

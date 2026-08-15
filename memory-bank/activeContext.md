@@ -1,5 +1,21 @@
 # Active Context
 
+## Current Focus — 2026-08-15: Bulk edit is single-blind-type
+Branch `claude/bulk-edit-blinds-type-filter-4z05ld`. Web only — no API, no schema, no
+pricing surface. Full detail in `engine_features.md` 2026-08-15.
+
+- **Bulk edit now requires blinds of ONE type.** Mixed selections, non-blind rows and blinds
+  with no type chosen disable the button, each with its own tooltip.
+- **`bulkEditSelection(items, selected)` is the only place the rule lives** (pure, in
+  `pages/orders/lineItemDrafts.ts`). Toolbar enablement, the popup heading and
+  `applyBulkEdit` all read the same verdict — do not re-derive it inline.
+- **`BulkEditForm` is scoped like the item form**: `materialsForType` + `slotsForType` +
+  `optionsForType`. A slot the type does not use is not rendered, not disabled.
+- **`applyBulkEdit` keeps its `slotsForType` gate** even though the selection is single-type
+  — the ids sit in state, and an id for an unused slot is a 400 on save.
+- **Verified:** web `tsc --noEmit` clean, 199/199 tests (7 new), `oxlint` exit 0, `vite build`
+  clean. **NOT verified in a browser** — the order editor is behind `ProtectedRoute`.
+
 ## Current Focus — 2026-08-12: Pull-to-refresh in the installed app
 Branch `claude/home-screen-scroll-reload-ekhpd6`, cut from `main`. Web only — no API, no
 schema, no pricing surface. Full detail in `engine_features.md` / `bug_fixes.md` 2026-08-12.
