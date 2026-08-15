@@ -2574,3 +2574,80 @@ the form now imports the type instead of owning it.
 web `tsc --noEmit` clean, tests 205/205 (13 new), `oxlint` exit 0, `vite build` clean. No API,
 schema or pricing surface touched — the override is cleared in the DRAFT, so the Worker simply
 receives `unit_price_override: null` and prices the line from the catalog as it always has.
+
+## Bulk measurement capture — widths and heights before any details (2026-08-15)
+
+Adding blinds used to be one window at a time through the full blind popup: type, material,
+four hardware dropdowns, measurements, price. On site that inverts the actual job — the
+consultant walks the house with a tape first and picks fabrics afterwards, usually sitting
+down with the customer. Every window therefore cost a round trip through a form that asks
+for eight things when only two are known.
+
+**"Add Measurements in Bulk"** (third dashed button under the item list, beside "Add
+Standard Blind") opens a popup of `Room / Width / Height` rows. OK appends **one blind line
+item per completed row**, with no blind type, no material and no per-type option — only the
+house default hardware a single new blind already gets. The details are then filled in per
+item, or across several at once with the existing bulk edit.
+
+### Files (web only — no API, no schema, no pricing surface)
+
+- **`apps/web/src/pages/orders/lineItemDrafts.ts`** — the whole rule set, pure and JSX-free:
+  `MeasurementRow`, `newMeasurementRow`, `measurementRowState`, `countMeasurementRows`,
+  `measurementRowsToDrafts`. Also gained `newBlindDraft` + `BlindDraftDefaults` and the
+  `NO_ADJUSTMENTS` constant (moved out of `OrderDetail.tsx`, which now imports it).
+- **`apps/web/src/pages/orders/LineItemEditor.tsx`** — `BulkMeasureForm`, the only form in
+  that file that CREATES drafts rather than editing them.
+- **`apps/web/src/pages/orders/OrderDetail.tsx`** — the button, the `bulkMeasure` sheet,
+  `openBulkMeasure` / `applyBulkMeasure`, `measureRows` state, and the `blindDefaults` memo.
+- **`apps/web/src/pages/orders/lineItemDrafts.test.ts`** — 16 new cases.
+
+### A half-filled row is REFUSED, never skipped
+
+`measurementRowState` classifies each row as `blank` (nothing typed — ignored, which is what
+lets the popup open with five rows), `ready` (width AND height are positive numbers), or
+`incomplete` (anything else: one measurement only, a room name with no measurements, a zero
+/ negative / non-numeric value).
+
+`incomplete` is the whole point of having states. A width typed without its height is a
+measurement someone took up a ladder; dropping it silently would leave the order one window
+short with nothing on screen to say so, and the omission would surface at manufacture. So the
+popup marks those rows red, says how many need attention, and **disables OK entirely** until
+they are completed or cleared. `measurementRowsToDrafts` skips them as the second half of the
+same rule — it is never reached with one present.
+
+Treating "room name but no numbers" as incomplete is deliberate: typing a room is intent to
+measure it.
+
+For the same reason, this is the one sheet on the order screen that CONFIRMS before closing
+with content (`closeBulkMeasure`): its rows exist nowhere else until OK is pressed, and a
+backdrop tap is easy to make by accident on a tablet.
+
+### One draft factory for both paths
+
+`newBlindDraft(key, defaults)` is now the single definition of "a brand-new blind", used by
+both the "Add Standard Blind" button and the measurement rows. The house defaults
+("Regular" cassette, "Regular" bottom rail, "Chain" control) are resolved ONCE per render in
+`OrderDetail`'s `blindDefaults` memo and passed in — the pure module holds no catalog lookup
+by name, and the two paths cannot drift into seeding different hardware. A test asserts a
+measurement item equals `newBlindDraft` plus the measurements and nothing else.
+
+Width lands as the item's SINGLE panel. A blind that needs several panels is split afterwards
+in the item form ("+ Panel"): a panel breakdown is a specification detail, not a measurement,
+and putting it in the popup would defeat one-row-per-window.
+
+### Deliberate omissions
+
+- **The item editor does NOT open afterwards.** Ten new items would mean ten popups, which is
+  exactly the round trip this replaces.
+- **No blind type dropdown in the popup**, not even a "same type for all" convenience. It
+  would invite specifying while measuring through a form laid out for neither, and bulk edit
+  already applies a type's material and options across many items.
+- **Items created this way are not saveable yet** — `buildPayload` still demands a type and
+  material and names the first item missing one. That is correct: they are measurements, not
+  finished line items.
+
+### Verified
+
+web `tsc -b --noEmit` clean, vitest **221/221** (16 new), `oxlint` exit 0, `vite build` clean
+with `border-danger` and the row grid template present in the emitted CSS. NOT seen in a
+browser — the order editor is behind `ProtectedRoute`.
