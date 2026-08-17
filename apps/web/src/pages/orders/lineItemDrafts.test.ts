@@ -12,18 +12,30 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import type { CatalogSlot } from '../../lib/blindTypes/base';
 import {
+  applyBulkEditToDraft,
   blindDraftPrice,
+  bulkEditSelection,
   canOverridePrice,
+  countMeasurementRows,
   flatDraftPrice,
+  measurementRowState,
+  measurementRowsToDrafts,
+  newBlindDraft,
+  newMeasurementRow,
   optionsForType,
   parseAddons,
   parseDraftAttributes,
   parseOverride,
   slotsForType,
   type BlindDraft,
+  type BlindDraftDefaults,
+  type BulkEditState,
   type Catalogs,
   type FlatDraft,
+  type ItemDraft,
+  type MeasurementRow,
 } from './lineItemDrafts';
 
 /**
@@ -396,5 +408,291 @@ describe('flatDraftPrice', () => {
     expect(
       flatDraftPrice(flat({ addons: [{ key: 'a', label: 'Rush fee', price: '' }] }))?.total
     ).toBe(200);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Bulk-edit selection                                                 */
+/* ------------------------------------------------------------------ */
+
+describe('bulkEditSelection', () => {
+  const roller = draft({ key: 'r1', blinds_type: 'Roller' });
+  const roller2 = draft({ key: 'r2', blinds_type: 'Roller' });
+  const curtain = draft({ key: 'c1', blinds_type: 'Curtains' });
+  const custom = flat({ key: 'f1' });
+
+  /** Shorthand: the verdict for these keys out of this item list. */
+  const verdict = (items: ItemDraft[], ...keys: string[]) =>
+    bulkEditSelection(items, new Set(keys));
+
+  it('refuses an empty selection', () => {
+    expect(verdict([roller])).toEqual({ ok: false, reason: 'empty' });
+  });
+
+  it('refuses a selection containing a preset or custom item', () => {
+    // Neither carries a material or a hardware slot to edit at all.
+    expect(verdict([roller, custom], 'r1', 'f1')).toEqual({ ok: false, reason: 'non_blind' });
+  });
+
+  it('refuses blinds of two different types', () => {
+    // Every catalog is scoped per type, so there is no one set of
+    // options that could serve both rows.
+    expect(verdict([roller, curtain], 'r1', 'c1')).toEqual({ ok: false, reason: 'mixed_types' });
+  });
+
+  it('refuses blinds whose type has not been chosen yet', () => {
+    const blank = draft({ key: 'b1', blinds_type: '' });
+    expect(verdict([blank], 'b1')).toEqual({ ok: false, reason: 'no_type' });
+  });
+
+  it('resolves the shared type and the keys it applies to', () => {
+    expect(verdict([roller, roller2, curtain], 'r1', 'r2')).toEqual({
+      ok: true,
+      blindsType: 'Roller',
+      keys: ['r1', 'r2'],
+    });
+  });
+
+  it('ignores items that are not selected', () => {
+    // A curtain sitting in the same order must not block a Roller-only
+    // selection — only what is ticked is inspected.
+    expect(verdict([curtain, roller], 'r1').ok).toBe(true);
+  });
+
+  it('groups a legacy free-text type like any other', () => {
+    // Nothing is scoped to it, so the form will offer nothing — but the
+    // selection itself is coherent and must not report "mixed".
+    const legacy = draft({ key: 'l1', blinds_type: 'Venetian (legacy)' });
+    const legacy2 = draft({ key: 'l2', blinds_type: 'Venetian (legacy)' });
+    expect(verdict([legacy, legacy2], 'l1', 'l2')).toEqual({
+      ok: true,
+      blindsType: 'Venetian (legacy)',
+      keys: ['l1', 'l2'],
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Bulk-edit application                                               */
+/* ------------------------------------------------------------------ */
+
+describe('applyBulkEditToDraft', () => {
+  /** Every field on "no change" — the baseline each case fills in. */
+  const NOTHING: BulkEditState = {
+    material_id: '',
+    cassette_id: '',
+    bottom_rail_id: '',
+    control_id: '',
+    installation_id: '',
+  };
+  /** The slots a Roller-like type uses; installation is deliberately out. */
+  const ROLLER_SLOTS = new Set<CatalogSlot>(['cassette', 'bottom_rail', 'control']);
+
+  it('writes the ids that were chosen', () => {
+    const next = applyBulkEditToDraft(
+      draft({ material_id: 'old-m', cassette_id: 'old-c' }),
+      { ...NOTHING, material_id: 'm2', cassette_id: 'c2' },
+      ROLLER_SLOTS
+    );
+    expect(next.material_id).toBe('m2');
+    expect(next.cassette_id).toBe('c2');
+  });
+
+  it('leaves a slot alone when its field is on "no change"', () => {
+    const next = applyBulkEditToDraft(
+      draft({ control_id: 'keep-me' }),
+      { ...NOTHING, material_id: 'm2' },
+      ROLLER_SLOTS
+    );
+    expect(next.control_id).toBe('keep-me');
+  });
+
+  it('drops an id for a slot the type does not use', () => {
+    // The Worker rejects an id for an unscoped slot, so writing one here
+    // would make the whole order unsavable.
+    const next = applyBulkEditToDraft(
+      draft({ installation_id: '' }),
+      { ...NOTHING, installation_id: 'ins-1' },
+      ROLLER_SLOTS
+    );
+    expect(next.installation_id).toBe('');
+  });
+
+  it('clears a price override on an item it changes', () => {
+    // The override was typed against the OLD options and wins over the
+    // calculated price, so leaving it would void the bulk re-price.
+    const next = applyBulkEditToDraft(
+      draft({ unit_price_override: '250' }),
+      { ...NOTHING, material_id: 'm2' },
+      ROLLER_SLOTS
+    );
+    expect(next.unit_price_override).toBe('');
+  });
+
+  it('keeps add-ons and the original-price flag when it clears an override', () => {
+    // Add-ons sit ON TOP of the price rather than replacing it, so a
+    // re-price does not invalidate them.
+    const before = draft({
+      unit_price_override: '250',
+      show_original_price: false,
+      addons: [{ key: 'a', label: 'Rush fee', price: '50' }],
+    });
+    const next = applyBulkEditToDraft(before, { ...NOTHING, material_id: 'm2' }, ROLLER_SLOTS);
+    expect(next.addons).toEqual(before.addons);
+    expect(next.show_original_price).toBe(false);
+  });
+
+  it('returns the draft untouched when nothing applies', () => {
+    // Including the override: an item the run misses must not lose its
+    // negotiated price as a side effect.
+    const before = draft({ unit_price_override: '250' });
+    expect(applyBulkEditToDraft(before, NOTHING, ROLLER_SLOTS)).toBe(before);
+    expect(
+      applyBulkEditToDraft(before, { ...NOTHING, installation_id: 'ins-1' }, ROLLER_SLOTS)
+    ).toBe(before);
+  });
+});
+
+/**
+ * The bulk measurement pass: room / width / height rows in, one blank
+ * blind line item per completed row out.
+ *
+ * The states matter as much as the conversion. A row that was started but
+ * not finished must be reported, never silently dropped — a width typed
+ * without its height is a measurement someone took on a ladder, and the
+ * order would otherwise be short one window with nothing to say so.
+ */
+describe('measurementRowState', () => {
+  function row(overrides: Partial<MeasurementRow> = {}): MeasurementRow {
+    return { key: 'r1', room_name: '', width_cm: '', height_cm: '', ...overrides };
+  }
+
+  it('is blank when nothing at all has been typed', () => {
+    expect(measurementRowState(row())).toBe('blank');
+    expect(measurementRowState(row({ width_cm: '  ', height_cm: ' ' }))).toBe('blank');
+  });
+
+  it('is ready when both measurements are positive numbers', () => {
+    expect(measurementRowState(row({ width_cm: '120', height_cm: '210' }))).toBe('ready');
+  });
+
+  it('accepts a half-typed decimal, like every other draft field', () => {
+    expect(measurementRowState(row({ width_cm: '120.', height_cm: ' 210.5 ' }))).toBe('ready');
+  });
+
+  it('is incomplete when only one measurement is present', () => {
+    expect(measurementRowState(row({ width_cm: '120' }))).toBe('incomplete');
+    expect(measurementRowState(row({ height_cm: '210' }))).toBe('incomplete');
+  });
+
+  it('is incomplete when a room was named but nothing measured', () => {
+    // Typing a room is intent to measure it. Treating this as blank would
+    // drop the window the consultant had just walked into.
+    expect(measurementRowState(row({ room_name: 'Kitchen' }))).toBe('incomplete');
+  });
+
+  it('is incomplete for a value that is not a positive number', () => {
+    expect(measurementRowState(row({ width_cm: '0', height_cm: '210' }))).toBe('incomplete');
+    expect(measurementRowState(row({ width_cm: '-5', height_cm: '210' }))).toBe('incomplete');
+    expect(measurementRowState(row({ width_cm: 'wide', height_cm: '210' }))).toBe('incomplete');
+  });
+});
+
+describe('countMeasurementRows', () => {
+  it('counts ready and incomplete rows and ignores blank ones', () => {
+    const rows: MeasurementRow[] = [
+      { key: 'a', room_name: 'Living', width_cm: '120', height_cm: '210' },
+      { key: 'b', room_name: '', width_cm: '90', height_cm: '' },
+      { key: 'c', room_name: '', width_cm: '', height_cm: '' },
+      { key: 'd', room_name: 'Bed', width_cm: '80', height_cm: '150' },
+    ];
+    expect(countMeasurementRows(rows)).toEqual({ ready: 2, incomplete: 1 });
+  });
+
+  it('counts a freshly opened popup as nothing to do', () => {
+    const rows = ['r1', 'r2', 'r3'].map(newMeasurementRow);
+    expect(countMeasurementRows(rows)).toEqual({ ready: 0, incomplete: 0 });
+  });
+});
+
+describe('measurementRowsToDrafts', () => {
+  const DEFAULTS: BlindDraftDefaults = {
+    cassette_id: 'cas-1',
+    bottom_rail_id: 'br-1',
+    control_id: 'ctl-1',
+  };
+
+  /** Key generator matching the page's, so ordering is checkable. */
+  function keys(): () => string {
+    let n = 0;
+    return () => `k${++n}`;
+  }
+
+  const ROWS: MeasurementRow[] = [
+    { key: 'a', room_name: '  Living Room  ', width_cm: ' 120 ', height_cm: ' 210 ' },
+    { key: 'b', room_name: 'Half', width_cm: '90', height_cm: '' },
+    { key: 'c', room_name: '', width_cm: '', height_cm: '' },
+    { key: 'd', room_name: '', width_cm: '80', height_cm: '150' },
+  ];
+
+  it('creates one item per completed row, in the order they were typed', () => {
+    const drafts = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
+    expect(drafts.map((d) => [d.panels[0], d.height_cm])).toEqual([
+      ['120', '210'],
+      ['80', '150'],
+    ]);
+    expect(drafts.map((d) => d.key)).toEqual(['k1', 'k2']);
+  });
+
+  it('skips incomplete and blank rows', () => {
+    // The caller refuses to apply while an incomplete row exists; this is
+    // the second half of that rule, not a licence to lose one.
+    expect(measurementRowsToDrafts(ROWS, DEFAULTS, keys())).toHaveLength(2);
+  });
+
+  it('trims the room name and leaves it empty when none was given', () => {
+    const drafts = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
+    expect(drafts[0].room_name).toBe('Living Room');
+    expect(drafts[1].room_name).toBe('');
+  });
+
+  it('leaves the blind type, material and installation unset', () => {
+    // The whole point of the pass: measurements now, specification later.
+    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
+    expect(first.blinds_type).toBe('');
+    expect(first.material_id).toBe('');
+    expect(first.installation_id).toBe('');
+    expect(first.attributes).toEqual({});
+  });
+
+  it('carries the house default hardware, exactly like Add Standard Blind', () => {
+    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
+    expect(first.cassette_id).toBe('cas-1');
+    expect(first.bottom_rail_id).toBe('br-1');
+    expect(first.control_id).toBe('ctl-1');
+  });
+
+  it('starts every item at quantity 1 with no price adjustments', () => {
+    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
+    expect(first.quantity).toBe('1');
+    expect(first.unit_price_override).toBe('');
+    expect(first.addons).toEqual([]);
+  });
+
+  it('produces the same draft the single-blind button does, plus measurements', () => {
+    // One shape, one set of defaults: the two paths must not drift.
+    const [first] = measurementRowsToDrafts([ROWS[0]], DEFAULTS, keys());
+    expect(first).toEqual({
+      ...newBlindDraft('k1', DEFAULTS),
+      room_name: 'Living Room',
+      panels: ['120'],
+      height_cm: '210',
+    });
+  });
+
+  it('returns nothing when no row was completed', () => {
+    expect(measurementRowsToDrafts(['r1', 'r2'].map(newMeasurementRow), DEFAULTS, keys())).toEqual(
+      []
+    );
   });
 });

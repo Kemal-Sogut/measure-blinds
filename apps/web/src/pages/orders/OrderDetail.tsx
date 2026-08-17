@@ -115,22 +115,32 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
-  type BulkEditState,
+  BulkMeasureForm,
 } from './LineItemEditor';
 import { getBlindType } from '../../lib/blindTypes';
 import {
+  applyBulkEditToDraft,
   blindDraftPrice,
+  bulkEditSelection,
   canOverridePrice,
+  countMeasurementRows,
   flatDraftPrice,
+  measurementRowsToDrafts,
+  newBlindDraft,
+  newMeasurementRow,
   parseAddons,
   parseDraftAttributes,
   parseOverride,
   parsePositive,
   slotsForType,
+  NO_ADJUSTMENTS,
   type BlindDraft,
+  type BlindDraftDefaults,
+  type BulkEditState,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
+  type MeasurementRow,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
@@ -281,13 +291,6 @@ function toDrafts(order: Order): ItemDraft[] {
     } satisfies FlatDraft;
   });
 }
-
-/** A freshly added item is never overridden and carries no add-ons. */
-const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
-  unit_price_override: '',
-  show_original_price: true,
-  addons: [],
-};
 
 /**
  * The three adjustment fields of a persisted item, as draft strings.
@@ -541,7 +544,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'cancelDeny'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -551,6 +554,9 @@ export default function OrderDetail() {
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
   const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
+  // Rows of the bulk measurement popup. Re-seeded on every open, so a
+  // cancelled measuring pass is never offered back half-typed.
+  const [measureRows, setMeasureRows] = useState<MeasurementRow[]>([]);
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -704,6 +710,22 @@ export default function OrderDetail() {
     ]
   );
 
+  /**
+   * The house default hardware every new blind starts with, resolved from
+   * the catalogs by NAME. Computed once here rather than at each Add
+   * button, so the single-blind and bulk-measurement paths cannot seed
+   * different defaults. A name that matches nothing yields `''`, which
+   * simply leaves the slot unset.
+   */
+  const blindDefaults: BlindDraftDefaults = useMemo(
+    () => ({
+      cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
+      bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
+      control_id: findOptionIdByName(catalogs.controls, 'Chain'),
+    }),
+    [catalogs.cassettes, catalogs.bottomRails, catalogs.controls]
+  );
+
   // ── Live totals (client preview; server recomputes on save) ────
   const itemPrices = useMemo(
     () =>
@@ -787,33 +809,13 @@ export default function OrderDetail() {
     );
   }
   function addBlind() {
-    const draft: BlindDraft = {
-      key: nextKey(),
-      // No uid yet: the Worker mints one the first time this is saved.
-      uid: null,
-      hidden: false,
-      item_type: 'blind',
-      room_name: '',
-      blinds_type: '',
-      panels: [''],
-      height_cm: '',
-      material_id: '',
-      // Sensible defaults from the catalog (fall back to unset if absent).
-      // No blind type is chosen yet, so nothing is scoped and nothing can
-      // be validated against a slot — the type dropdown clears whichever
-      // of these the chosen type turns out not to use.
-      cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
-      bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
-      control_id: findOptionIdByName(catalogs.controls, 'Chain'),
-      installation_id: '',
-      color: '',
-      note: '',
-      // Empty until a blind type is chosen — the type dropdown seeds this
-      // from the newly selected type's `defaultAttributes()`.
-      attributes: {},
-      quantity: '1',
-      ...NO_ADJUSTMENTS,
-    };
+    // Blank but for the house default hardware: no blind type is chosen
+    // yet, so nothing is scoped and nothing can be validated against a
+    // slot — the type dropdown clears whichever of the defaults the
+    // chosen type turns out not to use, and seeds `attributes` from it.
+    // The factory also seeds the identity fields (no uid until the first
+    // save, visible), so this path and the bulk popup cannot disagree.
+    const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
   }
@@ -915,34 +917,87 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  // ── Bulk edit (material / cassette / bottom rail / control only) ──
+  // ── Bulk edit (material / hardware slots of ONE blind type) ───────
+  /**
+   * Opens the bulk popup for a selection that has already been checked to
+   * be blinds of a single type. Every field starts empty ("No change") on
+   * each open, so a previous run can never re-apply itself.
+   */
   function openBulkEdit() {
+    if (!bulkEditSelection(items, selected).ok) return;
     setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
     setSheet('bulkEdit');
   }
 
+  /**
+   * Writes the non-empty bulk fields onto the selected items.
+   *
+   * Re-reads the verdict rather than trusting the popup being open: the
+   * selection is the same state the list renders from, and an item edited
+   * behind the sheet could have changed type. Only items of the resolved
+   * type are touched; what each one becomes — including the price
+   * override it loses — is `applyBulkEditToDraft`, so the rule is tested
+   * once and cannot drift from the note the form shows.
+   */
   function applyBulkEdit() {
+    const selection = bulkEditSelection(items, selected);
+    if (!selection.ok) return;
+    const uses = slotsForType(catalogs, selection.blindsType);
     setItems((list) =>
       list.map((it) => {
         if (!selected.has(it.key) || it.item_type !== 'blind') return it;
-        const patch: Partial<BlindDraft> = {};
-        // A bulk selection can mix blind types, and a hardware slot only
-        // applies to the types that use it — pushing a cassette onto a
-        // curtain here would make the whole order unsavable.
-        const uses = slotsForType(catalogs, it.blinds_type);
-        if (bulkState.material_id) patch.material_id = bulkState.material_id;
-        if (bulkState.cassette_id && uses.has('cassette')) patch.cassette_id = bulkState.cassette_id;
-        if (bulkState.bottom_rail_id && uses.has('bottom_rail')) {
-          patch.bottom_rail_id = bulkState.bottom_rail_id;
-        }
-        if (bulkState.control_id && uses.has('control')) patch.control_id = bulkState.control_id;
-        if (bulkState.installation_id && uses.has('installation')) {
-          patch.installation_id = bulkState.installation_id;
-        }
-        return { ...it, ...patch };
+        if (it.blinds_type !== selection.blindsType) return it;
+        return applyBulkEditToDraft(it, bulkState, uses);
       })
     );
     setSelected(new Set());
+    setSheet('none');
+  }
+
+  // ── Bulk measurements (widths and heights, no details) ────────────
+  /** How many blank rows the measurement popup opens with. */
+  const MEASURE_ROWS = 5;
+
+  /**
+   * Opens the measurement popup on a fresh set of blank rows. Never
+   * reopens the previous run: those rows have already become items, and
+   * offering them again is how a window gets entered twice.
+   */
+  function openBulkMeasure() {
+    setMeasureRows(Array.from({ length: MEASURE_ROWS }, () => newMeasurementRow(nextKey())));
+    setSheet('bulkMeasure');
+  }
+
+  /**
+   * Closes the popup, confirming first if anything has been typed.
+   *
+   * Unlike every other sheet here, this one can hold work that exists
+   * nowhere else — measurements read off a window minutes ago. A tap on
+   * the backdrop is easy to make by accident on a tablet, so it asks.
+   */
+  function closeBulkMeasure() {
+    const counts = countMeasurementRows(measureRows);
+    const typed = counts.ready + counts.incomplete;
+    if (typed > 0 && !window.confirm('Discard these measurements?')) return;
+    setMeasureRows([]);
+    setSheet('none');
+  }
+
+  /**
+   * Appends one blank blind item per completed row and closes the popup.
+   *
+   * No editor is opened afterwards, deliberately: the point of the pass is
+   * to capture every window's measurements in one go and choose type,
+   * material and options per item later. Half-filled rows are refused
+   * rather than skipped (the button is disabled while one exists), so a
+   * measurement taken on site cannot disappear here.
+   */
+  function applyBulkMeasure() {
+    const counts = countMeasurementRows(measureRows);
+    if (counts.ready === 0 || counts.incomplete > 0) return;
+    const drafts = measurementRowsToDrafts(measureRows, blindDefaults, nextKey);
+    setItems((list) => [...list, ...drafts]);
+    setMeasureRows([]);
     setSheet('none');
   }
 
@@ -2295,10 +2350,29 @@ export default function OrderDetail() {
               <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
                 {/* Bulk toolbar — only in edit mode */}
                 {!readOnly && items.length > 0 && (() => {
-                  const selectionHasNonBlind = [...selected].some(
-                    (k) => items.find((it) => it.key === k)?.item_type !== 'blind'
-                  );
-                  const canBulkEdit = selected.size > 0 && !selectionHasNonBlind;
+                  // Bulk edit is per blind TYPE: every catalog is scoped
+                  // to a type, so a mixed selection has no single set of
+                  // options to offer. The button explains which rule the
+                  // current selection breaks rather than just greying out.
+                  const bulkSelection = bulkEditSelection(items, selected);
+                  const canBulkEdit = bulkSelection.ok;
+                  const bulkEditHint = bulkSelection.ok
+                    ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
+                    : bulkSelection.reason === 'empty'
+                      ? 'Select blind items to bulk edit'
+                      : bulkSelection.reason === 'non_blind'
+                        ? 'Bulk edit is only available for blind items'
+                        : bulkSelection.reason === 'no_type'
+                          ? 'Pick a blind type on the selected items first'
+                          : 'Select blinds of the same type — options differ per type';
+                  // The same verdict in a few words, for the count line.
+                  const bulkBlockedNote = bulkSelection.ok
+                    ? ''
+                    : bulkSelection.reason === 'non_blind'
+                      ? 'not all blinds'
+                      : bulkSelection.reason === 'no_type'
+                        ? 'no blind type yet'
+                        : 'mixed blind types';
                   const canBulkDelete = selected.size > 0;
                   return (
                     <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
@@ -2312,20 +2386,24 @@ export default function OrderDetail() {
                         aria-label="Select all items"
                         className="h-4 w-4 rounded-sm accent-brand-600"
                       />
-                      <span className="flex-1 text-[12px] text-text-muted">
-                        {selected.size > 0 ? `${selected.size} selected` : `${items.length} item${items.length !== 1 ? 's' : ''}`}
+                      {/*
+                        The reason bulk edit is unavailable rides on the
+                        count line as well as on the button's `title`: a
+                        phone has no hover, so a tooltip alone would leave
+                        a disabled button with no explanation at all.
+                      */}
+                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
+                        {selected.size === 0
+                          ? `${items.length} item${items.length !== 1 ? 's' : ''}`
+                          : bulkSelection.ok
+                            ? `${selected.size} selected · ${bulkSelection.blindsType}`
+                            : `${selected.size} selected · ${bulkBlockedNote}`}
                       </span>
                       <button
                         type="button"
                         onClick={openBulkEdit}
                         disabled={!canBulkEdit}
-                        title={
-                          selected.size === 0
-                            ? 'Select blind items to bulk edit'
-                            : selectionHasNonBlind
-                              ? 'Bulk edit is only available for blind items'
-                              : 'Edit material, cassette, bottom rail and control for selected items'
-                        }
+                        title={bulkEditHint}
                         className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -2587,6 +2665,22 @@ export default function OrderDetail() {
                     <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
                   Add Standard Blind
+                </button>
+                {/*
+                  The measuring pass: every window's width and height in
+                  one popup, details chosen per item afterwards. Sits with
+                  the Add buttons because that is what it does — it adds
+                  blind items, just several at a time and blank.
+                */}
+                <button
+                  onClick={openBulkMeasure}
+                  className="flex h-[46px] items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M2 8h20v8H2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    <path d="M7 8v4M12 8v5M17 8v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  Add Measurements in Bulk
                 </button>
                 <div className="flex gap-2">
                   <button
@@ -3236,43 +3330,101 @@ export default function OrderDetail() {
         );
       })()}
 
-      {/* Bulk edit popup (material / cassette / bottom rail / control only) */}
-      {sheet === 'bulkEdit' && (
-        <div
-          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
-          onClick={() => setSheet('none')}
-        >
+      {/* Bulk edit popup — material and the hardware slots of ONE type */}
+      {sheet === 'bulkEdit' && (() => {
+        // The selection is live state; if it stopped being a single-type
+        // blind selection while the sheet was open there is nothing valid
+        // to edit, so the sheet closes itself rather than offering the
+        // options of a type no selected item still has.
+        const selection = bulkEditSelection(items, selected);
+        if (!selection.ok) return null;
+        return (
           <div
-            className={`${SHEET_PANEL} lg:max-w-lg`}
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
+            onClick={() => setSheet('none')}
           >
-            <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
-            <p className="mb-4 text-[13px] text-text-muted">
-              Editing {[...selected].filter((k) => items.find((it) => it.key === k)?.item_type === 'blind').length} blind item(s).
-            </p>
-            <BulkEditForm
-              state={bulkState}
-              catalogs={catalogs}
-              onChange={setBulkState}
-            />
-            <div className="mt-4 flex gap-2">
-              <button
-                onClick={() => setSheet('none')}
-                className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={applyBulkEdit}
-                disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
-                className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-              >
-                Apply to selected
-              </button>
+            <div
+              className={`${SHEET_PANEL} lg:max-w-lg`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
+              <p className="mb-4 text-[13px] text-text-muted">
+                {`Editing ${selection.keys.length} ${selection.blindsType} item${selection.keys.length !== 1 ? 's' : ''}.`}
+              </p>
+              <BulkEditForm
+                state={bulkState}
+                catalogs={catalogs}
+                blindsType={selection.blindsType}
+                onChange={setBulkState}
+              />
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={() => setSheet('none')}
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyBulkEdit}
+                  disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  Apply to selected
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* Bulk measurement popup — widths and heights, no details */}
+      {sheet === 'bulkMeasure' && (() => {
+        const counts = countMeasurementRows(measureRows);
+        return (
+          <div
+            className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
+            onClick={closeBulkMeasure}
+          >
+            <div
+              className={`${SHEET_PANEL} lg:max-w-lg`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="mb-1 text-sm font-semibold text-text-primary">Record measurements</h2>
+              <p className="mb-4 text-[13px] text-text-muted">
+                Enter each window's width and height. OK adds one blind item per row, ready for
+                its type and options.
+              </p>
+              <BulkMeasureForm
+                rows={measureRows}
+                onChange={setMeasureRows}
+                onAddRow={() => setMeasureRows((rows) => [...rows, newMeasurementRow(nextKey())])}
+                onRemoveRow={(key) =>
+                  setMeasureRows((rows) =>
+                    rows.length > 1 ? rows.filter((row) => row.key !== key) : rows
+                  )
+                }
+              />
+              <div className="mt-4 flex gap-2">
+                <button
+                  onClick={closeBulkMeasure}
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={applyBulkMeasure}
+                  disabled={counts.ready === 0 || counts.incomplete > 0}
+                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+                >
+                  {counts.ready === 0
+                    ? 'OK'
+                    : `OK — add ${counts.ready} item${counts.ready !== 1 ? 's' : ''}`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
 

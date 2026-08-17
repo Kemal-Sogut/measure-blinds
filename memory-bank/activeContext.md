@@ -26,12 +26,65 @@ schema (migration 37). Full detail in `engine_features.md` 2026-08-17.
   behaviour-identical; every pre-existing create test stayed green through the move.
 - **A concatenated supabase-js `.select()` string breaks the row TYPE**
   (`GenericStringError`), taking every field on it with it. Keep select strings on one line.
-- **Verified:** api 337/337, web 194/194, both `tsc --noEmit` clean, `oxlint` clean,
-  `vite build` clean.
+- **Verified:** api 337/337, web 223/223 (counts include `main` merged back in on 08-17 —
+  bulk measurement capture, single-type bulk edit), both `tsc --noEmit` clean, `oxlint`
+  clean, `vite build` clean.
+- **`newBlindDraft` is the one place a blank blind is built** (it arrived with the bulk
+  measurement work). Seeding `uid`/`hidden` there rather than in `addBlind` is what keeps
+  the Add button and the bulk popup from drifting.
 - **NOT verified: any browser.** The editor sits behind `ProtectedRoute` and the API is the
   deployed Worker, so the eye toggle and both Duplicate entry points still need a human
   pass. **The migration has NOT been applied** — apply it before deploying the Worker, which
   starts writing two not-null columns on its first save.
+
+## Current Focus — 2026-08-15: Bulk measurement capture
+Branch `claude/bulk-width-height-recording-koonvw`. Web only — no API, no schema, no pricing
+surface. Full detail in `engine_features.md` 2026-08-15 (second entry).
+
+- **"Add Measurements in Bulk" adds blank blinds, one per width/height pair.** Room name
+  optional, no blind type, no material, no per-type option — only the house default hardware.
+  Details are chosen afterwards, per item or through the existing bulk edit. The item editor
+  does NOT open after OK; opening ten popups is the round trip this removes.
+- **`measurementRowState` is the whole rule** (pure, `pages/orders/lineItemDrafts.ts`):
+  `blank` is ignored, `ready` becomes an item, `incomplete` DISABLES OK. Do not "helpfully"
+  skip an incomplete row — a width typed without its height is a measurement taken on site,
+  and losing it silently costs a second visit. A room name with no numbers counts as
+  incomplete on purpose (it is intent to measure). `closeBulkMeasure` confirms before
+  discarding typed rows — the only sheet on this screen that does, because its content exists
+  nowhere else until OK.
+- **`newBlindDraft(key, defaults)` is now the ONE definition of a new blind**, shared with the
+  "Add Standard Blind" button; defaults come from `OrderDetail`'s `blindDefaults` memo, so the
+  name lookups ("Regular", "Chain") stay out of the pure module and the two paths cannot
+  seed different hardware. `NO_ADJUSTMENTS` moved into `lineItemDrafts.ts` with it.
+- **Width becomes the item's single panel.** Multi-panel blinds are split later in the item
+  form; a panel breakdown is a specification detail, not a measurement.
+- **These items are deliberately unsaveable until specified** — `buildPayload` still demands a
+  blind type and material and names the first item missing one.
+- **Verified:** web `tsc -b --noEmit` clean, 221/221 tests (16 new), `oxlint` exit 0,
+  `vite build` clean (`border-danger` and the row grid template present in the emitted CSS).
+  **NOT verified in a browser** — the order editor is behind `ProtectedRoute`.
+
+## Previous Focus — 2026-08-15: Bulk edit is single-blind-type
+Branch `claude/bulk-edit-blinds-type-filter-4z05ld`. Web only — no API, no schema, no
+pricing surface. Full detail in `engine_features.md` 2026-08-15.
+
+- **Bulk edit now requires blinds of ONE type.** Mixed selections, non-blind rows and blinds
+  with no type chosen disable the button, each with its own tooltip.
+- **`bulkEditSelection(items, selected)` is the only place the rule lives** (pure, in
+  `pages/orders/lineItemDrafts.ts`). Toolbar enablement, the popup heading and
+  `applyBulkEdit` all read the same verdict — do not re-derive it inline.
+- **`BulkEditForm` is scoped like the item form**: `materialsForType` + `slotsForType` +
+  `optionsForType`. A slot the type does not use is not rendered, not disabled.
+- **Applying CLEARS `unit_price_override` on every item the run changes**
+  (`applyBulkEditToDraft`). An override replaces the calculated price on both sides, so an
+  overridden line would keep money typed for the OLD options and void the re-price. Add-ons
+  and `show_original_price` are kept; an item nothing applies to is returned by reference so
+  it cannot lose its override by accident.
+- **`applyBulkEditToDraft` keeps its `slotsForType` gate** even though the selection is
+  single-type — the ids sit in state, and an id for an unused slot is a 400 on save.
+- **`BulkEditState` now lives in `lineItemDrafts.ts`**, not in the form file.
+- **Verified:** web `tsc --noEmit` clean, 205/205 tests (13 new), `oxlint` exit 0, `vite build`
+  clean. **NOT verified in a browser** — the order editor is behind `ProtectedRoute`.
 
 ## Current Focus — 2026-08-12: Pull-to-refresh in the installed app
 Branch `claude/home-screen-scroll-reload-ekhpd6`, cut from `main`. Web only — no API, no

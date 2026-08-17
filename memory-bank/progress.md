@@ -12,14 +12,68 @@ re-priced from the current catalog — and leaves payments, logs, the appointmen
 state and the public token behind; the copy opens straight away, from the order toolbar or a
 per-row action on the list.
 
-**Verified:** api 337/337 (18 files), web 194/194 (15 files), `tsc --noEmit` clean both
-sides, `oxlint` clean, `vite build` clean.
+**Verified:** api 337/337 (18 files), web 223/223 (15 files) with `main` merged in, `tsc
+--noEmit` clean both sides, `oxlint` clean, `vite build` clean.
 
 **Not done yet:** the migration has not been applied to the live project, and nothing has
 been exercised in a browser. There is no per-item "hidden/shown" activity-log line — a
 deliberate omission, since visibility can only move while the order is draft/sent, before
 anything has been quoted; the `uid` needed to add one later exists.
 
+
+## Bulk measurement capture (2026-08-15)
+
+**Works:** "Add Measurements in Bulk" under the item list opens a popup of Room / Width /
+Height rows (five blank ones, "+ Add row", Enter at the end of a row adds the next, ✕ removes
+one). OK appends one blind line item per completed row — no blind type, no material, no
+per-type option, only the house default cassette / bottom rail / control that a single new
+blind already gets. The button counts what it will add ("OK — add 4 items"), and no editor
+opens afterwards, so a whole house is measured in one pass and specified later.
+
+**Refuses rather than drops:** a row with only one measurement, a room name and no numbers,
+or a non-positive value is marked red, counted in a message under the rows, and disables OK
+until it is completed or cleared. Rows with nothing typed at all are ignored. Cancel and a
+backdrop tap confirm before discarding typed rows — the only sheet here that does.
+
+**Also:** `newBlindDraft` is now the single definition of a brand-new blind, shared by the
+"Add Standard Blind" button and the measurement rows, seeded from one `blindDefaults` memo;
+`NO_ADJUSTMENTS` moved into `pages/orders/lineItemDrafts.ts` beside it.
+
+**Where:** `MeasurementRow` / `measurementRowState` / `countMeasurementRows` /
+`measurementRowsToDrafts` in `pages/orders/lineItemDrafts.ts`, `BulkMeasureForm` in
+`pages/orders/LineItemEditor.tsx`, the `bulkMeasure` sheet in `pages/orders/OrderDetail.tsx`.
+
+**Known gap:** items created this way cannot be SAVED until a type and material are chosen —
+`buildPayload` names the first one missing them. That is intended; they are measurements.
+
+**Status:** web `tsc -b --noEmit` clean, 221/221 tests (16 new), `oxlint` exit 0, `vite build`
+clean. Not exercised in a browser — the order editor sits behind `ProtectedRoute`.
+
+## Bulk edit restricted to one blind type (2026-08-15)
+
+**Works:** the line-item toolbar's Edit button enables only when every ticked row is a blind
+AND they all share one blind type; its tooltip names the rule that is broken otherwise
+(non-blind row / no type chosen / mixed types). The popup heading states the type and the
+count, and the form offers only that type's materials and only the hardware slots scoped to
+it — a Curtains selection shows Material / Control / Installation, a Roller selection shows
+Material / Cassette / Bottom rail / Control. Applying writes only to items of that type, and
+only into slots the type uses.
+
+**Also:** applying a bulk edit RESETS the manual price override on every item it changes, so
+the new options actually reach the total instead of being masked by a figure typed for the
+old ones. Add-ons and the show-original-price flag survive. An item the run does not change
+keeps its override untouched. The form says so above the dropdowns.
+
+**Why:** the old form offered every catalog unfiltered and silently dropped what an item's
+type did not use, so a choice could apply to none of the selected rows — or write an
+out-of-scope id the Worker 400s on save. And an overridden line kept its old price after a
+bulk re-option, which made the change void where it mattered most.
+
+**Where:** `bulkEditSelection` (the verdict) and `applyBulkEditToDraft` (what one item
+becomes, override reset included) in `pages/orders/lineItemDrafts.ts`.
+
+**Status:** web `tsc --noEmit` clean, 205/205 tests (13 new), `oxlint` exit 0, `vite build`
+clean. Not exercised in a browser — the order editor sits behind `ProtectedRoute`.
 
 ## Estimate visits without a customer email (2026-08-13)
 

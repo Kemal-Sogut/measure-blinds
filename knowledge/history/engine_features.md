@@ -2489,6 +2489,169 @@ api 290/290 (new test: books a no-email customer with NO Resend stub installed, 
 send attempt would fail the request), web 164/164, both `tsc --noEmit` clean, `oxlint`
 clean.
 
+## Bulk edit restricted to one blind type (2026-08-15)
+
+Bulk edit used to accept any selection of blind items, mix types included, and offered
+EVERY option of every catalog — the whole materials list, all four hardware dropdowns,
+unfiltered. The parent then quietly dropped whatever the item's type did not use
+(`slotsForType`), so a consultant could pick a Roller cassette with three Zebra rows
+selected and get no feedback that it landed on none of them. Worse, a material or option
+scoped to another type could be written onto an item outright, which the Worker rejects on
+save (`apps/api/src/lib/optionScoping.ts`).
+
+**Now the selection must be blinds of ONE type**, and the form is scoped to that type
+exactly like the per-item form.
+
+### The rule lives in one pure function
+
+`bulkEditSelection(items, selected)` in `apps/web/src/pages/orders/lineItemDrafts.ts`
+returns either `{ ok: true, blindsType, keys }` or `{ ok: false, reason }`, with `reason`
+one of `empty` | `non_blind` | `no_type` | `mixed_types`, checked in that order. Three
+call sites read the same verdict, which is why it is a function and not three inline
+conditions:
+
+- the toolbar's Edit button (enablement AND the `title` that names which rule is broken —
+  "Select blinds of the same type — options differ per type"). The verdict ALSO rides on the
+  count line in a few words ("3 selected · mixed blind types", "2 selected · Roller"),
+  because a phone has no hover and a `title` alone would leave a disabled button unexplained;
+- the popup (heading reads "Editing 3 Roller items"; it renders `null` if the selection
+  stopped qualifying while the sheet was open);
+- `applyBulkEdit`, which re-reads the verdict instead of trusting the open sheet and skips
+  any item whose `blinds_type` is not the resolved one.
+
+A blind with no type chosen yet is `no_type`, not a group: there is no scope to offer
+options from. A legacy free-text type name IS a group like any other — the form simply
+finds nothing scoped to it.
+
+### The form renders per type
+
+`BulkEditForm` (`apps/web/src/pages/orders/LineItemEditor.tsx`) now takes `blindsType` and
+uses the same three scoping helpers the item form does: `materialsForType` for the material
+list, `slotsForType` to decide WHICH hardware dropdowns exist, `optionsForType` to fill
+them. A slot the type does not use is not rendered at all rather than greyed out — Curtains
+shows Material / Control / Installation and nothing else. When a type has neither materials
+nor slots the form says so and points at Settings instead of showing four empty dropdowns.
+
+### Applying a bulk edit RESETS the price override
+
+`applyBulkEditToDraft(draft, state, uses)` (also in `lineItemDrafts.ts`) is what one item
+becomes. Beyond writing the chosen ids it clears `unit_price_override` on every item it
+actually changes.
+
+**Why:** an override replaces the calculated unit price on both sides (`applyPriceAdjustments`
+in the web preview, `resolveLineItems` in the Worker). It is typed against the options the
+item had at the time — so an overridden line would keep its old figure after a bulk material
+or hardware change, and the whole point of the bulk edit would go void on exactly the lines
+someone had already negotiated. The consultant sees the new options on the item and the old
+money on the total, with nothing saying why.
+
+**What is NOT reset:** add-ons and `show_original_price`. An add-on sits on top of the price
+rather than replacing it, so a re-price does not invalidate it.
+
+**No-op safety:** the function returns the SAME draft object when nothing applies (all fields
+on "No change", or the only chosen id belongs to a slot the type does not use), so a run can
+never drop an override as a side effect of touching nothing. The form's intro states the
+reset in words before the consultant picks anything.
+
+It keeps the `slotsForType` gate even though the selection is now single-type: the ids come
+from state that a re-render cannot re-validate, and an id for an unused slot is a 400 on save.
+
+`BulkEditState` moved from `LineItemEditor.tsx` to `lineItemDrafts.ts` for this — it is a
+draft model consumed by a pure function, which is that module's stated responsibility, and
+the form now imports the type instead of owning it.
+
+### Files
+
+- `apps/web/src/pages/orders/lineItemDrafts.ts` — `bulkEditSelection`, `applyBulkEditToDraft`,
+  `BulkEditState`, `BulkEditSelection`, `BulkEditBlocker`.
+- `apps/web/src/pages/orders/LineItemEditor.tsx` — `BulkEditForm` takes `blindsType`, filters,
+  and states the override reset in its intro.
+- `apps/web/src/pages/orders/OrderDetail.tsx` — toolbar verdict + hint, `openBulkEdit` guard,
+  `applyBulkEdit` delegating to `applyBulkEditToDraft`, popup heading and self-close.
+- `apps/web/src/pages/orders/lineItemDrafts.test.ts` — 13 cases (7 selection, 6 application).
+
+### Verified
+web `tsc --noEmit` clean, tests 205/205 (13 new), `oxlint` exit 0, `vite build` clean. No API,
+schema or pricing surface touched — the override is cleared in the DRAFT, so the Worker simply
+receives `unit_price_override: null` and prices the line from the catalog as it always has.
+
+## Bulk measurement capture — widths and heights before any details (2026-08-15)
+
+Adding blinds used to be one window at a time through the full blind popup: type, material,
+four hardware dropdowns, measurements, price. On site that inverts the actual job — the
+consultant walks the house with a tape first and picks fabrics afterwards, usually sitting
+down with the customer. Every window therefore cost a round trip through a form that asks
+for eight things when only two are known.
+
+**"Add Measurements in Bulk"** (third dashed button under the item list, beside "Add
+Standard Blind") opens a popup of `Room / Width / Height` rows. OK appends **one blind line
+item per completed row**, with no blind type, no material and no per-type option — only the
+house default hardware a single new blind already gets. The details are then filled in per
+item, or across several at once with the existing bulk edit.
+
+### Files (web only — no API, no schema, no pricing surface)
+
+- **`apps/web/src/pages/orders/lineItemDrafts.ts`** — the whole rule set, pure and JSX-free:
+  `MeasurementRow`, `newMeasurementRow`, `measurementRowState`, `countMeasurementRows`,
+  `measurementRowsToDrafts`. Also gained `newBlindDraft` + `BlindDraftDefaults` and the
+  `NO_ADJUSTMENTS` constant (moved out of `OrderDetail.tsx`, which now imports it).
+- **`apps/web/src/pages/orders/LineItemEditor.tsx`** — `BulkMeasureForm`, the only form in
+  that file that CREATES drafts rather than editing them.
+- **`apps/web/src/pages/orders/OrderDetail.tsx`** — the button, the `bulkMeasure` sheet,
+  `openBulkMeasure` / `applyBulkMeasure`, `measureRows` state, and the `blindDefaults` memo.
+- **`apps/web/src/pages/orders/lineItemDrafts.test.ts`** — 16 new cases.
+
+### A half-filled row is REFUSED, never skipped
+
+`measurementRowState` classifies each row as `blank` (nothing typed — ignored, which is what
+lets the popup open with five rows), `ready` (width AND height are positive numbers), or
+`incomplete` (anything else: one measurement only, a room name with no measurements, a zero
+/ negative / non-numeric value).
+
+`incomplete` is the whole point of having states. A width typed without its height is a
+measurement someone took up a ladder; dropping it silently would leave the order one window
+short with nothing on screen to say so, and the omission would surface at manufacture. So the
+popup marks those rows red, says how many need attention, and **disables OK entirely** until
+they are completed or cleared. `measurementRowsToDrafts` skips them as the second half of the
+same rule — it is never reached with one present.
+
+Treating "room name but no numbers" as incomplete is deliberate: typing a room is intent to
+measure it.
+
+For the same reason, this is the one sheet on the order screen that CONFIRMS before closing
+with content (`closeBulkMeasure`): its rows exist nowhere else until OK is pressed, and a
+backdrop tap is easy to make by accident on a tablet.
+
+### One draft factory for both paths
+
+`newBlindDraft(key, defaults)` is now the single definition of "a brand-new blind", used by
+both the "Add Standard Blind" button and the measurement rows. The house defaults
+("Regular" cassette, "Regular" bottom rail, "Chain" control) are resolved ONCE per render in
+`OrderDetail`'s `blindDefaults` memo and passed in — the pure module holds no catalog lookup
+by name, and the two paths cannot drift into seeding different hardware. A test asserts a
+measurement item equals `newBlindDraft` plus the measurements and nothing else.
+
+Width lands as the item's SINGLE panel. A blind that needs several panels is split afterwards
+in the item form ("+ Panel"): a panel breakdown is a specification detail, not a measurement,
+and putting it in the popup would defeat one-row-per-window.
+
+### Deliberate omissions
+
+- **The item editor does NOT open afterwards.** Ten new items would mean ten popups, which is
+  exactly the round trip this replaces.
+- **No blind type dropdown in the popup**, not even a "same type for all" convenience. It
+  would invite specifying while measuring through a form laid out for neither, and bulk edit
+  already applies a type's material and options across many items.
+- **Items created this way are not saveable yet** — `buildPayload` still demands a type and
+  material and names the first item missing one. That is correct: they are measurements, not
+  finished line items.
+
+### Verified
+
+web `tsc -b --noEmit` clean, vitest **221/221** (16 new), `oxlint` exit 0, `vite build` clean
+with `border-danger` and the row grid template present in the emitted CSS. NOT seen in a
+browser — the order editor is behind `ProtectedRoute`.
+
 ## Line-item visibility — the eye toggle (2026-08-17)
 
 A line item can now be HIDDEN: it stays in the order editor with its price on screen, but
@@ -2575,6 +2738,7 @@ its own mutation instance, which keeps the pending state on the clicked row alon
 ### Verified
 api 337/337 (new: `orderDuplicate.test.ts` 8 cases; duplicate route happy path / 404 /
 deleted-catalog 400; visibility gate 5 cases; hidden excluded from totals, from the public
-payload, and from the PDF), web 194/194, both `tsc --noEmit` clean, `oxlint` clean,
+payload, and from the PDF), web 223/223 after merging `main` (bulk measurement capture and
+the single-type bulk edit), both `tsc --noEmit` clean, `oxlint` clean,
 `vite build` clean. The PDF test inflates the content streams and decodes pdf-lib's hex
 string literals, so the "not printed" assertion cannot pass vacuously.
