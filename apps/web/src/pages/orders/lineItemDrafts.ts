@@ -287,6 +287,69 @@ export function slotsForType(catalogs: Catalogs, blindsType: string): Set<Catalo
 }
 
 /**
+ * Applies a blind-type change to a draft: sets the type, resets every
+ * hardware slot and the material to that type's SAVED defaults
+ * (Settings → Default Options), clears slots the type does not use, and
+ * seeds `attributes` from the type registry. Measurements, room, colour,
+ * note, quantity and price adjustments are untouched.
+ *
+ * `keepValid: true` (single-item type dropdown) preserves a current pick
+ * still offered for the new type instead of overwriting it with the
+ * default; bulk edit and bulk add omit it for true "reset" semantics.
+ *
+ * A slot the type does not use is always `''`. A default id no longer
+ * scoped+active for the type — retired or unlinked since it was saved —
+ * is ignored and falls through to `''`, same as no default at all;
+ * `BlindTypeDefaults` validates on write and keeps this rare, but this
+ * function does not assume it holds.
+ *
+ * Single source of truth: the type dropdown, bulk edit and bulk add all
+ * route through here so the three flows cannot drift.
+ */
+export function applyTypeDefaults(
+  draft: BlindDraft,
+  blindsType: string,
+  catalogs: Catalogs,
+  opts: { keepValid?: boolean } = {}
+): BlindDraft {
+  const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
+  const row = catalogs.defaults.find((d) => d.blind_type_id === typeId);
+  const uses = slotsForType(catalogs, blindsType);
+  const materials = materialsForType(catalogs, blindsType);
+
+  /** Resolves one hardware slot: '' when unused; else current (keepValid) → default → ''. */
+  type ScopedOption = { id: string; active: boolean; blind_type_ids: string[] };
+  const pick = (slot: CatalogSlot, current: string, def: string | null | undefined, options: ScopedOption[]): string => {
+    if (!uses.has(slot)) return '';
+    const scoped = optionsForType(options, catalogs.blindTypes, blindsType);
+    if (opts.keepValid && current && scoped.some((o) => o.id === current)) return current;
+    if (def && scoped.some((o) => o.id === def)) return def;
+    return '';
+  };
+
+  const materialValid = (id: string | null | undefined): id is string =>
+    !!id && materials.some((m) => m.id === id);
+
+  return {
+    ...draft,
+    blinds_type: blindsType,
+    material_id:
+      opts.keepValid && materialValid(draft.material_id)
+        ? draft.material_id
+        : materialValid(row?.material_id)
+          ? row!.material_id!
+          : '',
+    cassette_id: pick('cassette', draft.cassette_id, row?.cassette_id, catalogs.cassettes),
+    bottom_rail_id: pick('bottom_rail', draft.bottom_rail_id, row?.bottom_rail_id, catalogs.bottomRails),
+    control_id: pick('control', draft.control_id, row?.control_id, catalogs.controls),
+    installation_id: pick('installation', draft.installation_id, row?.installation_id, catalogs.installationOptions),
+    attributes: Object.fromEntries(
+      Object.entries(getBlindType(blindsType).defaultAttributes()).map(([k, v]) => [k, String(v)])
+    ),
+  };
+}
+
+/**
  * Why a selection cannot be bulk-edited, in the order the check applies:
  *
  * - `empty` — nothing is ticked.
