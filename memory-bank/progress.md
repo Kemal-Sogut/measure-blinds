@@ -1,5 +1,26 @@
 # Progress
 
+## Order duplication + line-item visibility (2026-08-17)
+Branch `feat/order-duplicate-line-item-visibility` off `main`. api + web + migration 37.
+
+**Works:** every line item carries a stable `uid` and a `hidden` flag. Hiding an item (eye
+button on the row, disabled once the order is confirmed) mutes it, strikes its price and
+removes it from the order total, the estimate/invoice PDF, the customer page, the warranty
+certificate, the labels and the cut sheet, while it stays in the editor. `POST
+/api/orders/:id/duplicate` creates a new DRAFT with the same customer, discount and items —
+re-priced from the current catalog — and leaves payments, logs, the appointment, warranty
+state and the public token behind; the copy opens straight away, from the order toolbar or a
+per-row action on the list.
+
+**Verified:** api 337/337 (18 files), web 223/223 (15 files) with `main` merged in, `tsc
+--noEmit` clean both sides, `oxlint` clean, `vite build` clean.
+
+**Not done yet:** the migration has not been applied to the live project, and nothing has
+been exercised in a browser. There is no per-item "hidden/shown" activity-log line — a
+deliberate omission, since visibility can only move while the order is draft/sent, before
+anything has been quoted; the `uid` needed to add one later exists.
+
+
 ## Bulk measurement capture (2026-08-15)
 
 **Works:** "Add Measurements in Bulk" under the item list opens a popup of Room / Width /

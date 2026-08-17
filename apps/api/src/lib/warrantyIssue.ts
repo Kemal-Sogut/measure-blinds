@@ -169,7 +169,11 @@ export async function issueWarrantyIfPaid(
       return { status: 'skipped', reason: 'no_email' };
     }
 
-    const coverage = buildWarrantyCoverage(order.line_items ?? [], startsOn);
+    // A hidden item was never charged for, so nothing covers it.
+    const coverage = buildWarrantyCoverage(
+      (order.line_items ?? []).filter((li: Record<string, unknown>) => !li.hidden),
+      startsOn
+    );
     const issuedOn = new Date().toISOString().slice(0, 10);
     const pdf = await buildWarrantyPdf({
       order: { order_number: order.order_number, order_date: order.order_date },

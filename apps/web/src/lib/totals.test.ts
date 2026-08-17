@@ -70,6 +70,20 @@ describe('calculateTotals', () => {
     expect(t.subtotal).toBe(0);
     expect(t.total).toBe(0);
   });
+
+  it('sums only the visible line totals it is given', () => {
+    // Hidden items are filtered out BEFORE this function is called, on
+    // both sides — the Worker filters its resolved rows, the editor
+    // filters its drafts. This pins the number both must produce for an
+    // order whose only visible items total 364.
+    const t = calculateTotals({
+      lineTotals: [364],
+      discount_type: 'fixed',
+      discount_value: 0,
+    });
+    expect(t.subtotal).toBe(364);
+    expect(t.total).toBe(411.32);
+  });
 });
 
 /** Local mirror of the module's rounding for expected-value math. */

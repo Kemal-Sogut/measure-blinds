@@ -88,6 +88,22 @@ export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
 /** Editable state of one blind line item (strings for free typing). */
 export interface BlindDraft extends PriceAdjustmentDraft {
   key: string;
+  /**
+   * The persisted item's `uid`, or null for an item added in this
+   * editing session and never saved. Null is sent as an ABSENT field and
+   * the Worker mints the uid — which is also why a cloned draft must
+   * reset this: two rows claiming one identity would make the Worker's
+   * visibility diff ambiguous.
+   *
+   * Distinct from `key`, which is a render-time list key that changes
+   * every time the editor rebuilds its drafts.
+   */
+  uid: string | null;
+  /**
+   * Excluded from the live total and from every document while true.
+   * Only editable before the order is confirmed.
+   */
+  hidden: boolean;
   item_type: 'blind';
   room_name: string;
   blinds_type: string;
@@ -117,6 +133,10 @@ export interface BlindDraft extends PriceAdjustmentDraft {
 /** Editable state of one preset/custom line item. */
 export interface FlatDraft extends PriceAdjustmentDraft {
   key: string;
+  /** As `BlindDraft.uid` — null until the item has been saved once. */
+  uid: string | null;
+  /** As `BlindDraft.hidden` — excluded from totals and documents. */
+  hidden: boolean;
   item_type: 'preset' | 'custom';
   /** Headline shown above the description on every surface. */
   title: string;
@@ -170,6 +190,10 @@ export interface BlindDraftDefaults {
 export function newBlindDraft(key: string, defaults: BlindDraftDefaults): BlindDraft {
   return {
     key,
+    // No uid yet: the Worker mints one the first time this is saved. A
+    // new item is visible — hiding one is always a deliberate act.
+    uid: null,
+    hidden: false,
     item_type: 'blind',
     room_name: '',
     blinds_type: '',

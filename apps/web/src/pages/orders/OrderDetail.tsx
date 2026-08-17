@@ -89,6 +89,7 @@ import {
   useMarkInstalled,
   useRevertOrder,
   useDeleteOrder,
+  useDuplicateOrder,
   useRecordPayment,
   useSendReceipt,
   useSendWarranty,
@@ -102,6 +103,7 @@ import {
   type OrderInput,
   type LineItemInput,
   type AdjustmentInputFields,
+  type ItemIdentityFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
@@ -249,6 +251,8 @@ function toDrafts(order: Order): ItemDraft[] {
     if (li.item_type === 'blind') {
       return {
         key: nextKey(),
+        uid: li.uid,
+        hidden: li.hidden,
         item_type: 'blind',
         room_name: li.room_name,
         blinds_type: li.blinds_type,
@@ -271,6 +275,8 @@ function toDrafts(order: Order): ItemDraft[] {
     }
     return {
       key: nextKey(),
+      uid: li.uid,
+      hidden: li.hidden,
       item_type: li.item_type,
       title: li.title,
       description: li.description,
@@ -426,6 +432,12 @@ const ICONS = {
       <circle cx="12" cy="12" r="3" />
     </ActionIcon>
   ),
+  duplicate: (
+    <ActionIcon>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </ActionIcon>
+  ),
   manufacturer: (
     <ActionIcon>
       <path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
@@ -510,6 +522,7 @@ export default function OrderDetail() {
   const installedMut = useMarkInstalled();
   const revertMut = useRevertOrder();
   const deleteMut = useDeleteOrder();
+  const duplicateMut = useDuplicateOrder();
   const paymentMut = useRecordPayment();
   const receiptMut = useSendReceipt();
   const warrantyMut = useSendWarranty();
@@ -723,14 +736,17 @@ export default function OrderDetail() {
       ),
     [items, catalogs]
   );
+  // A hidden item keeps its price on screen — the consultant has to see
+  // what is being left out — but never reaches the subtotal. Mirrors the
+  // Worker, which filters its resolved rows the same way.
   const totals = useMemo(
     () =>
       calculateTotals({
-        lineTotals: itemPrices,
+        lineTotals: itemPrices.filter((_, i) => !items[i].hidden),
         discount_type: discountType,
         discount_value: Number(discountValue) || 0,
       }),
-    [itemPrices, discountType, discountValue]
+    [itemPrices, items, discountType, discountValue]
   );
 
   const status = existing?.status ?? 'draft';
@@ -755,7 +771,15 @@ export default function OrderDetail() {
   function removeItem(key: string) {
     setItems((list) => list.filter((it) => it.key !== key));
   }
-  /** Clones a line item (fresh key, copied panels) right after the original. */
+  /**
+   * Clones a line item (fresh key and identity, copied panels) right
+   * after the original.
+   *
+   * The clone is a NEW row, so it must NOT inherit the source's `uid`:
+   * two rows claiming one identity would make the Worker's visibility
+   * diff ambiguous on save. Its `hidden` state is inherited, because a
+   * copy of a hidden item is one too until told otherwise.
+   */
   function duplicateItem(key: string) {
     setItems((list) => {
       const idx = list.findIndex((it) => it.key === key);
@@ -763,18 +787,34 @@ export default function OrderDetail() {
       const src = list[idx];
       const copy: ItemDraft =
         src.item_type === 'blind'
-          ? { ...src, key: nextKey(), panels: [...src.panels] }
-          : { ...src, key: nextKey() };
+          ? { ...src, key: nextKey(), uid: null, panels: [...src.panels] }
+          : { ...src, key: nextKey(), uid: null };
       const next = list.slice();
       next.splice(idx + 1, 0, copy);
       return next;
     });
+  }
+  /**
+   * Flips one line item's visibility.
+   *
+   * A hidden item keeps its place and its price in the editor but leaves
+   * the order total and every document — estimate, invoice, customer
+   * page, warranty, labels, cut sheet. The caller must not offer this
+   * once the order is confirmed: the Worker refuses the save with a 400,
+   * and the button is disabled there for the same reason.
+   */
+  function toggleHidden(key: string) {
+    setItems((list) =>
+      list.map((it) => (it.key === key ? { ...it, hidden: !it.hidden } : it))
+    );
   }
   function addBlind() {
     // Blank but for the house default hardware: no blind type is chosen
     // yet, so nothing is scoped and nothing can be validated against a
     // slot — the type dropdown clears whichever of the defaults the
     // chosen type turns out not to use, and seeds `attributes` from it.
+    // The factory also seeds the identity fields (no uid until the first
+    // save, visible), so this path and the bulk popup cannot disagree.
     const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -784,6 +824,8 @@ export default function OrderDetail() {
       ...list,
       {
         key: nextKey(),
+        uid: null,
+        hidden: false,
         item_type: 'preset',
         // The catalog name becomes the headline and its description the
         // body. These used to be concatenated into one string, which left
@@ -801,6 +843,8 @@ export default function OrderDetail() {
   function addCustom() {
     const draft: FlatDraft = {
       key: nextKey(),
+      uid: null,
+      hidden: false,
       item_type: 'custom',
       title: '',
       description: '',
@@ -983,6 +1027,17 @@ export default function OrderDetail() {
         addons: parseAddons(it.addons),
       };
     }
+    /**
+     * Identity and visibility, as the API expects them.
+     *
+     * `uid` is OMITTED for an item that has never been saved — the
+     * Worker mints one then — and round-tripped verbatim otherwise, since
+     * it is what the Worker diffs visibility against on a confirmed
+     * order.
+     */
+    function identityFor(it: ItemDraft): ItemIdentityFields {
+      return { ...(it.uid ? { uid: it.uid } : {}), hidden: it.hidden };
+    }
     for (const [i, it] of items.entries()) {
       if (it.item_type === 'blind') {
         const panels = it.panels.map(parsePositive);
@@ -1030,6 +1085,7 @@ export default function OrderDetail() {
           attributes,
           quantity: Math.round(qty),
           ...adj,
+          ...identityFor(it),
         });
       } else {
         const qty = parsePositive(it.quantity);
@@ -1050,6 +1106,7 @@ export default function OrderDetail() {
             description: it.description.trim(),
             quantity: Math.round(qty),
             ...adj,
+            ...identityFor(it),
           });
         } else if (it.item_type === 'preset') {
           // Legacy preset: no provenance, so its stored price still
@@ -1063,6 +1120,7 @@ export default function OrderDetail() {
             quantity: Math.round(qty),
             unit_price: unit,
             ...adj,
+            ...identityFor(it),
           });
         } else {
           if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
@@ -1073,6 +1131,7 @@ export default function OrderDetail() {
             quantity: Math.round(qty),
             unit_price: unit,
             ...adj,
+            ...identityFor(it),
           });
         }
       }
@@ -1204,6 +1263,27 @@ export default function OrderDetail() {
       toast.success(`Reverted to ${label}.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Revert failed.');
+    }
+  }
+
+  /**
+   * Copies this order into a new draft and opens it.
+   *
+   * The Worker duplicates from the DATABASE, so unsaved edits on screen
+   * are not part of the copy — the confirm below says so rather than
+   * silently dropping them.
+   */
+  async function handleDuplicateOrder() {
+    if (!id) return;
+    try {
+      const copy = await duplicateMut.mutateAsync(id);
+      toast.success(`Duplicated to ${copy.order_number}.`);
+      // Hydration is keyed off the loaded order, so the editor must be
+      // told to hydrate again for the copy it is about to show.
+      setHydrated(false);
+      navigate(`/orders/${copy.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
     }
   }
 
@@ -2133,6 +2213,23 @@ export default function OrderDetail() {
         {ICONS.customerView}
         <span className="hidden sm:inline">Customer View</span>
       </button>
+      {/* Duplicate — only for a SAVED order: an unsaved one has no rows
+          to copy, and the Worker duplicates from the database, not from
+          whatever is on screen. */}
+      {id && (
+        <button
+          onClick={handleDuplicateOrder}
+          disabled={duplicateMut.isPending || saving}
+          title="Create a new draft order with the same customer and items"
+          aria-label="Duplicate Order"
+          className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
+        >
+          {ICONS.duplicate}
+          <span className="hidden sm:inline">
+            {duplicateMut.isPending ? 'Duplicating…' : 'Duplicate'}
+          </span>
+        </button>
+      )}
       {id && (
         <button
           onClick={handleDeleteOrder}
@@ -2363,7 +2460,7 @@ export default function OrderDetail() {
                       return (
                         <li
                           key={it.key}
-                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
+                          className={`flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2${it.hidden ? ' opacity-55' : ''}`}
                         >
                           {/*
                             Line 1 on phones: checkbox, badge, name.
@@ -2393,6 +2490,15 @@ export default function OrderDetail() {
                             <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
                               {typeBadge}
                             </span>
+
+                            {/* Says out loud what the muted row and the
+                                struck price only imply: this line is on
+                                no document and in no total. */}
+                            {it.hidden && (
+                              <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
+                                Hidden
+                              </span>
+                            )}
 
                             {/*
                               Name WRAPS; it does not truncate. A custom
@@ -2451,7 +2557,9 @@ export default function OrderDetail() {
                               customer's signal is the struck-through
                               original on the documents, not this.
                             */}
-                            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary">
+                            <span
+                              className={`flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary${it.hidden ? ' line-through' : ''}`}
+                            >
                               {price ? `$${price.total.toFixed(2)}` : '—'}
                               {price && price.unit !== price.base && (
                                 <span
@@ -2462,11 +2570,44 @@ export default function OrderDetail() {
                               )}
                             </span>
 
-                            {/* Edit / Duplicate / Delete — hidden in read-only.
-                                44px targets on the two-line layout, where there
-                                is room; back to 32px inline at `sm+`. */}
+                            {/* Show-hide / Edit / Duplicate / Delete — hidden
+                                in read-only. 44px targets on the two-line
+                                layout, where there is room; back to 32px
+                                inline at `sm+`. */}
                             {!readOnly && (
                               <span className="flex shrink-0 items-center gap-1">
+                                {/* Visibility. Disabled once the order is
+                                    confirmed: the customer has been quoted a
+                                    total, and hiding a line would move it
+                                    under them. The Worker refuses the save
+                                    too — this button only says so earlier. */}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleHidden(it.key)}
+                                  disabled={postConfirm}
+                                  title={
+                                    postConfirm
+                                      ? 'Visibility can only be changed before the order is confirmed'
+                                      : it.hidden
+                                        ? `Show ${name} on documents`
+                                        : `Hide ${name} from documents`
+                                  }
+                                  aria-label={it.hidden ? `Show ${name}` : `Hide ${name}`}
+                                  aria-pressed={it.hidden}
+                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted sm:h-8 sm:w-8"
+                                >
+                                  {it.hidden ? (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
+                                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.15 18.15 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24M2 2l20 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  ) : (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
+                                      <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => openEdit(it.key)}

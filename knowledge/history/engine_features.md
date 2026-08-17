@@ -2651,3 +2651,94 @@ and putting it in the popup would defeat one-row-per-window.
 web `tsc -b --noEmit` clean, vitest **221/221** (16 new), `oxlint` exit 0, `vite build` clean
 with `border-danger` and the row grid template present in the emitted CSS. NOT seen in a
 browser — the order editor is behind `ProtectedRoute`.
+
+## Line-item visibility — the eye toggle (2026-08-17)
+
+A line item can now be HIDDEN: it stays in the order editor with its price on screen, but
+leaves the order total and every customer- and production-facing surface. The use case is a
+line the consultant wants to keep on file (a quoted-then-dropped blind, an option the
+customer is still deciding on) without it being charged, printed, cut or labelled.
+
+**Schema (`supabase/migrations/20260817000037_line_items_uid_hidden.sql`):**
+- `line_items.hidden boolean not null default false` — the flag. Defaulting to false means
+  no existing item or already-issued document changes.
+- `line_items.uid uuid not null default gen_random_uuid()` — a STABLE per-item identity.
+  Saving an order replaces its line items wholesale (delete-all + bulk insert), so `id` is
+  reborn on every save and `position` moves on any insert or reorder. `uid` is minted by
+  the Worker, round-trips through the client, and is what makes a per-item diff possible at
+  all. Indexed (`line_items_uid_idx`).
+
+**Worker (`apps/api/src/routes/orders.ts`):**
+- `identityFields` (`uid` optional uuid, `hidden` defaulting to false) is spread into all
+  three line-item schemas, which stay `.strict()`. Both row builders in `resolveLineItems`
+  carry both columns, keeping the uniform column set the PostgREST bulk insert requires.
+- Hidden items are still PRICED and stored — un-hiding restores the exact figure — but
+  `calculateTotals` is fed `rows.filter((r) => !r.hidden)` in both create and update.
+- `PUT /:id` refuses a visibility change on a CONFIRMED order (400 "Visibility can only be
+  changed before the order is confirmed."): once the order is an invoice, hiding a line
+  would move a total the customer was already quoted. The diff is by `uid`, never by
+  position, so adding, removing and reordering items on a confirmed order stay legal. A
+  brand-new item may join a confirmed order but not arrive already hidden. `/unconfirm` is
+  the way back.
+- Hidden rows are filtered out at each document assembly point: `toPdfData` (estimate and
+  invoice), the `buildWarrantyCoverage` call in `/:id/warranty-pdf`, and the same call in
+  `lib/warrantyIssue.ts` (the automatic certificate).
+- `routes/public.ts` drops them from the public estimate / customer-view payload, so
+  `CustomerView.tsx` needed no change.
+
+**Web:**
+- `LineItem` gains `uid`/`hidden`; `ItemIdentityFields` (in `hooks/useOrders.ts`) is
+  extended by all three payload types; both draft shapes carry `uid: string | null` (null =
+  never saved, so the field is omitted and the Worker mints one) and `hidden`.
+- `OrderDetail` hydrates both fields, seeds them on new items, sends them on every payload
+  push, and filters hidden drafts out of the live totals preview — the twin of the Worker's
+  filter. `duplicateItem` mints a FRESH uid on the clone: two rows sharing one identity
+  would make the visibility diff ambiguous.
+- The row shows an eye / eye-off button (disabled with an explanatory title once the order
+  is confirmed), mutes to 55% opacity, gains a "Hidden" chip and strikes through its price.
+- `lib/labels.ts` filters inside `buildLabels`, BEFORE the total is counted, so the "n of m"
+  on a printed label matches the bundle actually printed. `ManufacturerCopy.tsx` filters
+  before `buildManufacturingPlan`, so no stock is allocated for an item that was not sold.
+
+## Duplicating an order (2026-08-17)
+
+`POST /api/orders/:id/duplicate` copies an order into a NEW draft: same customer, discount
+and line items (with their `hidden` flags and hand-entered adjustments), fresh order number,
+`order_date` = today, expiry from `company_settings.default_expiry_days`, and fresh uids.
+Not copied: payments, the activity trail, the appointment/installation, warranty state, the
+public token, `cut_done`, and any cancellation request.
+
+**How:** the route does NOT copy rows. `lib/orderDuplicate.ts` (pure, no DB, no `c.env`)
+maps the stored rows back into a `POST /orders` payload, which is then parsed through
+`orderSchema` and run through the ordinary create path — so a duplicate is priced from
+TODAY's catalog, exactly like any other write, and a row written under an older schema fails
+as a readable 400 instead of slipping past validation on age alone.
+
+- `stripCatalogSnapshots(blindsType, attrs)` removes each `CatalogRef`'s `nameKey`/
+  `valueKey` from a stored attribute blob. Those keys are written by `resolveCatalogRefs`
+  AFTER validation and are deliberately undeclared in the strict `attributeSchema`, so
+  feeding a stored blob back verbatim would be a 400.
+- Only the money a client may legitimately dictate travels: a hand-entered override
+  (present exactly when `base_unit_price` is set), the add-on list, and a custom or
+  legacy-preset item's own typed price. A custom item never receives an override — the
+  create path rejects the field on it.
+- The create path itself was extracted to `createOrderFromInput(sb, input, logMessage)` and
+  is now shared by `POST /` and `POST /:id/duplicate`, so the two cannot drift.
+- A catalog row deleted since the source order was written surfaces the ordinary message
+  ("Selected material no longer exists.").
+- Both orders get a log line: `Duplicated from <n>.` on the copy, `Duplicated to <n>.` on
+  the source.
+
+**Web:** `useDuplicateOrder` (invalidates the SOURCE order's logs as well as caching the
+copy), a Duplicate action in the order toolbar (saved orders only — the Worker duplicates
+from the database, not from unsaved screen state), and a per-row action on the order list.
+List rows are whole-row `<button>`s, so that action is an absolutely-positioned SIBLING with
+its own mutation instance, which keeps the pending state on the clicked row alone.
+
+### Verified
+api 337/337 (new: `orderDuplicate.test.ts` 8 cases; duplicate route happy path / 404 /
+deleted-catalog 400; visibility gate 5 cases; hidden excluded from totals, from the public
+payload, and from the PDF), web 223/223 after merging `main` (bulk measurement capture and
+the single-type bulk edit), both `tsc --noEmit` clean, `oxlint` clean,
+`vite build` clean. The PDF test inflates the content streams and decodes pdf-lib's hex
+string literals, so the "not printed" assertion cannot pass vacuously.

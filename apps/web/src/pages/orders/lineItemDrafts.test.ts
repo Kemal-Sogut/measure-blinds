@@ -50,6 +50,8 @@ function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
     show_original_price: true,
     addons: [],
     key: 'd1',
+    uid: null,
+    hidden: false,
     item_type: 'blind',
     room_name: 'Living Room',
     blinds_type: 'Roller',
@@ -286,6 +288,8 @@ describe('optionsForType / slotsForType', () => {
 function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
   return {
     key: 'f1',
+    uid: null,
+    hidden: false,
     item_type: 'custom',
     title: 'Extra work',
     description: '',

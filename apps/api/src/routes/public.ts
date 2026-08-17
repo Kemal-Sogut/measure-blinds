@@ -257,7 +257,11 @@ app.get('/estimate/:token', async (c) => {
         shipping_postal_code: order.customer?.shipping_postal_code ?? '',
       },
       company,
-      line_items: (order.line_items ?? []).map((li: Record<string, unknown>) => ({
+      // A hidden item is absent from the total the customer is quoted, so
+      // printing it here would show a line that nothing adds up to.
+      line_items: (order.line_items ?? [])
+        .filter((li: Record<string, unknown>) => !li.hidden)
+        .map((li: Record<string, unknown>) => ({
         item_type: li.item_type,
         room_name: li.room_name,
         blinds_type: li.blinds_type,

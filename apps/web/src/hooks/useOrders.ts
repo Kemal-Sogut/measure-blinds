@@ -62,8 +62,22 @@ export interface AdjustmentInputFields {
   addons?: AddonInput[];
 }
 
+/**
+ * Identity and visibility, carried by every line-item payload.
+ *
+ * `uid` is omitted for an item that has never been saved — the Worker
+ * mints one and returns it. Sending back the uid of a saved item is what
+ * lets the Worker diff visibility across the wholesale line-item
+ * replace, so it must round-trip untouched; position cannot stand in for
+ * it, because it moves whenever items are added, removed or reordered.
+ */
+export interface ItemIdentityFields {
+  uid?: string;
+  hidden: boolean;
+}
+
 /** Blind line item payload — measurements + option ids, no base price. */
-export interface BlindItemInput extends AdjustmentInputFields {
+export interface BlindItemInput extends AdjustmentInputFields, ItemIdentityFields {
   item_type: 'blind';
   room_name: string;
   blinds_type: string;
@@ -88,7 +102,7 @@ export interface BlindItemInput extends AdjustmentInputFields {
 }
 
 /** Preset line item payload — a catalog reference the Worker prices. */
-export interface PresetItemInput extends AdjustmentInputFields {
+export interface PresetItemInput extends AdjustmentInputFields, ItemIdentityFields {
   item_type: 'preset';
   /** Null only for legacy rows saved before provenance existed. */
   preset_id: string | null;
@@ -107,7 +121,9 @@ export interface PresetItemInput extends AdjustmentInputFields {
  * the type carry it would make that a runtime surprise instead of a
  * compile error.
  */
-export interface CustomItemInput extends Omit<AdjustmentInputFields, 'unit_price_override'> {
+export interface CustomItemInput
+  extends Omit<AdjustmentInputFields, 'unit_price_override'>,
+    ItemIdentityFields {
   item_type: 'custom';
   title: string;
   description: string;
@@ -294,6 +310,30 @@ export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; 
         })
       ).data,
     onSuccess: cache,
+  });
+}
+
+/**
+ * Duplicates an order into a new draft and returns the COPY.
+ *
+ * Not built on `useLifecycleMutation` despite the identical call shape:
+ * that helper caches the order it receives and invalidates that order's
+ * logs, which here are the copy's. The source order also gains a trail
+ * entry ("Duplicated to …"), so its log is invalidated explicitly —
+ * otherwise coming back to it would show a stale trail.
+ *
+ * The caller navigates to `data.id`; this hook does no routing.
+ */
+export function useDuplicateOrder(): UseMutationResult<Order, Error, string> {
+  const qc = useQueryClient();
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<Envelope<Order>>(`/api/orders/${id}/duplicate`, { method: 'POST' })).data,
+    onSuccess: (copy, sourceId) => {
+      cache(copy);
+      void qc.invalidateQueries({ queryKey: ['orders', 'logs', sourceId] });
+    },
   });
 }
 

@@ -308,6 +308,41 @@ describe('GET /public/estimate/:token', () => {
     expect(Array.isArray(li.attribute_lines)).toBe(true);
   });
 
+  it('omits hidden line items from the payload', async () => {
+    // A hidden item is not part of what the customer is being charged —
+    // it never reaches the total — so printing it on their page would
+    // show a line that nothing adds up to.
+    const item = (room: string, hidden: boolean) => ({
+      item_type: 'blind',
+      room_name: room,
+      blinds_type: 'Roller',
+      panels: [140],
+      height_cm: 200,
+      material_name: 'Blackout White',
+      cassette_name: 'Standard',
+      bottom_rail_name: 'Regular',
+      control_name: 'Chain',
+      color: 'White',
+      description: '',
+      note: '',
+      attributes: {},
+      quantity: 1,
+      unit_price: 100,
+      line_total: 100,
+      hidden,
+    });
+    db.order = {
+      ...sentOrder(),
+      line_items: [item('Living Room', false), item('Cellar', true)],
+    };
+    const res = await req(`/estimate/${TOKEN}`);
+    const raw = await res.text();
+    expect(raw).not.toContain('Cellar');
+    const body = JSON.parse(raw) as { data: { line_items: Record<string, unknown>[] } };
+    expect(body.data.line_items).toHaveLength(1);
+    expect(body.data.line_items[0].room_name).toBe('Living Room');
+  });
+
   it('defensively expires a stale sent order on read', async () => {
     db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
     const res = await req(`/estimate/${TOKEN}`);

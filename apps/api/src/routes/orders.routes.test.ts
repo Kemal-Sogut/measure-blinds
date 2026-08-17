@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { inflateSync } from 'node:zlib';
 
 /** Rows returned by table, keyed for the fake client. */
 interface FakeDb {
@@ -395,6 +396,46 @@ describe('POST /api/orders', () => {
     expect(await res.json()).toMatchObject({
       error: 'Selected bottom rail option no longer exists.',
     });
+  });
+
+  it('excludes hidden items from the totals but still stores them', async () => {
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const body = payload();
+    body.discount_type = 'fixed';
+    body.discount_value = 0;
+    // The preset row (25) is hidden; only the two blinds (364) count.
+    (body.line_items[1] as Record<string, unknown>).hidden = true;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const orderRow = db.insertPayloads['orders']?.[0] as Record<string, number>;
+    expect(orderRow.subtotal).toBe(364);
+    // The hidden row is still inserted, still priced, and carries a uid.
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(2);
+    expect(rows[1].hidden).toBe(true);
+    expect(rows[1].line_total).toBe(25);
+    expect(typeof rows[1].uid).toBe('string');
+    // Uniform column set (PostgREST bulk-insert rule).
+    expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
+  });
+
+  it('keeps a client-supplied uid so visibility can be diffed later', async () => {
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const body = payload();
+    const uid = '99999999-9999-4999-8999-999999999999';
+    (body.line_items[0] as Record<string, unknown>).uid = uid;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].uid).toBe(uid);
   });
 });
 
@@ -1577,5 +1618,275 @@ describe('price overrides and add-ons', () => {
     const rows = insertedRows();
     expect(rows.length).toBe(2);
     expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
+  });
+});
+
+describe('PUT /api/orders/:id — visibility gate', () => {
+  const UID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const UID_B = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+
+  /** Seeds the pre-update read with one visible and one hidden item. */
+  function seedExisting(status: string) {
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        status,
+        expiry_date: '2026-07-17',
+        line_items: [
+          { position: 0, uid: UID_A, hidden: false, unit_price: 182, base_unit_price: null, addons: [] },
+          { position: 1, uid: UID_B, hidden: true, unit_price: 25, base_unit_price: null, addons: [] },
+        ],
+      },
+    ];
+  }
+
+  /** The saved payload, each item carrying the uid it came back with. */
+  function editPayload() {
+    const body = payload();
+    (body.line_items[0] as Record<string, unknown>).uid = UID_A;
+    (body.line_items[0] as Record<string, unknown>).hidden = false;
+    (body.line_items[1] as Record<string, unknown>).uid = UID_B;
+    (body.line_items[1] as Record<string, unknown>).hidden = true;
+    return body;
+  }
+
+  async function put(body: unknown) {
+    return ordersApp.request('/o1', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+  }
+
+  it('rejects showing a hidden item on a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    (body.line_items[1] as Record<string, unknown>).hidden = false;
+    const res = await put(body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Visibility can only be changed before the order is confirmed.',
+    });
+  });
+
+  it('rejects adding a hidden item to a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    body.line_items.push({
+      item_type: 'custom',
+      title: 'Extra',
+      description: '',
+      quantity: 1,
+      unit_price: 10,
+      hidden: true,
+    } as never);
+    const res = await put(body);
+    expect(res.status).toBe(400);
+  });
+
+  it('allows an unchanged visibility set on a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+  });
+
+  it('allows deleting a hidden item from a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    body.line_items = [body.line_items[0]];
+    const res = await put(body);
+    expect(res.status).toBe(200);
+  });
+
+  it('allows flipping visibility while the order is still sent', async () => {
+    seedExisting('sent');
+    const body = editPayload();
+    (body.line_items[1] as Record<string, unknown>).hidden = false;
+    const res = await put(body);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /api/orders/:id/pdf', () => {
+  /** An order carrying one visible and one hidden blind. */
+  function seedOrder() {
+    const item = (room: string, hidden: boolean) => ({
+      item_type: 'blind',
+      position: hidden ? 1 : 0,
+      room_name: room,
+      blinds_type: 'Roller',
+      panels: [140],
+      height_cm: 200,
+      material_name: 'Blackout White',
+      cassette_name: 'Standard',
+      bottom_rail_name: 'Regular',
+      control_name: 'Chain',
+      color: 'White',
+      title: '',
+      description: '',
+      note: '',
+      attributes: {},
+      quantity: 1,
+      unit_price: 100,
+      line_total: 100,
+      base_unit_price: null,
+      show_original_price: true,
+      addons: [],
+      hidden,
+    });
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        order_number: 'T0703-1',
+        order_date: '2026-07-03',
+        expiry_date: '2026-07-17',
+        status: 'sent',
+        subtotal: 100,
+        discount_amount: 0,
+        taxable_amount: 100,
+        tax_amount: 13,
+        total: 113,
+        public_token: '00000000-0000-4000-8000-000000000000',
+        terms_snapshot: 'Terms here',
+        customer: { first_name: 'Ada', last_name: 'Lovelace' },
+        payments: [],
+        line_items: [item('Living Room', false), item('Cellar', true)],
+      },
+    ];
+    db.responses['company_settings.select'] = [
+      { company_name: 'Blinds Nisa', logo_url: null, email: 'a@b.c', phone: '', address: '', hst_number: '' },
+    ];
+  }
+
+  /**
+   * The text pdf-lib actually drew.
+   *
+   * Content streams are Flate-compressed, so searching the raw response
+   * bytes finds nothing and would make any "not printed" assertion pass
+   * vacuously. Every stream is inflated and concatenated instead; the
+   * ones that are not deflate (there are none today) are skipped.
+   */
+  function drawnText(bytes: Uint8Array): string {
+    const buf = Buffer.from(bytes);
+    let out = '';
+    let from = 0;
+    for (;;) {
+      const end = buf.indexOf('endstream', from);
+      if (end === -1) break;
+      const keyword = buf.lastIndexOf('stream', end - 1);
+      if (keyword === -1) break;
+      // The keyword is followed by an EOL that is NOT part of the data,
+      // and the data is followed by one before `endstream`.
+      let start = keyword + 'stream'.length;
+      if (buf[start] === 0x0d) start += 1;
+      if (buf[start] === 0x0a) start += 1;
+      let stop = end;
+      if (buf[stop - 1] === 0x0a) stop -= 1;
+      if (buf[stop - 1] === 0x0d) stop -= 1;
+      try {
+        out += inflateSync(buf.subarray(start, stop)).toString('latin1');
+      } catch {
+        // Not a deflate stream — nothing to read here.
+      }
+      from = end + 'endstream'.length;
+    }
+    // pdf-lib writes every string as a hex literal (`<48656C6C6F> Tj`),
+    // so the drawn words are only readable once those are decoded.
+    return out.replace(/<([0-9A-Fa-f]+)>/g, (_m, hex: string) =>
+      Buffer.from(hex, 'hex').toString('latin1')
+    );
+  }
+
+  it('draws visible line items and omits hidden ones', async () => {
+    seedOrder();
+    const res = await ordersApp.request('/o1/pdf', {}, ENV);
+    expect(res.status).toBe(200);
+    const text = drawnText(new Uint8Array(await res.arrayBuffer()));
+    // The positive assertion is what makes the negative one meaningful:
+    // both titles are drawn the same way, so if one is findable in the
+    // page content and the other is not, the filter is why.
+    expect(text).toContain('Living Room');
+    expect(text).not.toContain('Cellar');
+  });
+});
+
+describe('POST /api/orders/:id/duplicate', () => {
+  /** Seeds the source-order read the duplicate route performs. */
+  function seedSource() {
+    db.responses['orders.select'] = [
+      {
+        id: 'src',
+        order_number: 'T0703-1',
+        customer_id: '44444444-4444-4444-8444-444444444444',
+        discount_type: 'percent',
+        discount_value: 10,
+        status: 'installed',
+        payments: [{ amount: 500 }],
+        line_items: [
+          {
+            item_type: 'blind',
+            position: 0,
+            uid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+            room_name: 'Living Room',
+            blinds_type: 'Roller',
+            panels: [70, 70],
+            height_cm: 200,
+            material_id: MATERIAL.id,
+            cassette_id: CASSETTE.id,
+            bottom_rail_id: BOTTOM_RAIL.id,
+            control_id: CONTROL.id,
+            installation_id: null,
+            color: 'White',
+            note: '',
+            attributes: {},
+            quantity: 2,
+            hidden: false,
+            unit_price: 182,
+            base_unit_price: null,
+            show_original_price: true,
+            addons: [],
+          },
+        ],
+      },
+    ];
+  }
+
+  it('creates a draft copy priced from the current catalog', async () => {
+    seedSource();
+    db.orderInsertResults = [{ data: { id: 'new1', order_number: 'T0703-2' } }];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(201);
+    const orderRow = db.insertPayloads['orders']?.[0] as Record<string, unknown>;
+    // Status is left to the column default ('draft') and never sent, so
+    // a duplicate of an installed order cannot inherit its stage.
+    expect(orderRow.status).toBeUndefined();
+    expect(orderRow.customer_id).toBe('44444444-4444-4444-8444-444444444444');
+    expect(orderRow.discount_value).toBe(10);
+    // 154 material + 28 cassette per blind × 2 = 364, priced by the
+    // Worker from the catalog rather than copied from the source row.
+    expect(orderRow.subtotal).toBe(364);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].room_name).toBe('Living Room');
+    // Fresh identity — the source order's uid must not be reused.
+    expect(rows[0].uid).not.toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
+    // Nothing from the source order's own history travels.
+    expect(db.insertPayloads['payments']).toBeUndefined();
+  });
+
+  it('404s for an unknown order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/nope/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
+  });
+
+  it('400s with a readable message when a catalog row is gone', async () => {
+    seedSource();
+    db.responses['materials.select'] = [];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Selected material no longer exists.',
+    });
   });
 });
