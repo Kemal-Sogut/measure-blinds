@@ -490,11 +490,14 @@ app.get('/blind-type-defaults', async (c) => {
  * rule `loadSlotScoping` enforces for hardware at order-save time,
  * applied here to all five slots including Material. This is what keeps
  * a stored default from ever producing a draft the order form cannot
- * save. Responds 404 when `blindTypeId` does not name a `blind_types`
- * row, and 400 naming the offending field on the first check that fails
- * (not-linked and inactive are reported as distinct messages so the
- * settings page can explain which). A `null` field is left unvalidated
- * and clears any existing default for that slot.
+ * save. Responds 500 if any lookup itself fails (transport/permission/DB
+ * error — never mistaken for a genuine not-found, so infrastructure
+ * failures stay visible instead of masquerading as bad input), 404 when
+ * `blindTypeId` does not name a `blind_types` row, and 400 naming the
+ * offending field on the first check that fails (not-linked and inactive
+ * are reported as distinct messages so the settings page can explain
+ * which). A `null` field is left unvalidated and clears any existing
+ * default for that slot.
  */
 app.put('/blind-type-defaults/:blindTypeId', async (c) => {
   const parsed = blindTypeDefaultsSchema.safeParse(await c.req.json().catch(() => null));
@@ -502,15 +505,32 @@ app.put('/blind-type-defaults/:blindTypeId', async (c) => {
   const blindTypeId = c.req.param('blindTypeId');
   const sb = createSupabaseAdmin(c.env);
 
-  const { data: type } = await sb.from('blind_types').select('id').eq('id', blindTypeId).maybeSingle();
+  const { data: type, error: typeError } = await sb
+    .from('blind_types')
+    .select('id')
+    .eq('id', blindTypeId)
+    .maybeSingle();
+  if (typeError) return c.json({ error: typeError.message }, 500);
   if (!type) return c.json({ error: 'Unknown blind type.' }, 404);
 
   for (const { field, join, fk, options, label } of DEFAULT_LINKS) {
     const id = parsed.data[field];
     if (!id) continue;
-    const { data: link } = await sb.from(join).select(fk).eq(fk, id).eq('blind_type_id', blindTypeId).maybeSingle();
+    const { data: link, error: linkError } = await sb
+      .from(join)
+      .select(fk)
+      .eq(fk, id)
+      .eq('blind_type_id', blindTypeId)
+      .maybeSingle();
+    if (linkError) return c.json({ error: linkError.message }, 500);
     if (!link) return c.json({ error: `${label} default is not offered for this blind type.` }, 400);
-    const { data: opt } = await sb.from(options).select('id').eq('id', id).eq('active', true).maybeSingle();
+    const { data: opt, error: optError } = await sb
+      .from(options)
+      .select('id')
+      .eq('id', id)
+      .eq('active', true)
+      .maybeSingle();
+    if (optError) return c.json({ error: optError.message }, 500);
     if (!opt) return c.json({ error: `${label} default is inactive.` }, 400);
   }
 
