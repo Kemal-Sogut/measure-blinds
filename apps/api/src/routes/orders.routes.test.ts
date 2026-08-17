@@ -21,6 +21,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { inflateSync } from 'node:zlib';
 
 /** Rows returned by table, keyed for the fake client. */
 interface FakeDb {
@@ -1703,5 +1704,108 @@ describe('PUT /api/orders/:id — visibility gate', () => {
     (body.line_items[1] as Record<string, unknown>).hidden = false;
     const res = await put(body);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('GET /api/orders/:id/pdf', () => {
+  /** An order carrying one visible and one hidden blind. */
+  function seedOrder() {
+    const item = (room: string, hidden: boolean) => ({
+      item_type: 'blind',
+      position: hidden ? 1 : 0,
+      room_name: room,
+      blinds_type: 'Roller',
+      panels: [140],
+      height_cm: 200,
+      material_name: 'Blackout White',
+      cassette_name: 'Standard',
+      bottom_rail_name: 'Regular',
+      control_name: 'Chain',
+      color: 'White',
+      title: '',
+      description: '',
+      note: '',
+      attributes: {},
+      quantity: 1,
+      unit_price: 100,
+      line_total: 100,
+      base_unit_price: null,
+      show_original_price: true,
+      addons: [],
+      hidden,
+    });
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        order_number: 'T0703-1',
+        order_date: '2026-07-03',
+        expiry_date: '2026-07-17',
+        status: 'sent',
+        subtotal: 100,
+        discount_amount: 0,
+        taxable_amount: 100,
+        tax_amount: 13,
+        total: 113,
+        public_token: '00000000-0000-4000-8000-000000000000',
+        terms_snapshot: 'Terms here',
+        customer: { first_name: 'Ada', last_name: 'Lovelace' },
+        payments: [],
+        line_items: [item('Living Room', false), item('Cellar', true)],
+      },
+    ];
+    db.responses['company_settings.select'] = [
+      { company_name: 'Blinds Nisa', logo_url: null, email: 'a@b.c', phone: '', address: '', hst_number: '' },
+    ];
+  }
+
+  /**
+   * The text pdf-lib actually drew.
+   *
+   * Content streams are Flate-compressed, so searching the raw response
+   * bytes finds nothing and would make any "not printed" assertion pass
+   * vacuously. Every stream is inflated and concatenated instead; the
+   * ones that are not deflate (there are none today) are skipped.
+   */
+  function drawnText(bytes: Uint8Array): string {
+    const buf = Buffer.from(bytes);
+    let out = '';
+    let from = 0;
+    for (;;) {
+      const end = buf.indexOf('endstream', from);
+      if (end === -1) break;
+      const keyword = buf.lastIndexOf('stream', end - 1);
+      if (keyword === -1) break;
+      // The keyword is followed by an EOL that is NOT part of the data,
+      // and the data is followed by one before `endstream`.
+      let start = keyword + 'stream'.length;
+      if (buf[start] === 0x0d) start += 1;
+      if (buf[start] === 0x0a) start += 1;
+      let stop = end;
+      if (buf[stop - 1] === 0x0a) stop -= 1;
+      if (buf[stop - 1] === 0x0d) stop -= 1;
+      try {
+        out += inflateSync(buf.subarray(start, stop)).toString('latin1');
+      } catch {
+        // Not a deflate stream — nothing to read here.
+      }
+      from = end + 'endstream'.length;
+    }
+    // pdf-lib writes every string as a hex literal (`<48656C6C6F> Tj`),
+    // so the drawn words are only readable once those are decoded.
+    return out.replace(/<([0-9A-Fa-f]+)>/g, (_m, hex: string) =>
+      Buffer.from(hex, 'hex').toString('latin1')
+    );
+  }
+
+  it('draws visible line items and omits hidden ones', async () => {
+    seedOrder();
+    const res = await ordersApp.request('/o1/pdf', {}, ENV);
+    expect(res.status).toBe(200);
+    const text = drawnText(new Uint8Array(await res.arrayBuffer()));
+    // The positive assertion is what makes the negative one meaningful:
+    // both titles are drawn the same way, so if one is findable in the
+    // page content and the other is not, the filter is why.
+    expect(text).toContain('Living Room');
+    expect(text).not.toContain('Cellar');
   });
 });

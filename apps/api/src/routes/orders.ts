@@ -1106,7 +1106,13 @@ async function toPdfData(
       paid_on: p.paid_on,
       note: p.note ?? '',
     })),
-    line_items: (order.line_items ?? []).map((li: Record<string, any>) => ({
+    // Hidden items are dropped HERE, at the single assembly point every
+    // document passes through, for the same reason `base_unit_price` is
+    // masked below: a PDF's text layer is extractable whether or not the
+    // row was ever drawn on a page.
+    line_items: (order.line_items ?? [])
+      .filter((li: Record<string, any>) => !li.hidden)
+      .map((li: Record<string, any>) => ({
       ...li,
       quantity: Number(li.quantity),
       unit_price: Number(li.unit_price),
@@ -1774,7 +1780,11 @@ app.get('/:id/warranty-pdf', async (c) => {
   try {
     const pdf = await buildWarrantyPdf({
       order: { order_number: order.order_number, order_date: order.order_date },
-      coverage: buildWarrantyCoverage(order.line_items ?? [], startsOn),
+      // A hidden item was never charged for, so nothing covers it.
+      coverage: buildWarrantyCoverage(
+        (order.line_items ?? []).filter((li: Record<string, any>) => !li.hidden),
+        startsOn
+      ),
       customer: order.customer,
       company: {
         company_name: company.company_name || 'Blinds Nisa',
