@@ -396,6 +396,46 @@ describe('POST /api/orders', () => {
       error: 'Selected bottom rail option no longer exists.',
     });
   });
+
+  it('excludes hidden items from the totals but still stores them', async () => {
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const body = payload();
+    body.discount_type = 'fixed';
+    body.discount_value = 0;
+    // The preset row (25) is hidden; only the two blinds (364) count.
+    (body.line_items[1] as Record<string, unknown>).hidden = true;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const orderRow = db.insertPayloads['orders']?.[0] as Record<string, number>;
+    expect(orderRow.subtotal).toBe(364);
+    // The hidden row is still inserted, still priced, and carries a uid.
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(2);
+    expect(rows[1].hidden).toBe(true);
+    expect(rows[1].line_total).toBe(25);
+    expect(typeof rows[1].uid).toBe('string');
+    // Uniform column set (PostgREST bulk-insert rule).
+    expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
+  });
+
+  it('keeps a client-supplied uid so visibility can be diffed later', async () => {
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const body = payload();
+    const uid = '99999999-9999-4999-8999-999999999999';
+    (body.line_items[0] as Record<string, unknown>).uid = uid;
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].uid).toBe(uid);
+  });
 });
 
 describe('POST /api/orders/:id/send', () => {

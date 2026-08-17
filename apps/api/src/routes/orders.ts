@@ -127,6 +127,26 @@ const adjustmentFields = {
 };
 
 /**
+ * The identity and visibility fields every line-item shape carries.
+ *
+ * `uid` is optional on the wire: an item the client has never saved has
+ * none, and the Worker mints one. An item that HAS been saved sends back
+ * the uid it was given, which is the only way `PUT /:id` can tell —
+ * across the wholesale delete/insert every save performs — whether a
+ * given item's visibility changed. Position cannot answer that: it moves
+ * whenever an item is added, removed or reordered.
+ *
+ * `hidden` keeps an item in the editor while removing it from the order
+ * total and from every customer- and production-facing document. It
+ * defaults to false, so any caller that omits it leaves every item
+ * visible.
+ */
+const identityFields = {
+  uid: z.string().uuid().optional(),
+  hidden: z.boolean().default(false),
+};
+
+/**
  * Consultant-typed unit price replacing the calculated one. Absent from
  * `customItemBase` on purpose — a custom item's price is already freely
  * typed, so a second price field would be two names for one number.
@@ -178,6 +198,7 @@ const blindItemSchema = z
     quantity: z.number().int().min(1).max(999),
     unit_price_override: overrideField,
     ...adjustmentFields,
+    ...identityFields,
   })
   .strict();
 
@@ -204,6 +225,7 @@ const presetItemBase = z
     unit_price: z.number().min(0).max(1_000_000).optional(),
     unit_price_override: overrideField,
     ...adjustmentFields,
+    ...identityFields,
   })
   .strict();
 
@@ -216,6 +238,7 @@ const customItemBase = z
     quantity: z.number().int().min(1).max(999),
     unit_price: z.number().min(0).max(1_000_000),
     ...adjustmentFields,
+    ...identityFields,
   })
   .strict();
 
@@ -299,8 +322,18 @@ function isConfirmed(status: string): boolean {
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Row shape inserted into line_items (before order_id/position). */
-type LineItemRow = Record<string, unknown> & { line_total: number };
+/**
+ * Row shape inserted into line_items (before order_id/position).
+ *
+ * `line_total`, `hidden` and `uid` are named rather than left to the
+ * index signature because the totals sum and the visibility diff read
+ * them directly, and neither should have to do so through `unknown`.
+ */
+type LineItemRow = Record<string, unknown> & {
+  line_total: number;
+  hidden: boolean;
+  uid: string;
+};
 
 /**
  * Resolves validated line-item inputs into insertable rows:
@@ -467,6 +500,10 @@ async function resolveLineItems(
       return {
         item_type: it.item_type,
         position,
+        // Minted here when the client has none — an item saved for the
+        // first time has no identity yet, and this is where it gets one.
+        uid: it.uid ?? crypto.randomUUID(),
+        hidden: it.hidden,
         room_name: '',
         blinds_type: '',
         panels: [],
@@ -615,6 +652,8 @@ async function resolveLineItems(
     return {
       item_type: 'blind',
       position,
+      uid: it.uid ?? crypto.randomUUID(),
+      hidden: it.hidden,
       room_name: it.room_name,
       blinds_type: it.blinds_type,
       panels: it.panels,
@@ -801,8 +840,11 @@ app.post('/', async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
   }
+  // A hidden item is priced and stored like any other, but it is not
+  // part of what the customer is being charged — so it never reaches the
+  // subtotal. Mirrored by the live preview in the web OrderDetail.
   const totals = calculateTotals(
-    rows.map((r) => r.line_total),
+    rows.filter((r) => !r.hidden).map((r) => r.line_total),
     input.discount_type,
     input.discount_value
   );
@@ -896,8 +938,11 @@ app.put('/:id', async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
   }
+  // A hidden item is priced and stored like any other, but it is not
+  // part of what the customer is being charged — so it never reaches the
+  // subtotal. Mirrored by the live preview in the web OrderDetail.
   const totals = calculateTotals(
-    rows.map((r) => r.line_total),
+    rows.filter((r) => !r.hidden).map((r) => r.line_total),
     input.discount_type,
     input.discount_value
   );
