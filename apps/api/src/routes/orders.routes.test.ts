@@ -1809,3 +1809,84 @@ describe('GET /api/orders/:id/pdf', () => {
     expect(text).not.toContain('Cellar');
   });
 });
+
+describe('POST /api/orders/:id/duplicate', () => {
+  /** Seeds the source-order read the duplicate route performs. */
+  function seedSource() {
+    db.responses['orders.select'] = [
+      {
+        id: 'src',
+        order_number: 'T0703-1',
+        customer_id: '44444444-4444-4444-8444-444444444444',
+        discount_type: 'percent',
+        discount_value: 10,
+        status: 'installed',
+        payments: [{ amount: 500 }],
+        line_items: [
+          {
+            item_type: 'blind',
+            position: 0,
+            uid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+            room_name: 'Living Room',
+            blinds_type: 'Roller',
+            panels: [70, 70],
+            height_cm: 200,
+            material_id: MATERIAL.id,
+            cassette_id: CASSETTE.id,
+            bottom_rail_id: BOTTOM_RAIL.id,
+            control_id: CONTROL.id,
+            installation_id: null,
+            color: 'White',
+            note: '',
+            attributes: {},
+            quantity: 2,
+            hidden: false,
+            unit_price: 182,
+            base_unit_price: null,
+            show_original_price: true,
+            addons: [],
+          },
+        ],
+      },
+    ];
+  }
+
+  it('creates a draft copy priced from the current catalog', async () => {
+    seedSource();
+    db.orderInsertResults = [{ data: { id: 'new1', order_number: 'T0703-2' } }];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(201);
+    const orderRow = db.insertPayloads['orders']?.[0] as Record<string, unknown>;
+    // Status is left to the column default ('draft') and never sent, so
+    // a duplicate of an installed order cannot inherit its stage.
+    expect(orderRow.status).toBeUndefined();
+    expect(orderRow.customer_id).toBe('44444444-4444-4444-8444-444444444444');
+    expect(orderRow.discount_value).toBe(10);
+    // 154 material + 28 cassette per blind × 2 = 364, priced by the
+    // Worker from the catalog rather than copied from the source row.
+    expect(orderRow.subtotal).toBe(364);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].room_name).toBe('Living Room');
+    // Fresh identity — the source order's uid must not be reused.
+    expect(rows[0].uid).not.toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1');
+    // Nothing from the source order's own history travels.
+    expect(db.insertPayloads['payments']).toBeUndefined();
+  });
+
+  it('404s for an unknown order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/nope/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
+  });
+
+  it('400s with a readable message when a catalog row is gone', async () => {
+    seedSource();
+    db.responses['materials.select'] = [];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Selected material no longer exists.',
+    });
+  });
+});

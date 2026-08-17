@@ -80,6 +80,7 @@ import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../
 import { greetingName } from '../lib/customerName';
 import { formatDateLong } from '../lib/timeText';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
+import { toDuplicateInput } from '../lib/orderDuplicate';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
 import {
@@ -810,13 +811,28 @@ app.get('/', async (c) => {
   return c.json({ data: rows });
 });
 
-/** Creates an order with server-generated order number + pricing. */
-app.post('/', async (c) => {
-  const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const input = parsed.data;
-  const sb = createSupabaseAdmin(c.env);
-
+/**
+ * The create path shared by `POST /` and `POST /:id/duplicate`.
+ *
+ * Both routes must produce an order the same way — server-priced from
+ * catalog ids, dated and expiring by the company default, numbered by
+ * the daily counter with the UNIQUE-index retry, line items inserted
+ * with a uniform column set — so the sequence lives here once rather
+ * than being mirrored in a second route that could drift.
+ *
+ * Returns a discriminated result rather than a `Response` so each caller
+ * keeps its own status code and body shape; the caller is also
+ * responsible for reading the finished order back.
+ *
+ * @param sb         Service-role client.
+ * @param input      An already-parsed `orderSchema` payload.
+ * @param logMessage The first line of the new order's activity trail.
+ */
+async function createOrderFromInput(
+  sb: SupabaseClient,
+  input: z.infer<typeof orderSchema>,
+  logMessage: string
+): Promise<{ order: Record<string, unknown> } | { error: string; status: 400 | 500 }> {
   // Resolve dates: default order_date = today, expiry = +default_expiry_days.
   const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
   let expiry_date = input.expiry_date;
@@ -831,14 +847,17 @@ app.post('/', async (c) => {
     expiry_date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
   if (expiry_date < order_date) {
-    return c.json({ error: 'Expiry date cannot be before the order date.' }, 400);
+    return { error: 'Expiry date cannot be before the order date.', status: 400 };
   }
 
   let rows: LineItemRow[];
   try {
     rows = await resolveLineItems(sb, input.line_items);
   } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
+    return {
+      error: e instanceof Error ? e.message : 'Invalid line items',
+      status: 400,
+    };
   }
   // A hidden item is priced and stored like any other, but it is not
   // part of what the customer is being charged — so it never reaches the
@@ -877,9 +896,9 @@ app.post('/', async (c) => {
       break;
     }
     lastError = error?.message ?? lastError;
-    if (error?.code !== '23505') return c.json({ error: lastError }, 500);
+    if (error?.code !== '23505') return { error: lastError, status: 500 };
   }
-  if (!order) return c.json({ error: lastError }, 500);
+  if (!order) return { error: lastError, status: 500 };
 
   if (rows.length) {
     const { error: liError } = await sb
@@ -887,14 +906,25 @@ app.post('/', async (c) => {
       .insert(rows.map((r) => ({ ...r, order_id: order!.id })));
     if (liError) {
       await sb.from('orders').delete().eq('id', order.id); // best-effort cleanup
-      return c.json({ error: liError.message }, 500);
+      return { error: liError.message, status: 500 };
     }
   }
 
-  await logOrderEvent(sb, order.id as string, 'Order created.');
+  await logOrderEvent(sb, order.id as string, logMessage);
+  return { order };
+}
 
-  const { data: full } = await readDetail(sb, order.id as string);
-  return c.json({ data: full ?? order }, 201);
+/** Creates an order with server-generated order number + pricing. */
+app.post('/', async (c) => {
+  const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const sb = createSupabaseAdmin(c.env);
+
+  const result = await createOrderFromInput(sb, parsed.data, 'Order created.');
+  if ('error' in result) return c.json({ error: result.error }, result.status);
+
+  const { data: full } = await readDetail(sb, result.order.id as string);
+  return c.json({ data: full ?? result.order }, 201);
 });
 
 /** Returns one order with line items + customer + payments. */
@@ -1459,6 +1489,47 @@ app.post('/:id/confirm', async (c) => {
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
   return c.json({ data });
+});
+
+/**
+ * Duplicates an order into a NEW draft.
+ *
+ * The copy is produced by running the ordinary create path over a
+ * payload derived from the stored rows, so its prices come from TODAY's
+ * catalog rather than from the source order's snapshots — the same rule
+ * that governs every other write. Only the commercial content travels:
+ * customer, discount, and line items with their visibility flags and
+ * hand-entered adjustments. Payments, the activity trail, the
+ * appointment, warranty state, the public token and any cancellation
+ * request belong to the source order's own history and are left there.
+ *
+ * A catalog row deleted since the source order was written surfaces as
+ * the same readable 400 an ordinary save would give ("Selected material
+ * no longer exists."), naming what needs fixing.
+ */
+app.post('/:id/duplicate', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const { data: source, error: readError } = await readDetail(sb, id);
+  if (readError) return c.json({ error: readError.message }, 500);
+  if (!source) return c.json({ error: 'Order not found' }, 404);
+
+  // Parsed, never trusted: a row written under an older schema must fail
+  // as a readable 400 rather than slip past validation on age alone.
+  const parsed = orderSchema.safeParse(toDuplicateInput(source));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+
+  const result = await createOrderFromInput(
+    sb,
+    parsed.data,
+    `Duplicated from ${source.order_number}.`
+  );
+  if ('error' in result) return c.json({ error: result.error }, result.status);
+
+  await logOrderEvent(sb, id, `Duplicated to ${result.order.order_number as string}.`);
+
+  const { data: full } = await readDetail(sb, result.order.id as string);
+  return c.json({ data: full ?? result.order }, 201);
 });
 
 /**
