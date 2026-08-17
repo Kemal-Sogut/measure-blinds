@@ -1,5 +1,38 @@
 # Active Context
 
+## Current Focus — 2026-08-17: Order duplication + line-item visibility
+Branch `feat/order-duplicate-line-item-visibility`, cut from `main`. Touches api, web AND
+schema (migration 37). Full detail in `engine_features.md` 2026-08-17.
+
+- **Line items finally have an identity: `line_items.uid`.** Saving an order replaces its
+  line items wholesale, so `id` is reborn on every save and `position` moves on any reorder
+  — before this, NOTHING could say "this same item" across an edit. `uid` is minted by the
+  Worker, round-trips through the client (`uid: string | null` on the drafts, null = never
+  saved) and is what the confirmed-order visibility diff compares. Any future per-item
+  audit line has the same handle available now.
+- **`hidden` means editor-only.** Hidden items are still priced and stored (un-hiding
+  restores the exact figure) but are filtered out of the totals, `toPdfData`, the public
+  payload, both warranty coverage call sites, `buildLabels` and the cut sheet. The labels
+  filter lives INSIDE `buildLabels`, before the count, or "n of m" would lie.
+- **Visibility is frozen once confirmed** (400 from `PUT /:id`): hiding a line on an invoice
+  would move a total the customer was already quoted. Diffed by `uid`, so reorders and
+  deletions on a confirmed order stay legal. `/unconfirm` is the escape hatch.
+- **Duplication copies nothing.** `lib/orderDuplicate.ts` maps stored rows back into a
+  create payload, which is parsed through `orderSchema` and run through the ordinary create
+  path — so a duplicate is priced from TODAY's catalog. `stripCatalogSnapshots` is the
+  non-obvious part: a stored `attributes` blob carries the `nameKey`/`valueKey` snapshots
+  that the strict `attributeSchema` refuses, so feeding it back verbatim is a 400.
+- **`createOrderFromInput` now backs both `POST /` and `POST /:id/duplicate`.** Extracted,
+  behaviour-identical; every pre-existing create test stayed green through the move.
+- **A concatenated supabase-js `.select()` string breaks the row TYPE**
+  (`GenericStringError`), taking every field on it with it. Keep select strings on one line.
+- **Verified:** api 337/337, web 194/194, both `tsc --noEmit` clean, `oxlint` clean,
+  `vite build` clean.
+- **NOT verified: any browser.** The editor sits behind `ProtectedRoute` and the API is the
+  deployed Worker, so the eye toggle and both Duplicate entry points still need a human
+  pass. **The migration has NOT been applied** — apply it before deploying the Worker, which
+  starts writing two not-null columns on its first save.
+
 ## Current Focus — 2026-08-12: Pull-to-refresh in the installed app
 Branch `claude/home-screen-scroll-reload-ekhpd6`, cut from `main`. Web only — no API, no
 schema, no pricing surface. Full detail in `engine_features.md` / `bug_fixes.md` 2026-08-12.
