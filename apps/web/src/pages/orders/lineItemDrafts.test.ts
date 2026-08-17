@@ -573,9 +573,13 @@ describe('applyTypeDefaults', () => {
    * Roller: cassette and control are scoped+active (two cassette choices,
    * one of them retired/unlinked to prove the "ignored" cases); NO bottom
    * rail or installation option is scoped at all, so those two slots are
-   * unused by the type. Material `m1` is scoped to Roller. The saved
-   * defaults row picks `c1` for cassette and leaves control (a USED slot)
-   * with no default, to prove "used but no default" resolves to `''`.
+   * unused by the type. Materials `m1` and `m2` are both scoped to Roller
+   * (`m1` is the saved default, `m2` a valid alternate pick — mirroring the
+   * `c1`/`c2` cassette pair so the material reset/keepValid branches can be
+   * told apart the same way); `m-unlinked` is scoped to nothing, to prove
+   * a default pointing at it resolves to `''`. The saved defaults row
+   * picks `c1` for cassette and leaves control (a USED slot) with no
+   * default, to prove "used but no default" resolves to `''`.
    */
   function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
     return {
@@ -589,6 +593,24 @@ describe('applyTypeDefaults', () => {
           sort_order: 0,
           width_cm: null,
           blind_type_ids: [ROLLER.id],
+        },
+        {
+          id: 'm2',
+          name: 'Sheer',
+          price_per_sqm: 40,
+          active: true,
+          sort_order: 1,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+        },
+        {
+          id: 'm-unlinked',
+          name: 'Curtains Only',
+          price_per_sqm: 60,
+          active: true,
+          sort_order: 2,
+          width_cm: null,
+          blind_type_ids: [],
         },
       ],
       cassettes: [
@@ -654,6 +676,41 @@ describe('applyTypeDefaults', () => {
       { keepValid: true }
     );
     expect(next.cassette_id).toBe('c2');
+  });
+
+  // `material_id` is resolved by its own ternary rather than through
+  // `pick`, so it needs the same reset/keepValid/invalid-default coverage
+  // on its own — a material-specific inversion would otherwise slip past
+  // the cassette-only assertions above.
+  it('reset semantics: an existing valid material is replaced by the default', () => {
+    const next = applyTypeDefaults({ ...blank(), material_id: 'm2' }, 'Roller', catalogs());
+    expect(next.material_id).toBe('m1'); // m2 valid but reset to default
+  });
+
+  it('keepValid keeps a still-valid current material over the default', () => {
+    const next = applyTypeDefaults(
+      { ...blank(), material_id: 'm2' },
+      'Roller',
+      catalogs(),
+      { keepValid: true }
+    );
+    expect(next.material_id).toBe('m2');
+  });
+
+  it('ignores a default material_id that is not scoped to the type', () => {
+    const unlinkedDefault = catalogs({
+      defaults: [
+        {
+          blind_type_id: ROLLER.id,
+          material_id: 'm-unlinked',
+          cassette_id: 'c1',
+          bottom_rail_id: null,
+          control_id: null,
+          installation_id: null,
+        },
+      ],
+    });
+    expect(applyTypeDefaults(blank(), 'Roller', unlinkedDefault).material_id).toBe('');
   });
 
   it('ignores a default that is no longer scoped/active', () => {

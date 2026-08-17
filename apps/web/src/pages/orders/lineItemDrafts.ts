@@ -337,7 +337,7 @@ export function applyTypeDefaults(
       opts.keepValid && materialValid(draft.material_id)
         ? draft.material_id
         : materialValid(row?.material_id)
-          ? row!.material_id!
+          ? row.material_id
           : '',
     cassette_id: pick('cassette', draft.cassette_id, row?.cassette_id, catalogs.cassettes),
     bottom_rail_id: pick('bottom_rail', draft.bottom_rail_id, row?.bottom_rail_id, catalogs.bottomRails),
