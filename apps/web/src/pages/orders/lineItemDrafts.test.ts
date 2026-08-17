@@ -200,6 +200,7 @@ describe('optionsForType / slotsForType', () => {
         { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id, CURTAINS.id] },
       ],
       pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
+      defaults: [],
       installationOptions: [
         { id: 'ins-1', name: 'Rod', price: 45, price_basis: 'per_unit', active: true, sort_order: 0, blind_type_ids: [CURTAINS.id] },
         { id: 'ins-free', name: 'None', price: 0, price_basis: 'per_unit', active: true, sort_order: 1, blind_type_ids: [CURTAINS.id] },

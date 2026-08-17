@@ -37,6 +37,7 @@ import type {
   BottomRailOption,
   ControlOption,
   BlindType,
+  BlindTypeDefaults,
   PleatType,
   InstallationOption,
 } from '../../types';
@@ -223,6 +224,14 @@ export interface Catalogs {
   pleatTypes: PleatType[];
   /** Curtains rod/track charges — a fixed amount per curtain. */
   installationOptions: InstallationOption[];
+  /**
+   * Saved per-blind-type default option picks, at most one row per
+   * blind type (see `BlindTypeDefaults`). Required rather than optional
+   * so every `Catalogs` construction site — production and test alike —
+   * must decide what to pass; a later `applyTypeDefaults` helper reads
+   * this to seed a fresh line-item draft when its blind type changes.
+   */
+  defaults: BlindTypeDefaults[];
 }
 
 /**

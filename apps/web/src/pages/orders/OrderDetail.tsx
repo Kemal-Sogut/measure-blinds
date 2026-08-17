@@ -109,7 +109,11 @@ import {
 import { useCustomerSearch } from '../../hooks/useCustomers';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
-import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
+import {
+  useBlindTypeDefaults,
+  useCatalogList,
+  useCompanySettings,
+} from '../../hooks/useSettings';
 import InstallationSection from './InstallationSection';
 import {
   BlindEditForm,
@@ -507,6 +511,7 @@ export default function OrderDetail() {
   const installationQ = useCatalogList<InstallationOption>('installation-options');
   const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
+  const defaultsQ = useBlindTypeDefaults();
   const { data: company } = useCompanySettings();
 
   const createMut = useCreateOrder();
@@ -698,6 +703,7 @@ export default function OrderDetail() {
       blindTypes: blindTypesQ.data ?? [],
       pleatTypes: pleatTypesQ.data ?? [],
       installationOptions: installationQ.data ?? [],
+      defaults: defaultsQ.data ?? [],
     }),
     [
       materialsQ.data,
@@ -707,6 +713,7 @@ export default function OrderDetail() {
       blindTypesQ.data,
       pleatTypesQ.data,
       installationQ.data,
+      defaultsQ.data,
     ]
   );
 

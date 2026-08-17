@@ -490,6 +490,33 @@ export interface BlindType {
   sort_order: number;
 }
 
+/**
+ * One blind type's saved default catalog picks — at most one row per
+ * `blind_type_id` in the `blind_type_defaults` table. Each of the five
+ * option slots is `uuid | null`: `null` means "no default for this
+ * slot", not "unset vs. explicitly cleared" — the settings page and the
+ * order form treat a missing row (a blind type that has never had
+ * defaults saved) identically to one whose fields are all null, so no
+ * placeholder row needs to exist up front.
+ *
+ * The Worker (`PUT /api/settings/blind-type-defaults/:blindTypeId`)
+ * validates every non-null id on write: it must be an ACTIVE option
+ * LINKED to that blind type in the matching join table, the same
+ * "active AND linked" rule enforced for hardware at order-save time.
+ * That guarantee is what lets a later `applyTypeDefaults` helper seed a
+ * line-item draft straight from these ids without re-checking scoping
+ * itself — a stored default can never name an option the order form
+ * would refuse to save.
+ */
+export interface BlindTypeDefaults {
+  blind_type_id: string;
+  material_id: string | null;
+  cassette_id: string | null;
+  bottom_rail_id: string | null;
+  control_id: string | null;
+  installation_id: string | null;
+}
+
 /** Preset line item template — for commonly used add-on services. */
 export interface PresetLineItem {
   id: string;
