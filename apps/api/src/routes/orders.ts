@@ -921,7 +921,10 @@ app.put('/:id', async (c) => {
   // the wholesale delete below, which is the only chance to see them.
   const { data: existing } = await sb
     .from('orders')
-    .select('id, status, expiry_date, line_items(position, unit_price, base_unit_price, addons)')
+    // Kept on ONE line: supabase-js parses the select string at the type
+    // level, and a concatenated one degrades the row type to
+    // `GenericStringError`, taking `status` and `line_items` with it.
+    .select('id, status, expiry_date, line_items(position, uid, hidden, unit_price, base_unit_price, addons)')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
@@ -930,6 +933,38 @@ app.put('/:id', async (c) => {
   const expiry_date = input.expiry_date ?? existing.expiry_date;
   if (expiry_date < order_date) {
     return c.json({ error: 'Expiry date cannot be before the order date.' }, 400);
+  }
+
+  // Visibility is a pre-confirmation decision. Once an order is an
+  // invoice, hiding or showing a line would silently move a total the
+  // customer has already been quoted — and, while money is owed, the
+  // balance they are paying against. Every other edit stays legal at
+  // every stage; `POST /:id/unconfirm` is the way back.
+  //
+  // The comparison is by `uid`, never by position: the line items are
+  // replaced wholesale below, so positions shift whenever an item is
+  // added, removed or reordered, and a position-based diff would reject
+  // those edits too.
+  if (isConfirmed(existing.status)) {
+    const previous = new Map<string, boolean>(
+      ((existing.line_items ?? []) as Record<string, unknown>[]).map((li) => [
+        String(li.uid),
+        Boolean(li.hidden),
+      ])
+    );
+    const changed = input.line_items.some((it) => {
+      const before = it.uid ? previous.get(it.uid) : undefined;
+      // An item this order has never seen is new: it may join a confirmed
+      // order, but not already hidden — that would be the same silent
+      // total move by another route.
+      return before === undefined ? it.hidden : it.hidden !== before;
+    });
+    if (changed) {
+      return c.json(
+        { error: 'Visibility can only be changed before the order is confirmed.' },
+        400
+      );
+    }
   }
 
   let rows: LineItemRow[];

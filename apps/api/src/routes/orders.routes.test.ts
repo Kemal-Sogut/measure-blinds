@@ -1619,3 +1619,89 @@ describe('price overrides and add-ons', () => {
     expect(Object.keys(rows[0]).sort()).toEqual(Object.keys(rows[1]).sort());
   });
 });
+
+describe('PUT /api/orders/:id — visibility gate', () => {
+  const UID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const UID_B = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+
+  /** Seeds the pre-update read with one visible and one hidden item. */
+  function seedExisting(status: string) {
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        status,
+        expiry_date: '2026-07-17',
+        line_items: [
+          { position: 0, uid: UID_A, hidden: false, unit_price: 182, base_unit_price: null, addons: [] },
+          { position: 1, uid: UID_B, hidden: true, unit_price: 25, base_unit_price: null, addons: [] },
+        ],
+      },
+    ];
+  }
+
+  /** The saved payload, each item carrying the uid it came back with. */
+  function editPayload() {
+    const body = payload();
+    (body.line_items[0] as Record<string, unknown>).uid = UID_A;
+    (body.line_items[0] as Record<string, unknown>).hidden = false;
+    (body.line_items[1] as Record<string, unknown>).uid = UID_B;
+    (body.line_items[1] as Record<string, unknown>).hidden = true;
+    return body;
+  }
+
+  async function put(body: unknown) {
+    return ordersApp.request('/o1', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+  }
+
+  it('rejects showing a hidden item on a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    (body.line_items[1] as Record<string, unknown>).hidden = false;
+    const res = await put(body);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: 'Visibility can only be changed before the order is confirmed.',
+    });
+  });
+
+  it('rejects adding a hidden item to a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    body.line_items.push({
+      item_type: 'custom',
+      title: 'Extra',
+      description: '',
+      quantity: 1,
+      unit_price: 10,
+      hidden: true,
+    } as never);
+    const res = await put(body);
+    expect(res.status).toBe(400);
+  });
+
+  it('allows an unchanged visibility set on a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+  });
+
+  it('allows deleting a hidden item from a confirmed order', async () => {
+    seedExisting('awaiting_payment');
+    const body = editPayload();
+    body.line_items = [body.line_items[0]];
+    const res = await put(body);
+    expect(res.status).toBe(200);
+  });
+
+  it('allows flipping visibility while the order is still sent', async () => {
+    seedExisting('sent');
+    const body = editPayload();
+    (body.line_items[1] as Record<string, unknown>).hidden = false;
+    const res = await put(body);
+    expect(res.status).toBe(200);
+  });
+});
