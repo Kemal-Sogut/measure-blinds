@@ -89,6 +89,7 @@ import {
   useMarkInstalled,
   useRevertOrder,
   useDeleteOrder,
+  useDuplicateOrder,
   useRecordPayment,
   useSendReceipt,
   useSendWarranty,
@@ -428,6 +429,12 @@ const ICONS = {
       <circle cx="12" cy="12" r="3" />
     </ActionIcon>
   ),
+  duplicate: (
+    <ActionIcon>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </ActionIcon>
+  ),
   manufacturer: (
     <ActionIcon>
       <path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
@@ -512,6 +519,7 @@ export default function OrderDetail() {
   const installedMut = useMarkInstalled();
   const revertMut = useRevertOrder();
   const deleteMut = useDeleteOrder();
+  const duplicateMut = useDuplicateOrder();
   const paymentMut = useRecordPayment();
   const receiptMut = useSendReceipt();
   const warrantyMut = useSendWarranty();
@@ -1200,6 +1208,27 @@ export default function OrderDetail() {
       toast.success(`Reverted to ${label}.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Revert failed.');
+    }
+  }
+
+  /**
+   * Copies this order into a new draft and opens it.
+   *
+   * The Worker duplicates from the DATABASE, so unsaved edits on screen
+   * are not part of the copy — the confirm below says so rather than
+   * silently dropping them.
+   */
+  async function handleDuplicateOrder() {
+    if (!id) return;
+    try {
+      const copy = await duplicateMut.mutateAsync(id);
+      toast.success(`Duplicated to ${copy.order_number}.`);
+      // Hydration is keyed off the loaded order, so the editor must be
+      // told to hydrate again for the copy it is about to show.
+      setHydrated(false);
+      navigate(`/orders/${copy.id}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
     }
   }
 
@@ -2129,6 +2158,23 @@ export default function OrderDetail() {
         {ICONS.customerView}
         <span className="hidden sm:inline">Customer View</span>
       </button>
+      {/* Duplicate — only for a SAVED order: an unsaved one has no rows
+          to copy, and the Worker duplicates from the database, not from
+          whatever is on screen. */}
+      {id && (
+        <button
+          onClick={handleDuplicateOrder}
+          disabled={duplicateMut.isPending || saving}
+          title="Create a new draft order with the same customer and items"
+          aria-label="Duplicate Order"
+          className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
+        >
+          {ICONS.duplicate}
+          <span className="hidden sm:inline">
+            {duplicateMut.isPending ? 'Duplicating…' : 'Duplicate'}
+          </span>
+        </button>
+      )}
       {id && (
         <button
           onClick={handleDeleteOrder}

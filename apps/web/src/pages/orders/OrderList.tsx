@@ -20,16 +20,56 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
+import toast from 'react-hot-toast';
 import StatusBadge from '../../components/StatusBadge';
 import SidebarToggle from '../../components/SidebarToggle';
 import { PAGE_CONTAINER } from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody, StatTile } from '../../components/ui';
-import { useOrderList, type OrderTab } from '../../hooks/useOrders';
+import { useOrderList, useDuplicateOrder, type OrderTab } from '../../hooks/useOrders';
 import { displayName } from '../../lib/customerName';
 import type { Order, OrderStatus } from '../../types';
 import type { CardAccent } from '../../components/ui';
+
+/**
+ * The per-row "duplicate this order" action.
+ *
+ * Its own component because each row needs its OWN pending state — one
+ * mutation lifted to the list would spin every row's icon at once — and
+ * because rows are whole-row `<button>`s, so this has to be rendered as
+ * an absolutely-positioned SIBLING rather than a child.
+ *
+ * The copy opens immediately: duplicating is nearly always the first
+ * step of editing the copy.
+ */
+function DuplicateButton({ order, className }: { order: Order; className: string }) {
+  const navigate = useNavigate();
+  const duplicateMut = useDuplicateOrder();
+  return (
+    <button
+      type="button"
+      disabled={duplicateMut.isPending}
+      onClick={async () => {
+        try {
+          const copy = await duplicateMut.mutateAsync(order.id);
+          toast.success(`Duplicated to ${copy.order_number}.`);
+          navigate(`/orders/${copy.id}`);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
+        }
+      }}
+      title={`Duplicate ${order.order_number} into a new draft`}
+      aria-label={`Duplicate ${order.order_number}`}
+      className={`flex items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-sunken hover:text-brand-600 disabled:opacity-40 ${className}`}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
 
 /** Tab definitions in display order. */
 const TABS: { key: OrderTab; label: string }[] = [
@@ -214,10 +254,13 @@ export default function OrderList() {
         {orders && orders.length > 0 && (
           <ul className="flex flex-col gap-2.5 lg:hidden">
             {orders.map((order) => (
-              <li key={order.id}>
+              // `relative` so the duplicate action can sit as a SIBLING
+              // overlaying the card. The card itself is one big button,
+              // and a button cannot legally contain another.
+              <li key={order.id} className="relative">
                 <button
                   onClick={() => navigate(`/orders/${order.id}`)}
-                  className="w-full rounded-xl border border-border-light bg-surface p-3.5 text-left shadow-sm transition-shadow hover:shadow-md"
+                  className="w-full rounded-xl border border-border-light bg-surface p-3.5 pr-14 text-left shadow-sm transition-shadow hover:shadow-md"
                 >
                   <span className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate text-[15px] font-bold text-text-primary">
@@ -235,6 +278,10 @@ export default function OrderList() {
                     </span>
                   </span>
                 </button>
+                <DuplicateButton
+                  order={order}
+                  className="absolute right-2.5 top-2.5 h-11 w-11"
+                />
               </li>
             ))}
           </ul>
@@ -253,10 +300,13 @@ export default function OrderList() {
                   <span className="text-right">Total</span>
                 </div>
                 {orders.map((order, i) => (
+                  // Same sibling-overlay arrangement as the mobile card:
+                  // the row is one button, so the duplicate action cannot
+                  // be nested inside it.
+                  <div key={order.id} className="relative">
                   <button
-                    key={order.id}
                     onClick={() => navigate(`/orders/${order.id}`)}
-                    className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 text-left transition-colors hover:bg-surface-sunken ${
+                    className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 pr-14 text-left transition-colors hover:bg-surface-sunken ${
                       i > 0 ? 'border-t border-border-light' : ''
                     }`}
                   >
@@ -276,6 +326,11 @@ export default function OrderList() {
                       ${Number(order.total).toFixed(2)}
                     </span>
                   </button>
+                    <DuplicateButton
+                      order={order}
+                      className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2"
+                    />
+                  </div>
                 ))}
               </CardBody>
             </Card>

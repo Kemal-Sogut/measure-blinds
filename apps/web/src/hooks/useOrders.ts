@@ -313,6 +313,30 @@ export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; 
   });
 }
 
+/**
+ * Duplicates an order into a new draft and returns the COPY.
+ *
+ * Not built on `useLifecycleMutation` despite the identical call shape:
+ * that helper caches the order it receives and invalidates that order's
+ * logs, which here are the copy's. The source order also gains a trail
+ * entry ("Duplicated to …"), so its log is invalidated explicitly —
+ * otherwise coming back to it would show a stale trail.
+ *
+ * The caller navigates to `data.id`; this hook does no routing.
+ */
+export function useDuplicateOrder(): UseMutationResult<Order, Error, string> {
+  const qc = useQueryClient();
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<Envelope<Order>>(`/api/orders/${id}/duplicate`, { method: 'POST' })).data,
+    onSuccess: (copy, sourceId) => {
+      cache(copy);
+      void qc.invalidateQueries({ queryKey: ['orders', 'logs', sourceId] });
+    },
+  });
+}
+
 /** User confirm (status → awaiting_payment). */
 export function useConfirmOrder() {
   return useLifecycleMutation((id) => `/api/orders/${id}/confirm`);
