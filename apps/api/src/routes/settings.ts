@@ -419,6 +419,111 @@ function registerCatalog(target: SettingsApp, cfg: CatalogConfig): void {
 for (const cfg of catalogs) registerCatalog(app, cfg);
 
 /* ------------------------------------------------------------------ */
+/* Blind-type defaults (one row per blind type)                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Payload for saving one blind type's defaults. `.strict()` and fully
+ * nullable: null CLEARS a default field rather than requiring a
+ * different verb to un-set it. Money never appears here — these are
+ * catalog ids only; prices stay server-resolved at order time, exactly
+ * like every other catalog-carrying payload in this file.
+ */
+const blindTypeDefaultsSchema = z
+  .object({
+    material_id: z.string().uuid().nullable(),
+    cassette_id: z.string().uuid().nullable(),
+    bottom_rail_id: z.string().uuid().nullable(),
+    control_id: z.string().uuid().nullable(),
+    installation_id: z.string().uuid().nullable(),
+  })
+  .strict();
+
+/**
+ * Field → (join table, join FK, options table, label) driving the PUT
+ * handler's per-id validation below.
+ *
+ * The four hardware entries are copied from `SLOT_TABLES` in
+ * `lib/optionScoping.ts` — the same join tables `loadSlotScoping` reads
+ * to enforce "active AND linked" on order saves — so a stored default
+ * can never disagree with what a line item is allowed to carry.
+ *
+ * The Material entry targets `material_blind_types` and is validated
+ * with that SAME strict "a link row must exist" rule, deliberately NOT
+ * the friendlier "no links = offered for every blind type" convention
+ * described in this file's Materials section and in migration 20's
+ * comment. That convention is not actually what the shipped web form
+ * implements: `materialsForType` (apps/web/src/pages/orders/
+ * lineItemDrafts.ts) filters with a plain `blind_type_ids.includes(id)`
+ * and has no empty-means-all branch, so in practice an unlinked Material
+ * already renders in NO blind type's dropdown. Mirroring that strict
+ * behavior here — rather than the documented-but-unimplemented
+ * convention — is what guarantees a saved Material default is always
+ * something the order form can actually apply.
+ */
+const DEFAULT_LINKS = [
+  { field: 'material_id', join: 'material_blind_types', fk: 'material_id', options: 'materials', label: 'Material' },
+  { field: 'cassette_id', join: 'cassette_option_blind_types', fk: 'cassette_option_id', options: 'cassette_options', label: 'Cassette' },
+  { field: 'bottom_rail_id', join: 'bottom_rail_option_blind_types', fk: 'bottom_rail_option_id', options: 'bottom_rail_options', label: 'Bottom rail' },
+  { field: 'control_id', join: 'control_option_blind_types', fk: 'control_option_id', options: 'control_options', label: 'Control' },
+  { field: 'installation_id', join: 'installation_option_blind_types', fk: 'installation_option_id', options: 'installation_options', label: 'Installation' },
+] as const;
+
+/**
+ * Lists every saved blind-type defaults row — at most one per blind
+ * type, keyed by `blind_type_id`. A blind type that has never had
+ * defaults saved is simply absent from the array; callers (the settings
+ * page, the order form) treat a missing row the same as one whose five
+ * fields are all null, so no placeholder row needs to exist up front.
+ */
+app.get('/blind-type-defaults', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb.from('blind_type_defaults').select('*');
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data });
+});
+
+/**
+ * Upserts one blind type's defaults after validating every non-null id
+ * against `DEFAULT_LINKS`: it must be an ACTIVE option linked to
+ * `blindTypeId` in that catalog's join table — the "active AND linked"
+ * rule `loadSlotScoping` enforces for hardware at order-save time,
+ * applied here to all five slots including Material. This is what keeps
+ * a stored default from ever producing a draft the order form cannot
+ * save. Responds 404 when `blindTypeId` does not name a `blind_types`
+ * row, and 400 naming the offending field on the first check that fails
+ * (not-linked and inactive are reported as distinct messages so the
+ * settings page can explain which). A `null` field is left unvalidated
+ * and clears any existing default for that slot.
+ */
+app.put('/blind-type-defaults/:blindTypeId', async (c) => {
+  const parsed = blindTypeDefaultsSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const blindTypeId = c.req.param('blindTypeId');
+  const sb = createSupabaseAdmin(c.env);
+
+  const { data: type } = await sb.from('blind_types').select('id').eq('id', blindTypeId).maybeSingle();
+  if (!type) return c.json({ error: 'Unknown blind type.' }, 404);
+
+  for (const { field, join, fk, options, label } of DEFAULT_LINKS) {
+    const id = parsed.data[field];
+    if (!id) continue;
+    const { data: link } = await sb.from(join).select(fk).eq(fk, id).eq('blind_type_id', blindTypeId).maybeSingle();
+    if (!link) return c.json({ error: `${label} default is not offered for this blind type.` }, 400);
+    const { data: opt } = await sb.from(options).select('id').eq('id', id).eq('active', true).maybeSingle();
+    if (!opt) return c.json({ error: `${label} default is inactive.` }, 400);
+  }
+
+  const { data, error } = await sb
+    .from('blind_type_defaults')
+    .upsert({ blind_type_id: blindTypeId, ...parsed.data })
+    .select()
+    .single();
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data });
+});
+
+/* ------------------------------------------------------------------ */
 /* Materials (catalog + many-to-many blind-type links)                 */
 /* ------------------------------------------------------------------ */
 
