@@ -38,11 +38,32 @@ function blind(overrides: Partial<LabelLineItem> = {}): LabelLineItem {
     // installation option scoped to it carries one.
     installation_name: null,
     quantity: 1,
+    hidden: false,
     ...overrides,
   };
 }
 
 describe('buildLabels', () => {
+  it('skips hidden items and counts only visible ones in "n of m"', () => {
+    // A hidden item is not manufactured, so it gets no label — and the
+    // count on the labels that ARE printed has to agree, because a bench
+    // worker uses "n of m" to know the bundle is complete.
+    const labels = buildLabels(
+      order({
+        line_items: [
+          blind({ position: 0, room_name: 'Living Room' }),
+          blind({ position: 1, room_name: 'Cellar', hidden: true }),
+          blind({ position: 2, room_name: 'Kitchen' }),
+        ],
+      })
+    );
+    expect(labels.map((l) => l.room)).toEqual(['Living Room', 'Kitchen']);
+    expect(labels.map((l) => [l.index, l.total])).toEqual([
+      [1, 2],
+      [2, 2],
+    ]);
+  });
+
   it('produces one label per unit of quantity, not per panel', () => {
     const labels = buildLabels(order({ line_items: [blind({ quantity: 2 })] }));
     expect(labels).toHaveLength(2);

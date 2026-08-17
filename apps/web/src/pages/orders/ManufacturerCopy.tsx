@@ -315,8 +315,15 @@ export default function ManufacturerCopy() {
     return map;
   }, [materials]);
 
+  // A hidden item was not sold, so nothing is cut for it — it must not
+  // consume stock in the plan or appear on the bench sheet.
   const plan = useMemo(
-    () => buildManufacturingPlan(order?.line_items ?? [], widthByMaterialId, stockCm),
+    () =>
+      buildManufacturingPlan(
+        (order?.line_items ?? []).filter((li) => !li.hidden),
+        widthByMaterialId,
+        stockCm
+      ),
     [order?.line_items, widthByMaterialId, stockCm]
   );
 

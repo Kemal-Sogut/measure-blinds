@@ -34,6 +34,8 @@ export interface LabelLineItem {
   control_name: string | null;
   installation_name: string | null;
   quantity: number;
+  /** Hidden items are not manufactured, so they produce no label. */
+  hidden: boolean;
 }
 
 /** The subset of an order this module reads. */
@@ -235,8 +237,12 @@ function hardwareOf(item: LabelLineItem): string {
  * @returns One entry per physical blind; empty when the order has none.
  */
 export function buildLabels(order: LabelOrder): LabelFields[] {
+  // Hidden items drop out HERE, before the total below counts anything:
+  // the "n of m" on a printed label has to match the number of labels
+  // actually in the bundle, which it could not if the caller filtered
+  // afterwards.
   const blinds = (order.line_items ?? [])
-    .filter((li) => li.item_type === 'blind')
+    .filter((li) => li.item_type === 'blind' && !li.hidden)
     .slice()
     .sort((a, b) => a.position - b.position);
 
