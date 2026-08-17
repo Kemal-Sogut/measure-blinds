@@ -764,6 +764,20 @@ export default function OrderDetail() {
       return next;
     });
   }
+  /**
+   * Flips one line item's visibility.
+   *
+   * A hidden item keeps its place and its price in the editor but leaves
+   * the order total and every document — estimate, invoice, customer
+   * page, warranty, labels, cut sheet. The caller must not offer this
+   * once the order is confirmed: the Worker refuses the save with a 400,
+   * and the button is disabled there for the same reason.
+   */
+  function toggleHidden(key: string) {
+    setItems((list) =>
+      list.map((it) => (it.key === key ? { ...it, hidden: !it.hidden } : it))
+    );
+  }
   function addBlind() {
     const draft: BlindDraft = {
       key: nextKey(),
@@ -2322,7 +2336,7 @@ export default function OrderDetail() {
                       return (
                         <li
                           key={it.key}
-                          className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2"
+                          className={`flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2${it.hidden ? ' opacity-55' : ''}`}
                         >
                           {/*
                             Line 1 on phones: checkbox, badge, name.
@@ -2352,6 +2366,15 @@ export default function OrderDetail() {
                             <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
                               {typeBadge}
                             </span>
+
+                            {/* Says out loud what the muted row and the
+                                struck price only imply: this line is on
+                                no document and in no total. */}
+                            {it.hidden && (
+                              <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
+                                Hidden
+                              </span>
+                            )}
 
                             {/*
                               Name WRAPS; it does not truncate. A custom
@@ -2410,7 +2433,9 @@ export default function OrderDetail() {
                               customer's signal is the struck-through
                               original on the documents, not this.
                             */}
-                            <span className="flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary">
+                            <span
+                              className={`flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary${it.hidden ? ' line-through' : ''}`}
+                            >
                               {price ? `$${price.total.toFixed(2)}` : '—'}
                               {price && price.unit !== price.base && (
                                 <span
@@ -2421,11 +2446,44 @@ export default function OrderDetail() {
                               )}
                             </span>
 
-                            {/* Edit / Duplicate / Delete — hidden in read-only.
-                                44px targets on the two-line layout, where there
-                                is room; back to 32px inline at `sm+`. */}
+                            {/* Show-hide / Edit / Duplicate / Delete — hidden
+                                in read-only. 44px targets on the two-line
+                                layout, where there is room; back to 32px
+                                inline at `sm+`. */}
                             {!readOnly && (
                               <span className="flex shrink-0 items-center gap-1">
+                                {/* Visibility. Disabled once the order is
+                                    confirmed: the customer has been quoted a
+                                    total, and hiding a line would move it
+                                    under them. The Worker refuses the save
+                                    too — this button only says so earlier. */}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleHidden(it.key)}
+                                  disabled={postConfirm}
+                                  title={
+                                    postConfirm
+                                      ? 'Visibility can only be changed before the order is confirmed'
+                                      : it.hidden
+                                        ? `Show ${name} on documents`
+                                        : `Hide ${name} from documents`
+                                  }
+                                  aria-label={it.hidden ? `Show ${name}` : `Hide ${name}`}
+                                  aria-pressed={it.hidden}
+                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted sm:h-8 sm:w-8"
+                                >
+                                  {it.hidden ? (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
+                                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.15 18.15 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24M2 2l20 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  ) : (
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
+                                      <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => openEdit(it.key)}
