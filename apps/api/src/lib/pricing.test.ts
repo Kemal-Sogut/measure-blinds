@@ -182,6 +182,15 @@ describe('totals (server)', () => {
     expect(calculateTotals([100], 'fixed', 250).taxable_amount).toBe(0);
     expect(calculateTotals([100], 'fixed', -5).discount_amount).toBe(0);
   });
+
+  it('sums only the visible line totals it is given', () => {
+    // Hidden items are filtered out BEFORE this function is called, here
+    // and in the web preview alike. Mirrors the identically named case
+    // in apps/web/src/lib/totals.test.ts — the two must agree.
+    const t = calculateTotals([364], 'fixed', 0);
+    expect(t.subtotal).toBe(364);
+    expect(t.total).toBe(411.32);
+  });
 });
 
 describe('orderNumber (server)', () => {

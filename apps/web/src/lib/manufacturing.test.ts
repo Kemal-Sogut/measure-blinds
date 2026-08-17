@@ -32,6 +32,8 @@ function lineItem(overrides: Partial<LineItem> = {}): LineItem {
     order_id: 'o-1',
     item_type: 'blind',
     position: 0,
+    uid: 'u-1',
+    hidden: false,
     room_name: 'Room',
     blinds_type: 'Roller',
     panels: [150],

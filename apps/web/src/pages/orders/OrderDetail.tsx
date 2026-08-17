@@ -102,6 +102,7 @@ import {
   type OrderInput,
   type LineItemInput,
   type AdjustmentInputFields,
+  type ItemIdentityFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomerSearch } from '../../hooks/useCustomers';
@@ -239,6 +240,8 @@ function toDrafts(order: Order): ItemDraft[] {
     if (li.item_type === 'blind') {
       return {
         key: nextKey(),
+        uid: li.uid,
+        hidden: li.hidden,
         item_type: 'blind',
         room_name: li.room_name,
         blinds_type: li.blinds_type,
@@ -261,6 +264,8 @@ function toDrafts(order: Order): ItemDraft[] {
     }
     return {
       key: nextKey(),
+      uid: li.uid,
+      hidden: li.hidden,
       item_type: li.item_type,
       title: li.title,
       description: li.description,
@@ -701,14 +706,17 @@ export default function OrderDetail() {
       ),
     [items, catalogs]
   );
+  // A hidden item keeps its price on screen — the consultant has to see
+  // what is being left out — but never reaches the subtotal. Mirrors the
+  // Worker, which filters its resolved rows the same way.
   const totals = useMemo(
     () =>
       calculateTotals({
-        lineTotals: itemPrices,
+        lineTotals: itemPrices.filter((_, i) => !items[i].hidden),
         discount_type: discountType,
         discount_value: Number(discountValue) || 0,
       }),
-    [itemPrices, discountType, discountValue]
+    [itemPrices, items, discountType, discountValue]
   );
 
   const status = existing?.status ?? 'draft';
@@ -733,7 +741,15 @@ export default function OrderDetail() {
   function removeItem(key: string) {
     setItems((list) => list.filter((it) => it.key !== key));
   }
-  /** Clones a line item (fresh key, copied panels) right after the original. */
+  /**
+   * Clones a line item (fresh key and identity, copied panels) right
+   * after the original.
+   *
+   * The clone is a NEW row, so it must NOT inherit the source's `uid`:
+   * two rows claiming one identity would make the Worker's visibility
+   * diff ambiguous on save. Its `hidden` state is inherited, because a
+   * copy of a hidden item is one too until told otherwise.
+   */
   function duplicateItem(key: string) {
     setItems((list) => {
       const idx = list.findIndex((it) => it.key === key);
@@ -741,8 +757,8 @@ export default function OrderDetail() {
       const src = list[idx];
       const copy: ItemDraft =
         src.item_type === 'blind'
-          ? { ...src, key: nextKey(), panels: [...src.panels] }
-          : { ...src, key: nextKey() };
+          ? { ...src, key: nextKey(), uid: null, panels: [...src.panels] }
+          : { ...src, key: nextKey(), uid: null };
       const next = list.slice();
       next.splice(idx + 1, 0, copy);
       return next;
@@ -751,6 +767,9 @@ export default function OrderDetail() {
   function addBlind() {
     const draft: BlindDraft = {
       key: nextKey(),
+      // No uid yet: the Worker mints one the first time this is saved.
+      uid: null,
+      hidden: false,
       item_type: 'blind',
       room_name: '',
       blinds_type: '',
@@ -781,6 +800,8 @@ export default function OrderDetail() {
       ...list,
       {
         key: nextKey(),
+        uid: null,
+        hidden: false,
         item_type: 'preset',
         // The catalog name becomes the headline and its description the
         // body. These used to be concatenated into one string, which left
@@ -798,6 +819,8 @@ export default function OrderDetail() {
   function addCustom() {
     const draft: FlatDraft = {
       key: nextKey(),
+      uid: null,
+      hidden: false,
       item_type: 'custom',
       title: '',
       description: '',
@@ -927,6 +950,17 @@ export default function OrderDetail() {
         addons: parseAddons(it.addons),
       };
     }
+    /**
+     * Identity and visibility, as the API expects them.
+     *
+     * `uid` is OMITTED for an item that has never been saved — the
+     * Worker mints one then — and round-tripped verbatim otherwise, since
+     * it is what the Worker diffs visibility against on a confirmed
+     * order.
+     */
+    function identityFor(it: ItemDraft): ItemIdentityFields {
+      return { ...(it.uid ? { uid: it.uid } : {}), hidden: it.hidden };
+    }
     for (const [i, it] of items.entries()) {
       if (it.item_type === 'blind') {
         const panels = it.panels.map(parsePositive);
@@ -974,6 +1008,7 @@ export default function OrderDetail() {
           attributes,
           quantity: Math.round(qty),
           ...adj,
+          ...identityFor(it),
         });
       } else {
         const qty = parsePositive(it.quantity);
@@ -994,6 +1029,7 @@ export default function OrderDetail() {
             description: it.description.trim(),
             quantity: Math.round(qty),
             ...adj,
+            ...identityFor(it),
           });
         } else if (it.item_type === 'preset') {
           // Legacy preset: no provenance, so its stored price still
@@ -1007,6 +1043,7 @@ export default function OrderDetail() {
             quantity: Math.round(qty),
             unit_price: unit,
             ...adj,
+            ...identityFor(it),
           });
         } else {
           if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
@@ -1017,6 +1054,7 @@ export default function OrderDetail() {
             quantity: Math.round(qty),
             unit_price: unit,
             ...adj,
+            ...identityFor(it),
           });
         }
       }

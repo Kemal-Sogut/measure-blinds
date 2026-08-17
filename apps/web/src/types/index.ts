@@ -261,6 +261,21 @@ export interface LineItem {
   order_id: string;
   item_type: LineItemType;
   position: number;
+  /**
+   * Stable identity minted by the Worker. Saving an order replaces its
+   * line items wholesale, so `id` is reborn on every save and `position`
+   * moves on any reorder — `uid` is what survives, and therefore what
+   * lets the Worker tell whether THIS item's visibility changed.
+   */
+  uid: string;
+  /**
+   * Excluded from the order total and from every customer- and
+   * production-facing surface (documents, the customer page, the
+   * warranty, labels, the cut sheet) while staying in the editor.
+   * Changeable only before the order is confirmed — the Worker answers a
+   * flip on a confirmed order with a 400.
+   */
+  hidden: boolean;
   room_name: string;
   blinds_type: string;
   panels: number[];
