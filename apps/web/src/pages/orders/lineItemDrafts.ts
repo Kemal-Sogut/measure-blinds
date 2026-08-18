@@ -163,13 +163,19 @@ export interface FlatDraft extends PriceAdjustmentDraft {
 export type ItemDraft = BlindDraft | FlatDraft;
 
 /**
- * The house default hardware a brand-new blind starts with, resolved by
- * the caller from the catalogs it already holds (`findOptionIdByName` in
- * `OrderDetail` — "Regular" cassette and bottom rail, "Chain" control).
+ * Hardware `newBlindDraft` seeds a brand-new blind with before any blind
+ * type is chosen. Every caller now passes all-empty ids (`''`): nothing is
+ * scoped until a type is picked, so guessing a house default here would
+ * just be overwritten — or wrong — the moment `applyTypeDefaults` runs.
+ * That helper is what actually fills these slots, from each type's SAVED
+ * defaults (`/settings/defaults`, the `blind_type_defaults` table) the
+ * instant `BlindTypeSelect` (or `addBlind`, or a bulk-add section) sets a
+ * type.
  *
- * Passed in rather than looked up here: this module is pure and holds no
- * catalog lookups by NAME, and which option counts as the house default
- * is a shop decision that belongs to the page.
+ * Kept as its own parameter, rather than inlined as `''` in this function,
+ * so the shape stays explicit at every call site and a future caller that
+ * legitimately has a starting pick (none does today) has somewhere to put
+ * it. This module stays pure either way — no catalog lookup happens here.
  */
 export interface BlindDraftDefaults {
   cassette_id: string;
