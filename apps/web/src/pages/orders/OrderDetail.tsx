@@ -323,23 +323,6 @@ function draftLabel(it: ItemDraft, index: number): string {
   return it.description || `Item ${index + 1}`;
 }
 
-/**
- * Finds an active catalog option's id by name — exact match preferred,
- * otherwise the first case-insensitive substring match. Returns '' when
- * nothing matches so the field stays unset. Used to pre-select sensible
- * defaults (e.g. "Regular" cassette, "Chain" control) on a new blind.
- */
-function findOptionIdByName(
-  options: { id: string; name: string; active: boolean }[],
-  needle: string
-): string {
-  const lower = needle.toLowerCase();
-  const active = options.filter((o) => o.active);
-  const exact = active.find((o) => o.name.toLowerCase() === lower);
-  if (exact) return exact.id;
-  return active.find((o) => o.name.toLowerCase().includes(lower))?.id ?? '';
-}
-
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
 
 /** Linear lifecycle stages shown in the progress timeline. */
@@ -718,20 +701,16 @@ export default function OrderDetail() {
   );
 
   /**
-   * The house default hardware every new blind starts with, resolved from
-   * the catalogs by NAME. Computed once here rather than at each Add
-   * button, so the single-blind and bulk-measurement paths cannot seed
-   * different defaults. A name that matches nothing yields `''`, which
-   * simply leaves the slot unset.
+   * A brand-new blind starts with no hardware chosen: nothing is scoped
+   * until a blind type is picked, so guessing a house default by NAME
+   * here would just be overwritten (or wrong) once a type is selected.
+   * The type dropdown (`BlindTypeSelect`, via `applyTypeDefaults`) fills
+   * material and every hardware slot with that type's SAVED defaults from
+   * Settings the moment a type is chosen. Shared by the single-blind and
+   * bulk-measurement paths (`addBlind`, `applyBulkMeasure`) so both start
+   * a blind identically blank.
    */
-  const blindDefaults: BlindDraftDefaults = useMemo(
-    () => ({
-      cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
-      bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
-      control_id: findOptionIdByName(catalogs.controls, 'Chain'),
-    }),
-    [catalogs.cassettes, catalogs.bottomRails, catalogs.controls]
-  );
+  const blindDefaults: BlindDraftDefaults = { cassette_id: '', bottom_rail_id: '', control_id: '' };
 
   // ── Live totals (client preview; server recomputes on save) ────
   const itemPrices = useMemo(
@@ -816,12 +795,14 @@ export default function OrderDetail() {
     );
   }
   function addBlind() {
-    // Blank but for the house default hardware: no blind type is chosen
-    // yet, so nothing is scoped and nothing can be validated against a
-    // slot — the type dropdown clears whichever of the defaults the
-    // chosen type turns out not to use, and seeds `attributes` from it.
-    // The factory also seeds the identity fields (no uid until the first
-    // save, visible), so this path and the bulk popup cannot disagree.
+    // Nothing is seeded yet — no blind type, no material, no hardware —
+    // because nothing can be validated or scoped before a type is chosen.
+    // The type dropdown (`BlindTypeSelect`) then applies that type's
+    // SAVED defaults from Settings via `applyTypeDefaults`, which also
+    // clears whichever slot the chosen type does not use and seeds
+    // `attributes` from it. The factory also seeds the identity fields
+    // (no uid until the first save, visible), so this path and the bulk
+    // popup cannot disagree.
     const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
