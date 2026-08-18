@@ -792,6 +792,24 @@ export default function OrderDetail() {
       list.map((it) => (it.key === key ? { ...it, hidden: !it.hidden } : it))
     );
   }
+  /**
+   * Moves a line item one position up (-1) or down (+1) in display order;
+   * no-ops at either edge. Feeds `LineItemList`'s `onMove`, which
+   * `LineItemRow`'s 3-dot menu calls from its Move up/down items — those
+   * are themselves disabled at the first/last row, so the no-op here is a
+   * backstop, not the only guard.
+   */
+  function moveItem(key: string, dir: -1 | 1) {
+    setItems((list) => {
+      const idx = list.findIndex((it) => it.key === key);
+      const to = idx + dir;
+      if (idx === -1 || to < 0 || to >= list.length) return list;
+      const next = list.slice();
+      const [row] = next.splice(idx, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
+  }
   function addBlind() {
     // Nothing is seeded yet — no blind type, no material, no hardware —
     // because nothing can be validated or scoped before a type is chosen.
@@ -2414,6 +2432,7 @@ export default function OrderDetail() {
                   onEdit={openEdit}
                   onDuplicate={duplicateItem}
                   onDelete={removeItem}
+                  onMove={moveItem}
                 />
               </section>
             )}
