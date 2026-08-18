@@ -18,6 +18,14 @@
  * codebase's file-length comfort zone. What stays HERE is list-level state
  * that only one row at a time doesn't own: which keys are expanded.
  *
+ * Task 12 added drag-and-drop reordering (`@dnd-kit`): this component owns
+ * the `DndContext`/`SortableContext` and the pointer sensor, because both
+ * need the full `items` array (for `SortableContext`'s id list) and the
+ * single `onReorder` callback — list-level concerns, same as `expanded`.
+ * Each `LineItemRow` calls `useSortable` itself (it needs its own id) and
+ * renders the actual drag handle; see `LineItemRow.tsx` for why the drag
+ * listeners are attached ONLY to that handle and not the row.
+ *
  * Each row reads its price and attribute line from the in-progress DRAFT
  * (`ItemDraft`), not the persisted `LineItem`, because this list shows
  * unsaved edits — `blindDraftPrice`/`flatDraftPrice` and
@@ -25,7 +33,16 @@
  * `LineItemRow.tsx`).
  */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import LineItemRow from './LineItemRow';
 import type { ItemDraft, Catalogs } from './lineItemDrafts';
 
@@ -71,6 +88,14 @@ export interface LineItemListProps {
    *  and last row rather than relying on the no-op alone — a disabled
    *  control reads better than a button that silently does nothing. */
   onMove: (key: string, dir: -1 | 1) => void;
+  /** Moves the item identified by `activeKey` to the position of the item
+   *  identified by `overKey`; called from this component's `DndContext`
+   *  once a drag-handle drag lands on a different row than it started on.
+   *  Persistence is implicit: the Worker derives each line item's saved
+   *  `position` from its index in the save payload, so reordering the
+   *  array here is the whole job — nothing else needs to write a
+   *  position field. */
+  onReorder: (activeKey: string, overKey: string) => void;
 }
 
 /**
@@ -84,13 +109,16 @@ export interface LineItemListProps {
  * Duplicate, Move up, Move down). See `LineItemRow.tsx` for the row itself.
  *
  * Owns exactly one piece of state: `expanded`, the set of item keys whose
- * detail panel is open. It lives here rather than in each row because nothing
- * about it needs to survive a row's own remount (a `key`-stable id, `it.key`,
- * already keys the row) — it is kept here simply because `LineItemList` is
- * the natural, single owner of "which rows in THIS list are expanded", the
- * same way `OrderDetail.tsx` owns `selected` for "which rows are checked".
- * Every mutation of the ITEMS themselves is still delegated to the
- * corresponding callback prop: this component never mutates a draft itself.
+ * detail panel is open (pruned by an effect whenever an item is deleted, so
+ * a stale key never lingers past the item it belonged to). It lives here
+ * rather than in each row because nothing about it needs to survive a row's
+ * own remount (a `key`-stable id, `it.key`, already keys the row) — it is
+ * kept here simply because `LineItemList` is the natural, single owner of
+ * "which rows in THIS list are expanded", the same way `OrderDetail.tsx`
+ * owns `selected` for "which rows are checked". Every mutation of the ITEMS
+ * themselves — including reordering, via drag-and-drop's `onReorder` — is
+ * still delegated to the corresponding callback prop: this component never
+ * mutates a draft itself.
  */
 export default function LineItemList({
   items,
@@ -104,8 +132,27 @@ export default function LineItemList({
   onDuplicate,
   onDelete,
   onMove,
+  onReorder,
 }: LineItemListProps): ReactNode {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Prune stale keys out of `expanded` whenever the item list's membership
+  // changes (an item is deleted). Without this, a deleted item's key stays
+  // in the set forever — harmless on its own (nothing reads it back out
+  // for a key that no longer has a row), but it accumulates for the whole
+  // page's lifetime, which is one thing not to leave in your pocket in a
+  // long-lived editor session. `next` is built as `items ∩ prev`, so it can
+  // never be LARGER than `prev`; equal size therefore means equal
+  // membership, and the size check alone is enough to skip a no-op update.
+  useEffect(() => {
+    setExpanded((prev) => {
+      const next = new Set<string>();
+      for (const it of items) {
+        if (prev.has(it.key)) next.add(it.key);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [items]);
 
   function toggleExpanded(key: string) {
     setExpanded((prev) => {
@@ -116,35 +163,56 @@ export default function LineItemList({
     });
   }
 
+  /**
+   * `DndContext`'s pointer sensor for the drag handle. `activationConstraint`
+   * requires the pointer to move 6px before a drag starts, so a plain tap on
+   * the handle (or anywhere else — listeners are handle-only, see
+   * `LineItemRow`) is never misread as the start of a drag on a touch
+   * screen, where a stationary "press" reads as a sequence of tiny
+   * jittering pointer moves.
+   */
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      onReorder(String(active.id), String(over.id));
+    }
+  }
+
   return (
     <>
       {/* Item rows */}
       {items.length === 0 ? (
         <p className="p-4 text-[13px] text-text-muted">No items yet — add one below.</p>
       ) : (
-        <ul className="divide-y divide-border-light">
-          {items.map((it, i) => (
-            <LineItemRow
-              key={it.key}
-              item={it}
-              index={i}
-              isFirst={i === 0}
-              isLast={i === items.length - 1}
-              catalogs={catalogs}
-              readOnly={readOnly}
-              postConfirm={postConfirm}
-              selected={selected.has(it.key)}
-              expanded={expanded.has(it.key)}
-              onToggleSelect={() => onToggleSelect(it.key)}
-              onToggleExpand={() => toggleExpanded(it.key)}
-              onToggleHidden={() => onToggleHidden(it.key)}
-              onEdit={() => onEdit(it.key)}
-              onDuplicate={() => onDuplicate(it.key)}
-              onDelete={() => onDelete(it.key)}
-              onMove={(dir) => onMove(it.key, dir)}
-            />
-          ))}
-        </ul>
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={items.map((it) => it.key)} strategy={verticalListSortingStrategy}>
+            <ul className="divide-y divide-border-light">
+              {items.map((it, i) => (
+                <LineItemRow
+                  key={it.key}
+                  item={it}
+                  index={i}
+                  isFirst={i === 0}
+                  isLast={i === items.length - 1}
+                  catalogs={catalogs}
+                  readOnly={readOnly}
+                  postConfirm={postConfirm}
+                  selected={selected.has(it.key)}
+                  expanded={expanded.has(it.key)}
+                  onToggleSelect={() => onToggleSelect(it.key)}
+                  onToggleExpand={() => toggleExpanded(it.key)}
+                  onToggleHidden={() => onToggleHidden(it.key)}
+                  onEdit={() => onEdit(it.key)}
+                  onDuplicate={() => onDuplicate(it.key)}
+                  onDelete={() => onDelete(it.key)}
+                  onMove={(dir) => onMove(it.key, dir)}
+                />
+              ))}
+            </ul>
+          </SortableContext>
+        </DndContext>
       )}
     </>
   );

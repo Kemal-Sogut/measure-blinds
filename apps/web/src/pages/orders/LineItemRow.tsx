@@ -11,6 +11,14 @@
  * the `<ul>`, the empty state, and the `expanded` key set; this file owns
  * everything about rendering ONE row.
  *
+ * Task 12 added a drag handle (`@dnd-kit`) as a new leading control in the
+ * row. This file calls `useSortable` itself — each row needs its OWN id and
+ * transform, which `LineItemList`'s shared `DndContext`/`SortableContext`
+ * cannot supply per row — and attaches the resulting `listeners`/
+ * `attributes` to the handle button ONLY, never to the row or its
+ * name/body button, so dragging can never fight the row's existing tap
+ * targets (expand, checkbox, Edit, Delete, the 3-dot menu).
+ *
  * Every row reads its price and attribute line from the in-progress DRAFT
  * (`ItemDraft`), not the persisted `LineItem`, for the same reason
  * `LineItemList` does: this list shows unsaved edits.
@@ -18,6 +26,8 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
@@ -308,8 +318,8 @@ export interface LineItemRowProps {
 }
 
 /**
- * Renders one line-item row: checkbox, an optional "Hidden" pill, a
- * name/body button that expands a detail panel, the price (with its
+ * Renders one line-item row: a drag handle, checkbox, an optional "Hidden"
+ * pill, a name/body button that expands a detail panel, the price (with its
  * amber override dot), and — unless `readOnly` — Edit, Delete and the
  * 3-dot {@link RowMenu} (Show/Hide, Duplicate, Move up, Move down).
  *
@@ -320,7 +330,12 @@ export interface LineItemRowProps {
  * Purely presentational, like `LineItemList`: every state change is a
  * callback prop, and this component never mutates a draft or reaches
  * into a hook that owns application state (only `RowMenu`'s own
- * open/closed flag is local).
+ * open/closed flag and `useSortable`'s internal drag state are local).
+ * `onMove` and the list's drag-and-drop `onReorder` are two independent
+ * ways to reach the same end (a new item order) — this component only
+ * ever calls `onMove`; the drag path goes straight from the handle's
+ * `listeners` through `LineItemList`'s `DndContext` to `onReorder` in
+ * `OrderDetail.tsx`, never through this component's own props.
  */
 export default function LineItemRow({
   item,
@@ -355,12 +370,29 @@ export default function LineItemRow({
   const detailLines = item.item_type === 'blind' ? blindDetailLines(item, catalogs) : flatDetailLines(item);
   const detailsId = `line-item-details-${item.key}`;
 
+  // `useSortable` is called here, per-row, rather than lifted to
+  // `LineItemList`, because it needs THIS row's own id and returns THIS
+  // row's own transform — `LineItemList` only owns the list-level
+  // `DndContext`/`SortableContext`/sensors (see its file header). Disabled
+  // in read-only: with no handle rendered (below) there would be nothing
+  // to attach `listeners`/`attributes` to anyway, but disabling here also
+  // stops `useSortable` from registering this row as a drop target while
+  // the list otherwise looks and behaves the same as any other read-only
+  // row.
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.key,
+    disabled: readOnly,
+  });
+  const sortableStyle = { transform: CSS.Transform.toString(transform), transition };
+
   return (
     <li
-      className={`flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2${item.hidden ? ' opacity-55' : ''}`}
+      ref={setNodeRef}
+      style={sortableStyle}
+      className={`flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2${item.hidden ? ' opacity-55' : ''}${isDragging ? ' relative z-10 bg-surface opacity-90 shadow-md' : ''}`}
     >
       {/*
-        Line 1 on phones: checkbox, name.
+        Line 1 on phones: handle, checkbox, name.
 
         Alignment is start on phones and centre at `sm+`.
         On a phone the name routinely wraps to several
@@ -372,6 +404,40 @@ export default function LineItemRow({
         row's centre — hence the switch.
       */}
       <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
+        {/*
+          Drag handle — hidden in read-only, same as the checkbox and
+          every other action control below. `{...listeners}
+          {...attributes}` are attached ONLY here, never on the row or
+          its name/body button: the body is already a tap target that
+          expands the detail panel, and the row also holds a checkbox,
+          two icon buttons and a menu trigger — if drag listeners landed
+          on any of that, a tap to expand or press a button would race a
+          drag-start on a touch screen and the row would become
+          unreliable to use one-handed at a customer's house. `touch-none`
+          stops the browser's own touch-scroll gesture from competing
+          with `PointerSensor`'s drag once a touch lands on the handle;
+          `cursor-grab` is a desktop-only affordance (irrelevant to touch,
+          harmless to leave in).
+        */}
+        {!readOnly && (
+          <button
+            type="button"
+            {...attributes}
+            {...listeners}
+            aria-label={`Reorder ${name}`}
+            className="flex h-11 w-11 shrink-0 touch-none cursor-grab items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 sm:h-8 sm:w-8"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
+              <circle cx="9" cy="6" r="1.6" />
+              <circle cx="15" cy="6" r="1.6" />
+              <circle cx="9" cy="12" r="1.6" />
+              <circle cx="15" cy="12" r="1.6" />
+              <circle cx="9" cy="18" r="1.6" />
+              <circle cx="15" cy="18" r="1.6" />
+            </svg>
+          </button>
+        )}
+
         {/* Checkbox — hidden in read-only */}
         {!readOnly && (
           <input

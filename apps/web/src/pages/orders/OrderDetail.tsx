@@ -122,6 +122,7 @@ import {
   BulkMeasureForm,
 } from './LineItemEditor';
 import LineItemList from './LineItemList';
+import { arrayMove } from '@dnd-kit/sortable';
 import {
   blindDraftPrice,
   bulkEditSelection,
@@ -808,6 +809,32 @@ export default function OrderDetail() {
       const [row] = next.splice(idx, 1);
       next.splice(to, 0, row);
       return next;
+    });
+  }
+  /**
+   * Reorders line items by drag-and-drop: moves the item identified by
+   * `activeKey` to the position of the item identified by `overKey`.
+   * Feeds `LineItemList`'s `onReorder`, called from its `DndContext`'s
+   * `onDragEnd` once a drag lands on a different row than it started on.
+   *
+   * Uses `arrayMove` from `@dnd-kit/sortable` rather than hand-rolling the
+   * splice `moveItem` above uses, because a drag can land anywhere in the
+   * list (not just one slot up or down) — `arrayMove` handles that
+   * distance uniformly and immutably. No-ops (returns the same list) if
+   * either key is not found, mirroring `moveItem`'s edge-case guard.
+   *
+   * This is the ENTIRE persistence story for the new order: nothing here
+   * writes a `position` field. The Worker derives each line item's saved
+   * position from its index in the save payload array, so reordering this
+   * in-memory array is the whole job — the next save carries the new
+   * order through untouched.
+   */
+  function reorderItems(activeKey: string, overKey: string) {
+    setItems((list) => {
+      const from = list.findIndex((it) => it.key === activeKey);
+      const to = list.findIndex((it) => it.key === overKey);
+      if (from === -1 || to === -1) return list;
+      return arrayMove(list, from, to);
     });
   }
   function addBlind() {
@@ -2433,6 +2460,7 @@ export default function OrderDetail() {
                   onDuplicate={duplicateItem}
                   onDelete={removeItem}
                   onMove={moveItem}
+                  onReorder={reorderItems}
                 />
               </section>
             )}
