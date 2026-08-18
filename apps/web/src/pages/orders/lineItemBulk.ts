@@ -49,7 +49,14 @@ export interface BulkEditState {
  * slot for a bulk edit to touch. This guard is what lets the caller
  * (`OrderDetail`'s `applyBulkEdit`) map every selected item through this
  * function unconditionally, without first re-checking each one's
- * `item_type`.
+ * `item_type`. A BLIND item, by contrast, always gets back a NEW object —
+ * even a patch that changes nothing on it still allocates via `{
+ * ...item }` (or via `applyTypeDefaults`, which does the same). Unlike
+ * the retired `applyBulkEditToDraft`, this does not special-case a
+ * same-reference no-op: `OrderDetail.applyBulkEdit` already builds a new
+ * items array on every apply via `Array.prototype.map`, so preserving one
+ * item's reference identity inside that map would not save a render, and
+ * is not worth the extra branch.
  *
  * When `patch.blinds_type` is set, the item is first RESET onto that
  * type's saved defaults via `applyTypeDefaults` — deliberately without
@@ -71,6 +78,19 @@ export interface BulkEditState {
  * (`materialsForType`) is what keeps an out-of-scope id from ever
  * reaching the patch in the first place.
  *
+ * **`unit_price_override` is CLEARED whenever the patch changes anything
+ * that FEEDS the calculated price** — a new blind type, a material, or
+ * any hardware slot. An override pins the unit price to a figure typed
+ * against the OLD options, and it wins over the calculated price on both
+ * sides (`adjustedDraftPrice`), so leaving it in place would show the new
+ * options while silently continuing to charge the stale figure. A
+ * COLOUR-only patch is the deliberate exception: colour is free text and
+ * never enters pricing, so clearing the override on a pure colour edit
+ * would surprise a consultant who did not touch anything price-related.
+ * `addons` and `show_original_price` are left alone either way — they are
+ * additions to the price rather than a replacement for it, so a re-price
+ * does not invalidate them.
+ *
  * Empty patch fields mean "no change" throughout, including `color`.
  *
  * @param item Any selected line item; only `item_type === 'blind'` rows
@@ -87,11 +107,31 @@ export function applyBulkPatch(item: ItemDraft, patch: BulkEditState, catalogs: 
     ? applyTypeDefaults(item, patch.blinds_type, catalogs)
     : { ...item };
   const uses = slotsForType(catalogs, next.blinds_type);
-  if (patch.material_id) next.material_id = patch.material_id;
-  if (patch.cassette_id && uses.has('cassette')) next.cassette_id = patch.cassette_id;
-  if (patch.bottom_rail_id && uses.has('bottom_rail')) next.bottom_rail_id = patch.bottom_rail_id;
-  if (patch.control_id && uses.has('control')) next.control_id = patch.control_id;
-  if (patch.installation_id && uses.has('installation')) next.installation_id = patch.installation_id;
+  // Tracks whether anything that feeds the price was touched, so the
+  // stale override is dropped on exactly those changes and never on a
+  // colour-only patch.
+  let pricingChanged = Boolean(patch.blinds_type);
+  if (patch.material_id) {
+    next.material_id = patch.material_id;
+    pricingChanged = true;
+  }
+  if (patch.cassette_id && uses.has('cassette')) {
+    next.cassette_id = patch.cassette_id;
+    pricingChanged = true;
+  }
+  if (patch.bottom_rail_id && uses.has('bottom_rail')) {
+    next.bottom_rail_id = patch.bottom_rail_id;
+    pricingChanged = true;
+  }
+  if (patch.control_id && uses.has('control')) {
+    next.control_id = patch.control_id;
+    pricingChanged = true;
+  }
+  if (patch.installation_id && uses.has('installation')) {
+    next.installation_id = patch.installation_id;
+    pricingChanged = true;
+  }
   if (patch.color) next.color = patch.color;
+  if (pricingChanged) next.unit_price_override = '';
   return next;
 }

@@ -174,9 +174,11 @@ export function FlatEditForm({
  *
  * The intro explains that choosing a blind type resets each touched
  * item's options to that type's saved defaults before anything else here
- * applies, and that applying always clears a manual price override on the
- * items it touches (`applyBulkPatch`) — the consultant has to know before
- * choosing, because an override is usually a figure they quoted.
+ * applies, and that applying clears a manual price override on an item
+ * ONLY when the change actually feeds its price — a new type, material or
+ * hardware slot (`applyBulkPatch`), never a colour-only change — the
+ * consultant has to know before choosing, because an override is usually
+ * a figure they quoted.
  */
 export function BulkEditForm({
   state,
@@ -202,9 +204,10 @@ export function BulkEditForm({
       <p className="text-[13px] text-text-muted">
         Only the selected fields will be changed; leave one on "No change" to keep each item's
         current value. Choosing a blind type resets each item's options to that type's defaults
-        before anything else here is applied. Any manual price override on an item this changes
-        is <span className="font-medium text-text-secondary">reset</span>, so the new options are
-        what it is priced from.
+        before anything else here is applied. Changing the type, material or a hardware option
+        on an item also <span className="font-medium text-text-secondary">clears</span> any
+        manual price override on it, so it prices from the new options — a colour-only change
+        never touches an override.
       </p>
       <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2">
         <label className="min-w-0">

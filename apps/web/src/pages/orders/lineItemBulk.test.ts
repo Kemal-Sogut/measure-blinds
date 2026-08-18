@@ -204,4 +204,46 @@ describe('applyBulkPatch', () => {
     expect(next.blinds_type).toBe('Curtains');
     expect(next.cassette_id).toBe(''); // Curtains has no cassette slot → dropped
   });
+
+  /*
+   * `unit_price_override` pins the unit price to a figure typed against
+   * the OLD options, and it wins over the calculated price — so a bulk
+   * change that feeds the price (type, material, or a hardware slot) must
+   * clear it, or the item would show new options but keep charging the
+   * stale figure. A colour-only change must NOT clear it: colour is free
+   * text and never enters pricing, so wiping a deliberate override on a
+   * pure colour edit would be its own surprise.
+   */
+  it('clears a price override when a price-feeding field changes', () => {
+    const cases: [string, Partial<BulkEditState>][] = [
+      ['blind type', { blinds_type: 'Roller' }],
+      ['material', { material_id: 'm-roller' }],
+      ['a hardware slot', { cassette_id: 'c-zebra-2' }],
+    ];
+    for (const [, patch] of cases) {
+      const before = draft({ unit_price_override: '250' });
+      const next = applyBulkPatch(before, { ...NOTHING, ...patch }, catalogs()) as BlindDraft;
+      expect(next.unit_price_override).toBe('');
+    }
+  });
+
+  it('keeps add-ons and show_original_price when it clears an override', () => {
+    // Add-ons sit ON TOP of the price rather than replacing it, so a
+    // re-price does not invalidate them.
+    const before = draft({
+      unit_price_override: '250',
+      show_original_price: false,
+      addons: [{ key: 'a', label: 'Rush fee', price: '50' }],
+    });
+    const next = applyBulkPatch(before, { ...NOTHING, material_id: 'm-roller' }, catalogs()) as BlindDraft;
+    expect(next.addons).toEqual(before.addons);
+    expect(next.show_original_price).toBe(false);
+  });
+
+  it('a colour-only patch does not clear the price override', () => {
+    const before = draft({ unit_price_override: '250' });
+    const next = applyBulkPatch(before, { ...NOTHING, color: 'Charcoal' }, catalogs()) as BlindDraft;
+    expect(next.color).toBe('Charcoal');
+    expect(next.unit_price_override).toBe('250');
+  });
 });
