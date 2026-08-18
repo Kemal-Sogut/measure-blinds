@@ -36,6 +36,7 @@ const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
 const CompanyInfo = lazy(() => import('./pages/settings/CompanyInfo'));
 const Materials = lazy(() => import('./pages/settings/Materials'));
 const MaterialsForType = lazy(() => import('./pages/settings/MaterialsForType'));
+const BlindTypeDefaults = lazy(() => import('./pages/settings/BlindTypeDefaults'));
 const CassetteOptions = lazy(() => import('./pages/settings/CassetteOptions'));
 const BottomRailOptions = lazy(() => import('./pages/settings/BottomRailOptions'));
 const ControlOptions = lazy(() => import('./pages/settings/ControlOptions'));
@@ -120,6 +121,7 @@ export default function App() {
             <Route path="/settings/pleat-types" element={guard(<Layout><PleatTypes /></Layout>)} />
             <Route path="/settings/installation" element={guard(<Layout><InstallationOptions /></Layout>)} />
             <Route path="/settings/presets" element={guard(<Layout><PresetLineItems /></Layout>)} />
+            <Route path="/settings/defaults" element={guard(<Layout><BlindTypeDefaults /></Layout>)} />
             <Route path="/settings/terms" element={guard(<Layout><TermsAndConditions /></Layout>)} />
 
             {/* Public — no auth */}
