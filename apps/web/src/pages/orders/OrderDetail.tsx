@@ -146,6 +146,7 @@ import {
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import { nextKey } from './bulkAdd';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
@@ -240,12 +241,6 @@ function toIso(d: Date): string {
 function fromIso(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d);
-}
-
-/** Unique keys for list rendering of drafts. */
-let draftSeq = 0;
-function nextKey(): string {
-  return `d${++draftSeq}`;
 }
 
 /** Converts persisted line items into editable drafts. */
