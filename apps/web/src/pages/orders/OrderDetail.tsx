@@ -146,6 +146,7 @@ import {
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import BulkAddSheet from './BulkAddSheet';
 import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
@@ -529,7 +530,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'cancelDeny'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'bulkAdd' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -2642,6 +2643,22 @@ export default function OrderDetail() {
                   Add Standard Blind
                 </button>
                 {/*
+                  Bulk add: one shared config per blind type ("section"),
+                  many measurement rows underneath it — the fast path for
+                  a whole room or house of the SAME type. Distinct from
+                  the older bulk-measurement popup below, which captures
+                  only widths/heights with no type or options at all.
+                */}
+                <button
+                  onClick={() => setSheet('bulkAdd')}
+                  className="flex h-11 items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3 4h18v4H3z M3 10h18v4H3z M3 16h18v4H3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                  </svg>
+                  Bulk Add
+                </button>
+                {/*
                   The measuring pass: every window's width and height in
                   one popup, details chosen per item afterwards. Sits with
                   the Add buttons because that is what it does — it adds
@@ -3400,6 +3417,24 @@ export default function OrderDetail() {
           </div>
         );
       })()}
+
+      {/* Bulk-add sheet — one shared config per blind type ("section"),
+          many measurement rows underneath it. See `BulkAddSheet.tsx`.
+          Mounted only while active (like every other sheet on this
+          screen) rather than kept alive and toggled via `open`, so its
+          internally-owned `sections` state cannot survive into a later
+          reopened pass. */}
+      {sheet === 'bulkAdd' && (
+        <BulkAddSheet
+          open
+          catalogs={catalogs}
+          onCancel={() => setSheet('none')}
+          onAdd={(drafts) => {
+            setItems((list) => [...list, ...drafts]);
+            setSheet('none');
+          }}
+        />
+      )}
 
     </div>
 
