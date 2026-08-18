@@ -15,7 +15,7 @@
  * running page.
  */
 
-import { materialsForType, slotsForType, type Catalogs } from '../orders/lineItemDrafts';
+import { materialsForType, optionsForType, type Catalogs } from '../orders/lineItemDrafts';
 
 /**
  * All-string mirror of a saved defaults row's five option fields, `''`
@@ -35,31 +35,36 @@ export interface DefaultsDraft {
 
 /**
  * Clears any field in `draft` that is no longer a valid pick for
- * `typeName` under the CURRENT `catalogs` — i.e. re-applies the exact
- * scoping the card renders from (`materialsForType` for Material,
- * `slotsForType` for each hardware slot) to the values that are about to
- * be DISPLAYED or SAVED, not just to whatever the draft happens to hold.
+ * `typeName` under the CURRENT `catalogs` — i.e. re-checks each field's id
+ * against the exact OPTION list the card renders that field's `<select>`
+ * from (`optionsForType` per hardware catalog; `materialsForType` filtered
+ * to `active` for Material), not just to whatever the draft happens to
+ * hold.
  *
  * Exists because a saved default can go stale without the Default
- * Options page ever being touched: a hardware slot's last active+scoped
- * option can be deactivated or unlinked on another settings page, or a
- * Material can be unlinked from this type on the Materials page. When
- * that happens the card stops RENDERING the affected field (the same
- * scoping rule that decided to render it), but the row still carries the
- * old id — and the page's `toPatch` always resends every field, so every
- * subsequent save on that card would 400 on an id the user has no
- * control left to clear. Calling this before every save (see
+ * Options page ever being touched: an option can be deactivated or
+ * unlinked from a type on another settings page while still being the
+ * value some card's draft holds. Calling this before every save (see
  * `BlindTypeDefaults.tsx`'s module doc) is what keeps a card from
  * becoming permanently unsavable; calling it when building the display
  * draft as well keeps the UI from ever showing a value that cannot match
  * any rendered option.
  *
- * Hardware fields are cleared at the SLOT level (`slotsForType`), matching
- * what the card actually renders — not at the individual-option level
- * (`optionsForType`), which `OptionSelect` already tolerates on its own by
- * keeping a selected-but-now-inactive option visible in its list as long
- * as the slot itself is still offered. Material has no separate "slot"
- * concept, so it is checked directly against `materialsForType`'s id list.
+ * Deliberately OPTION-level, not slot-level: `optionsForType` (which
+ * `OptionSelect`'s own option list is built from) already filters to
+ * `active` options before the list reaches the control, so an id for a
+ * since-deactivated option has no matching `<option>` to fall back to —
+ * `OptionSelect` cannot "tolerate" it the way selecting the slot as a
+ * whole might suggest. The API independently re-validates every non-null
+ * id's `active` flag on save (`apps/api/src/routes/settings.ts`'s
+ * `DEFAULT_LINKS` lookup), so an id that survived a slot-level check here
+ * (the slot still has SOME active option, just not THIS one) would still
+ * 400 — a narrower version of the exact staleness this function exists to
+ * prevent. Material has no separate "slot" concept and `materialsForType`
+ * does not itself filter on `active` (a documented, pre-existing
+ * asymmetry with the hardware catalogs — see `materialsForType`'s own
+ * JSDoc) — so `active` is checked here explicitly, matching what the API
+ * accepts.
  *
  * Pure — catalogs and a type name in, a sanitized draft out.
  */
@@ -68,14 +73,63 @@ export function sanitizeDraftForType(
   catalogs: Catalogs,
   typeName: string
 ): DefaultsDraft {
-  const materials = materialsForType(catalogs, typeName);
-  const slots = slotsForType(catalogs, typeName);
-  const validMaterial = materials.some((m) => m.id === draft.material_id);
+  const validMaterial = materialsForType(catalogs, typeName).some(
+    (m) => m.id === draft.material_id && m.active
+  );
+  const validId = <T extends { id: string; active: boolean; blind_type_ids: string[] }>(
+    options: T[],
+    id: string
+  ) => optionsForType(options, catalogs.blindTypes, typeName).some((o) => o.id === id);
   return {
     material_id: validMaterial ? draft.material_id : '',
-    cassette_id: slots.has('cassette') ? draft.cassette_id : '',
-    bottom_rail_id: slots.has('bottom_rail') ? draft.bottom_rail_id : '',
-    control_id: slots.has('control') ? draft.control_id : '',
-    installation_id: slots.has('installation') ? draft.installation_id : '',
+    cassette_id: validId(catalogs.cassettes, draft.cassette_id) ? draft.cassette_id : '',
+    bottom_rail_id: validId(catalogs.bottomRails, draft.bottom_rail_id) ? draft.bottom_rail_id : '',
+    control_id: validId(catalogs.controls, draft.control_id) ? draft.control_id : '',
+    installation_id: validId(catalogs.installationOptions, draft.installation_id)
+      ? draft.installation_id
+      : '',
   };
+}
+
+/**
+ * Computes the sanitized full draft one `BlindTypeDefaultsCard.set` call
+ * should save: `draft` (last SERVER-CONFIRMED values) overlaid with
+ * `pendingWrites` (any OTHER fields on the same card with a save still in
+ * flight, holding their just-sent, not-yet-confirmed values) overlaid with
+ * this field's freshly picked `value`, then re-sanitized against the
+ * current catalogs.
+ *
+ * This is the merge step that closes the original non-optimistic-mutation
+ * race (see `BlindTypeDefaults.tsx`'s module doc): computing a save from
+ * `draft` ALONE while a sibling field's PUT is in flight would silently
+ * revert that sibling's edit the moment this save lands, because a
+ * full-row PUT resends every field. Folding in `pendingWrites` means a
+ * concurrent, still-unconfirmed sibling edit survives.
+ *
+ * It also defines the recovery guarantee for a field whose OWN save has
+ * already been rejected: `set` unconditionally removes a field from
+ * `pendingWrites` once ITS save settles, success or failure (see `set`'s
+ * own JSDoc) — so by the time this function is called for a LATER save
+ * that does not name that field, `pendingWrites` no longer carries its
+ * rejected value, and this merge falls back to `draft` (the last value
+ * the server actually accepted) for it instead. A save fired for a
+ * DIFFERENT field WHILE the rejected one is still mid-flight can still
+ * carry that doomed value in its own outgoing PUT — no purely local state
+ * change can un-send an already-in-flight request — but every save fired
+ * after the rejection is known is guaranteed clean, which is what keeps a
+ * single bad pick from blocking the rest of the card.
+ *
+ * Pure — no React, no network — so this exact contamination-avoidance
+ * behaviour is unit-testable without a browser or a mounted component.
+ */
+export function nextDraftForSave(
+  draft: DefaultsDraft,
+  pendingWrites: Partial<DefaultsDraft>,
+  field: keyof DefaultsDraft,
+  value: string,
+  catalogs: Catalogs,
+  typeName: string
+): DefaultsDraft {
+  const merged: DefaultsDraft = { ...draft, ...pendingWrites, [field]: value };
+  return sanitizeDraftForType(merged, catalogs, typeName);
 }

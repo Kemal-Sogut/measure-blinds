@@ -39,22 +39,28 @@
  *
  * The mutation is intentionally NOT optimistic (see its own JSDoc), so
  * `BlindTypeDefaultsCard.set` tracks, per card, which FIELDS have an
- * unconfirmed save in flight (`pendingWrites`) and merges those into every
- * new patch it builds, instead of only the render closure's (possibly
- * stale) `draft`. That merge is what actually closes the race a naive
- * "read `draft`, patch one field" implementation would have: without it,
- * editing field B while field A's PUT is still in flight would compute
- * B's full-row patch from the PRE-edit value of A and silently revert A
- * the moment B's PUT lands — A's own edit is never lost even though B's
- * request may resolve first. Each field ALSO disables itself (via its own
- * `<fieldset>` — no `disabled` prop was added to the shared `OptionSelect`)
- * while its OWN save is in flight; that lock is narrower than
- * `pendingWrites` and exists only to stop a second edit to the SAME field
- * from firing before the first settles, which could otherwise complete
- * out of order and leave a value the user did not pick last. Locking is
- * therefore per-field, not per-card — the natural workflow on a phone is
- * picking several fields on one card in quick succession, and nothing
- * about the race requires blocking that.
+ * unconfirmed save in flight (`pendingWrites`) and folds those into every
+ * new patch it builds via `nextDraftForSave`, instead of computing a patch
+ * from only the render closure's (possibly stale) `draft`. That merge is
+ * what actually closes the race a naive "read `draft`, patch one field"
+ * implementation would have: without it, editing field B while field A's
+ * PUT is still in flight would compute B's full-row patch from the
+ * PRE-edit value of A and silently revert A the moment B's PUT lands —
+ * A's own edit is never lost even though B's request may resolve first.
+ * `set` unconditionally drops a field from `pendingWrites` once ITS OWN
+ * save settles — success or failure — so a rejected pick cannot go on
+ * contaminating saves fired for OTHER fields afterward; see
+ * `nextDraftForSave`'s JSDoc for the exact guarantee and its one
+ * acknowledged limit (a save already in flight for another field when the
+ * rejection lands cannot be un-sent). Each field ALSO disables itself (via
+ * its own `<fieldset>` — no `disabled` prop was added to the shared
+ * `OptionSelect`) while its OWN save is in flight; that lock is narrower
+ * than `pendingWrites` and exists only to stop a second edit to the SAME
+ * field from firing before the first settles, which could otherwise
+ * complete out of order and leave a value the user did not pick last.
+ * Locking is therefore per-field, not per-card — the natural workflow on a
+ * phone is picking several fields on one card in quick succession, and
+ * nothing about the race requires blocking that.
  */
 
 import { useState } from 'react';
@@ -62,7 +68,7 @@ import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import { materialsForType, optionsForType, slotsForType, type Catalogs } from '../orders/lineItemDrafts';
 import { OptionSelect } from '../orders/blindForms/fields';
-import { sanitizeDraftForType, type DefaultsDraft } from './blindTypeDefaultsDraft';
+import { nextDraftForSave, sanitizeDraftForType, type DefaultsDraft } from './blindTypeDefaultsDraft';
 import {
   useBlindTypeDefaults,
   useCatalogList,
@@ -213,20 +219,28 @@ function BlindTypeDefaultsCard({
   const [pendingWrites, setPendingWrites] = useState<Partial<DefaultsDraft>>({});
 
   /**
-   * Handles one `OptionSelect`'s `onChange`. Builds the next full draft
-   * from `draft` (server truth) overlaid with any OTHER fields still
-   * mid-save (`pendingWrites`) and this field's new value, re-sanitizes
-   * it for the current scoping (cheap and idempotent — see
-   * `sanitizeDraftForType`), marks `field` pending, fires the save, and
-   * always clears `field` from `pendingWrites` once it settles. On error
-   * this correctly leaves the field showing `draft[field]` again, because
-   * the save never took effect and nothing else needs to change; `onSave`
-   * itself never rejects (see `handleSave`), so this `finally` always
-   * runs promptly rather than waiting on an unhandled rejection.
+   * Handles one `OptionSelect`'s `onChange`. Delegates the next full draft
+   * to `nextDraftForSave` (server-truth `draft` overlaid with any OTHER
+   * fields still mid-save and this field's new value, re-sanitized for
+   * the current scoping — see its own JSDoc for exactly why each layer
+   * matters), marks `field` pending, fires the save, and unconditionally
+   * clears `field` from `pendingWrites` once it settles — success OR
+   * failure, via `finally`, never leaving a rejected value sitting in
+   * `pendingWrites` as if it had been accepted. That unconditional clear
+   * is what gives `nextDraftForSave` its guarantee: a save fired for a
+   * DIFFERENT field AFTER this one's rejection is already known is
+   * computed purely from `draft` (the last value the server actually
+   * accepted) for this field, never from the rejected pick — a single bad
+   * id cannot block the rest of the card once its own save has settled.
+   * (A save fired for another field WHILE this one is still mid-flight
+   * can still carry the not-yet-known-bad value in its own outgoing PUT —
+   * see `nextDraftForSave`'s JSDoc for why no local cleanup can undo an
+   * already-sent request.) `onSave` itself never rejects (see
+   * `handleSave`), so this `finally` always runs promptly rather than
+   * waiting on an unhandled rejection.
    */
   async function set(field: keyof DefaultsDraft, value: string) {
-    const merged: DefaultsDraft = { ...draft, ...pendingWrites, [field]: value };
-    const sanitized = sanitizeDraftForType(merged, catalogs, type.name);
+    const sanitized = nextDraftForSave(draft, pendingWrites, field, value, catalogs, type.name);
     setPendingWrites((w) => ({ ...w, [field]: value }));
     try {
       await onSave(toPatch(sanitized));
