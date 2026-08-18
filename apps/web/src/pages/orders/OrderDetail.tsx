@@ -146,7 +146,7 @@ import {
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
-import { nextKey } from './bulkAdd';
+import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**

@@ -11,17 +11,21 @@
  * ORDER items come out in (section 1 before section 2, row order preserved
  * within a section — the consultant reads the list back and expects it to
  * match what they typed), and that each draft owns its own `panels` array
- * rather than sharing the row's reference (a later per-item edit — e.g.
- * "+ Panel" in the single-item form — must not silently rewrite the
- * original bulk row it came from, which a shared array would allow).
+ * AND its own `attributes` object rather than sharing the row's/config's
+ * references (a later per-item edit — e.g. "+ Panel" or a Curtains pleat
+ * pick in the single-item form — must not silently rewrite the original
+ * bulk row/config it came from, or a SIBLING item expanded from the same
+ * section, which a shared reference would allow).
  *
- * `validateBulkSections` mirrors `buildPayload`'s rules and message style
- * in `OrderDetail.tsx` (same wording: "choose a material.", "choose a
- * cassette.", "enter every panel width.") — the Worker enforces the exact
- * same constraints on save, so a bulk-add section that passes this check
- * must always be acceptable to `buildPayload` once expanded. Section/row
- * numbers in messages are ONE-based, matching how `buildPayload` numbers
- * items and how a consultant counts rows on screen.
+ * `validateBulkSections` mirrors `buildPayload`'s rules, message style AND
+ * CHECK ORDER in `OrderDetail.tsx` (same wording: "choose a material.",
+ * "choose a cassette.", "enter every panel width.", "check the Curtains
+ * options."; same order: measurement checks before configuration checks)
+ * — the Worker enforces the exact same constraints on save, so a bulk-add
+ * section that passes this check must always be acceptable to
+ * `buildPayload` once expanded. Section/row numbers in messages are
+ * ONE-based, matching how `buildPayload` numbers items and how a
+ * consultant counts rows on screen.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -193,6 +197,24 @@ describe('expandBulkSections', () => {
     expect(draftItem.panels).toEqual(['100', '120', '999']);
     expect(draftItem.panels).not.toBe(sharedRow.panels);
   });
+
+  it('copies the section config attributes object (no shared reference)', () => {
+    const cfg = rollerConfig({ attributes: { foo: 'bar' } });
+    const s = section({ config: cfg, rows: [row({ key: 'r1' }), row({ key: 'r2' })] });
+    const [d1, d2] = expandBulkSections([s]);
+
+    // Every row expanded from one section shares that section's `config`,
+    // which stays live in the sheet's own state — mutating one expanded
+    // item's attributes (e.g. a Curtains pleat pick on the single-item
+    // form) must never reach back into the config or into a SIBLING item
+    // expanded from the same section.
+    d1.attributes.baz = 'qux';
+    expect(cfg.attributes).toEqual({ foo: 'bar' });
+    expect(d2.attributes).toEqual({ foo: 'bar' });
+    expect(d1.attributes).not.toBe(cfg.attributes);
+    expect(d2.attributes).not.toBe(cfg.attributes);
+    expect(d1.attributes).not.toBe(d2.attributes);
+  });
 });
 
 describe('validateBulkSections', () => {
@@ -238,6 +260,42 @@ describe('validateBulkSections', () => {
     ).toBeNull();
   });
 
+  it('invalid attributes for the section blind type → message matching buildPayload wording', () => {
+    // `attributes` lives on the shared config; a bad value there would
+    // otherwise fail identically on every row expanded from it, and only
+    // surface once `buildPayload` rejects the first already-expanded item.
+    // Curtains' `pleat_type_id` is optional but, when present, must be a
+    // real uuid — this fixture supplies neither a cassette nor a bottom
+    // rail scoped to Curtains, so those slots are unused and stay out of
+    // the way of the attributes check being exercised.
+    const CURTAINS = { id: 't-curtains', name: 'Curtains', active: true, sort_order: 1 };
+    const curtainCatalogs = catalogs({
+      blindTypes: [ROLLER, CURTAINS],
+      materials: [
+        ...catalogs().materials,
+        {
+          id: 'm-curtains',
+          name: 'Curtain Fabric',
+          price_per_sqm: 40,
+          active: true,
+          sort_order: 1,
+          width_cm: null,
+          blind_type_ids: [CURTAINS.id],
+        },
+      ],
+    });
+    const badAttributes = section({
+      config: rollerConfig({
+        blinds_type: 'Curtains',
+        material_id: 'm-curtains',
+        attributes: { pleat_type_id: 'not-a-uuid' },
+      }),
+    });
+    expect(validateBulkSections([badAttributes], curtainCatalogs)).toBe(
+      'Section 1: check the Curtains options.'
+    );
+  });
+
   it('row with empty room allowed, but missing panel width or height → message naming section+row', () => {
     const withEmptyRoom = section({ rows: [row({ room_name: '' })] });
     expect(validateBulkSections([withEmptyRoom], catalogs())).toBeNull();
@@ -250,6 +308,17 @@ describe('validateBulkSections', () => {
     const missingHeight = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: '' })] });
     expect(validateBulkSections([missingHeight], catalogs())).toBe(
       'Section 1, row 2: enter a height.'
+    );
+  });
+
+  it('catches an invalid panel in the middle of a multi-panel row, not just the first', () => {
+    // A row with several panels where only a MIDDLE entry is bad — proves
+    // the check inspects every panel rather than just `panels[0]`.
+    const middleInvalid = section({
+      rows: [row({ key: 'r1' }), row({ key: 'r2', panels: ['100', 'abc', '50'] })],
+    });
+    expect(validateBulkSections([middleInvalid], catalogs())).toBe(
+      'Section 1, row 2: enter every panel width.'
     );
   });
 
