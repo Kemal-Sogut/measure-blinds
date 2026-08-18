@@ -123,7 +123,6 @@ import {
 } from './LineItemEditor';
 import { getBlindType } from '../../lib/blindTypes';
 import {
-  applyBulkEditToDraft,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
@@ -140,13 +139,13 @@ import {
   NO_ADJUSTMENTS,
   type BlindDraft,
   type BlindDraftDefaults,
-  type BulkEditState,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
   type MeasurementRow,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
+import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
@@ -478,6 +477,9 @@ type StageAction = {
  */
 const LOG_PREVIEW_COUNT = 10;
 
+/** Every bulk-edit field on "no change" — shared by `bulkState`'s initial value and `openBulkEdit`'s reset so the two can never drift apart. */
+const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '', color: '' };
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -541,7 +543,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>(EMPTY_BULK_STATE);
   // Rows of the bulk measurement popup. Re-seeded on every open, so a
   // cancelled measuring pass is never offered back half-typed.
   const [measureRows, setMeasureRows] = useState<MeasurementRow[]>([]);
@@ -913,31 +915,21 @@ export default function OrderDetail() {
    */
   function openBulkEdit() {
     if (!bulkEditSelection(items, selected).ok) return;
-    setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
+    setBulkState(EMPTY_BULK_STATE);
     setSheet('bulkEdit');
   }
 
   /**
-   * Writes the non-empty bulk fields onto the selected items.
+   * Writes the current bulk-edit patch onto every selected item.
    *
-   * Re-reads the verdict rather than trusting the popup being open: the
-   * selection is the same state the list renders from, and an item edited
-   * behind the sheet could have changed type. Only items of the resolved
-   * type are touched; what each one becomes — including the price
-   * override it loses — is `applyBulkEditToDraft`, so the rule is tested
-   * once and cannot drift from the note the form shows.
+   * What each item becomes is entirely `applyBulkPatch`'s call — it
+   * already passes a non-blind item through untouched and re-scopes a
+   * blind-type change per item, so this only has to map the selection
+   * over it once; the rule is tested there and cannot drift from the note
+   * the form shows.
    */
   function applyBulkEdit() {
-    const selection = bulkEditSelection(items, selected);
-    if (!selection.ok) return;
-    const uses = slotsForType(catalogs, selection.blindsType);
-    setItems((list) =>
-      list.map((it) => {
-        if (!selected.has(it.key) || it.item_type !== 'blind') return it;
-        if (it.blinds_type !== selection.blindsType) return it;
-        return applyBulkEditToDraft(it, bulkState, uses);
-      })
-    );
+    setItems((list) => list.map((it) => (selected.has(it.key) ? applyBulkPatch(it, bulkState, catalogs) : it)));
     setSelected(new Set());
     setSheet('none');
   }
@@ -3354,7 +3346,7 @@ export default function OrderDetail() {
                 </button>
                 <button
                   onClick={applyBulkEdit}
-                  disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
+                  disabled={Object.values(bulkState).every((v) => !v)}
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   Apply to selected

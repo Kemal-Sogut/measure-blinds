@@ -12,10 +12,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { CatalogSlot } from '../../lib/blindTypes/base';
 import { getBlindType } from '../../lib/blindTypes';
 import {
-  applyBulkEditToDraft,
   applyTypeDefaults,
   blindDraftPrice,
   bulkEditSelection,
@@ -33,7 +31,6 @@ import {
   slotsForType,
   type BlindDraft,
   type BlindDraftDefaults,
-  type BulkEditState,
   type Catalogs,
   type FlatDraft,
   type ItemDraft,
@@ -472,87 +469,6 @@ describe('bulkEditSelection', () => {
       blindsType: 'Venetian (legacy)',
       keys: ['l1', 'l2'],
     });
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* Bulk-edit application                                               */
-/* ------------------------------------------------------------------ */
-
-describe('applyBulkEditToDraft', () => {
-  /** Every field on "no change" — the baseline each case fills in. */
-  const NOTHING: BulkEditState = {
-    material_id: '',
-    cassette_id: '',
-    bottom_rail_id: '',
-    control_id: '',
-    installation_id: '',
-  };
-  /** The slots a Roller-like type uses; installation is deliberately out. */
-  const ROLLER_SLOTS = new Set<CatalogSlot>(['cassette', 'bottom_rail', 'control']);
-
-  it('writes the ids that were chosen', () => {
-    const next = applyBulkEditToDraft(
-      draft({ material_id: 'old-m', cassette_id: 'old-c' }),
-      { ...NOTHING, material_id: 'm2', cassette_id: 'c2' },
-      ROLLER_SLOTS
-    );
-    expect(next.material_id).toBe('m2');
-    expect(next.cassette_id).toBe('c2');
-  });
-
-  it('leaves a slot alone when its field is on "no change"', () => {
-    const next = applyBulkEditToDraft(
-      draft({ control_id: 'keep-me' }),
-      { ...NOTHING, material_id: 'm2' },
-      ROLLER_SLOTS
-    );
-    expect(next.control_id).toBe('keep-me');
-  });
-
-  it('drops an id for a slot the type does not use', () => {
-    // The Worker rejects an id for an unscoped slot, so writing one here
-    // would make the whole order unsavable.
-    const next = applyBulkEditToDraft(
-      draft({ installation_id: '' }),
-      { ...NOTHING, installation_id: 'ins-1' },
-      ROLLER_SLOTS
-    );
-    expect(next.installation_id).toBe('');
-  });
-
-  it('clears a price override on an item it changes', () => {
-    // The override was typed against the OLD options and wins over the
-    // calculated price, so leaving it would void the bulk re-price.
-    const next = applyBulkEditToDraft(
-      draft({ unit_price_override: '250' }),
-      { ...NOTHING, material_id: 'm2' },
-      ROLLER_SLOTS
-    );
-    expect(next.unit_price_override).toBe('');
-  });
-
-  it('keeps add-ons and the original-price flag when it clears an override', () => {
-    // Add-ons sit ON TOP of the price rather than replacing it, so a
-    // re-price does not invalidate them.
-    const before = draft({
-      unit_price_override: '250',
-      show_original_price: false,
-      addons: [{ key: 'a', label: 'Rush fee', price: '50' }],
-    });
-    const next = applyBulkEditToDraft(before, { ...NOTHING, material_id: 'm2' }, ROLLER_SLOTS);
-    expect(next.addons).toEqual(before.addons);
-    expect(next.show_original_price).toBe(false);
-  });
-
-  it('returns the draft untouched when nothing applies', () => {
-    // Including the override: an item the run misses must not lose its
-    // negotiated price as a side effect.
-    const before = draft({ unit_price_override: '250' });
-    expect(applyBulkEditToDraft(before, NOTHING, ROLLER_SLOTS)).toBe(before);
-    expect(
-      applyBulkEditToDraft(before, { ...NOTHING, installation_id: 'ins-1' }, ROLLER_SLOTS)
-    ).toBe(before);
   });
 });
 
