@@ -37,6 +37,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  bulkAddHasContent,
   expandBulkSections,
   newBulkRow,
   newBulkSection,
@@ -99,6 +100,16 @@ interface BulkAddSheetProps {
  * and hands the drafts to `onAdd`. Every section/row mutation goes through
  * the shared `mutate` helper specifically so the stale error banner cannot
  * survive an edit that may have fixed it.
+ *
+ * Cancelling — the backdrop tap AND the Cancel button, both routed through
+ * `handleCancel` so the guard cannot be bypassed by either path — confirms
+ * first whenever `bulkAddHasContent(sections)` is true, mirroring the
+ * older single-measurement popup's own guard
+ * (`OrderDetail.tsx`'s `closeBulkMeasure`, whose own comment notes a
+ * backdrop tap is easy to make by accident on a tablet). This sheet can
+ * hold measurements for a whole house — the most expensive, hardest to
+ * redo state in the app — so a stray tap must not be able to discard it
+ * silently the way it could before this guard existed.
  */
 export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAddSheetProps) {
   const [sections, setSections] = useState<BulkSection[]>(() => [newBulkSection()]);
@@ -145,6 +156,17 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
     setPendingFocusRowKey(row.key);
   }
 
+  /**
+   * Discards the sheet and closes it — confirming first if anything has
+   * been typed or picked (`bulkAddHasContent`). Shared by the backdrop
+   * and the Cancel button (see the component doc) so neither can discard
+   * a measuring pass without the same guard the other one gets.
+   */
+  function handleCancel() {
+    if (bulkAddHasContent(sections) && !window.confirm('Discard this bulk add?')) return;
+    onCancel();
+  }
+
   /** Validates, then expands and hands the drafts up; blocks on the first error. */
   function handleConfirm() {
     const message = validateBulkSections(sections, catalogs);
@@ -158,7 +180,7 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
   return (
     <div
       className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
-      onClick={onCancel}
+      onClick={handleCancel}
     >
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk add blinds</h2>
@@ -225,7 +247,7 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
 
         <div className="mt-4 flex gap-2">
           <button
-            onClick={onCancel}
+            onClick={handleCancel}
             className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
           >
             Cancel

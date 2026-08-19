@@ -31,6 +31,7 @@
 import { describe, it, expect } from 'vitest';
 import type { BlindDraft, Catalogs } from './lineItemDrafts';
 import {
+  bulkAddHasContent,
   expandBulkSections,
   newBulkRow,
   newBulkSection,
@@ -395,5 +396,57 @@ describe('newBulkSection', () => {
     const b = newBulkSection();
     expect(a.key).not.toBe(b.key);
     expect(a.config.key).not.toBe(b.config.key);
+  });
+});
+
+/*
+ * FINDING 4 — a fresh bulk-add sheet's default single section + single
+ * blank row must read as "nothing entered", so a stray backdrop tap on an
+ * untouched sheet stays silent; the moment anything is typed or picked,
+ * it must read as "has content", so the same tap gets a confirm guard
+ * instead of silently discarding a measuring pass (`BulkAddSheet.tsx`'s
+ * close handler).
+ */
+describe('bulkAddHasContent', () => {
+  it('is false for a freshly opened sheet (default section, blank row)', () => {
+    expect(bulkAddHasContent([newBulkSection()])).toBe(false);
+  });
+
+  it('is true once a row has a room name, a panel width, or a height', () => {
+    const withRoom: BulkSection = { ...newBulkSection() };
+    withRoom.rows[0].room_name = 'Bedroom';
+    expect(bulkAddHasContent([withRoom])).toBe(true);
+
+    const withWidth: BulkSection = { ...newBulkSection() };
+    withWidth.rows[0].panels = ['120'];
+    expect(bulkAddHasContent([withWidth])).toBe(true);
+
+    const withHeight: BulkSection = { ...newBulkSection() };
+    withHeight.rows[0].height_cm = '200';
+    expect(bulkAddHasContent([withHeight])).toBe(true);
+  });
+
+  it('is true once the section config has a blind type, material, or hardware picked', () => {
+    const withType: BulkSection = { ...newBulkSection() };
+    withType.config = { ...withType.config, blinds_type: 'Roller' };
+    expect(bulkAddHasContent([withType])).toBe(true);
+
+    const withMaterial: BulkSection = { ...newBulkSection() };
+    withMaterial.config = { ...withMaterial.config, material_id: 'm-roller' };
+    expect(bulkAddHasContent([withMaterial])).toBe(true);
+  });
+
+  it('is true once the section config has a colour, note, or attribute typed', () => {
+    const withColor: BulkSection = { ...newBulkSection() };
+    withColor.config = { ...withColor.config, color: 'White' };
+    expect(bulkAddHasContent([withColor])).toBe(true);
+
+    const withAttr: BulkSection = { ...newBulkSection() };
+    withAttr.config = { ...withAttr.config, attributes: { pleat_type_id: 'p1' } };
+    expect(bulkAddHasContent([withAttr])).toBe(true);
+  });
+
+  it('is false across multiple untouched sections', () => {
+    expect(bulkAddHasContent([newBulkSection(), newBulkSection()])).toBe(false);
   });
 });

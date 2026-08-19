@@ -14,8 +14,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { BlindDraft, Catalogs, FlatDraft } from './lineItemDrafts';
-import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import { applyTypeDefaults, type BlindDraft, type Catalogs, type FlatDraft } from './lineItemDrafts';
+import { applyBulkPatch, clearPriceOverride, type BulkEditState } from './lineItemBulk';
 
 /**
  * Three blind types so a "type set" patch has somewhere real to reset
@@ -53,6 +53,15 @@ function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
         price_per_sqm: 55,
         active: true,
         sort_order: 1,
+        width_cm: null,
+        blind_type_ids: [ZEBRA.id],
+      },
+      {
+        id: 'm-zebra-2',
+        name: 'Zebra Fabric Deluxe',
+        price_per_sqm: 65,
+        active: true,
+        sort_order: 2,
         width_cm: null,
         blind_type_ids: [ZEBRA.id],
       },
@@ -206,6 +215,49 @@ describe('applyBulkPatch', () => {
   });
 
   /*
+   * FINDING 1 repro: a bulk-edit form re-scopes its dropdowns option-level
+   * (`optionsForType`) when the type is switched mid-dialog, but the OLD
+   * guard here only checked `uses.has(slot)` — true for BOTH types
+   * whenever they happen to share a slot, even though the id itself came
+   * from the wrong type's option list. `k1` is a Roller-only control; a
+   * consultant who picks it, then switches the bulk dialog's type to
+   * Zebra, must not have `k1` written onto the Zebra items just because
+   * Zebra also has a 'control' slot.
+   */
+  it('drops a hardware id scoped to the OLD type when the bulk type change re-scopes the slot', () => {
+    const item = draft({ blinds_type: 'Roller', material_id: 'm-roller', cassette_id: 'c1', control_id: 'k1' });
+    const next = applyBulkPatch(
+      item,
+      { ...NOTHING, blinds_type: 'Zebra', control_id: 'k1' },
+      catalogs()
+    ) as BlindDraft;
+    expect(next.blinds_type).toBe('Zebra');
+    // k1 is Roller-only — invalid for Zebra, so it must NOT survive. Zebra
+    // has no saved defaults row in this fixture, so the slot falls to ''.
+    expect(next.control_id).toBe('');
+  });
+
+  it('drops a material id not scoped to the (possibly new) type', () => {
+    const item = draft(); // Zebra item
+    const next = applyBulkPatch(
+      item,
+      { ...NOTHING, material_id: 'm-roller' }, // m-roller is Roller-only
+      catalogs()
+    ) as BlindDraft;
+    expect(next.material_id).toBe(item.material_id); // unchanged — dropped
+  });
+
+  it('applies a material id that IS scoped to the (possibly new) type', () => {
+    const item = draft(); // Zebra item
+    const next = applyBulkPatch(
+      item,
+      { ...NOTHING, material_id: 'm-zebra-2' },
+      catalogs()
+    ) as BlindDraft;
+    expect(next.material_id).toBe('m-zebra-2');
+  });
+
+  /*
    * `unit_price_override` pins the unit price to a figure typed against
    * the OLD options, and it wins over the calculated price — so a bulk
    * change that feeds the price (type, material, or a hardware slot) must
@@ -217,7 +269,7 @@ describe('applyBulkPatch', () => {
   it('clears a price override when a price-feeding field changes', () => {
     const cases: [string, Partial<BulkEditState>][] = [
       ['blind type', { blinds_type: 'Roller' }],
-      ['material', { material_id: 'm-roller' }],
+      ['material', { material_id: 'm-zebra-2' }], // scoped to Zebra, the item's type
       ['a hardware slot', { cassette_id: 'c-zebra-2' }],
     ];
     for (const [, patch] of cases) {
@@ -245,5 +297,37 @@ describe('applyBulkPatch', () => {
     const next = applyBulkPatch(before, { ...NOTHING, color: 'Charcoal' }, catalogs()) as BlindDraft;
     expect(next.color).toBe('Charcoal');
     expect(next.unit_price_override).toBe('250');
+  });
+});
+
+/*
+ * FINDING 2 — the "clear a stale price override on a price-feeding
+ * change" rule existed only inside `applyBulkPatch`; the single-item
+ * blind-type dropdown (`BlindTypeSelect` in `blindForms/fields.tsx`) did
+ * not clear it at all. `clearPriceOverride` is the one function both
+ * paths now call so the rule cannot re-diverge; `fields.tsx` has no
+ * component-level test harness in this repo (no @testing-library/react),
+ * so its wiring is pinned here by reproducing exactly what its `onChange`
+ * does: `applyTypeDefaults` then `clearPriceOverride`.
+ */
+describe('clearPriceOverride', () => {
+  it('clears unit_price_override and leaves every other field untouched', () => {
+    const before = draft({ unit_price_override: '250', color: 'Charcoal' });
+    const after = clearPriceOverride(before);
+    expect(after.unit_price_override).toBe('');
+    expect(after).not.toBe(before);
+    expect({ ...after, unit_price_override: before.unit_price_override }).toEqual(before);
+  });
+
+  it('single-item type-change pipeline clears a stale override (Finding 2 repro)', () => {
+    const item = draft({ blinds_type: 'Zebra', unit_price_override: '250' });
+    const changed = clearPriceOverride(
+      applyTypeDefaults(item, 'Roller', catalogs(), { keepValid: true })
+    );
+    expect(changed.blinds_type).toBe('Roller');
+    // Material and hardware were reset by applyTypeDefaults (Zebra's picks
+    // are not valid for Roller), so this is a price-feeding change and the
+    // override must not survive it.
+    expect(changed.unit_price_override).toBe('');
   });
 });

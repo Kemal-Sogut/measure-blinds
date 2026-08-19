@@ -74,11 +74,21 @@ function requiredAttributeKeys(typeName: string): string[] {
 }
 
 /**
- * Isolates the `SectionAttributes` function body from the rest of
- * `BulkAddSectionCard.tsx` by brace-counting from its `function
- * SectionAttributes(` header, so a match against a required type's name
- * elsewhere in the file (an import, a comment, another component) can
- * never produce a false pass.
+ * Isolates the `SectionAttributes` function BODY (not its destructured
+ * parameter list or inline param-type annotation, both of which contain
+ * their own balanced `{}` pairs) from the rest of `BulkAddSectionCard.tsx`,
+ * so a match against a required type's name elsewhere in the file (an
+ * import, a comment, another component) can never produce a false pass.
+ *
+ * Two passes are needed because the signature itself has braces before the
+ * body starts: `function SectionAttributes({ config, catalogs, onChange }:
+ * { config: BlindDraft; catalogs: Catalogs; onChange: (next: BlindDraft) =>
+ * void }) {`. Brace-counting from the header's first `{` alone would return
+ * once depth hits 0 at the destructured parameter list's OWN closing
+ * brace — never reaching the body. So this first paren-counts from the
+ * `(` right after the function name to find that parameter list's matching
+ * `)` (paren-depth is unaffected by the braces inside), THEN brace-counts
+ * from the next `{` after that — the actual body's opening brace.
  */
 function sectionAttributesBody(): string {
   const header = 'function SectionAttributes(';
@@ -86,7 +96,24 @@ function sectionAttributesBody(): string {
   if (start === -1) {
     throw new Error('SectionAttributes not found in BulkAddSectionCard.tsx');
   }
-  const braceStart = sectionCardSource.indexOf('{', start);
+  const parenStart = start + header.length - 1; // index of the header's own '('
+  let parenDepth = 0;
+  let parenEnd = -1;
+  for (let i = parenStart; i < sectionCardSource.length; i++) {
+    const char = sectionCardSource[i];
+    if (char === '(') parenDepth++;
+    else if (char === ')') {
+      parenDepth--;
+      if (parenDepth === 0) {
+        parenEnd = i;
+        break;
+      }
+    }
+  }
+  if (parenEnd === -1) {
+    throw new Error('Unbalanced parens reading SectionAttributes params from BulkAddSectionCard.tsx');
+  }
+  const braceStart = sectionCardSource.indexOf('{', parenEnd);
   let depth = 0;
   for (let i = braceStart; i < sectionCardSource.length; i++) {
     const char = sectionCardSource[i];

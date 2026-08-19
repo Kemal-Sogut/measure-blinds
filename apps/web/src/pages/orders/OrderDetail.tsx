@@ -136,6 +136,7 @@ import {
   parseDraftAttributes,
   parseOverride,
   parsePositive,
+  pruneSelection,
   slotsForType,
   NO_ADJUSTMENTS,
   type BlindDraft,
@@ -753,8 +754,20 @@ export default function OrderDetail() {
   const balance = Math.round((orderTotal - amountPaid) * 100) / 100;
 
   // ── Draft list operations ───────────────────────────────────────
+  /**
+   * Removes one line item and prunes it out of `selected` too.
+   *
+   * Without the prune, deleting a currently-selected row via its own
+   * Delete button leaves a phantom key in the Set: the toolbar's "N
+   * selected" count stays stale and a later bulk-delete would count, and
+   * try to delete, a row that is already gone (`pruneSelection`, mirroring
+   * `LineItemList`'s own pruning of its `expanded` Set on the identical
+   * membership change).
+   */
   function removeItem(key: string) {
-    setItems((list) => list.filter((it) => it.key !== key));
+    const next = items.filter((it) => it.key !== key);
+    setItems(next);
+    setSelected((prev) => pruneSelection(prev, next));
   }
   /**
    * Clones a line item (fresh key and identity, copied panels) right

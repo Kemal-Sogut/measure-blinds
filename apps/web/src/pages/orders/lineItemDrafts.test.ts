@@ -28,6 +28,7 @@ import {
   parseAddons,
   parseDraftAttributes,
   parseOverride,
+  pruneSelection,
   slotsForType,
   type BlindDraft,
   type BlindDraftDefaults,
@@ -840,5 +841,43 @@ describe('measurementRowsToDrafts', () => {
     expect(measurementRowsToDrafts(['r1', 'r2'].map(newMeasurementRow), DEFAULTS, keys())).toEqual(
       []
     );
+  });
+});
+
+/*
+ * FINDING 5 — `OrderDetail.tsx`'s `removeItem` filtered `items` but never
+ * pruned the matching key out of `selected`, so deleting a selected row
+ * via its own Delete button left a phantom in the Set: the toolbar kept
+ * showing a stale "N selected" count and a later bulk-delete would try to
+ * delete an item already gone. `pruneSelection` is the fix, mirroring
+ * `LineItemList.tsx`'s own `expanded`-Set pruning.
+ */
+describe('pruneSelection', () => {
+  it('drops keys that no longer name an item', () => {
+    const selected = new Set(['d1', 'd2', 'd3']);
+    const items = [draft({ key: 'd1' }), draft({ key: 'd3' })];
+    expect(pruneSelection(selected, items)).toEqual(new Set(['d1', 'd3']));
+  });
+
+  it('keeps every key still present, in any order', () => {
+    const selected = new Set(['d1', 'd2']);
+    const items = [draft({ key: 'd2' }), draft({ key: 'd1' })];
+    expect(pruneSelection(selected, items)).toEqual(new Set(['d1', 'd2']));
+  });
+
+  it('returns the SAME Set instance when nothing was pruned (no-op update)', () => {
+    const selected = new Set(['d1', 'd2']);
+    const items = [draft({ key: 'd1' }), draft({ key: 'd2' })];
+    expect(pruneSelection(selected, items)).toBe(selected);
+  });
+
+  it('returns an empty Set when every selected key was removed', () => {
+    const selected = new Set(['d1']);
+    expect(pruneSelection(selected, [])).toEqual(new Set());
+  });
+
+  it('is a no-op on an already-empty selection', () => {
+    const selected = new Set<string>();
+    expect(pruneSelection(selected, [draft({ key: 'd1' })])).toBe(selected);
   });
 });
