@@ -6,8 +6,9 @@ Touches api, web AND schema (migration 38). Twelve tasks, all reviewed and commi
 Task 13 — docs, one guard test, one stale-doc fix, full verification. Full detail in
 `engine_features.md` 2026-08-17 (four entries) and `bug_fixes.md` 2026-08-17 (five entries).
 
-- **New table `blind_type_defaults` (migration 38, NOT YET APPLIED live): one row per blind type,
-  a default Material and one default per hardware slot, every id nullable.** `GET`/`PUT
+- **New table `blind_type_defaults` (migration 38, APPLIED to the live Supabase project — confirmed
+  via `list_tables`, RLS enabled): one row per blind type, a default Material and one default per
+  hardware slot, every id nullable.** `GET`/`PUT
   /api/settings/blind-type-defaults` validate every non-null id as an ACTIVE option scoped to that
   type, matching the order-save rule exactly — a saved default can never produce a draft the order
   form itself would refuse.
@@ -58,13 +59,13 @@ Task 13 — docs, one guard test, one stale-doc fix, full verification. Full det
   3. **No API route test exists yet for `GET`/`PUT /api/settings/blind-type-defaults`.**
 - **Verified (real command runs, this task):** api `pnpm check` clean, api `pnpm test` **337/337**
   (18 files); web `pnpm check` clean, web `pnpm test` **267/267** (19 files, +1 file/+2 tests —
-  this task's guard test), web `pnpm lint` (oxlint) **0 warnings/errors** — the 4 long-standing
-  `LineItemEditor.tsx` `react/only-export-components` warnings this history has tracked since
-  2026-08-09 are gone, resolved by this branch's `LineItemList.tsx`/`LineItemRow.tsx` split.
+  this task's guard test), web `pnpm lint` (oxlint) **0 warnings/errors** (the `LineItemEditor.tsx`
+  `react/only-export-components` warnings this history tracked through 2026-08-09 were already
+  gone before this branch, resolved by that date's `lineItemDrafts.ts` extraction — this branch's
+  `LineItemList.tsx`/`LineItemRow.tsx` split gets no credit for it).
 - **NOT verified: any browser.** Every surface (the new Settings page, both bulk sheets, the
-  reworked row, the drag handle) sits behind `ProtectedRoute`. **Migration 38 has NOT been
-  applied** — apply before deploying the API Worker, which starts reading/writing
-  `blind_type_defaults` on its first `/settings/defaults` request.
+  reworked row, the drag handle) sits behind `ProtectedRoute`. Migration 38 IS applied to the
+  live Supabase project.
 
 ## Current Focus — 2026-08-17: Order duplication + line-item visibility
 Branch `feat/order-duplicate-line-item-visibility`, cut from `main`. Touches api, web AND

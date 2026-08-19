@@ -30,13 +30,14 @@ registry to find any REQUIRED attribute key and asserts `SectionAttributes` in
 attribute is optional) and exists to fail the day that stops being true.
 
 **Verified:** api `tsc --noEmit` clean + vitest **337/337** (18 files); web `tsc -b --noEmit`
-clean + vitest **267/267** (19 files) + `oxlint` **0 warnings/errors** — the 4 pre-existing
-`LineItemEditor.tsx` fast-refresh warnings this log has tracked since 2026-08-09 are gone,
-resolved as a side effect of this branch's row/list split.
+clean + vitest **267/267** (19 files) + `oxlint` **0 warnings/errors** (the pre-existing
+`LineItemEditor.tsx` fast-refresh warnings this log tracked through 2026-08-09 were already
+resolved by that date's entry, before this branch existed — this branch's row/list split gets
+no credit for it).
 
 **Not done yet / known issues:**
-- Migration 38 has not been applied to the live project; nothing on this branch has been
-  exercised in a browser (every surface sits behind `ProtectedRoute`).
+- Migration 38 IS applied to the live project (confirmed via `list_tables`); nothing on this
+  branch has been exercised in a browser (every surface sits behind `ProtectedRoute`).
 - **Drag-and-drop reorder has no `KeyboardSensor`.** It is pointer/touch only by design of this
   pass — the 3-dot menu's Move up/Move down items are the ONLY reorder path a keyboard or screen
   reader can reach. Worth adding a `KeyboardSensor` alongside the `PointerSensor` if full

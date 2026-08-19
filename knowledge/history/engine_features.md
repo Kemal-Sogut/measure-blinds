@@ -49,9 +49,10 @@ three features on this branch is documented in the entries below.
 - **Verified (this session, real command runs — see `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/task-13-report.md` for full output):** across the whole branch — api `pnpm check` clean,
   api `pnpm test` **337/337** (18 files); web `pnpm check` clean, web `pnpm test` **267/267**
   (19 files, +1 file/+2 tests from this task's new guard test), web `pnpm lint` (oxlint) **0
-  warnings** — the 4 long-standing `LineItemEditor.tsx` `react/only-export-components` warnings
-  the history notes for 2026-08-09 onward are gone: they lived in code this branch's
-  `LineItemList.tsx`/`LineItemRow.tsx` split moved out from under `OrderDetail.tsx`'s orbit.
+  warnings/errors** (the `LineItemEditor.tsx` `react/only-export-components` warnings this
+  history tracked through 2026-08-09 were already resolved by that date's `lineItemDrafts.ts`
+  extraction — see that entry below; this branch's `LineItemList.tsx`/`LineItemRow.tsx` split
+  never touched `LineItemEditor.tsx`'s exports and gets no credit for it).
 - **Not verified in a browser.** The order editor sits behind `ProtectedRoute`. Owed: the menu on
   a phone, the drag handle on a touch device, and the detail panel's line ordering against a real
   multi-hardware blind.
@@ -152,7 +153,8 @@ resets its options onto those saved defaults through one shared function, `apply
 rather than four independent, drifting implementations.
 
 - **Schema — migration 38 (`supabase/migrations/20260817000038_blind_type_defaults.sql`,
-  NOT YET APPLIED to live `lgbxxlwsdeuhdgzrjjen`):** `blind_type_defaults` — ONE row per blind type
+  APPLIED to live `lgbxxlwsdeuhdgzrjjen` — confirmed via `list_tables`: `public.blind_type_defaults`
+  exists with RLS enabled):** `blind_type_defaults` — ONE row per blind type
   (`blind_type_id uuid primary key references blind_types(id) on delete cascade`), with
   `material_id`/`cassette_id`/`bottom_rail_id`/`control_id`/`installation_id`, **every id
   NULLABLE and `on delete set null`** on its own catalog table. A type simply has no row until its
@@ -215,8 +217,6 @@ rather than four independent, drifting implementations.
   this design replaced and the one known limit it does not close (a sibling PUT already in flight
   cannot be un-sent).
 - **Verified together with the row-v2/reorder entry above** — same branch, same test run.
-- ⚠️ **Migration 38 is NOT applied** to `lgbxxlwsdeuhdgzrjjen` — apply before deploying the API
-  Worker, which starts reading/writing the table on its first `/settings/defaults` request.
 - ⚠️ **No API route test exists for `GET`/`PUT /api/settings/blind-type-defaults`** — `settings.
   routes.test.ts` covers the other catalog groups but not this one. The route is exercised only
   indirectly (by nothing, currently — the web hooks have no test either). Worth closing before this
