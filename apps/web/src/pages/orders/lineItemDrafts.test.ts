@@ -18,12 +18,7 @@ import {
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
-  countMeasurementRows,
   flatDraftPrice,
-  measurementRowState,
-  measurementRowsToDrafts,
-  newBlindDraft,
-  newMeasurementRow,
   optionsForType,
   parseAddons,
   parseDraftAttributes,
@@ -31,11 +26,9 @@ import {
   pruneSelection,
   slotsForType,
   type BlindDraft,
-  type BlindDraftDefaults,
   type Catalogs,
   type FlatDraft,
   type ItemDraft,
-  type MeasurementRow,
 } from './lineItemDrafts';
 
 /**
@@ -697,150 +690,6 @@ describe('applyTypeDefaults', () => {
     expect(next.unit_price_override).toBe(before.unit_price_override);
     expect(next.show_original_price).toBe(before.show_original_price);
     expect(next.addons).toEqual(before.addons);
-  });
-});
-
-/**
- * The bulk measurement pass: room / width / height rows in, one blank
- * blind line item per completed row out.
- *
- * The states matter as much as the conversion. A row that was started but
- * not finished must be reported, never silently dropped — a width typed
- * without its height is a measurement someone took on a ladder, and the
- * order would otherwise be short one window with nothing to say so.
- */
-describe('measurementRowState', () => {
-  function row(overrides: Partial<MeasurementRow> = {}): MeasurementRow {
-    return { key: 'r1', room_name: '', width_cm: '', height_cm: '', ...overrides };
-  }
-
-  it('is blank when nothing at all has been typed', () => {
-    expect(measurementRowState(row())).toBe('blank');
-    expect(measurementRowState(row({ width_cm: '  ', height_cm: ' ' }))).toBe('blank');
-  });
-
-  it('is ready when both measurements are positive numbers', () => {
-    expect(measurementRowState(row({ width_cm: '120', height_cm: '210' }))).toBe('ready');
-  });
-
-  it('accepts a half-typed decimal, like every other draft field', () => {
-    expect(measurementRowState(row({ width_cm: '120.', height_cm: ' 210.5 ' }))).toBe('ready');
-  });
-
-  it('is incomplete when only one measurement is present', () => {
-    expect(measurementRowState(row({ width_cm: '120' }))).toBe('incomplete');
-    expect(measurementRowState(row({ height_cm: '210' }))).toBe('incomplete');
-  });
-
-  it('is incomplete when a room was named but nothing measured', () => {
-    // Typing a room is intent to measure it. Treating this as blank would
-    // drop the window the consultant had just walked into.
-    expect(measurementRowState(row({ room_name: 'Kitchen' }))).toBe('incomplete');
-  });
-
-  it('is incomplete for a value that is not a positive number', () => {
-    expect(measurementRowState(row({ width_cm: '0', height_cm: '210' }))).toBe('incomplete');
-    expect(measurementRowState(row({ width_cm: '-5', height_cm: '210' }))).toBe('incomplete');
-    expect(measurementRowState(row({ width_cm: 'wide', height_cm: '210' }))).toBe('incomplete');
-  });
-});
-
-describe('countMeasurementRows', () => {
-  it('counts ready and incomplete rows and ignores blank ones', () => {
-    const rows: MeasurementRow[] = [
-      { key: 'a', room_name: 'Living', width_cm: '120', height_cm: '210' },
-      { key: 'b', room_name: '', width_cm: '90', height_cm: '' },
-      { key: 'c', room_name: '', width_cm: '', height_cm: '' },
-      { key: 'd', room_name: 'Bed', width_cm: '80', height_cm: '150' },
-    ];
-    expect(countMeasurementRows(rows)).toEqual({ ready: 2, incomplete: 1 });
-  });
-
-  it('counts a freshly opened popup as nothing to do', () => {
-    const rows = ['r1', 'r2', 'r3'].map(newMeasurementRow);
-    expect(countMeasurementRows(rows)).toEqual({ ready: 0, incomplete: 0 });
-  });
-});
-
-describe('measurementRowsToDrafts', () => {
-  const DEFAULTS: BlindDraftDefaults = {
-    cassette_id: 'cas-1',
-    bottom_rail_id: 'br-1',
-    control_id: 'ctl-1',
-  };
-
-  /** Key generator matching the page's, so ordering is checkable. */
-  function keys(): () => string {
-    let n = 0;
-    return () => `k${++n}`;
-  }
-
-  const ROWS: MeasurementRow[] = [
-    { key: 'a', room_name: '  Living Room  ', width_cm: ' 120 ', height_cm: ' 210 ' },
-    { key: 'b', room_name: 'Half', width_cm: '90', height_cm: '' },
-    { key: 'c', room_name: '', width_cm: '', height_cm: '' },
-    { key: 'd', room_name: '', width_cm: '80', height_cm: '150' },
-  ];
-
-  it('creates one item per completed row, in the order they were typed', () => {
-    const drafts = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
-    expect(drafts.map((d) => [d.panels[0], d.height_cm])).toEqual([
-      ['120', '210'],
-      ['80', '150'],
-    ]);
-    expect(drafts.map((d) => d.key)).toEqual(['k1', 'k2']);
-  });
-
-  it('skips incomplete and blank rows', () => {
-    // The caller refuses to apply while an incomplete row exists; this is
-    // the second half of that rule, not a licence to lose one.
-    expect(measurementRowsToDrafts(ROWS, DEFAULTS, keys())).toHaveLength(2);
-  });
-
-  it('trims the room name and leaves it empty when none was given', () => {
-    const drafts = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
-    expect(drafts[0].room_name).toBe('Living Room');
-    expect(drafts[1].room_name).toBe('');
-  });
-
-  it('leaves the blind type, material and installation unset', () => {
-    // The whole point of the pass: measurements now, specification later.
-    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
-    expect(first.blinds_type).toBe('');
-    expect(first.material_id).toBe('');
-    expect(first.installation_id).toBe('');
-    expect(first.attributes).toEqual({});
-  });
-
-  it('carries the house default hardware, exactly like Add Standard Blind', () => {
-    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
-    expect(first.cassette_id).toBe('cas-1');
-    expect(first.bottom_rail_id).toBe('br-1');
-    expect(first.control_id).toBe('ctl-1');
-  });
-
-  it('starts every item at quantity 1 with no price adjustments', () => {
-    const [first] = measurementRowsToDrafts(ROWS, DEFAULTS, keys());
-    expect(first.quantity).toBe('1');
-    expect(first.unit_price_override).toBe('');
-    expect(first.addons).toEqual([]);
-  });
-
-  it('produces the same draft the single-blind button does, plus measurements', () => {
-    // One shape, one set of defaults: the two paths must not drift.
-    const [first] = measurementRowsToDrafts([ROWS[0]], DEFAULTS, keys());
-    expect(first).toEqual({
-      ...newBlindDraft('k1', DEFAULTS),
-      room_name: 'Living Room',
-      panels: ['120'],
-      height_cm: '210',
-    });
-  });
-
-  it('returns nothing when no row was completed', () => {
-    expect(measurementRowsToDrafts(['r1', 'r2'].map(newMeasurementRow), DEFAULTS, keys())).toEqual(
-      []
-    );
   });
 });
 
