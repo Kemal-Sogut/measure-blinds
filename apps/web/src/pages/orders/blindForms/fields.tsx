@@ -23,8 +23,8 @@
  */
 
 import type { ReactNode } from 'react';
-import { getBlindType } from '../../../lib/blindTypes';
 import {
+  applyTypeDefaults,
   materialsForType,
   optionsForType,
   parsePositive,
@@ -135,18 +135,24 @@ export function OptionSelect({
  * when it is inactive or a legacy free-text entry not in the list, so an
  * old order never silently loses its type.
  *
- * Changing the type does three clean-ups the caller must not have to
- * remember, each of which would otherwise be a 400 on save:
+ * Changing the type delegates to `applyTypeDefaults(draft, blinds_type,
+ * catalogs, { keepValid: true })` — the same helper the bulk-edit and
+ * bulk-add flows use, so the three cannot drift — which does three
+ * clean-ups the caller must not have to remember, each of which would
+ * otherwise be a 400 on save:
  *
- * 1. It drops a Material the new type does not offer.
- * 2. It RESEEDS `attributes` from the new type's `defaultAttributes()`.
- *    Without this the draft keeps the previous type's keys, which the new
- *    type's schema does not declare.
- * 3. It CLEARS every hardware id the new type does not use, per the
+ * 1. It sets Material and every hardware slot to the new type's SAVED
+ *    defaults from Settings (`catalogs.defaults`) — UNLESS the current
+ *    pick is still valid for the new type, in which case that deliberate
+ *    choice survives instead of being overwritten (`keepValid: true`).
+ * 2. It CLEARS every hardware id the new type does not use, per the
  *    SCOPING (`slotsForType`), not per any declaration on the type's
  *    module. Switching a Roller to Curtains would otherwise carry the
  *    cassette across, and the Worker rejects an id for a slot the type
  *    has no option scoped to.
+ * 3. It RESEEDS `attributes` from the new type's `defaultAttributes()`.
+ *    Without this the draft keeps the previous type's keys, which the new
+ *    type's schema does not declare.
  */
 export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
   const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
@@ -155,27 +161,7 @@ export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
       <span className={LABEL}>Blind type</span>
       <select
         value={draft.blinds_type}
-        onChange={(e) => {
-          const blinds_type = e.target.value;
-          // Drop a selected Material that isn't offered for the new type.
-          const stillValid = materialsForType({ ...catalogs }, blinds_type).some(
-            (m) => m.id === draft.material_id
-          );
-          const next = getBlindType(blinds_type);
-          const uses = slotsForType(catalogs, blinds_type);
-          onChange({
-            ...draft,
-            blinds_type,
-            material_id: stillValid ? draft.material_id : '',
-            cassette_id: uses.has('cassette') ? draft.cassette_id : '',
-            bottom_rail_id: uses.has('bottom_rail') ? draft.bottom_rail_id : '',
-            control_id: uses.has('control') ? draft.control_id : '',
-            installation_id: uses.has('installation') ? draft.installation_id : '',
-            attributes: Object.fromEntries(
-              Object.entries(next.defaultAttributes()).map(([k, v]) => [k, String(v)])
-            ),
-          });
-        }}
+        onChange={(e) => onChange(applyTypeDefaults(draft, e.target.value, catalogs, { keepValid: true }))}
         className={INPUT}
       >
         <option value="">Select…</option>

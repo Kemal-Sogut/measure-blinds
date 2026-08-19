@@ -1,5 +1,57 @@
 # Progress
 
+## Per-type defaults, bulk edit v2, bulk add, line-item row v2 (2026-08-17/18)
+Branch `feat/defaults-bulk-lineitems` off `main`. api + web + migration 38 (twelve tasks reviewed
+and committed, plus this docs/verification task). Full detail in `engine_features.md` 2026-08-17
+(four entries) and `bug_fixes.md` 2026-08-17 (five entries).
+
+**Works:** Settings → `/settings/defaults` saves, per blind type, a preferred Material and one
+preferred option per hardware slot; a slot with nothing scoped renders no field, and a stale id
+(an option deactivated/unlinked elsewhere) is sanitized both on display and again right before
+every save, so a card can never become permanently unsavable. Every place a blind's TYPE changes
+— the single-item dropdown, bulk edit, a bulk-add section — now resets its options through the one
+shared `applyTypeDefaults` helper, reading those saved defaults, and does so STRICTER than before:
+an option survives a type change only if that exact id is still scoped+active for the new type.
+Bulk edit can change blind type (resetting to defaults) and colour, clearing the manual price
+override only when something that actually feeds the price changed. Bulk-add's new sheet
+(`BulkAddSheet.tsx`/`BulkAddSectionCard.tsx`) adds one FULLY SPECIFIED line item per measurement
+row, grouped into per-blind-type sections with one shared config each. The line-item list
+(`LineItemList.tsx`, extracted from `OrderDetail.tsx`) now renders each row (`LineItemRow.tsx`)
+with a 3-dot menu (Show/Hide, Duplicate, Move up/down), an expandable detail panel replacing the
+old always-visible type badge + attribute line, and a drag handle for reordering (`@dnd-kit`).
+
+**Also:** a stale JSDoc on `BlindDraftDefaults` in `lineItemDrafts.ts` (citing the deleted
+`findOptionIdByName` and the old hardcoded 'Regular'/'Chain' seeds) was corrected to describe
+current behaviour — every caller now passes all-empty ids, and `applyTypeDefaults` is what
+actually fills them in once a type is chosen. One new guard test,
+`BulkAddSectionCard.test.ts`, reads each blind type's live `attributeSchema` from the pricing
+registry to find any REQUIRED attribute key and asserts `SectionAttributes` in
+`BulkAddSectionCard.tsx` has a matching case for it — passes vacuously today (Curtains' one
+attribute is optional) and exists to fail the day that stops being true.
+
+**Verified:** api `tsc --noEmit` clean + vitest **337/337** (18 files); web `tsc -b --noEmit`
+clean + vitest **267/267** (19 files) + `oxlint` **0 warnings/errors** — the 4 pre-existing
+`LineItemEditor.tsx` fast-refresh warnings this log has tracked since 2026-08-09 are gone,
+resolved as a side effect of this branch's row/list split.
+
+**Not done yet / known issues:**
+- Migration 38 has not been applied to the live project; nothing on this branch has been
+  exercised in a browser (every surface sits behind `ProtectedRoute`).
+- **Drag-and-drop reorder has no `KeyboardSensor`.** It is pointer/touch only by design of this
+  pass — the 3-dot menu's Move up/Move down items are the ONLY reorder path a keyboard or screen
+  reader can reach. Worth adding a `KeyboardSensor` alongside the `PointerSensor` if full
+  keyboard-operability of drag reordering is ever required, rather than relying on the menu alone.
+- **On the defaults page, a sibling field's PUT already in flight cannot be un-sent** if another
+  field's save is later rejected — `pendingWrites` + `nextDraftForSave` guarantee every save fired
+  AFTER a rejection is known is clean, but one already in flight when the rejection lands can
+  still carry the doomed pre-rejection value in its own outgoing request. No local state change
+  can un-send an HTTP request already on the wire; closing this fully would need either
+  serializing a card's saves (worse latency for the common multi-pick workflow) or a
+  request-generation token, both deliberately deferred.
+- **No API route test exists for `GET`/`PUT /api/settings/blind-type-defaults`.** The endpoint
+  compiles and is exercised only by hand; `settings.routes.test.ts` covers every other catalog
+  group but not this one.
+
 ## Order duplication + line-item visibility (2026-08-17)
 Branch `feat/order-duplicate-line-item-visibility` off `main`. api + web + migration 37.
 

@@ -109,7 +109,11 @@ import {
 import { useCustomerSearch } from '../../hooks/useCustomers';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
-import { useCatalogList, useCompanySettings } from '../../hooks/useSettings';
+import {
+  useBlindTypeDefaults,
+  useCatalogList,
+  useCompanySettings,
+} from '../../hooks/useSettings';
 import InstallationSection from './InstallationSection';
 import {
   BlindEditForm,
@@ -117,9 +121,9 @@ import {
   BulkEditForm,
   BulkMeasureForm,
 } from './LineItemEditor';
-import { getBlindType } from '../../lib/blindTypes';
+import LineItemList from './LineItemList';
+import { arrayMove } from '@dnd-kit/sortable';
 import {
-  applyBulkEditToDraft,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
@@ -136,13 +140,15 @@ import {
   NO_ADJUSTMENTS,
   type BlindDraft,
   type BlindDraftDefaults,
-  type BulkEditState,
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
   type MeasurementRow,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
+import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import BulkAddSheet from './BulkAddSheet';
+import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
@@ -239,12 +245,6 @@ function fromIso(iso: string): Date {
   return new Date(y, m - 1, d);
 }
 
-/** Unique keys for list rendering of drafts. */
-let draftSeq = 0;
-function nextKey(): string {
-  return `d${++draftSeq}`;
-}
-
 /** Converts persisted line items into editable drafts. */
 function toDrafts(order: Order): ItemDraft[] {
   return (order.line_items ?? []).map((li) => {
@@ -317,23 +317,6 @@ function draftLabel(it: ItemDraft, index: number): string {
     return [it.room_name || `Blind ${index + 1}`, it.blinds_type].filter(Boolean).join(' — ');
   }
   return it.description || `Item ${index + 1}`;
-}
-
-/**
- * Finds an active catalog option's id by name — exact match preferred,
- * otherwise the first case-insensitive substring match. Returns '' when
- * nothing matches so the field stays unset. Used to pre-select sensible
- * defaults (e.g. "Regular" cassette, "Chain" control) on a new blind.
- */
-function findOptionIdByName(
-  options: { id: string; name: string; active: boolean }[],
-  needle: string
-): string {
-  const lower = needle.toLowerCase();
-  const active = options.filter((o) => o.active);
-  const exact = active.find((o) => o.name.toLowerCase() === lower);
-  if (exact) return exact.id;
-  return active.find((o) => o.name.toLowerCase().includes(lower))?.id ?? '';
 }
 
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
@@ -491,6 +474,9 @@ type StageAction = {
  */
 const LOG_PREVIEW_COUNT = 10;
 
+/** Every bulk-edit field on "no change" — shared by `bulkState`'s initial value and `openBulkEdit`'s reset so the two can never drift apart. */
+const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '', color: '' };
+
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -507,6 +493,7 @@ export default function OrderDetail() {
   const installationQ = useCatalogList<InstallationOption>('installation-options');
   const blindTypesQ = useCatalogList<BlindType>('blind-types');
   const presetsQ = useCatalogList<PresetLineItem>('presets');
+  const defaultsQ = useBlindTypeDefaults();
   const { data: company } = useCompanySettings();
 
   const createMut = useCreateOrder();
@@ -544,7 +531,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'cancelDeny'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'bulkAdd' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -553,7 +540,7 @@ export default function OrderDetail() {
   // Key of a just-added item whose editor is open for the first time;
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
-  const [bulkState, setBulkState] = useState<BulkEditState>({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
+  const [bulkState, setBulkState] = useState<BulkEditState>(EMPTY_BULK_STATE);
   // Rows of the bulk measurement popup. Re-seeded on every open, so a
   // cancelled measuring pass is never offered back half-typed.
   const [measureRows, setMeasureRows] = useState<MeasurementRow[]>([]);
@@ -698,6 +685,7 @@ export default function OrderDetail() {
       blindTypes: blindTypesQ.data ?? [],
       pleatTypes: pleatTypesQ.data ?? [],
       installationOptions: installationQ.data ?? [],
+      defaults: defaultsQ.data ?? [],
     }),
     [
       materialsQ.data,
@@ -707,24 +695,21 @@ export default function OrderDetail() {
       blindTypesQ.data,
       pleatTypesQ.data,
       installationQ.data,
+      defaultsQ.data,
     ]
   );
 
   /**
-   * The house default hardware every new blind starts with, resolved from
-   * the catalogs by NAME. Computed once here rather than at each Add
-   * button, so the single-blind and bulk-measurement paths cannot seed
-   * different defaults. A name that matches nothing yields `''`, which
-   * simply leaves the slot unset.
+   * A brand-new blind starts with no hardware chosen: nothing is scoped
+   * until a blind type is picked, so guessing a house default by NAME
+   * here would just be overwritten (or wrong) once a type is selected.
+   * The type dropdown (`BlindTypeSelect`, via `applyTypeDefaults`) fills
+   * material and every hardware slot with that type's SAVED defaults from
+   * Settings the moment a type is chosen. Shared by the single-blind and
+   * bulk-measurement paths (`addBlind`, `applyBulkMeasure`) so both start
+   * a blind identically blank.
    */
-  const blindDefaults: BlindDraftDefaults = useMemo(
-    () => ({
-      cassette_id: findOptionIdByName(catalogs.cassettes, 'Regular'),
-      bottom_rail_id: findOptionIdByName(catalogs.bottomRails, 'Regular'),
-      control_id: findOptionIdByName(catalogs.controls, 'Chain'),
-    }),
-    [catalogs.cassettes, catalogs.bottomRails, catalogs.controls]
-  );
+  const blindDefaults: BlindDraftDefaults = { cassette_id: '', bottom_rail_id: '', control_id: '' };
 
   // ── Live totals (client preview; server recomputes on save) ────
   const itemPrices = useMemo(
@@ -808,13 +793,59 @@ export default function OrderDetail() {
       list.map((it) => (it.key === key ? { ...it, hidden: !it.hidden } : it))
     );
   }
+  /**
+   * Moves a line item one position up (-1) or down (+1) in display order;
+   * no-ops at either edge. Feeds `LineItemList`'s `onMove`, which
+   * `LineItemRow`'s 3-dot menu calls from its Move up/down items — those
+   * are themselves disabled at the first/last row, so the no-op here is a
+   * backstop, not the only guard.
+   */
+  function moveItem(key: string, dir: -1 | 1) {
+    setItems((list) => {
+      const idx = list.findIndex((it) => it.key === key);
+      const to = idx + dir;
+      if (idx === -1 || to < 0 || to >= list.length) return list;
+      const next = list.slice();
+      const [row] = next.splice(idx, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
+  }
+  /**
+   * Reorders line items by drag-and-drop: moves the item identified by
+   * `activeKey` to the position of the item identified by `overKey`.
+   * Feeds `LineItemList`'s `onReorder`, called from its `DndContext`'s
+   * `onDragEnd` once a drag lands on a different row than it started on.
+   *
+   * Uses `arrayMove` from `@dnd-kit/sortable` rather than hand-rolling the
+   * splice `moveItem` above uses, because a drag can land anywhere in the
+   * list (not just one slot up or down) — `arrayMove` handles that
+   * distance uniformly and immutably. No-ops (returns the same list) if
+   * either key is not found, mirroring `moveItem`'s edge-case guard.
+   *
+   * This is the ENTIRE persistence story for the new order: nothing here
+   * writes a `position` field. The Worker derives each line item's saved
+   * position from its index in the save payload array, so reordering this
+   * in-memory array is the whole job — the next save carries the new
+   * order through untouched.
+   */
+  function reorderItems(activeKey: string, overKey: string) {
+    setItems((list) => {
+      const from = list.findIndex((it) => it.key === activeKey);
+      const to = list.findIndex((it) => it.key === overKey);
+      if (from === -1 || to === -1) return list;
+      return arrayMove(list, from, to);
+    });
+  }
   function addBlind() {
-    // Blank but for the house default hardware: no blind type is chosen
-    // yet, so nothing is scoped and nothing can be validated against a
-    // slot — the type dropdown clears whichever of the defaults the
-    // chosen type turns out not to use, and seeds `attributes` from it.
-    // The factory also seeds the identity fields (no uid until the first
-    // save, visible), so this path and the bulk popup cannot disagree.
+    // Nothing is seeded yet — no blind type, no material, no hardware —
+    // because nothing can be validated or scoped before a type is chosen.
+    // The type dropdown (`BlindTypeSelect`) then applies that type's
+    // SAVED defaults from Settings via `applyTypeDefaults`, which also
+    // clears whichever slot the chosen type does not use and seeds
+    // `attributes` from it. The factory also seeds the identity fields
+    // (no uid until the first save, visible), so this path and the bulk
+    // popup cannot disagree.
     const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -925,31 +956,21 @@ export default function OrderDetail() {
    */
   function openBulkEdit() {
     if (!bulkEditSelection(items, selected).ok) return;
-    setBulkState({ material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '' });
+    setBulkState(EMPTY_BULK_STATE);
     setSheet('bulkEdit');
   }
 
   /**
-   * Writes the non-empty bulk fields onto the selected items.
+   * Writes the current bulk-edit patch onto every selected item.
    *
-   * Re-reads the verdict rather than trusting the popup being open: the
-   * selection is the same state the list renders from, and an item edited
-   * behind the sheet could have changed type. Only items of the resolved
-   * type are touched; what each one becomes — including the price
-   * override it loses — is `applyBulkEditToDraft`, so the rule is tested
-   * once and cannot drift from the note the form shows.
+   * What each item becomes is entirely `applyBulkPatch`'s call — it
+   * already passes a non-blind item through untouched and re-scopes a
+   * blind-type change per item, so this only has to map the selection
+   * over it once; the rule is tested there and cannot drift from the note
+   * the form shows.
    */
   function applyBulkEdit() {
-    const selection = bulkEditSelection(items, selected);
-    if (!selection.ok) return;
-    const uses = slotsForType(catalogs, selection.blindsType);
-    setItems((list) =>
-      list.map((it) => {
-        if (!selected.has(it.key) || it.item_type !== 'blind') return it;
-        if (it.blinds_type !== selection.blindsType) return it;
-        return applyBulkEditToDraft(it, bulkState, uses);
-      })
-    );
+    setItems((list) => list.map((it) => (selected.has(it.key) ? applyBulkPatch(it, bulkState, catalogs) : it)));
     setSelected(new Set());
     setSheet('none');
   }
@@ -2427,230 +2448,20 @@ export default function OrderDetail() {
                   );
                 })()}
 
-                {/* Item rows */}
-                {items.length === 0 ? (
-                  <p className="p-4 text-[13px] text-text-muted">No items yet — add one below.</p>
-                ) : (
-                  <ul className="divide-y divide-border-light">
-                    {items.map((it, i) => {
-                      const price =
-                        it.item_type === 'blind'
-                          ? blindDraftPrice(it, catalogs)
-                          : flatDraftPrice(it);
-                      const typeBadge =
-                        it.item_type === 'blind'
-                          ? 'Blind'
-                          : it.item_type === 'preset'
-                            ? 'Preset'
-                            : 'Custom';
-                      const name =
-                        it.item_type === 'blind'
-                          ? [it.room_name || `Blind ${i + 1}`, it.blinds_type]
-                            .filter(Boolean)
-                            .join(' — ')
-                          : it.description || `Item ${i + 1}`;
-                      const attrLine =
-                        it.item_type === 'blind'
-                          ? getBlindType(it.blinds_type)
-                            .describeAttributes(parseDraftAttributes(it) ?? {})
-                            .map((a) => `${a.label}: ${a.value}`)
-                            .join(' · ')
-                          : '';
-
-                      return (
-                        <li
-                          key={it.key}
-                          className={`flex min-w-0 flex-col gap-1.5 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-2${it.hidden ? ' opacity-55' : ''}`}
-                        >
-                          {/*
-                            Line 1 on phones: checkbox, badge, name.
-
-                            Alignment is start on phones and centre at `sm+`.
-                            On a phone the name routinely wraps to several
-                            lines, and a centred checkbox/badge would float
-                            beside the middle of that block instead of its
-                            first line. At `sm+` the row is one line whose
-                            height is set by the 32px action buttons, so
-                            start-alignment left the text visibly above the
-                            row's centre — hence the switch.
-                          */}
-                          <div className="flex min-w-0 flex-1 items-start gap-2 sm:items-center">
-                            {/* Checkbox — hidden in read-only */}
-                            {!readOnly && (
-                              <input
-                                type="checkbox"
-                                checked={selected.has(it.key)}
-                                onChange={() => toggleSelect(it.key)}
-                                aria-label={`Select ${name}`}
-                                className="mt-0.5 h-4 w-4 shrink-0 rounded-sm accent-brand-600 sm:mt-0"
-                              />
-                            )}
-
-                            {/* Type badge */}
-                            <span className="mt-0.5 w-12 shrink-0 rounded-sm bg-surface-sunken px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
-                              {typeBadge}
-                            </span>
-
-                            {/* Says out loud what the muted row and the
-                                struck price only imply: this line is on
-                                no document and in no total. */}
-                            {it.hidden && (
-                              <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
-                                Hidden
-                              </span>
-                            )}
-
-                            {/*
-                              Name WRAPS; it does not truncate. A custom
-                              item's description is free text and is
-                              routinely longer than a phone is wide, and
-                              truncating it hid the one field that tells
-                              two similar lines apart.
-
-                              `wrap-anywhere` (overflow-wrap: anywhere),
-                              not `break-words`: `break-words` only
-                              breaks INSIDE an over-long word, and — the
-                              part that matters here — leaves the box's
-                              min-content width equal to that word. A
-                              60-character unbroken description would
-                              still have forced the row, the card and
-                              the grid wider than the viewport. `anywhere`
-                              lets the intrinsic width collapse, so the
-                              card can never exceed its column.
-                            */}
-                            <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
-                              {name}
-                              {/*
-                                The blind type's own inputs, formatted by
-                                the type itself so this row, the PDF, the
-                                manufacturer copy and the customer page
-                                cannot disagree about labels. Read from the
-                                DRAFT, not the persisted item, because this
-                                list shows unsaved edits.
-
-                                Nested INSIDE the name span as a block, not
-                                beside it in a flex column. Wrapping the two
-                                in `flex flex-col` was measured to break the
-                                name's wrapping outright — a 120-character
-                                unbroken name went from 238px over 5 lines
-                                to 1252px on one, dragging the row to
-                                1356px inside a 375px viewport. Inheriting
-                                this span's `wrap-anywhere` and `min-w-0`
-                                keeps the original intrinsic-width
-                                behaviour, and renders byte-identical
-                                markup while no type declares attributes.
-                              */}
-                              {attrLine && (
-                                <span className="mt-0.5 block text-xs text-text-muted">
-                                  {attrLine}
-                                </span>
-                              )}
-                            </span>
-                          </div>
-
-                          {/* Line 2 on phones: price left, actions right. On
-                              `sm+` this collapses back into the single row. */}
-                          <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-                            {/*
-                              Total, with an amber dot marking a price the
-                              consultant overrode. Staff-only: the
-                              customer's signal is the struck-through
-                              original on the documents, not this.
-                            */}
-                            <span
-                              className={`flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary${it.hidden ? ' line-through' : ''}`}
-                            >
-                              {price ? `$${price.total.toFixed(2)}` : '—'}
-                              {price && price.unit !== price.base && (
-                                <span
-                                  title="Price overridden"
-                                  aria-label="Price overridden"
-                                  className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
-                                />
-                              )}
-                            </span>
-
-                            {/* Show-hide / Edit / Duplicate / Delete — hidden
-                                in read-only. 44px targets on the two-line
-                                layout, where there is room; back to 32px
-                                inline at `sm+`. */}
-                            {!readOnly && (
-                              <span className="flex shrink-0 items-center gap-1">
-                                {/* Visibility. Disabled once the order is
-                                    confirmed: the customer has been quoted a
-                                    total, and hiding a line would move it
-                                    under them. The Worker refuses the save
-                                    too — this button only says so earlier. */}
-                                <button
-                                  type="button"
-                                  onClick={() => toggleHidden(it.key)}
-                                  disabled={postConfirm}
-                                  title={
-                                    postConfirm
-                                      ? 'Visibility can only be changed before the order is confirmed'
-                                      : it.hidden
-                                        ? `Show ${name} on documents`
-                                        : `Hide ${name} from documents`
-                                  }
-                                  aria-label={it.hidden ? `Show ${name}` : `Hide ${name}`}
-                                  aria-pressed={it.hidden}
-                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-muted sm:h-8 sm:w-8"
-                                >
-                                  {it.hidden ? (
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
-                                      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.61 6.61A18.15 18.15 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                      <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24M2 2l20 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  ) : (
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
-                                      <path d="M2 12s3-8 10-8 10 8 10 8-3 8-10 8-10-8-10-8Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  )}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openEdit(it.key)}
-                                  title={`Edit ${name}`}
-                                  aria-label={`Edit ${name}`}
-                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 sm:h-8 sm:w-8"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
-                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => duplicateItem(it.key)}
-                                  title={`Duplicate ${name}`}
-                                  aria-label={`Duplicate ${name}`}
-                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 sm:h-8 sm:w-8"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
-                                    <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => removeItem(it.key)}
-                                  title={`Delete ${name}`}
-                                  aria-label={`Delete ${name}`}
-                                  className="flex h-11 w-11 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-danger sm:h-8 sm:w-8"
-                                >
-                                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="sm:h-3.5 sm:w-3.5">
-                                    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                </button>
-                              </span>
-                            )}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
+                <LineItemList
+                  items={items}
+                  catalogs={catalogs}
+                  readOnly={readOnly}
+                  postConfirm={postConfirm}
+                  selected={selected}
+                  onToggleSelect={toggleSelect}
+                  onToggleHidden={toggleHidden}
+                  onEdit={openEdit}
+                  onDuplicate={duplicateItem}
+                  onDelete={removeItem}
+                  onMove={moveItem}
+                  onReorder={reorderItems}
+                />
               </section>
             )}
 
@@ -2665,6 +2476,22 @@ export default function OrderDetail() {
                     <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                   </svg>
                   Add Standard Blind
+                </button>
+                {/*
+                  Bulk add: one shared config per blind type ("section"),
+                  many measurement rows underneath it — the fast path for
+                  a whole room or house of the SAME type. Distinct from
+                  the older bulk-measurement popup below, which captures
+                  only widths/heights with no type or options at all.
+                */}
+                <button
+                  onClick={() => setSheet('bulkAdd')}
+                  className="flex h-11 items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3 4h18v4H3z M3 10h18v4H3z M3 16h18v4H3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                  </svg>
+                  Bulk Add
                 </button>
                 {/*
                   The measuring pass: every window's width and height in
@@ -3366,7 +3193,7 @@ export default function OrderDetail() {
                 </button>
                 <button
                   onClick={applyBulkEdit}
-                  disabled={!bulkState.material_id && !bulkState.cassette_id && !bulkState.bottom_rail_id && !bulkState.control_id && !bulkState.installation_id}
+                  disabled={Object.values(bulkState).every((v) => !v)}
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   Apply to selected
@@ -3425,6 +3252,24 @@ export default function OrderDetail() {
           </div>
         );
       })()}
+
+      {/* Bulk-add sheet — one shared config per blind type ("section"),
+          many measurement rows underneath it. See `BulkAddSheet.tsx`.
+          Mounted only while active (like every other sheet on this
+          screen) rather than kept alive and toggled via `open`, so its
+          internally-owned `sections` state cannot survive into a later
+          reopened pass. */}
+      {sheet === 'bulkAdd' && (
+        <BulkAddSheet
+          open
+          catalogs={catalogs}
+          onCancel={() => setSheet('none')}
+          onAdd={(drafts) => {
+            setItems((list) => [...list, ...drafts]);
+            setSheet('none');
+          }}
+        />
+      )}
 
     </div>
 

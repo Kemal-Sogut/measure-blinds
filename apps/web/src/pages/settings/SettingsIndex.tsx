@@ -49,6 +49,13 @@ const BUSINESS: Row[] = [
     d: 'M12 2 2 7l10 5 10-5-10-5z M2 17l10 5 10-5 M2 12l10 5 10-5',
   },
   {
+    to: '/settings/defaults',
+    label: 'Default Options',
+    desc: 'Per-type starting options',
+    accent: 'success',
+    d: 'M20 6 9 17l-5-5',
+  },
+  {
     to: '/settings/cassette',
     label: 'Cassette Options',
     desc: 'Headrail styles and pricing',

@@ -37,6 +37,7 @@ import type {
   BottomRailOption,
   ControlOption,
   BlindType,
+  BlindTypeDefaults,
   PleatType,
   InstallationOption,
 } from '../../types';
@@ -162,13 +163,19 @@ export interface FlatDraft extends PriceAdjustmentDraft {
 export type ItemDraft = BlindDraft | FlatDraft;
 
 /**
- * The house default hardware a brand-new blind starts with, resolved by
- * the caller from the catalogs it already holds (`findOptionIdByName` in
- * `OrderDetail` — "Regular" cassette and bottom rail, "Chain" control).
+ * Hardware `newBlindDraft` seeds a brand-new blind with before any blind
+ * type is chosen. Every caller now passes all-empty ids (`''`): nothing is
+ * scoped until a type is picked, so guessing a house default here would
+ * just be overwritten — or wrong — the moment `applyTypeDefaults` runs.
+ * That helper is what actually fills these slots, from each type's SAVED
+ * defaults (`/settings/defaults`, the `blind_type_defaults` table) the
+ * instant `BlindTypeSelect` (or `addBlind`, or a bulk-add section) sets a
+ * type.
  *
- * Passed in rather than looked up here: this module is pure and holds no
- * catalog lookups by NAME, and which option counts as the house default
- * is a shop decision that belongs to the page.
+ * Kept as its own parameter, rather than inlined as `''` in this function,
+ * so the shape stays explicit at every call site and a future caller that
+ * legitimately has a starting pick (none does today) has somewhere to put
+ * it. This module stays pure either way — no catalog lookup happens here.
  */
 export interface BlindDraftDefaults {
   cassette_id: string;
@@ -223,6 +230,14 @@ export interface Catalogs {
   pleatTypes: PleatType[];
   /** Curtains rod/track charges — a fixed amount per curtain. */
   installationOptions: InstallationOption[];
+  /**
+   * Saved per-blind-type default option picks, at most one row per
+   * blind type (see `BlindTypeDefaults`). Required rather than optional
+   * so every `Catalogs` construction site — production and test alike —
+   * must decide what to pass; a later `applyTypeDefaults` helper reads
+   * this to seed a fresh line-item draft when its blind type changes.
+   */
+  defaults: BlindTypeDefaults[];
 }
 
 /**
@@ -278,6 +293,69 @@ export function slotsForType(catalogs: Catalogs, blindsType: string): Set<Catalo
 }
 
 /**
+ * Applies a blind-type change to a draft: sets the type, resets every
+ * hardware slot and the material to that type's SAVED defaults
+ * (Settings → Default Options), clears slots the type does not use, and
+ * seeds `attributes` from the type registry. Measurements, room, colour,
+ * note, quantity and price adjustments are untouched.
+ *
+ * `keepValid: true` (single-item type dropdown) preserves a current pick
+ * still offered for the new type instead of overwriting it with the
+ * default; bulk edit and bulk add omit it for true "reset" semantics.
+ *
+ * A slot the type does not use is always `''`. A default id no longer
+ * scoped+active for the type — retired or unlinked since it was saved —
+ * is ignored and falls through to `''`, same as no default at all;
+ * `BlindTypeDefaults` validates on write and keeps this rare, but this
+ * function does not assume it holds.
+ *
+ * Single source of truth: the type dropdown, bulk edit and bulk add all
+ * route through here so the three flows cannot drift.
+ */
+export function applyTypeDefaults(
+  draft: BlindDraft,
+  blindsType: string,
+  catalogs: Catalogs,
+  opts: { keepValid?: boolean } = {}
+): BlindDraft {
+  const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
+  const row = catalogs.defaults.find((d) => d.blind_type_id === typeId);
+  const uses = slotsForType(catalogs, blindsType);
+  const materials = materialsForType(catalogs, blindsType);
+
+  /** Resolves one hardware slot: '' when unused; else current (keepValid) → default → ''. */
+  type ScopedOption = { id: string; active: boolean; blind_type_ids: string[] };
+  const pick = (slot: CatalogSlot, current: string, def: string | null | undefined, options: ScopedOption[]): string => {
+    if (!uses.has(slot)) return '';
+    const scoped = optionsForType(options, catalogs.blindTypes, blindsType);
+    if (opts.keepValid && current && scoped.some((o) => o.id === current)) return current;
+    if (def && scoped.some((o) => o.id === def)) return def;
+    return '';
+  };
+
+  const materialValid = (id: string | null | undefined): id is string =>
+    !!id && materials.some((m) => m.id === id);
+
+  return {
+    ...draft,
+    blinds_type: blindsType,
+    material_id:
+      opts.keepValid && materialValid(draft.material_id)
+        ? draft.material_id
+        : materialValid(row?.material_id)
+          ? row.material_id
+          : '',
+    cassette_id: pick('cassette', draft.cassette_id, row?.cassette_id, catalogs.cassettes),
+    bottom_rail_id: pick('bottom_rail', draft.bottom_rail_id, row?.bottom_rail_id, catalogs.bottomRails),
+    control_id: pick('control', draft.control_id, row?.control_id, catalogs.controls),
+    installation_id: pick('installation', draft.installation_id, row?.installation_id, catalogs.installationOptions),
+    attributes: Object.fromEntries(
+      Object.entries(getBlindType(blindsType).defaultAttributes()).map(([k, v]) => [k, String(v)])
+    ),
+  };
+}
+
+/**
  * Why a selection cannot be bulk-edited, in the order the check applies:
  *
  * - `empty` — nothing is ticked.
@@ -328,58 +406,6 @@ export function bulkEditSelection(items: ItemDraft[], selected: Set<string>): Bu
   }
   if (blindsType === '') return { ok: false, reason: 'no_type' };
   return { ok: true, blindsType, keys: blinds.map((it) => it.key) };
-}
-
-/**
- * What one run of the bulk-edit form asks for: an id per editable slot,
- * `''` meaning "no change". It lives here rather than beside the form
- * because `applyBulkEditToDraft` is the rule that consumes it, and this
- * module owns the drafts and every pure function over them.
- */
-export interface BulkEditState {
-  material_id: string;
-  cassette_id: string;
-  bottom_rail_id: string;
-  control_id: string;
-  installation_id: string;
-}
-
-/**
- * Applies the non-empty bulk fields to ONE blind draft.
- *
- * `uses` is the slot set of the type the selection shares
- * (`slotsForType`); an id for a slot outside it is dropped, because the
- * Worker rejects one and the whole order would stop saving.
- *
- * **The item's price override is CLEARED whenever anything is applied.**
- * An override pins the unit price to a figure typed against the OLD
- * options, and it wins over the calculated price on both sides — so
- * without this, a bulk change of material or hardware would show up on
- * the item but never reach what is charged, silently voiding the price
- * change on exactly the lines someone had already negotiated. Add-ons and
- * `show_original_price` are deliberately left alone: they are additions to
- * the price rather than a replacement for it, so a re-price does not
- * invalidate them.
- *
- * Returns the draft UNCHANGED (same reference) when nothing applies, so a
- * run that misses an item cannot drop that item's override as a side
- * effect.
- */
-export function applyBulkEditToDraft(
-  draft: BlindDraft,
-  state: BulkEditState,
-  uses: Set<CatalogSlot>
-): BlindDraft {
-  const patch: Partial<BlindDraft> = {};
-  if (state.material_id) patch.material_id = state.material_id;
-  if (state.cassette_id && uses.has('cassette')) patch.cassette_id = state.cassette_id;
-  if (state.bottom_rail_id && uses.has('bottom_rail')) patch.bottom_rail_id = state.bottom_rail_id;
-  if (state.control_id && uses.has('control')) patch.control_id = state.control_id;
-  if (state.installation_id && uses.has('installation')) {
-    patch.installation_id = state.installation_id;
-  }
-  if (Object.keys(patch).length === 0) return draft;
-  return { ...draft, ...patch, unit_price_override: '' };
 }
 
 /* ------------------------------------------------------------------ */

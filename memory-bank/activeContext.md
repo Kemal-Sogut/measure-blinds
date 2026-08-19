@@ -1,5 +1,71 @@
 # Active Context
 
+## Current Focus — 2026-08-17/18: Per-type defaults, bulk edit v2, bulk add, line-item row v2
+Branch `feat/defaults-bulk-lineitems`, spec `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/`.
+Touches api, web AND schema (migration 38). Twelve tasks, all reviewed and committed; this is
+Task 13 — docs, one guard test, one stale-doc fix, full verification. Full detail in
+`engine_features.md` 2026-08-17 (four entries) and `bug_fixes.md` 2026-08-17 (five entries).
+
+- **New table `blind_type_defaults` (migration 38, NOT YET APPLIED live): one row per blind type,
+  a default Material and one default per hardware slot, every id nullable.** `GET`/`PUT
+  /api/settings/blind-type-defaults` validate every non-null id as an ACTIVE option scoped to that
+  type, matching the order-save rule exactly — a saved default can never produce a draft the order
+  form itself would refuse.
+- **`applyTypeDefaults(draft, blindsType, catalogs, opts?)` in `lineItemDrafts.ts` is now the ONE
+  place "a blind's type changed → reset its options to that type's saved defaults" lives.** Three
+  call sites route through it: the single-item type dropdown (`keepValid: true` — a still-valid
+  deliberate pick survives an unrelated type edit), bulk edit's type change, and a bulk-add
+  section's type picker (both without `keepValid` — neither has a "current pick" worth
+  preserving). **Stricter than the old hardcoded 'Regular'/'Chain' seeding it replaced:** an
+  option now survives only if that EXACT id is scoped+active for the new type, not merely "a
+  same-named option exists" — this closes a latent save-time 400 the old by-NAME lookup could
+  produce. `findOptionIdByName` and the hardcoded seeds are deleted; `newBlindDraft`'s
+  `BlindDraftDefaults` parameter is now always all-empty ids at every call site (its JSDoc was
+  stale, citing the deleted function — corrected this task, see below).
+- **Bulk edit v2** (`lineItemBulk.ts`, `applyBulkPatch`) can now change blind type (via
+  `applyTypeDefaults`) and colour. `unit_price_override` clears ONLY on a change that feeds the
+  price (type/material/hardware) — a colour-only edit leaves it alone. This rule was accidentally
+  dropped mid-branch when the old `applyBulkEditToDraft` was retired, then restored narrower; see
+  `bug_fixes.md`.
+- **Bulk add** (`bulkAdd.ts` + `BulkAddSheet.tsx` + `BulkAddSectionCard.tsx`): one section per
+  blind type (shared config: type/material/hardware/attributes/colour/note), many measurement
+  rows per section, one FULLY SPECIFIED line item per row (not a blank placeholder — that's the
+  older single-config bulk-measurement popup, untouched, still available). `nextKey` moved to a
+  new leaf module `draftKeys.ts` so both `OrderDetail.tsx` and `bulkAdd.ts` can share the one
+  counter every draft-creating call site in the app already draws from.
+- **Line-item row v2** (`LineItemList.tsx` extracted from `OrderDetail.tsx`; row markup moved to
+  new `LineItemRow.tsx`): type badge removed from the collapsed row (moved into the new
+  expandable detail panel alongside every other spec line), a 3-dot menu (Show/Hide, Duplicate,
+  Move up, Move down — disabled at the list edges), Edit/Delete still directly visible.
+- **Drag-and-drop reordering** (`@dnd-kit/core` + `@dnd-kit/sortable`, new deps):
+  `LineItemList` owns one `DndContext`/`SortableContext` + a `PointerSensor` (`distance: 6`
+  activation, so an ordinary tap never starts a drag); each `LineItemRow` calls `useSortable`
+  itself and wires the drag listeners to its own handle button ONLY, never the row body.
+- **New guard test** `BulkAddSectionCard.test.ts`: reads each canonical blind type's live
+  `attributeSchema` from the registry (`getBlindType`, same `.shape`/`isOptional()` introspection
+  `BaseBlindType.inputKeys()` uses) to find any type with a REQUIRED attribute key, then checks
+  that `SectionAttributes` in `BulkAddSectionCard.tsx` has a matching case naming it. Passes
+  vacuously today (only Curtains has an attribute, and it's optional) — its job is to fail the
+  day someone adds a required attribute to a type with no bulk-add UI to fill it in, which would
+  otherwise ship a section that validates as permanently broken.
+- **Known, deliberate limits (see `progress.md` for the full list):**
+  1. **Drag reorder has no `KeyboardSensor`.** Pointer/touch only; the menu's Move up/Move down
+     are the ONLY reorder path reachable from a keyboard or screen reader.
+  2. **On the defaults page, a sibling field's PUT already in flight cannot be un-sent** once
+     another field's save is later rejected — only saves fired AFTER a rejection is known are
+     guaranteed clean of it. See `bug_fixes.md` 2026-08-17 for the full race and its two-layer fix
+     (`pendingWrites` + `nextDraftForSave`).
+  3. **No API route test exists yet for `GET`/`PUT /api/settings/blind-type-defaults`.**
+- **Verified (real command runs, this task):** api `pnpm check` clean, api `pnpm test` **337/337**
+  (18 files); web `pnpm check` clean, web `pnpm test` **267/267** (19 files, +1 file/+2 tests —
+  this task's guard test), web `pnpm lint` (oxlint) **0 warnings/errors** — the 4 long-standing
+  `LineItemEditor.tsx` `react/only-export-components` warnings this history has tracked since
+  2026-08-09 are gone, resolved by this branch's `LineItemList.tsx`/`LineItemRow.tsx` split.
+- **NOT verified: any browser.** Every surface (the new Settings page, both bulk sheets, the
+  reworked row, the drag handle) sits behind `ProtectedRoute`. **Migration 38 has NOT been
+  applied** — apply before deploying the API Worker, which starts reading/writing
+  `blind_type_defaults` on its first `/settings/defaults` request.
+
 ## Current Focus — 2026-08-17: Order duplication + line-item visibility
 Branch `feat/order-duplicate-line-item-visibility`, cut from `main`. Touches api, web AND
 schema (migration 37). Full detail in `engine_features.md` 2026-08-17.

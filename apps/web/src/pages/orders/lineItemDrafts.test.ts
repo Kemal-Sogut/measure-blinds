@@ -12,9 +12,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { CatalogSlot } from '../../lib/blindTypes/base';
+import { getBlindType } from '../../lib/blindTypes';
 import {
-  applyBulkEditToDraft,
+  applyTypeDefaults,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
@@ -31,7 +31,6 @@ import {
   slotsForType,
   type BlindDraft,
   type BlindDraftDefaults,
-  type BulkEditState,
   type Catalogs,
   type FlatDraft,
   type ItemDraft,
@@ -200,6 +199,7 @@ describe('optionsForType / slotsForType', () => {
         { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id, CURTAINS.id] },
       ],
       pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
+      defaults: [],
       installationOptions: [
         { id: 'ins-1', name: 'Rod', price: 45, price_basis: 'per_unit', active: true, sort_order: 0, blind_type_ids: [CURTAINS.id] },
         { id: 'ins-free', name: 'None', price: 0, price_basis: 'per_unit', active: true, sort_order: 1, blind_type_ids: [CURTAINS.id] },
@@ -473,83 +473,229 @@ describe('bulkEditSelection', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Bulk-edit application                                               */
+/* Type-defaults application                                          */
 /* ------------------------------------------------------------------ */
 
-describe('applyBulkEditToDraft', () => {
-  /** Every field on "no change" — the baseline each case fills in. */
-  const NOTHING: BulkEditState = {
-    material_id: '',
-    cassette_id: '',
-    bottom_rail_id: '',
-    control_id: '',
-    installation_id: '',
-  };
-  /** The slots a Roller-like type uses; installation is deliberately out. */
-  const ROLLER_SLOTS = new Set<CatalogSlot>(['cassette', 'bottom_rail', 'control']);
+/**
+ * `applyTypeDefaults` is the single place a blind-type change resets a
+ * draft's material/hardware picks — the type dropdown, bulk edit and
+ * bulk add all route through it (Task 5), so its semantics here are the
+ * contract those three share.
+ */
+describe('applyTypeDefaults', () => {
+  const ROLLER = { id: 't1', name: 'Roller', active: true, sort_order: 0 };
 
-  it('writes the ids that were chosen', () => {
-    const next = applyBulkEditToDraft(
-      draft({ material_id: 'old-m', cassette_id: 'old-c' }),
-      { ...NOTHING, material_id: 'm2', cassette_id: 'c2' },
-      ROLLER_SLOTS
+  /**
+   * Roller: cassette and control are scoped+active (two cassette choices,
+   * one of them retired/unlinked to prove the "ignored" cases); NO bottom
+   * rail or installation option is scoped at all, so those two slots are
+   * unused by the type. Materials `m1` and `m2` are both scoped to Roller
+   * (`m1` is the saved default, `m2` a valid alternate pick — mirroring the
+   * `c1`/`c2` cassette pair so the material reset/keepValid branches can be
+   * told apart the same way); `m-unlinked` is scoped to nothing, to prove
+   * a default pointing at it resolves to `''`. The saved defaults row
+   * picks `c1` for cassette and leaves control (a USED slot) with no
+   * default, to prove "used but no default" resolves to `''`.
+   */
+  function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
+    return {
+      blindTypes: [ROLLER],
+      materials: [
+        {
+          id: 'm1',
+          name: 'Blackout',
+          price_per_sqm: 50,
+          active: true,
+          sort_order: 0,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+        },
+        {
+          id: 'm2',
+          name: 'Sheer',
+          price_per_sqm: 40,
+          active: true,
+          sort_order: 1,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+        },
+        {
+          id: 'm-unlinked',
+          name: 'Curtains Only',
+          price_per_sqm: 60,
+          active: true,
+          sort_order: 2,
+          width_cm: null,
+          blind_type_ids: [],
+        },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+        { id: 'c2', name: 'Deluxe', price: 30, price_basis: 'per_m', active: true, sort_order: 1, blind_type_ids: [ROLLER.id] },
+        { id: 'c-inactive', name: 'Retired', price: 15, price_basis: 'per_m', active: false, sort_order: 2, blind_type_ids: [ROLLER.id] },
+        { id: 'c-unlinked', name: 'Zebra Only', price: 25, price_basis: 'per_m', active: true, sort_order: 3, blind_type_ids: [] },
+      ],
+      // No bottom rail is scoped to Roller at all — the slot is unused.
+      bottomRails: [],
+      controls: [
+        { id: 'k1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      pleatTypes: [],
+      // No installation option is scoped to Roller — the slot is unused.
+      installationOptions: [],
+      defaults: [
+        {
+          blind_type_id: ROLLER.id,
+          material_id: 'm1',
+          cassette_id: 'c1',
+          bottom_rail_id: null,
+          control_id: null,
+          installation_id: null,
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  /** A Roller draft with every slot blank, ready to have defaults applied. */
+  function blank(): BlindDraft {
+    return draft({
+      blinds_type: 'Roller',
+      material_id: '',
+      cassette_id: '',
+      bottom_rail_id: '',
+      control_id: '',
+      installation_id: '',
+    });
+  }
+
+  it('seeds scoped defaults and clears unscoped slots', () => {
+    const next = applyTypeDefaults(blank(), 'Roller', catalogs());
+    expect(next.blinds_type).toBe('Roller');
+    expect(next.material_id).toBe('m1'); // default applied
+    expect(next.cassette_id).toBe('c1'); // default applied
+    expect(next.bottom_rail_id).toBe(''); // slot unused by type
+    expect(next.control_id).toBe(''); // slot used, no default → empty
+    expect(next.installation_id).toBe(''); // slot unused by type
+  });
+
+  it('reset semantics: existing valid picks are replaced by defaults', () => {
+    const next = applyTypeDefaults({ ...blank(), cassette_id: 'c2' }, 'Roller', catalogs());
+    expect(next.cassette_id).toBe('c1'); // c2 valid but reset to default
+  });
+
+  it('keepValid keeps a still-valid current pick over the default', () => {
+    const next = applyTypeDefaults(
+      { ...blank(), cassette_id: 'c2' },
+      'Roller',
+      catalogs(),
+      { keepValid: true }
     );
-    expect(next.material_id).toBe('m2');
     expect(next.cassette_id).toBe('c2');
   });
 
-  it('leaves a slot alone when its field is on "no change"', () => {
-    const next = applyBulkEditToDraft(
-      draft({ control_id: 'keep-me' }),
-      { ...NOTHING, material_id: 'm2' },
-      ROLLER_SLOTS
-    );
-    expect(next.control_id).toBe('keep-me');
+  // `material_id` is resolved by its own ternary rather than through
+  // `pick`, so it needs the same reset/keepValid/invalid-default coverage
+  // on its own — a material-specific inversion would otherwise slip past
+  // the cassette-only assertions above.
+  it('reset semantics: an existing valid material is replaced by the default', () => {
+    const next = applyTypeDefaults({ ...blank(), material_id: 'm2' }, 'Roller', catalogs());
+    expect(next.material_id).toBe('m1'); // m2 valid but reset to default
   });
 
-  it('drops an id for a slot the type does not use', () => {
-    // The Worker rejects an id for an unscoped slot, so writing one here
-    // would make the whole order unsavable.
-    const next = applyBulkEditToDraft(
-      draft({ installation_id: '' }),
-      { ...NOTHING, installation_id: 'ins-1' },
-      ROLLER_SLOTS
+  it('keepValid keeps a still-valid current material over the default', () => {
+    const next = applyTypeDefaults(
+      { ...blank(), material_id: 'm2' },
+      'Roller',
+      catalogs(),
+      { keepValid: true }
     );
-    expect(next.installation_id).toBe('');
+    expect(next.material_id).toBe('m2');
   });
 
-  it('clears a price override on an item it changes', () => {
-    // The override was typed against the OLD options and wins over the
-    // calculated price, so leaving it would void the bulk re-price.
-    const next = applyBulkEditToDraft(
-      draft({ unit_price_override: '250' }),
-      { ...NOTHING, material_id: 'm2' },
-      ROLLER_SLOTS
-    );
-    expect(next.unit_price_override).toBe('');
+  it('ignores a default material_id that is not scoped to the type', () => {
+    const unlinkedDefault = catalogs({
+      defaults: [
+        {
+          blind_type_id: ROLLER.id,
+          material_id: 'm-unlinked',
+          cassette_id: 'c1',
+          bottom_rail_id: null,
+          control_id: null,
+          installation_id: null,
+        },
+      ],
+    });
+    expect(applyTypeDefaults(blank(), 'Roller', unlinkedDefault).material_id).toBe('');
   });
 
-  it('keeps add-ons and the original-price flag when it clears an override', () => {
-    // Add-ons sit ON TOP of the price rather than replacing it, so a
-    // re-price does not invalidate them.
+  it('ignores a default that is no longer scoped/active', () => {
+    // The saved default points at a cassette that is now inactive.
+    const inactiveDefault = catalogs({
+      defaults: [
+        {
+          blind_type_id: ROLLER.id,
+          material_id: 'm1',
+          cassette_id: 'c-inactive',
+          bottom_rail_id: null,
+          control_id: null,
+          installation_id: null,
+        },
+      ],
+    });
+    expect(applyTypeDefaults(blank(), 'Roller', inactiveDefault).cassette_id).toBe('');
+
+    // The saved default points at a cassette no longer linked to Roller.
+    const unlinkedDefault = catalogs({
+      defaults: [
+        {
+          blind_type_id: ROLLER.id,
+          material_id: 'm1',
+          cassette_id: 'c-unlinked',
+          bottom_rail_id: null,
+          control_id: null,
+          installation_id: null,
+        },
+      ],
+    });
+    expect(applyTypeDefaults(blank(), 'Roller', unlinkedDefault).cassette_id).toBe('');
+  });
+
+  it('seeds attributes from the type registry', () => {
+    // A stale attribute blob left behind by a previous type must be wiped
+    // and replaced with the new type's own seed values — asserted against
+    // the real registry rather than a hardcoded guess.
+    const stale = { ...blank(), attributes: { pleat_type_id: 'stale-uuid' } };
+    const next = applyTypeDefaults(stale, 'Roller', catalogs());
+    const expected = Object.fromEntries(
+      Object.entries(getBlindType('Roller').defaultAttributes()).map(([k, v]) => [k, String(v)])
+    );
+    expect(next.attributes).toEqual(expected);
+  });
+
+  it('keeps room, panels, height, qty, color, note untouched', () => {
     const before = draft({
-      unit_price_override: '250',
+      blinds_type: 'Roller',
+      room_name: 'Kitchen',
+      panels: ['80', '80'],
+      height_cm: '150',
+      quantity: '3',
+      color: 'Grey',
+      note: 'Handle with care',
+      unit_price_override: '199',
       show_original_price: false,
       addons: [{ key: 'a', label: 'Rush fee', price: '50' }],
     });
-    const next = applyBulkEditToDraft(before, { ...NOTHING, material_id: 'm2' }, ROLLER_SLOTS);
+    const next = applyTypeDefaults(before, 'Roller', catalogs());
+    expect(next.room_name).toBe(before.room_name);
+    expect(next.panels).toEqual(before.panels);
+    expect(next.height_cm).toBe(before.height_cm);
+    expect(next.quantity).toBe(before.quantity);
+    expect(next.color).toBe(before.color);
+    expect(next.note).toBe(before.note);
+    expect(next.unit_price_override).toBe(before.unit_price_override);
+    expect(next.show_original_price).toBe(before.show_original_price);
     expect(next.addons).toEqual(before.addons);
-    expect(next.show_original_price).toBe(false);
-  });
-
-  it('returns the draft untouched when nothing applies', () => {
-    // Including the override: an item the run misses must not lose its
-    // negotiated price as a side effect.
-    const before = draft({ unit_price_override: '250' });
-    expect(applyBulkEditToDraft(before, NOTHING, ROLLER_SLOTS)).toBe(before);
-    expect(
-      applyBulkEditToDraft(before, { ...NOTHING, installation_id: 'ins-1' }, ROLLER_SLOTS)
-    ).toBe(before);
   });
 });
 

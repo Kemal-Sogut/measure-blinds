@@ -15,6 +15,8 @@ export {
   useCreateCatalogItem,
   useUpdateCatalogItem,
   useDeleteCatalogItem,
+  useBlindTypeDefaults,
+  useUpdateBlindTypeDefaults,
   type CatalogPath,
   type CatalogRow,
 } from './useSettings';

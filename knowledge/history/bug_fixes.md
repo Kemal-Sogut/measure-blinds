@@ -1,5 +1,139 @@
 # Bug Fixes History
 
+## 2026-08-17 — Default Options settings page: a stale id could make a card permanently unsavable
+- **Issue:** found in review of the new `/settings/defaults` page (branch
+  `feat/defaults-bulk-lineitems`). A saved default can go stale WITHOUT this page ever being
+  touched — another settings page deactivates or unlinks the exact option a card's default
+  points at. The first cut only re-validated a card's draft against the current catalogs when
+  BUILDING the on-screen draft, never again right before the save itself fired.
+- **Cause:** the page's mutation is intentionally not optimistic, and `toPatch` always resends
+  the FULL row (the API replaces the whole row on every PUT). With sanitization applied only at
+  render time, a card that had already rendered its stale value once could go on resending that
+  same now-invalid id on every subsequent save forever — a genuine dead end, since the UI gave
+  the user no field holding the bad value to clear it from.
+- **Fix (`5781e05`):** `sanitizeDraftForType` is now applied a SECOND time, immediately before
+  every save (`BlindTypeDefaultsCard.set`), not just once when the draft is built for display.
+- **A follow-up review pass (`408a02f`) found the first fix was still too coarse.**
+  `sanitizeDraftForType` originally cleared a hardware field at the SLOT level (`slotsForType` —
+  "does this type use a cassette at all"), not the individual-option level. A slot can keep SOME
+  active option while the SPECIFIC id a card's default points at goes inactive — that id then
+  survived slot-level sanitization, reached the API, and 400'd there anyway (the API validates
+  each id's own `active` flag). Rewritten to check each field against `optionsForType`'s actual
+  option list (the same list `OptionSelect` renders `<option>`s from), and Material — which has
+  no "slot" concept and whose `materialsForType` helper does not itself filter on `active` — is
+  now checked for `active` explicitly here to match what the API accepts.
+- **A second, independent race surfaced in the same review pass:** editing field B on a card
+  while field A's PUT was still in flight computed B's full-row patch from the PRE-edit value of
+  A (since the render closure's `draft` had not yet learned A's new value), silently REVERTING
+  A's own edit the instant B's request landed. **Fix:** `pendingWrites` — per-card, per-field
+  state holding the just-sent-but-not-yet-confirmed value for any field with a save in flight —
+  folded into every new patch via the new `nextDraftForSave(draft, pendingWrites, field, value,
+  catalogs, typeName)`, so a save for one field always carries every OTHER in-flight field's
+  latest picked value, not the stale render-time one. `set` unconditionally drops a field from
+  `pendingWrites` once ITS OWN save settles (success or failure), which is what stops a single
+  rejected pick from going on contaminating saves fired for other fields afterward.
+- **Acknowledged, undocumented-nowhere-else-until-now limit:** a save already SENT for field B
+  before field A's rejection becomes known can still carry A's doomed pre-rejection value in that
+  outgoing request — no local state change can un-send an HTTP request already in flight. Only
+  saves fired AFTER the rejection is known are guaranteed clean. Recorded as a known limit in
+  `memory-bank/progress.md`, not treated as an open bug — closing it would need either serializing
+  every field's saves on one card (worse latency for the common case of picking several fields in
+  quick succession) or a request-generation token to let a stale in-flight response overwrite
+  nothing, out of scope for this pass.
+- **Lesson:** a page whose save resends the WHOLE resource on every field edit needs its
+  staleness check applied twice — once for display, once for save — and at the same GRANULARITY
+  the destination actually validates at. Checking a coarser property ("the slot still has some
+  active option") than what the receiving system checks ("this exact id is active") reintroduces
+  the same class of failure one level down.
+
+## 2026-08-17 — Blind-type defaults PUT swallowed Supabase lookup failures as 404/400
+- **Issue:** found in review. `PUT /api/settings/blind-type-defaults/:blindTypeId` runs three
+  Supabase lookups (the blind type itself, then per-field `DEFAULT_LINKS` join/option checks) but
+  each one originally destructured only `data`, never `error`. A transport, permission, or
+  database failure on any of those lookups therefore read as `data === null` — surfacing as a 404
+  "Unknown blind type." or a 400 "not offered"/"inactive," never as the 500 an infrastructure
+  failure should be.
+- **Cause:** fails closed either way (no id was accepted on a broken lookup), but disguises an
+  infrastructure failure as a user input error — a consultant seeing "not offered for this blind
+  type" would (reasonably) try a different option rather than report an outage.
+- **Fix (`6a52620`):** destructure `error` from every lookup and return 500 with the Supabase
+  error message before interpreting `data` at all, for all three lookups in the route.
+- **Lesson:** `const { data } = await sb...` silently treats a genuine backend error the same as
+  a legitimate "not found" — the two must always be told apart before `data` is read, everywhere
+  a Supabase call's result feeds a 404/400 decision.
+
+## 2026-08-17 — Bulk edit's rewrite for type/colour dropped the stale-override-clearing rule
+- **Issue:** found in review while adding blind-type and colour to bulk edit. The 2026-08-15
+  single-type bulk edit cleared `unit_price_override` on every item a run touched, so a bulk
+  re-option always reached the total instead of being masked by a price typed against the old
+  picks. The rewrite that retired `applyBulkEditToDraft` for the new `applyBulkPatch` (needed for
+  the type/colour additions) dropped that clearing behaviour entirely — its own `BulkEditForm`
+  copy and JSDoc still claimed the reset happened, but nothing in the new code performed it.
+- **Cause:** a straight reimplementation that carried over the OLD function's field-writing logic
+  without re-deriving the override-clearing side effect that used to ride along with it.
+- **Fix (`ae74757`):** `applyBulkPatch` tracks a local `pricingChanged` flag, set whenever the
+  patch changes anything that actually FEEDS the calculated price — the blind type, the material,
+  or any hardware slot — and clears `unit_price_override` only when that flag ends up true. A
+  COLOUR-only patch never clears it: colour is free text, never priced, so wiping a deliberately
+  set override on a change that could not have affected the price would surprise the consultant
+  for no reason. `addons` and `show_original_price` are left untouched by either path — they add
+  to a price rather than replace it. Docs corrected to state the narrower (and, this time,
+  actually implemented) rule.
+- **Lesson:** when a function is rewritten to add capability, re-derive its side effects from the
+  desired BEHAVIOUR, not by porting only the lines that assign the new fields — a side effect that
+  "just rode along" with the old field-writing code has no visible trace once that code is gone,
+  and the JSDoc/UI copy can keep claiming a guarantee the implementation no longer provides.
+
+## 2026-08-17 — Bulk-add expansion aliased one `attributes` object across every generated item
+- **Issue:** found in review of `expandBulkSections`. `panels` was already correctly copied per
+  expanded item (`[...r.panels]`), but `attributes` was not — every `BlindDraft` produced from one
+  `BulkSection` (and the section's own still-live `config`) shared the SAME `attributes` object
+  reference.
+- **Cause:** one section's `config` can expand into many rows, and the section stays live in the
+  sheet's own state while more rows are still being typed underneath it. Editing one expanded
+  item's attributes afterward — the single-item form's own attribute inputs, e.g. Curtains' pleat
+  picker — would silently reach back through the shared reference and mutate every OTHER item
+  expanded from that same config, plus the section's config itself. Confirmed latent rather than
+  already visible in practice: every blind-type attribute input today only ever REPLACES the
+  attributes object (`{ ...draft.attributes, [k]: v }`), never assigns into it in place — but
+  `expandBulkSections`'s own contract cannot rely on every FUTURE input honouring that discipline.
+- **Fix (`f96c085`):** `attributes: { ...s.config.attributes }` — a fresh shallow copy per
+  expanded item, mirroring how `panels` was already handled. A new test pins reference identity:
+  two items expanded from the same section must have `!==` (not `===`) attributes objects.
+- **Lesson:** the "copy every array, never alias it across generated siblings" discipline has to
+  be applied to every mutable field a generator spreads from a shared template, not just the one
+  that happened to need it first — a plain object is exactly as aliasable as an array, and Object
+  spread copies it just as cheaply.
+
+## 2026-08-17 — Bulk-add validation passed sections `buildPayload` would still reject at save
+- **Issue:** found in review of `validateBulkSections`. Two related gaps: (1) it never ran a
+  section's `attributes` through the blind type's own `attributeSchema` at all, so a section with
+  e.g. an invalid Curtains `pleat_type_id` passed bulk-add validation cleanly and only failed
+  later, once, per EXPANDED ITEM, at actual save time — the sheet would let the consultant click
+  Add, then the save step would report the same problem N times over, once per row the broken
+  section produced. (2) the checks it did run were not ordered the same way `buildPayload`
+  orders its own — so for a section with more than one problem at once, bulk-add's validation and
+  the eventual save could report two DIFFERENT "first" problems for the same section.
+- **Cause:** `validateBulkSections` and `buildPayload` are necessarily two independent
+  implementations (one checks one config against many not-yet-expanded rows; the other checks
+  already-expanded, one-config-per-item drafts) that must be kept in sync by hand — the attribute
+  check was simply never added when the rest of the function was written, and check order was
+  never deliberately matched to `buildPayload`'s.
+- **Fix (`f96c085`):** added a `parseDraftAttributes(cfg) === null` check per section (after the
+  hardware-slot checks, mirroring `buildPayload`'s own position for the equivalent per-item
+  check), and reordered the existing checks so PER-ROW measurement checks (panels, height) run
+  before PER-SECTION configuration checks (type, material, hardware, attributes) — the same order
+  `buildPayload` checks an expanded item in. A blind-type-not-chosen check, which has no
+  `buildPayload` counterpart (an untyped blind's `material_id` is always empty too and falls
+  through to the material message there), was placed immediately before the material check it
+  would otherwise be folded into.
+- **Lesson:** when a client-side pre-check exists purely to catch what a server-side (or, here, a
+  later client-side) check will reject anyway, missing even ONE of that check's constituent gates
+  does not just weaken the pre-check — it lets the failure surface later, worse (once per
+  expanded item, at save, instead of once, at Add), and the order two independent checks run
+  their gates in matters just as much as which gates they run, whenever more than one gate can
+  fail on the same input.
+
 ## 2026-08-12 — The installed home-screen app had no way to refresh at all
 - **Issue:** owner reported that the app added to the home screen "doesn't reload when I
   scroll to the top as on the regular browser". Data went stale with no way to ask for more.

@@ -25,7 +25,7 @@ import {
   type UseQueryResult,
 } from '@tanstack/react-query';
 import { apiFetch } from '../lib/api';
-import type { CompanySettings } from '../types';
+import type { BlindTypeDefaults, CompanySettings } from '../types';
 
 /** API envelope: every settings endpoint returns `{ data: T }`. */
 interface Envelope<T> {
@@ -190,5 +190,61 @@ export function useDeleteCatalogItem(
         })
       ).data,
     onSuccess: () => qc.invalidateQueries({ queryKey: catalogKey(path) }),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Blind-type defaults                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Blind-type defaults are deliberately NOT a `CatalogPath`: they are a
+ * one-row-per-blind-type upsert table, not a create/list/delete
+ * collection, so they get their own query key and hooks rather than
+ * being squeezed through `useCatalogList`/`useCreateCatalogItem`/etc.
+ */
+const DEFAULTS_KEY = ['settings', 'blind-type-defaults'] as const;
+
+/**
+ * Fetches all saved per-blind-type default option rows in one call. A
+ * blind type absent from the result has never had defaults saved — see
+ * `BlindTypeDefaults` for how callers are expected to treat that the
+ * same as an all-null row. No optimistic patching: the settings page
+ * that edits this list is a later task and can add it if the plain
+ * invalidate-and-refetch in `useUpdateBlindTypeDefaults` proves too slow.
+ */
+export function useBlindTypeDefaults(): UseQueryResult<BlindTypeDefaults[]> {
+  return useQuery({
+    queryKey: DEFAULTS_KEY,
+    queryFn: async () =>
+      (await apiFetch<Envelope<BlindTypeDefaults[]>>('/api/settings/blind-type-defaults')).data,
+  });
+}
+
+/**
+ * Upserts one blind type's defaults, then invalidates the list so every
+ * consumer (the settings editor, the order form's `Catalogs.defaults`)
+ * refetches. `patch` omits `blind_type_id` — it is supplied via the URL,
+ * matching the Worker's `PUT /api/settings/blind-type-defaults/:blindTypeId`
+ * route, which validates every non-null id server-side before writing.
+ * No optimistic update: a rejected id (inactive or unlinked) is common
+ * enough on this endpoint that showing the change before the Worker
+ * confirms it would routinely have to be rolled back.
+ */
+export function useUpdateBlindTypeDefaults(): UseMutationResult<
+  BlindTypeDefaults,
+  Error,
+  { blindTypeId: string; patch: Omit<BlindTypeDefaults, 'blind_type_id'> }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ blindTypeId, patch }) =>
+      (
+        await apiFetch<Envelope<BlindTypeDefaults>>(
+          `/api/settings/blind-type-defaults/${blindTypeId}`,
+          { method: 'PUT', body: JSON.stringify(patch) }
+        )
+      ).data,
+    onSuccess: () => qc.invalidateQueries({ queryKey: DEFAULTS_KEY }),
   });
 }

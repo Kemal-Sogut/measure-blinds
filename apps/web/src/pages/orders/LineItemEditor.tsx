@@ -50,11 +50,11 @@ import {
   measurementRowState,
   optionsForType,
   slotsForType,
-  type BulkEditState,
   type Catalogs,
   type FlatDraft,
   type MeasurementRow,
 } from './lineItemDrafts';
+import type { BulkEditState } from './lineItemBulk';
 
 /* ------------------------------------------------------------------ */
 /* Edit forms (used inside popup modals)                               */
@@ -152,16 +152,19 @@ export function FlatEditForm({
 }
 
 /**
- * Bulk-edit form, scoped to ONE blind type.
+ * Bulk-edit form.
  *
- * `blindsType` is the type every selected item shares — the caller has
- * already refused a mixed or non-blind selection (`bulkEditSelection`).
- * Because the selection is single-type, this form renders exactly what
- * the per-item form would for that type:
+ * `blindsType` is the ONE type every selected item currently shares — the
+ * caller has already refused a mixed or non-blind selection
+ * (`bulkEditSelection`). The form's own Blind type dropdown (ACTIVE types
+ * only) lets the consultant additionally MOVE the whole selection onto a
+ * different type; while `state.blinds_type` is empty the form renders
+ * exactly what it always has for `blindsType`, and once a new type is
+ * chosen every option control below re-scopes to it instead:
  *
- * - Materials are the ones LINKED to the type (`materialsForType`).
- * - A hardware dropdown appears only when the type uses that slot
- *   (`slotsForType`) and lists only the options scoped to it
+ * - Materials are the ones LINKED to the effective type (`materialsForType`).
+ * - A hardware dropdown appears only when the effective type uses that
+ *   slot (`slotsForType`) and lists only the options scoped to it
  *   (`optionsForType`) — the same rule the Worker validates the save
  *   against, so a bulk edit can never write an id the server rejects.
  *
@@ -169,9 +172,13 @@ export function FlatEditForm({
  * bottom rail) renders those dropdowns not at all rather than greyed out:
  * a control that can only be a no-op is noise on a phone screen.
  *
- * The intro warns that applying CLEARS a manual price override on the
- * items it touches (`applyBulkEditToDraft`) — the consultant has to know
- * before choosing, because an override is usually a figure they quoted.
+ * The intro explains that choosing a blind type resets each touched
+ * item's options to that type's saved defaults before anything else here
+ * applies, and that applying clears a manual price override on an item
+ * ONLY when the change actually feeds its price — a new type, material or
+ * hardware slot (`applyBulkPatch`), never a colour-only change — the
+ * consultant has to know before choosing, because an override is usually
+ * a figure they quoted.
  */
 export function BulkEditForm({
   state,
@@ -184,18 +191,50 @@ export function BulkEditForm({
   blindsType: string;
   onChange: (next: BulkEditState) => void;
 }) {
-  const uses = slotsForType(catalogs, blindsType);
+  // The type option controls scope to: the one just picked in this form,
+  // else the type the whole selection already shares.
+  const effectiveType = state.blinds_type || blindsType;
+  const uses = slotsForType(catalogs, effectiveType);
   const forType = <T extends { active: boolean; blind_type_ids: string[] }>(list: T[]) =>
-    optionsForType(list, catalogs.blindTypes, blindsType);
-  const materials = materialsForType(catalogs, blindsType);
+    optionsForType(list, catalogs.blindTypes, effectiveType);
+  const materials = materialsForType(catalogs, effectiveType);
+  const activeTypes = catalogs.blindTypes.filter((t) => t.active);
   return (
     <div className="flex min-w-0 flex-col gap-3.5">
       <p className="text-[13px] text-text-muted">
-        Only the selected options will be changed. Leave a field on "No change" to keep each
-        item's current value. Any manual price override on an item this changes is{' '}
-        <span className="font-medium text-text-secondary">reset</span>, so the new options are
-        what it is priced from.
+        Only the selected fields will be changed; leave one on "No change" to keep each item's
+        current value. Choosing a blind type resets each item's options to that type's defaults
+        before anything else here is applied. Changing the type, material or a hardware option
+        on an item also <span className="font-medium text-text-secondary">clears</span> any
+        manual price override on it, so it prices from the new options — a colour-only change
+        never touches an override.
       </p>
+      <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <label className="min-w-0">
+          <span className={LABEL}>Blind type</span>
+          <select
+            value={state.blinds_type}
+            onChange={(e) => onChange({ ...state, blinds_type: e.target.value })}
+            className={INPUT}
+          >
+            <option value="">No change</option>
+            {activeTypes.map((t) => (
+              <option key={t.id} value={t.name}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-0">
+          <span className={LABEL}>Color</span>
+          <input
+            placeholder="No change"
+            value={state.color}
+            onChange={(e) => onChange({ ...state, color: e.target.value })}
+            className={INPUT}
+          />
+        </label>
+      </div>
       <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <OptionSelect
           label="Material"
@@ -243,7 +282,7 @@ export function BulkEditForm({
       </div>
       {materials.length === 0 && uses.size === 0 && (
         <p className="text-[13px] text-text-muted">
-          No materials or options are set up for {blindsType || 'this blind type'} — add them
+          No materials or options are set up for {effectiveType || 'this blind type'} — add them
           under Settings first.
         </p>
       )}
