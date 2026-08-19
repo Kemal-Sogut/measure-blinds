@@ -76,9 +76,12 @@ export interface PriceAdjustmentDraft {
  * The neutral adjustment fields: no override, no add-ons, and the
  * original price shown if one is ever set later.
  *
- * Every freshly created item starts from this — the three Add buttons and
- * the bulk measurement popup alike — so "a new item" cannot come to mean
- * two different things on two code paths.
+ * Every freshly created item spreads this in as its starting point:
+ * `newBlindDraft` below (and so, transitively, every blind it seeds),
+ * `OrderDetail.tsx`'s `addPreset` and `addCustom`, and `bulkAdd.ts`'s
+ * `expandBulkSections` (each row it expands into a blind item). Sharing
+ * one constant across every creation path is what keeps "a new item" from
+ * coming to mean a different starting price shape on some of them.
  */
 export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
   unit_price_override: '',
@@ -190,9 +193,15 @@ export interface BlindDraftDefaults {
  * until a type is chosen, and `BlindTypeSelect` then clears whichever of
  * the defaults that type turns out not to use.
  *
- * Shared by the "Add Standard Blind" button and the bulk measurement
- * popup, so a blind created either way starts identical — duplicating the
- * shape would let the two paths drift into seeding different defaults.
+ * The shared factory behind every blind-creating call site: `addBlind`'s
+ * "Add Standard Blind" button in `OrderDetail.tsx`, and `bulkAdd.ts`'s
+ * `newBulkSection` (a fresh section's blank `config`). Both pass an
+ * all-empty `BlindDraftDefaults` — real hardware defaults are not guessed
+ * here, they arrive later from `applyTypeDefaults` the instant a type is
+ * picked. A blind added the ordinary way and a bulk-add section's blank
+ * config therefore start from this identical shape — duplicating it per
+ * call site would let the two paths drift into seeding different
+ * defaults.
  */
 export function newBlindDraft(key: string, defaults: BlindDraftDefaults): BlindDraft {
   return {
