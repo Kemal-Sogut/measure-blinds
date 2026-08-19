@@ -1,5 +1,66 @@
 # Bug Fixes History
 
+## 2026-08-18 — Final whole-branch review fix wave (defaults/bulk/line-item batch)
+Branch `feat/defaults-bulk-lineitems`. Five defects found in the FINAL review of the whole
+branch (money handling itself was found correct end to end); all fixed in one pass, one
+commit. Full report: `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/final-fix-report.md`.
+
+- **Bulk edit could write an out-of-scope hardware id (`lineItemBulk.ts`).** `applyBulkPatch`
+  guarded each hardware field with `uses.has(<slot>)` — true whenever the item's (possibly
+  just-changed) type merely USES that slot, regardless of whether the specific id offered
+  came from that type's OWN option list. Repro: select three Roller blinds, pick a
+  Roller-only Control, then change Blind type to Zebra in the same dialog — the dropdown
+  re-scopes option-level and blanks visually, but `bulkState.control_id` still held the
+  Roller id, and apply wrote it onto Zebra items (both types use 'control', so the
+  slot-level guard passed). `material_id` had no scope guard at all. **Fix:** every
+  material/hardware field is now guarded OPTION-level — `materialsForType(catalogs,
+  next.blinds_type).some(m => m.id === patch.material_id)` for material, and
+  `optionsForType(<slot's catalog>, catalogs.blindTypes, next.blinds_type).some(o => o.id
+  === patch.<field>)` for each hardware slot — matching exactly what the bulk-edit form's
+  own re-scoped dropdowns offered. `lineItemBulk.test.ts` covers the repro plus the material
+  case.
+- **The stale-price-override-clearing rule existed in only one of its two write paths.**
+  `applyBulkPatch` cleared `unit_price_override` on a price-feeding patch; the single-item
+  blind-type dropdown (`BlindTypeSelect` in `blindForms/fields.tsx` → `applyTypeDefaults`)
+  did not, even though a type change there resets material and every hardware slot exactly
+  as bulk edit does. **Fix:** the clearing logic is now ONE function,
+  `clearPriceOverride(draft)` in `lineItemBulk.ts`, called by both `applyBulkPatch` (once
+  its whole patch is decided to be price-feeding) and `BlindTypeSelect`'s `onChange`
+  (unconditionally, right after `applyTypeDefaults` — a type change is always
+  price-feeding for a single item). One implementation, so the two paths cannot silently
+  re-diverge the way they already had once.
+- **The Default Options page offered a material it then silently discarded
+  (`BlindTypeDefaults.tsx`).** The card's Material `<select>` was built from
+  `materialsForType(...)`, which does not filter on `active`; `sanitizeDraftForType`
+  (which runs right before every save) DOES require `active`. Picking a retired-but-still-
+  linked material therefore saved `null`, the API returned 200, and the select snapped back
+  to "No default" with no error — every attempt silently did nothing. **Fix:** the card now
+  filters to `materialsForType(catalogs, type.name).filter(m => m.active)`, so the offered
+  list matches exactly what can be saved.
+- **Bulk-add could lose an entire measuring pass on a stray backdrop tap
+  (`BulkAddSheet.tsx`).** The backdrop `onClick` called `onCancel` directly — no guard —
+  even though this sheet can hold thirty windows of on-site measurements, the single most
+  expensive state in the app, and the OLDER, less valuable single-measurement popup already
+  guards exactly this case (`OrderDetail.tsx`'s `closeBulkMeasure`, whose own comment notes
+  a backdrop tap is easy to make by accident on a tablet). **Fix:** a new pure predicate
+  `bulkAddHasContent(sections)` (`bulkAdd.ts`) reports whether anything has been typed or
+  picked across every section/row; a new `handleCancel` in `BulkAddSheet.tsx` confirms via
+  `window.confirm` when it is true, and both the backdrop and the Cancel button now route
+  through it instead of calling `onCancel` directly.
+- **`removeItem` never pruned `selected` (`OrderDetail.tsx`).** Deleting a line item via its
+  own Delete button removed it from `items` but left its key in the `selected` Set forever —
+  select three, delete one via its row, and the toolbar still read "3 selected," with a
+  follow-on bulk-delete confirming "Delete 3 items?" while only two still existed.
+  `LineItemList.tsx` already pruned its own `expanded` Set on the identical membership
+  change. **Fix:** a new pure `pruneSelection(selected, items)` in `lineItemDrafts.ts`
+  (returns the SAME Set instance when nothing changed, so no extra render), called from
+  `removeItem` right after computing the post-delete item list.
+
+**Verified:** web `pnpm check`/`pnpm test`/`pnpm lint` clean (test count grew by the new
+cases above); api `pnpm check`/`pnpm test` clean (untouched by this pass — no API surface
+was touched). `apps/web/src/lib/pricing.ts`/`totals.ts` and their api twins were not
+touched by any of the five fixes.
+
 ## 2026-08-17 — Default Options settings page: a stale id could make a card permanently unsavable
 - **Issue:** found in review of the new `/settings/defaults` page (branch
   `feat/defaults-bulk-lineitems`). A saved default can go stale WITHOUT this page ever being

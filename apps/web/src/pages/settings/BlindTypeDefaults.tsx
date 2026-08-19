@@ -202,7 +202,16 @@ function BlindTypeDefaultsCard({
   onSave: (patch: Omit<BlindTypeDefaultsRow, 'blind_type_id'>) => Promise<void>;
 }) {
   const draft = sanitizeDraftForType(rowToDraft(row), catalogs, type.name);
-  const materials = materialsForType(catalogs, type.name);
+  // `materialsForType` does not itself filter on `active` (a documented,
+  // pre-existing asymmetry with the hardware catalogs' `optionsForType` —
+  // see that function's own JSDoc). `sanitizeDraftForType` DOES require
+  // `active` for `material_id` (matching the API's `DEFAULT_LINKS` check),
+  // so offering an inactive-but-still-linked material here would let the
+  // consultant pick something the very next sanitize pass discards back to
+  // "No default" — a save that returns 200 while silently doing nothing.
+  // Filtering here keeps the offered list exactly the set of picks that
+  // can actually be saved.
+  const materials = materialsForType(catalogs, type.name).filter((m) => m.active);
   const slots = slotsForType(catalogs, type.name);
   const hasMaterial = materials.length > 0;
   const visibleSlots = HARDWARE_SLOTS.filter(({ slot }) => slots.has(slot));

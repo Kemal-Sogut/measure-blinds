@@ -66,6 +66,23 @@ Task 13 — docs, one guard test, one stale-doc fix, full verification. Full det
 - **NOT verified: any browser.** Every surface (the new Settings page, both bulk sheets, the
   reworked row, the drag handle) sits behind `ProtectedRoute`. Migration 38 IS applied to the
   live Supabase project.
+- **2026-08-18 — final whole-branch review, fix wave applied (5 findings, 1 commit):** an
+  option-level scope guard on bulk edit's material/hardware fields (`lineItemBulk.ts`,
+  `optionsForType`/`materialsForType` in place of the old slot-level `uses.has(slot)` —
+  closes a path where a bulk-dialog type switch could carry a stale, out-of-scope hardware
+  id onto the new type); a single shared `clearPriceOverride` now backs both `applyBulkPatch`
+  and the single-item type dropdown (`BlindTypeSelect` in `blindForms/fields.tsx`), closing
+  the gap where only bulk edit cleared a stale override on a type change; the Default
+  Options page's Material select now filters to `active` (`BlindTypeDefaults.tsx`), matching
+  what `sanitizeDraftForType` actually allows to save; `BulkAddSheet.tsx`'s backdrop and
+  Cancel button now confirm before discarding via a new `bulkAddHasContent` predicate,
+  mirroring `closeBulkMeasure`'s existing guard; `removeItem` in `OrderDetail.tsx` now prunes
+  `selected` via a new `pruneSelection` helper, mirroring `LineItemList`'s `expanded`
+  pruning. Money handling was reviewed and found correct end to end; none of the five touch
+  `pricing.ts`/`totals.ts` on either side. Re-verified: api unchanged (337/337, clean); web
+  `tsc -b --noEmit` clean, `pnpm test` **282/282** (19 files, +15 cases), `oxlint` 0
+  warnings/errors. Full detail: `bug_fixes.md` 2026-08-18,
+  `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/final-fix-report.md`.
 
 ## Current Focus — 2026-08-17: Order duplication + line-item visibility
 Branch `feat/order-duplicate-line-item-visibility`, cut from `main`. Touches api, web AND

@@ -225,6 +225,50 @@ export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Discard guard                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether anything has actually been entered into the bulk-add sheet: a
+ * measurement typed into any row, or a section's shared config touched
+ * away from its blank defaults (blind type, material, any hardware slot,
+ * colour, note, or an attribute).
+ *
+ * This sheet can hold on-site measurements for a whole house — the most
+ * expensive, hardest-to-redo state in the app — so its close handler
+ * (`BulkAddSheet.tsx`) must confirm before discarding once this is true,
+ * mirroring the older single-measurement popup's own backdrop guard
+ * (`OrderDetail.tsx`'s `closeBulkMeasure`). A freshly opened sheet's
+ * default single section with its single blank row must read as "nothing
+ * entered" — otherwise every accidental backdrop tap on an untouched
+ * sheet would ask a pointless question — which is exactly what lets that
+ * guard stay silent until real typing has happened.
+ *
+ * Deliberately more liberal than `validateBulkSections` (which asks "is
+ * this section READY to expand?"): a half-typed room name with no
+ * measurement yet, or a blind type picked with nothing else filled in, is
+ * still real unsaved progress a consultant would not want a stray tap to
+ * throw away, even though neither would pass validation.
+ */
+export function bulkAddHasContent(sections: BulkSection[]): boolean {
+  const rowHasContent = (row: BulkMeasureRow) =>
+    row.room_name.trim() !== '' ||
+    row.height_cm.trim() !== '' ||
+    row.panels.some((p) => p.trim() !== '');
+  const configHasContent = (config: BlindDraft) =>
+    config.blinds_type !== '' ||
+    config.material_id !== '' ||
+    config.cassette_id !== '' ||
+    config.bottom_rail_id !== '' ||
+    config.control_id !== '' ||
+    config.installation_id !== '' ||
+    config.color !== '' ||
+    config.note !== '' ||
+    Object.values(config.attributes).some((v) => v.trim() !== '');
+  return sections.some((s) => configHasContent(s.config) || s.rows.some(rowHasContent));
+}
+
+/* ------------------------------------------------------------------ */
 /* Validation                                                          */
 /* ------------------------------------------------------------------ */
 

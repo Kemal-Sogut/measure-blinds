@@ -514,6 +514,32 @@ export function measurementRowsToDrafts(
     }));
 }
 
+/**
+ * Drops any key from `selected` that no longer names a row in `items`.
+ *
+ * Exists because a selection Set is state SIBLING to the item list, not
+ * derived from it, so nothing keeps the two in sync automatically —
+ * removing an item (`OrderDetail.tsx`'s `removeItem`) without this leaves
+ * a deleted item's key in `selected` forever: the toolbar's "N selected"
+ * count goes stale and a later bulk-delete counts and tries to delete a
+ * row that is already gone. Mirrors `LineItemList.tsx`'s own pruning of
+ * its `expanded` detail-panel Set on the identical membership change.
+ *
+ * Returns `selected` itself, unchanged, when nothing was pruned, so a
+ * caller feeding this through `setState` never triggers an extra render
+ * for a no-op prune.
+ */
+export function pruneSelection(selected: Set<string>, items: { key: string }[]): Set<string> {
+  const valid = new Set(items.map((it) => it.key));
+  let changed = false;
+  const next = new Set<string>();
+  for (const key of selected) {
+    if (valid.has(key)) next.add(key);
+    else changed = true;
+  }
+  return changed ? next : selected;
+}
+
 /** Parses a positive number from a draft string; null when invalid. */
 export function parsePositive(value: string): number | null {
   const n = Number(value);

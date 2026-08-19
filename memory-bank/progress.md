@@ -35,6 +35,22 @@ clean + vitest **267/267** (19 files) + `oxlint` **0 warnings/errors** (the pre-
 resolved by that date's entry, before this branch existed — this branch's row/list split gets
 no credit for it).
 
+**Final whole-branch review fix wave (2026-08-18) — all five findings fixed, one pass, one
+commit** (full detail in `bug_fixes.md` 2026-08-18): an option-level (not slot-level) scope
+guard on bulk edit's material/hardware fields (a stale id from a just-superseded type could
+otherwise reach a save); one shared `clearPriceOverride` now backs BOTH the single-item
+type dropdown and bulk edit, closing the gap where only bulk edit cleared a stale price
+override on a type change; the Default Options page's Material select now filters to
+`active`, matching what `sanitizeDraftForType` actually allows to save; the bulk-add sheet's
+backdrop and Cancel button now confirm before discarding once anything has been entered
+(`bulkAddHasContent`), mirroring the older bulk-measure popup's own guard; `removeItem` now
+prunes the deleted key out of `selected` too, mirroring `LineItemList`'s own `expanded`
+pruning. Money handling itself was reviewed and found correct end to end — none of the five
+touch `pricing.ts`/`totals.ts` on either side. Re-verified after the fix wave: api clean +
+vitest 337/337, web `tsc -b --noEmit` clean + vitest **282/282** (19 files, +15 new cases
+across `lineItemBulk.test.ts`, `bulkAdd.test.ts`, `lineItemDrafts.test.ts`) + `oxlint` 0
+warnings/errors.
+
 **Not done yet / known issues:**
 - Migration 38 IS applied to the live project (confirmed via `list_tables`); nothing on this
   branch has been exercised in a browser (every surface sits behind `ProtectedRoute`).

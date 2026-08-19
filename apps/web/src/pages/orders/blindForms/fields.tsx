@@ -32,6 +32,7 @@ import {
   type BlindDraft,
   type Catalogs,
 } from '../lineItemDrafts';
+import { clearPriceOverride } from '../lineItemBulk';
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -153,6 +154,14 @@ export function OptionSelect({
  * 3. It RESEEDS `attributes` from the new type's `defaultAttributes()`.
  *    Without this the draft keeps the previous type's keys, which the new
  *    type's schema does not declare.
+ * 4. It CLEARS a stale `unit_price_override` via `clearPriceOverride`
+ *    (`../lineItemBulk`) — the same function `applyBulkPatch` uses for
+ *    the identical rule on its own write path. A type change is
+ *    unconditionally price-feeding (material and hardware are reset or
+ *    re-scoped by step 1 above), so a hand-typed override set against the
+ *    OLD options must not keep winning over the freshly recalculated
+ *    price. This was the one cleanup missing before this function existed
+ *    here — bulk edit already cleared it, this dropdown did not.
  */
 export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
   const typeInList = catalogs.blindTypes.some((t) => t.name === draft.blinds_type);
@@ -161,7 +170,11 @@ export function BlindTypeSelect({ draft, catalogs, onChange }: BlindFormProps) {
       <span className={LABEL}>Blind type</span>
       <select
         value={draft.blinds_type}
-        onChange={(e) => onChange(applyTypeDefaults(draft, e.target.value, catalogs, { keepValid: true }))}
+        onChange={(e) =>
+          onChange(
+            clearPriceOverride(applyTypeDefaults(draft, e.target.value, catalogs, { keepValid: true }))
+          )
+        }
         className={INPUT}
       >
         <option value="">Select…</option>
