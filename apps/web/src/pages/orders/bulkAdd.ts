@@ -29,10 +29,9 @@
  * and functions live here instead, alongside `lineItemBulk.ts` (bulk EDIT
  * — a different feature: patching already-added items, not creating new
  * ones). Both siblings import `lineItemDrafts.ts`'s draft model and
- * scoping helpers rather than re-deriving them, so none of the three bulk
- * flows (bulk edit, the older single-measurement popup, and this one) can
- * drift apart on what a "blind draft" is or which hardware slots a type
- * uses.
+ * scoping helpers rather than re-deriving them, so the two bulk flows
+ * (bulk edit and this one) cannot drift apart on what a "blind draft" is
+ * or which hardware slots a type uses.
  *
  * `nextKey` is imported from the dedicated `draftKeys.ts` (see that
  * module's doc comment) rather than defined here: it is a page-wide id
@@ -52,6 +51,7 @@ import {
   type Catalogs,
 } from './lineItemDrafts';
 import { nextKey } from './draftKeys';
+import { parsePanelInput } from './panelInput';
 
 /* ------------------------------------------------------------------ */
 /* Blank-value factories                                               */
@@ -60,10 +60,9 @@ import { nextKey } from './draftKeys';
 /**
  * House default hardware for a brand-new bulk-add section: all three ids
  * empty. Mirrors `OrderDetail.tsx`'s own `blindDefaults` constant (used by
- * `addBlind` and the older bulk-measurement popup) rather than importing
- * it, to avoid a `bulkAdd.ts` → `OrderDetail.tsx` import that would create
- * a cycle once `OrderDetail.tsx` imports this module's bulk-add exports
- * for its sheet UI.
+ * `addBlind`) rather than importing it, to avoid a `bulkAdd.ts` →
+ * `OrderDetail.tsx` import that would create a cycle once `OrderDetail.tsx`
+ * imports this module's bulk-add exports for its sheet UI.
  *
  * Nothing is seeded because nothing can be validated or scoped before a
  * blind type is chosen — once one is, `applyTypeDefaults` (called by the
@@ -78,17 +77,23 @@ const EMPTY_HARDWARE: BlindDraftDefaults = {
 };
 
 /**
- * One row of the bulk-add sheet: a room label and the panel widths + one
- * height that become a single blind line item once the section's config
- * is applied to it.
+ * One row of the bulk-add sheet: a room label, a single width entry, and a
+ * height that become one blind line item once the section's config is
+ * applied to the row.
  *
- * Distinct from `MeasurementRow` (the OLDER single-measurement popup,
- * `lineItemDrafts.ts`): that shape holds one `width_cm` and no blind
- * configuration at all, seeding only house-default hardware. This shape
- * holds a full `panels` array (a blind can have several panels) and pairs
- * with a `BulkSection.config` that already carries a chosen blind type,
- * material and hardware — bulk add exists precisely so those do not have
- * to be re-picked per window.
+ * `width_cm` deliberately holds ONE string rather than a `panels` array.
+ * Unlike the single-item form's `PanelWidths` (which keeps a "+ Panel"
+ * button alongside the shorthand), a bulk-add row accepts multiple panel
+ * widths ONLY through the `panelInput.ts` shorthand — typing
+ * `'118.5+118'` into this one field. There is no per-row "+ Panel" or
+ * remove-panel control in the bulk sheet; `expandBulkSections` is what
+ * runs `width_cm` through `parsePanelInput` to produce the eventual line
+ * item's `panels` array, so the split logic itself stays owned by
+ * `panelInput.ts` and is never duplicated here.
+ *
+ * Pairs with a `BulkSection.config` that already carries a chosen blind
+ * type, material and hardware — bulk add exists precisely so those do not
+ * have to be re-picked per window.
  *
  * Every field is a raw string, same convention as every other draft field
  * in this codebase: a half-typed "12." must not fight the keyboard.
@@ -96,19 +101,17 @@ const EMPTY_HARDWARE: BlindDraftDefaults = {
 export interface BulkMeasureRow {
   key: string;
   room_name: string;
-  panels: string[];
+  width_cm: string;
   height_cm: string;
 }
 
 /**
- * A blank measurement row, ready to type into: no room name yet, one
- * empty panel width (mirrors `newBlindDraft`'s own `panels: ['']` — a
- * blind starts with one panel; "+ Panel" is how a consultant adds more),
- * no height. `key` is a fresh id from `nextKey`, so a sheet can append any
- * number of these to a section's `rows` without key collisions.
+ * A blank measurement row, ready to type into: no room name yet, an empty
+ * width, no height. `key` is a fresh id from `nextKey`, so a sheet can
+ * append any number of these to a section's `rows` without key collisions.
  */
 export function newBulkRow(): BulkMeasureRow {
-  return { key: nextKey(), room_name: '', panels: [''], height_cm: '' };
+  return { key: nextKey(), room_name: '', width_cm: '', height_cm: '' };
 }
 
 /**
@@ -171,11 +174,11 @@ export function newBulkSection(): BulkSection {
  * state.
  *
  * Field provenance per output draft:
- * - From the ROW: `room_name`, `panels` (copied, never the row's own
- *   array reference — see below), `height_cm`.
+ * - From the ROW: `room_name`, `panels` (derived from the row's `width_cm`
+ *   shorthand string via `parsePanelInput` — see below), `height_cm`.
  * - From the SECTION's `config`: everything else — `blinds_type`,
  *   `material_id`, every hardware slot, `color`, `note`, `attributes`
- *   (also copied, not shared — see below), `uid`/`hidden` (both start at
+ *   (copied, not shared — see below), `uid`/`hidden` (both start at
  *   the config's blank values: `null` / `false`, since every expanded item
  *   is new and unsaved).
  * - Fixed regardless of either: `key` (a fresh one per item, so no two
@@ -185,17 +188,18 @@ export function newBulkSection(): BulkSection {
  *   carried one, because an adjustment made against a template before any
  *   row existed has no single row it was ever meant for).
  *
- * `panels: [...r.panels]` and `attributes: { ...s.config.attributes }` are
- * both SHALLOW COPIES, never the row's/config's own object references.
- * Every row expanded from one section shares that section's `config` — and
- * one `config` object can produce many drafts, plus it is still held live
- * in the sheet's own state while the consultant keeps adding rows under
- * it. Without the copy, editing one expanded item's panels or attributes
- * afterwards (e.g. the single-item form's "+ Panel", or a blind-type input
- * like Curtains' pleat picker) would silently reach back through the
+ * `panels: parsePanelInput(r.width_cm)` mints a fresh array on every call —
+ * there is no row-owned `panels` array to alias in the first place, unlike
+ * `attributes: { ...s.config.attributes }`, which IS a deliberate SHALLOW
+ * COPY of an object the row does not own. Every row expanded from one
+ * section shares that section's `config` — and one `config` object can
+ * produce many drafts, plus it is still held live in the sheet's own state
+ * while the consultant keeps adding rows under it. Without the copy,
+ * editing one expanded item's attributes afterwards (e.g. a Curtains pleat
+ * picker in the single-item form) would silently reach back through the
  * shared reference and mutate the section's `config` — and every OTHER
  * item already expanded from it, since they would all alias that same
- * array/object. `attributes` is a plain `Record<string, string>` that the
+ * object. `attributes` is a plain `Record<string, string>` that the
  * blind-type input forms currently only ever REPLACE (`{ ...draft.attributes,
  * [k]: v }`, never assigned into in place), so the aliasing bug this copy
  * prevents is latent today rather than already visible — but nothing in
@@ -215,7 +219,7 @@ export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
       ...s.config,
       key: nextKey(),
       room_name: r.room_name,
-      panels: [...r.panels],
+      panels: parsePanelInput(r.width_cm),
       height_cm: r.height_cm,
       attributes: { ...s.config.attributes },
       quantity: '1',
@@ -236,13 +240,12 @@ export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
  *
  * This sheet can hold on-site measurements for a whole house — the most
  * expensive, hardest-to-redo state in the app — so its close handler
- * (`BulkAddSheet.tsx`) must confirm before discarding once this is true,
- * mirroring the older single-measurement popup's own backdrop guard
- * (`OrderDetail.tsx`'s `closeBulkMeasure`). A freshly opened sheet's
- * default single section with its single blank row must read as "nothing
- * entered" — otherwise every accidental backdrop tap on an untouched
- * sheet would ask a pointless question — which is exactly what lets that
- * guard stay silent until real typing has happened.
+ * (`BulkAddSheet.tsx`) must confirm before discarding once this is true: a
+ * backdrop tap is easy to make by accident on a tablet. A freshly opened
+ * sheet's default single section with its single blank row must read as
+ * "nothing entered" — otherwise every accidental backdrop tap on an
+ * untouched sheet would ask a pointless question — which is exactly what
+ * lets that guard stay silent until real typing has happened.
  *
  * Deliberately more liberal than `validateBulkSections` (which asks "is
  * this section READY to expand?"): a half-typed room name with no
@@ -254,7 +257,7 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
   const rowHasContent = (row: BulkMeasureRow) =>
     row.room_name.trim() !== '' ||
     row.height_cm.trim() !== '' ||
-    row.panels.some((p) => p.trim() !== '');
+    row.width_cm.trim() !== '';
   const configHasContent = (config: BlindDraft) =>
     config.blinds_type !== '' ||
     config.material_id !== '' ||
@@ -311,9 +314,10 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
  * value the expansion never actually uses.
  *
  * Checked per ROW within a section, first:
- * - every panel is a positive number (an empty `panels` array, same as
- *   `buildPayload`, is treated as "no panels entered" — refused, not
- *   silently skipped);
+ * - every panel produced by running the row's `width_cm` shorthand string
+ *   through `parsePanelInput` is a positive number (a blank `width_cm`
+ *   parses to one blank panel — see `parsePanelInput` — which then fails
+ *   the positive-number check the same as any other empty panel would);
  * - the height is a positive number.
  *
  * `room_name` is DELIBERATELY not checked — an empty room is allowed, same
@@ -355,8 +359,8 @@ export function validateBulkSections(sections: BulkSection[], catalogs: Catalogs
     if (section.rows.length === 0) return `Section ${s + 1}: add at least one row.`;
 
     for (const [r, row] of section.rows.entries()) {
-      const panels = row.panels.map(parsePositive);
-      if (panels.length === 0 || panels.some((p) => p === null))
+      const panels = parsePanelInput(row.width_cm).map(parsePositive);
+      if (panels.some((p) => p === null))
         return `Section ${s + 1}, row ${r + 1}: enter every panel width.`;
       if (!parsePositive(row.height_cm)) return `Section ${s + 1}, row ${r + 1}: enter a height.`;
     }

@@ -10,12 +10,14 @@
  * field provenance (which fields come from the section vs. the row), the
  * ORDER items come out in (section 1 before section 2, row order preserved
  * within a section — the consultant reads the list back and expects it to
- * match what they typed), and that each draft owns its own `panels` array
- * AND its own `attributes` object rather than sharing the row's/config's
- * references (a later per-item edit — e.g. "+ Panel" or a Curtains pleat
- * pick in the single-item form — must not silently rewrite the original
- * bulk row/config it came from, or a SIBLING item expanded from the same
- * section, which a shared reference would allow).
+ * match what they typed), that a row's `width_cm` shorthand (`'118.5+118'`)
+ * expands into the draft's `panels` array via `parsePanelInput`, and that
+ * each draft owns its own `panels` array AND its own `attributes` object
+ * rather than sharing the config's references (a later per-item edit —
+ * e.g. "+ Panel" or a Curtains pleat pick in the single-item form — must
+ * not silently rewrite the section's `config` it came from, or a SIBLING
+ * item expanded from the same section, which a shared reference would
+ * allow).
  *
  * `validateBulkSections` mirrors `buildPayload`'s rules, message style AND
  * CHECK ORDER in `OrderDetail.tsx` (same wording: "choose a material.",
@@ -110,7 +112,7 @@ function rollerConfig(overrides: Partial<BlindDraft> = {}): BlindDraft {
 }
 
 function row(overrides: Partial<BulkMeasureRow> = {}): BulkMeasureRow {
-  return { key: 'r1', room_name: 'Living Room', panels: ['100'], height_cm: '200', ...overrides };
+  return { key: 'r1', room_name: 'Living Room', width_cm: '100', height_cm: '200', ...overrides };
 }
 
 function section(overrides: Partial<BulkSection> = {}): BulkSection {
@@ -123,14 +125,14 @@ describe('expandBulkSections', () => {
       key: 's1',
       config: rollerConfig({ color: 'White', note: 'n1' }),
       rows: [
-        row({ key: 'r1', room_name: 'Living Room', panels: ['100'], height_cm: '200' }),
-        row({ key: 'r2', room_name: 'Kitchen', panels: ['80', '90'], height_cm: '150' }),
+        row({ key: 'r1', room_name: 'Living Room', width_cm: '100', height_cm: '200' }),
+        row({ key: 'r2', room_name: 'Kitchen', width_cm: '80+90', height_cm: '150' }),
       ],
     });
     const s2 = section({
       key: 's2',
       config: rollerConfig({ color: 'Grey', note: 'n2' }),
-      rows: [row({ key: 'r3', room_name: 'Bedroom', panels: ['60'], height_cm: '120' })],
+      rows: [row({ key: 'r3', room_name: 'Bedroom', width_cm: '60', height_cm: '120' })],
     });
 
     const drafts = expandBulkSections([s1, s2]);
@@ -186,17 +188,34 @@ describe('expandBulkSections', () => {
     expect(d.quantity).toBe('1');
   });
 
-  it('copies panels arrays (no shared references)', () => {
-    const sharedRow = row({ panels: ['100', '120'] });
-    const [draftItem] = expandBulkSections([section({ rows: [sharedRow] })]);
+  it('expands a shorthand width_cm ("118.5+118") into multiple panels', () => {
+    const s = section({ rows: [row({ width_cm: '118.5+118' })] });
+    const [d] = expandBulkSections([s]);
+    expect(d.panels).toEqual(['118.5', '118']);
+  });
 
-    // Mutating the draft's panels must never reach back into the row that
-    // produced it — a later per-item "+ Panel" edit would otherwise
-    // silently corrupt data the bulk sheet still displays.
-    draftItem.panels.push('999');
-    expect(sharedRow.panels).toEqual(['100', '120']);
-    expect(draftItem.panels).toEqual(['100', '120', '999']);
-    expect(draftItem.panels).not.toBe(sharedRow.panels);
+  it('a plain width_cm with no "+" gives a single-element panels array', () => {
+    const s = section({ rows: [row({ width_cm: '120' })] });
+    const [d] = expandBulkSections([s]);
+    expect(d.panels).toEqual(['120']);
+  });
+
+  it('gives each expanded draft its own panels array (no shared references)', () => {
+    // Two rows typed with the identical shorthand must still each produce
+    // their OWN array instance — a later per-item "+ Panel" edit on one
+    // expanded line item must never reach back into a SIBLING item's
+    // panels, which a shared reference would allow.
+    const s = section({
+      rows: [row({ key: 'r1', width_cm: '100+120' }), row({ key: 'r2', width_cm: '100+120' })],
+    });
+    const [d1, d2] = expandBulkSections([s]);
+
+    expect(d1.panels).toEqual(['100', '120']);
+    expect(d2.panels).toEqual(['100', '120']);
+    expect(d1.panels).not.toBe(d2.panels);
+
+    d1.panels.push('999');
+    expect(d2.panels).toEqual(['100', '120']);
   });
 
   it('copies the section config attributes object (no shared reference)', () => {
@@ -301,7 +320,9 @@ describe('validateBulkSections', () => {
     const withEmptyRoom = section({ rows: [row({ room_name: '' })] });
     expect(validateBulkSections([withEmptyRoom], catalogs())).toBeNull();
 
-    const missingPanel = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', panels: [''] })] });
+    const missingPanel = section({
+      rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '' })],
+    });
     expect(validateBulkSections([missingPanel], catalogs())).toBe(
       'Section 1, row 2: enter every panel width.'
     );
@@ -316,7 +337,7 @@ describe('validateBulkSections', () => {
     // A row with several panels where only a MIDDLE entry is bad — proves
     // the check inspects every panel rather than just `panels[0]`.
     const middleInvalid = section({
-      rows: [row({ key: 'r1' }), row({ key: 'r2', panels: ['100', 'abc', '50'] })],
+      rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '100+abc+50' })],
     });
     expect(validateBulkSections([middleInvalid], catalogs())).toBe(
       'Section 1, row 2: enter every panel width.'
@@ -355,10 +376,10 @@ describe('validateBulkSections', () => {
 });
 
 describe('newBulkRow', () => {
-  it('returns a blank row with one empty panel', () => {
+  it('returns a blank row with an empty width', () => {
     const r = newBulkRow();
     expect(r.room_name).toBe('');
-    expect(r.panels).toEqual(['']);
+    expect(r.width_cm).toBe('');
     expect(r.height_cm).toBe('');
     expect(r.key).toBeTruthy();
   });
@@ -375,7 +396,7 @@ describe('newBulkSection', () => {
     const s = newBulkSection();
     expect(s.rows).toHaveLength(1);
     expect(s.rows[0].room_name).toBe('');
-    expect(s.rows[0].panels).toEqual(['']);
+    expect(s.rows[0].width_cm).toBe('');
     expect(s.rows[0].height_cm).toBe('');
 
     expect(s.config.item_type).toBe('blind');
@@ -418,7 +439,7 @@ describe('bulkAddHasContent', () => {
     expect(bulkAddHasContent([withRoom])).toBe(true);
 
     const withWidth: BulkSection = { ...newBulkSection() };
-    withWidth.rows[0].panels = ['120'];
+    withWidth.rows[0].width_cm = '120';
     expect(bulkAddHasContent([withWidth])).toBe(true);
 
     const withHeight: BulkSection = { ...newBulkSection() };

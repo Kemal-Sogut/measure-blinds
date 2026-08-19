@@ -69,6 +69,13 @@ describe('parsePanelInput', () => {
     expect(parsePanelInput('100+120+140')).toEqual(['100', '120', '140']);
   });
 
+  it('pins consecutive delimiters to a blank panel between them, not a collapse or a throw', () => {
+    // '118++119' has no digits between the two '+'s — split still walks
+    // every delimiter individually, so the middle field comes out blank
+    // rather than the two panels either merging or being dropped.
+    expect(parsePanelInput('118++119')).toEqual(['118', '', '119']);
+  });
+
   it('passes non-numeric junk through untouched (no validation here)', () => {
     expect(parsePanelInput('abc+xyz')).toEqual(['abc', 'xyz']);
   });

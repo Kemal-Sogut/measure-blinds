@@ -7,10 +7,9 @@
  *
  * Originally a private, unexported function inside `OrderDetail.tsx`
  * (`nextKey`, backed by a module-local `draftSeq` counter), used there by
- * `toDrafts`, `addBlind`, `addPreset`, `addCustom`, the duplicate-item
- * clone path, and the older single-measurement bulk popup
- * (`measurementRowsToDrafts`'s `nextKey` parameter). `bulkAdd.ts`'s
- * `expandBulkSections` needed the exact same generator — its signature is
+ * `toDrafts`, `addBlind`, `addPreset`, `addCustom`, and the duplicate-item
+ * clone path. `bulkAdd.ts`'s `expandBulkSections` needed the exact same
+ * generator — its signature is
  * fixed by this feature's spec to `(sections) => BlindDraft[]`, with no
  * parameter to inject a key generator through — so `nextKey` had to become
  * IMPORTABLE, and it had to stay the SAME counter every other call site

@@ -849,8 +849,10 @@ export default function OrderDetail() {
     // SAVED defaults from Settings via `applyTypeDefaults`, which also
     // clears whichever slot the chosen type does not use and seeds
     // `attributes` from it. The factory also seeds the identity fields
-    // (no uid until the first save, visible), so this path and the bulk
-    // popup cannot disagree.
+    // (no uid until the first save, visible), so this path and the Bulk
+    // Add sheet's own section factory (`newBulkSection` in `bulkAdd.ts`,
+    // which calls this same `newBlindDraft`) cannot disagree on what a
+    // blank draft looks like.
     const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);

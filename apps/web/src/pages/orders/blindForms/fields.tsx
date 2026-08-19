@@ -33,6 +33,7 @@ import {
   type Catalogs,
 } from '../lineItemDrafts';
 import { clearPriceOverride } from '../lineItemBulk';
+import { parsePanelInput } from '../panelInput';
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -215,13 +216,34 @@ export function RoomField({ draft, onChange }: Pick<BlindFormProps, 'draft' | 'o
  *
  * The effective width of the blind is the SUM of the panels, which is why
  * the total is surfaced here rather than left for the user to add up.
+ *
+ * Accepts the `panelInput.ts` `'118.5+118'` shorthand IN ADDITION to the
+ * "+ Panel" button, which deliberately STAYS rather than being replaced by
+ * it (an explicit maintainer decision — unlike the bulk-add sheet's row,
+ * which drops the button and offers the shorthand only). Typing a value
+ * containing `+` into ANY one panel input — not just the last — expands it
+ * on that same keystroke: `setPanel` runs the typed value through
+ * `parsePanelInput` and splices the result into the `panels` array in
+ * place of the single panel being edited, so `'118.5+118'` typed into
+ * panel 1 of `['', '200']` yields `['118.5', '118', '200']` — that panel
+ * plus the following ones, with every OTHER panel in the row left
+ * untouched. A value with no `+` is stored as-is, same as before this
+ * shorthand existed, so ordinary single-panel typing (including a
+ * half-typed `12.`) is completely unaffected. The button remains because
+ * tapping is still the faster, error-free path for someone who is not
+ * already thinking in shorthand — this input never forces one style over
+ * the other.
  */
 export function PanelWidths({ draft, onChange }: Pick<BlindFormProps, 'draft' | 'onChange'>) {
   const panelSum = draft.panels.reduce((a, p) => a + (parsePositive(p) ?? 0), 0);
 
   function setPanel(i: number, value: string) {
     const panels = draft.panels.slice();
-    panels[i] = value;
+    if (value.includes('+')) {
+      panels.splice(i, 1, ...parsePanelInput(value));
+    } else {
+      panels[i] = value;
+    }
     onChange({ ...draft, panels });
   }
 

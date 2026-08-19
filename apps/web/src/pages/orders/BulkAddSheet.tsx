@@ -103,13 +103,11 @@ interface BulkAddSheetProps {
  *
  * Cancelling — the backdrop tap AND the Cancel button, both routed through
  * `handleCancel` so the guard cannot be bypassed by either path — confirms
- * first whenever `bulkAddHasContent(sections)` is true, mirroring the
- * older single-measurement popup's own guard
- * (`OrderDetail.tsx`'s `closeBulkMeasure`, whose own comment notes a
- * backdrop tap is easy to make by accident on a tablet). This sheet can
- * hold measurements for a whole house — the most expensive, hardest to
- * redo state in the app — so a stray tap must not be able to discard it
- * silently the way it could before this guard existed.
+ * first whenever `bulkAddHasContent(sections)` is true: a backdrop tap is
+ * easy to make by accident on a tablet, and this sheet can hold
+ * measurements for a whole house — the most expensive, hardest to redo
+ * state in the app — so a stray tap must not be able to discard it
+ * silently.
  */
 export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAddSheetProps) {
   const [sections, setSections] = useState<BulkSection[]>(() => [newBulkSection()]);

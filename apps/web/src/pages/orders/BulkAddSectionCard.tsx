@@ -12,9 +12,15 @@
  * Also holds the two field reimplementations `BulkAddSheet.tsx`'s module
  * doc explains are unavoidable duplicates of `blindForms/fields.tsx`
  * components (`SectionTypeSelect` for `BlindTypeSelect`, and `RowFields`'s
- * panel/height inputs for `PanelWidths`/`HeightField`), since both are used
- * only from inside a section card. `SectionAttributes` — the Curtains-pleat
- * extension point — lives here for the same reason.
+ * width/height inputs for `PanelWidths`/`HeightField`), since both are used
+ * only from inside a section card. The two are NOT identical, by explicit
+ * design decision: `RowFields` accepts panel widths ONLY via the
+ * `panelInput.ts` shorthand (one width input, no "+ Panel" or per-panel
+ * remove control), whereas `PanelWidths` keeps its "+ Panel" button
+ * alongside the same shorthand — a bulk-add row is meant to be typed fast
+ * across many windows, so there is no per-row button to tap.
+ * `SectionAttributes` — the Curtains-pleat extension point — lives here for
+ * the same reason as the other two.
  *
  * Only `SectionCard` is exported; the rest are private helpers used
  * exclusively by it, kept in this file rather than `BulkAddSheet.tsx`
@@ -23,6 +29,7 @@
 
 import { applyTypeDefaults, parsePositive, type BlindDraft, type Catalogs } from './lineItemDrafts';
 import type { BulkMeasureRow, BulkSection } from './bulkAdd';
+import { parsePanelInput } from './panelInput';
 import {
   AttributeSelect,
   FormSplitter,
@@ -122,12 +129,19 @@ function SectionAttributes({
 }
 
 /**
- * One measurement row's fields: room name, panel widths, height, and a
- * remove control — the reimplementation of `PanelWidths`/`HeightField`
- * against `BulkMeasureRow` `BulkAddSheet.tsx`'s module doc explains,
- * copying their exact visual structure and `INPUT`/`LABEL` tokens so a row
- * looks and behaves identically to the single-item form's own width/height
- * inputs.
+ * One measurement row's fields: room name, a single width entry, height,
+ * and a remove control.
+ *
+ * Deliberately NOT the same shape as the single-item form's `PanelWidths`:
+ * this row has ONE width input, no "+ Panel" button, and no per-panel
+ * remove control (an explicit design decision — see this file's module
+ * doc). Typing `'118.5+118'` here does not split live; the row keeps the
+ * raw string in `width_cm` and `expandBulkSections` (`bulkAdd.ts`) is what
+ * runs it through `parsePanelInput` at add-time to produce the eventual
+ * line item's `panels` array. The running "panels total" caption below the
+ * label previews that same split as the consultant types, so they can
+ * confirm the shorthand parsed the way they meant before confirming the
+ * whole sheet.
  *
  * `registerRoomInput` is a ref callback rather than a plain `ref` object:
  * the sheet keeps ONE map of room inputs keyed by row key (rows come and
@@ -150,13 +164,10 @@ function RowFields({
   onEnterHeight: () => void;
   registerRoomInput: (el: HTMLInputElement | null) => void;
 }) {
-  const panelSum = row.panels.reduce((a, p) => a + (parsePositive(p) ?? 0), 0);
-
-  function setPanel(i: number, value: string) {
-    const panels = row.panels.slice();
-    panels[i] = value;
-    onChange({ ...row, panels });
-  }
+  const panelSum = parsePanelInput(row.width_cm).reduce(
+    (a, p) => a + (parsePositive(p) ?? 0),
+    0
+  );
 
   return (
     <div className="flex flex-col gap-2.5 rounded-md border border-border-light p-2.5">
@@ -181,46 +192,19 @@ function RowFields({
         </button>
       </div>
 
-      <div>
+      <label>
         <span className={LABEL}>
           Width (cm) — panels total:{' '}
           <span className="font-mono">{panelSum > 0 ? panelSum : '—'}</span>
         </span>
-        <div className="mt-1 flex items-stretch gap-2">
-          <div className="flex min-w-0 flex-1 gap-2">
-            {row.panels.map((p, i) => (
-              <div key={i} className="relative min-w-0 flex-1">
-                <input
-                  inputMode="decimal"
-                  value={p}
-                  onChange={(e) => setPanel(i, e.target.value)}
-                  className="h-11 w-full rounded-md border border-border-input bg-surface px-2 text-center font-mono text-sm"
-                  aria-label={`Panel ${i + 1} width`}
-                />
-                {row.panels.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onChange({ ...row, panels: row.panels.filter((_, j) => j !== i) })
-                    }
-                    aria-label={`Remove panel ${i + 1}`}
-                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border-input bg-surface text-[10px] text-text-muted hover:text-danger"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => onChange({ ...row, panels: [...row.panels, ''] })}
-            className="h-11 w-[15%] shrink-0 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-brand-600"
-          >
-            + Panel
-          </button>
-        </div>
-      </div>
+        <input
+          inputMode="decimal"
+          placeholder="118.5+118 for two panels"
+          value={row.width_cm}
+          onChange={(e) => onChange({ ...row, width_cm: e.target.value })}
+          className={`${INPUT} font-mono`}
+        />
+      </label>
 
       <label>
         <span className={LABEL}>Height (cm)</span>
