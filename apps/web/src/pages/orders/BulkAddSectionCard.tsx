@@ -173,17 +173,24 @@ function SectionAttributes({
  * plus an `aria-label` (screen-reader only) — every input keeps one
  * regardless of what a sighted user sees.
  *
- * The row's own surface is `bg-surface-sunken` (a shade darker than the
- * card's `bg-surface` white it sits inside, on TOP of the `border-light`
- * outline it already had) — a `border-light` hairline alone reads as
- * near-invisible on white, especially in daylight, so without a fill the
- * card contrast fix above would stop one layer short: sections would read
- * as cards, but the rows inside them would still blur into each other and
- * the card behind them. This reuses an existing token (no new one), the
- * same one this app already uses for "a slightly recessed group of
- * controls" (segmented controls, muted chips) — each input inside keeps
- * its own `bg-surface` white, so it still stands out against ITS row the
- * same way it already stood out against the sheet before this fix.
+ * The row's own surface is `bg-surface-sunken` (`#f1f2f5`) on
+ * `border-border-strong` (`#b6bdcc`) — a fill AND a border darker than
+ * that fill, not just a tint. A first pass here paired the sunken fill
+ * with `border-light` (`#edeef2`), which is LIGHTER than `#f1f2f5` and so
+ * contributed nothing at all: a `border-light` hairline (or a fill with no
+ * real border) reads as near-invisible on white, especially in daylight,
+ * so without a border actually darker than its own fill the card contrast
+ * fix above would stop one layer short — sections would read as cards, but
+ * the rows inside them would still blur together. `border-border-strong`
+ * (rather than the `border-border-input` `#d8dbe3` middle option) is what
+ * this row uses because it is visibly darker than BOTH surfaces it
+ * separates — `#ffffff` (the card, outside the row) and `#f1f2f5` (the
+ * row's own fill) — the same real jump the card's own border already makes
+ * against the sheet, not a marginal one. Only existing tokens (no new
+ * ones). Each input inside keeps its own `bg-surface` white with its
+ * ordinary `border-border-input`, so it still reads as interactive against
+ * the now-muted row the same way it already read against the sheet before
+ * this fix.
  *
  * Deliberately NOT the same shape as the single-item form's `PanelWidths`:
  * this row has ONE width input, no "+ Panel" button, and no per-panel
@@ -290,7 +297,7 @@ function RowFields({
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border-light bg-surface-sunken p-2.5">
+    <div className="flex flex-col gap-1.5 rounded-md border border-border-strong bg-surface-sunken p-2.5">
       <div className="flex items-start gap-2">
         <div className="grid min-w-0 flex-1 grid-cols-[4fr_3fr_3fr] gap-2">
           <input
