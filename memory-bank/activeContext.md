@@ -5,9 +5,11 @@
 > and `knowledge/history/bug_fixes.md`.
 
 ## Where things stand (as of 2026-08-20)
-Branch `main`, latest merge PR #35 (`feat/defaults-bulk-lineitems`). Verified: web `pnpm check`
+Branch `main`, latest merge PR #35 (`feat/defaults-bulk-lineitems`). Since then, uncommitted on
+`main`: the 50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on
+confirm (see `knowledge/history/engine_features.md`, 2026-08-20). Verified: web `pnpm check`
 clean, `pnpm test` 305/305 (20 files), `pnpm lint` (oxlint) 0 warnings/errors; api `pnpm check`
-clean, `pnpm test` 337/337 (18 files).
+clean, `pnpm test` 340/340 (18 files).
 
 Live on `main`: server-authoritative pricing with per-type blind modules (Curtains is the one
 type with a divergent formula); per-type hardware scoping + price basis; per-blind-type saved
@@ -60,3 +62,13 @@ primitive layer.
 - Money-triggered side effects (email + a persisted flag) belong in a `lib/` helper called
   from every door that can produce the event (a consultant's own action AND the e-Transfer
   webhook), never inline in one route — see `lib/warrantyIssue.ts`, `lib/payments.ts`.
+- The automatic production trigger (awaiting_payment → in_progress) fires only when the ledger
+  reaches the 50% deposit (`round2(total/2)`, half-cent epsilon), computed inside
+  `recordOrderPayment` by re-reading the ledger AFTER the insert — so both doors and a run of
+  smaller payments behave identically. Manual advancement is a SEPARATE route and is
+  intentionally not gated ("manual progress below 50% is allowed"). Payment-deletion auto-
+  revert stays "only when the ledger is emptied" for the same reason — a manual/threshold
+  advance must not be auto-undone.
+- The customer page must never derive money (AI_GUIDELINES rule 1): "deposit reached?" on
+  `CustomerView` compares `amount_paid` to the server's `deposit_due`, it does not compute
+  `total/2` itself.

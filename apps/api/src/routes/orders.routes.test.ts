@@ -1013,6 +1013,82 @@ const WARRANTY_CUSTOMER = {
 const logMessages = () =>
   ((db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>).map((l) => l.message);
 
+describe('POST /api/orders/:id/payments — 50% production trigger', () => {
+  /**
+   * A confirmed but unpaid order (total 113 → 50% deposit 56.50). The
+   * `payments` array is the ledger state the fake DB reports back AFTER
+   * the payment insert, which is what `recordOrderPayment` re-reads to
+   * decide whether the deposit has been reached — so each test sets it to
+   * the post-payment total it is exercising. `orders.update` firing is the
+   * observable signal that the order advanced to in_progress; a suite with
+   * no other update path, so its presence/absence is unambiguous.
+   */
+  const awaitingOrder = (over: Record<string, unknown> = {}) => ({
+    id: 'ap1',
+    status: 'awaiting_payment',
+    order_number: 'F0307-200',
+    order_date: '2026-07-03',
+    total: 113,
+    warranty_sent_at: null,
+    warranty_starts_on: null,
+    line_items: [
+      { item_type: 'blind', room_name: 'Den', blinds_type: 'Roller', control_name: 'Chain', quantity: 1 },
+    ],
+    payments: [],
+    customer: { ...WARRANTY_CUSTOMER },
+    ...over,
+  });
+
+  const post = (path: string, body: unknown) =>
+    ordersApp.request(
+      path,
+      { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  beforeEach(() => {
+    db.responses['company_settings.select'] = [WARRANTY_COMPANY];
+    db.responses['payments.insert'] = [{ id: 'p9' }];
+  });
+
+  it('advances to in_progress once the ledger reaches the 50% deposit', async () => {
+    // 60 paid ≥ 56.50 deposit → production begins.
+    db.responses['orders.select'] = [
+      awaitingOrder({ payments: [{ id: 'p9', order_id: 'ap1', amount: 60, paid_on: '2026-07-10', note: '' }] }),
+    ];
+    const res = await post('/ap1/payments', { amount: 60 });
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('orders.update');
+  });
+
+  it('advances when a later payment tops the ledger up over the deposit', async () => {
+    // 30 already on file + 30 now = 60 ≥ 56.50 → production begins even
+    // though neither payment alone reached the deposit.
+    db.responses['orders.select'] = [
+      awaitingOrder({
+        payments: [
+          { id: 'p1', order_id: 'ap1', amount: 30, paid_on: '2026-07-09', note: '' },
+          { id: 'p9', order_id: 'ap1', amount: 30, paid_on: '2026-07-10', note: '' },
+        ],
+      }),
+    ];
+    const res = await post('/ap1/payments', { amount: 30 });
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('orders.update');
+  });
+
+  it('records a sub-deposit payment without advancing to in_progress', async () => {
+    // 40 paid < 56.50 deposit → recorded, but stays awaiting_payment.
+    db.responses['orders.select'] = [
+      awaitingOrder({ payments: [{ id: 'p9', order_id: 'ap1', amount: 40, paid_on: '2026-07-10', note: '' }] }),
+    ];
+    const res = await post('/ap1/payments', { amount: 40 });
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('payments.insert');
+    expect(db.calls).not.toContain('orders.update');
+  });
+});
+
 describe('warranty issue on paid-in-full', () => {
   /**
    * A confirmed order whose ledger ALREADY settles the total — the state

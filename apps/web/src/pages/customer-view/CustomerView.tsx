@@ -17,11 +17,19 @@
  *                       quoted while the order awaits its first payment)
  *                       + progress tracker + summary + cancellation block
  *
+ * The e-Transfer details are shown only while the customer has a transfer
+ * to make: the deposit is still due, or the order is installed and a
+ * balance remains. Once the 50% deposit is in and production is under way
+ * they are hidden — nothing is expected — and they reappear at
+ * installation if a final balance is owed (`showHowToPay`).
+ *
  * Confirming shows NO success banner. The banner used to sit directly
  * under the header and say "thank you"; that slot now holds the payment
  * instructions, because the confirmation itself is already evident from
  * the page (tracker, "Order" wording, no Confirm button) while the
  * amount and the address are the only things the customer still needs.
+ * Confirming also scrolls the page back to the top, since Confirm is
+ * tapped from the fixed bar at the bottom.
  *
  * Because the tracker is always live here, the app sends customers NO
  * status-update emails.
@@ -498,6 +506,13 @@ export default function CustomerView() {
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       if (res.ok || res.status === 409) {
         await load();
+        // Confirm is tapped from the fixed bar at the bottom of the page,
+        // so the customer is scrolled down; the confirmed layout puts the
+        // payment instructions and tracker up top. Return them there so
+        // the first thing they see is what to do next, not the middle of
+        // the order they were already looking at. Guarded because the
+        // helper is absent in non-browser test environments.
+        window.scrollTo?.({ top: 0, behavior: 'smooth' });
       } else {
         setActionError(body?.error ?? 'Confirmation failed. Please try again.');
       }
@@ -591,6 +606,25 @@ export default function CustomerView() {
     estimate.status === 'awaiting_payment' &&
     estimate.amount_paid === 0 &&
     estimate.deposit_due !== undefined;
+  // Has the customer covered the 50% deposit? Compared against the
+  // server's `deposit_due` (never derived here — AI_GUIDELINES rule 1),
+  // with the same half-cent tolerance the server uses so an exact deposit
+  // still counts. If a Worker predating `deposit_due` served the payload,
+  // fall back to "any payment recorded" rather than crash.
+  const depositPaid =
+    estimate.deposit_due !== undefined
+      ? estimate.amount_paid + 0.005 >= estimate.deposit_due
+      : estimate.amount_paid > 0;
+  // Whether "How to pay" is mounted at all. The customer has a transfer to
+  // make in exactly two windows: while the deposit is still outstanding,
+  // and — once production is done — when the order is installed with a
+  // balance still owing. Between them (deposit in, order in production or
+  // ready) nothing is expected, so the box is hidden. Balance > 0 is the
+  // outer guard: a settled order never shows it.
+  const showHowToPay =
+    confirmed &&
+    estimate.balance > 0 &&
+    (!depositPaid || estimate.status === 'installed');
   const c = estimate.company;
   const cust = estimate.customer;
 
@@ -634,9 +668,12 @@ export default function CustomerView() {
           arriving straight from the confirm button lands on the amount
           and the e-Transfer address instead of on a thank-you, and a
           customer returning later still finds it without scrolling.
-          Only mounted once something is actually owed.
+          Mounted only when the customer actually has a transfer to make
+          now (`showHowToPay`): the deposit is still due, or the order is
+          installed with a balance remaining. Hidden once the deposit is in
+          and production is under way.
         */}
-        {confirmed && estimate.balance > 0 && (
+        {showHowToPay && (
           <PaymentSection
             payToEmail={c?.etransfer_email ?? ''}
             instructions={c?.etransfer_instructions}

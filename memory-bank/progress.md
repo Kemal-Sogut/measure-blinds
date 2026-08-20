@@ -9,15 +9,25 @@
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
 (+ expired), auto-expiry on sent. Confirmation is reversible by staff only, and only pre-
 payment. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
-the first payment, then an Invoice. Order duplication re-prices from the current catalog and
-leaves payments/logs/appointment/warranty/public-token behind. Revert (backward-only) and
-delete (draft/expired only) are both guarded.
+the first payment, then an Invoice. Production starts automatically only when the ledger
+reaches the 50% deposit (`recordOrderPayment` gates awaiting_payment → in_progress on
+`round2(total/2)`; shared by the staff route and the e-Transfer webhook) — a sub-deposit
+payment is recorded but does not advance, and staff may still advance an under-deposited
+order by hand. Deleting the LAST payment reverts in_progress → awaiting_payment; dropping
+below 50% while some payment remains does not (manual/threshold advances are not auto-undone).
+Order duplication re-prices from the current catalog and leaves payments/logs/appointment/
+warranty/public-token behind. Revert (backward-only) and delete (draft/expired only) are both
+guarded.
 
 **Customer-facing:** a permanent public order-summary page (not one-shot) with a 5-step
 tracker (Confirmed → Awaiting Payment → In Production → Ready → Installed), the quoted 50%
 deposit, e-Transfer instructions, cancellation request/withdraw, installation confirm/
-request, and collapsible line items/terms. Confirm is gated behind a Terms checkbox
-(UI-only — see Known Issues).
+request, and collapsible line items/terms. The "HOW TO PAY" block is windowed to when the
+customer actually owes a transfer (`showHowToPay`): shown while the deposit is outstanding,
+hidden once the 50% is in and the order is in production/ready, and shown again at
+installation if a balance remains. Confirming scrolls the page back to the top (Confirm sits
+in the fixed bottom bar). Confirm is gated behind a Terms checkbox (UI-only — see Known
+Issues).
 
 **Blind types & pricing:** ten canonical blind types as modules (`lib/blindTypes/`, twinned
 api/web); Curtains is the one type with a genuinely divergent formula (fabric per running

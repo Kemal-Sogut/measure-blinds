@@ -1,5 +1,52 @@
 # Engine Features / Feature History
 
+## 2026-08-20 — 50% deposit gates the production trigger; customer "how to pay" windowed; auto-scroll on confirm
+Three changes, one to money-lifecycle logic (api) and two to the public customer page (web).
+
+**Production now begins at the 50% deposit, not the first dollar.** `recordOrderPayment`
+(`apps/api/src/lib/payments.ts`) previously advanced `awaiting_payment → in_progress` on ANY
+first payment. It now re-reads the order total and the full ledger AFTER inserting the payment
+and advances only when paid-to-date reaches the standard 50% deposit (`round2(total / 2)`,
+with a half-cent `DEPOSIT_EPSILON` — the same figure `routes/public.ts` `depositDue` quotes
+and `lib/etransferMatch.ts` recognises). A sub-deposit payment is still recorded; it just
+leaves the order awaiting payment. Because both the staff Record-Payment route and the
+e-Transfer webhook share this one helper, the gate applies identically to both doors.
+
+- **Manual progress is deliberately NOT gated.** A staff member can still advance an
+  under-deposited order to production by hand — that is the status-PUT/mark path, a different
+  route, untouched here. The gate only stops a token payment from doing it automatically.
+- **Auto-revert on payment deletion is unchanged**: `DELETE /:id/payments/:paymentId` still
+  rolls `in_progress → awaiting_payment` ONLY when the ledger is emptied (last payment
+  removed), never merely because paid dropped back below 50% — a manual/threshold advance is
+  not auto-undone. (Deliberate decision, 2026-08-20.)
+- Reading the ledger post-insert (not deriving from `input.amount`) means a run of smaller
+  payments that together cross 50% triggers production exactly like one payment that clears
+  it.
+
+**Customer page — "HOW TO PAY" is now windowed to when the customer actually owes a
+transfer.** It used to mount on `confirmed && balance > 0`. It now mounts on `showHowToPay`
+(`CustomerView.tsx`): confirmed, balance > 0, AND (`!depositPaid` OR status is `installed`).
+So it shows while the deposit is outstanding, hides once the 50% is in and the order is in
+production / ready (nothing is expected from the customer then), and reappears at installation
+if a final balance remains. `depositPaid` compares `amount_paid` to the server's `deposit_due`
+(never derived client-side — AI_GUIDELINES rule 1) with the same half-cent tolerance, falling
+back to "any payment recorded" only if a Worker predating `deposit_due` served the payload.
+`PaymentSection` itself is unchanged (still renders whenever mounted); only the caller's mount
+rule and the two doc comments moved.
+
+**Customer page — confirming scrolls back to the top.** Confirm is tapped from the fixed bar
+at the bottom; after the successful confirm + reload, `handleConfirm` calls
+`window.scrollTo({ top: 0, behavior: 'smooth' })` (optional-chained for non-browser test
+envs) so the customer lands on the payment instructions and tracker rather than the middle of
+the order.
+
+### Verified
+api `tsc --noEmit` clean, `pnpm test` 340/340 (new: three cases under `POST /api/orders/:id/
+payments — 50% production trigger` — advances at the deposit, advances when a later payment
+tops the ledger over it, records a sub-deposit payment without advancing). web `tsc` clean,
+`oxlint` clean, `pnpm test` 305/305. Visual/on-device verification of the customer page
+remains the standing project-wide gap (the page sits behind a token + live API), not run here.
+
 ## 2026-08-19/20 — Bulk-add refinements: legacy popup retired, panel shorthand, incomplete-row capture, contrast pass
 Web-only (no API, schema, or pricing surface). Branch `feat/defaults-bulk-lineitems`, spec
 `.superpowers/sdd/2026-08-18-bulkadd-refinements/` (continues from the 2026-08-17/18 batch

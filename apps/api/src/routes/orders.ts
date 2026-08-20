@@ -1566,11 +1566,12 @@ app.post('/:id/unconfirm', async (c) => {
 });
 
 /**
- * Records a payment against an order. The first payment moves
- * awaiting_payment → in_progress; further payments keep the order
- * in_progress. The outstanding balance is derived from the ledger, so
- * it is returned but never stored. Payments are accepted while the
- * order is awaiting_payment or in_progress.
+ * Records a payment against an order. Reaching the 50% deposit moves
+ * awaiting_payment → in_progress (the automatic production trigger, in
+ * `lib/payments.ts`); a smaller payment is recorded but leaves the order
+ * awaiting_payment. The outstanding balance is derived from the ledger,
+ * so it is returned but never stored. Payments are accepted at any
+ * post-confirmation stage (awaiting_payment through installed).
  */
 app.post('/:id/payments', async (c) => {
   const parsed = paymentSchema.safeParse(await c.req.json().catch(() => null));

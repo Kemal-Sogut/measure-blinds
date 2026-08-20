@@ -17,12 +17,17 @@
  * that — it is the amount to transfer, which appears nowhere else, and
  * it is computed by the Worker (`deposit_due`), never here.
  *
- * The caller decides when to mount it — the rule is "confirmed, and
- * still owing" — and separately decides whether the deposit applies (the
- * order is awaiting payment and nothing has been received yet). This
- * renders unconditionally EXCEPT when no e-Transfer address is
- * configured, in which case it renders nothing rather than showing an
- * empty box the customer cannot act on.
+ * The caller decides when to mount it — the rule is "confirmed, still
+ * owing, and the customer actually has a transfer to make now": while the
+ * 50% deposit is outstanding, or, once production is finished, when the
+ * order is installed and a balance remains. Between those windows (the
+ * deposit is in, the order is in production or ready) nothing is expected
+ * from the customer, so the caller does not mount this at all. The caller
+ * also separately decides whether the deposit FIGURE applies (the order is
+ * awaiting payment and nothing has been received yet). This renders
+ * unconditionally EXCEPT when no e-Transfer address is configured, in
+ * which case it renders nothing rather than showing an empty box the
+ * customer cannot act on.
  *
  * Colour: the whole block is amber (`warning` / `warning-tint`), not the
  * neutral surface the other cards use. That is the design system's own
