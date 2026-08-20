@@ -52,12 +52,20 @@ The `memory-bank/` folder is the long-term project memory for all AI assistants.
 - `techContext.md` — technologies, dependencies, dev setup, constraints.
 - `productContext.md` — why the project exists, what it solves, UX goals.
 - **Rule**: Update the relevant memory-bank files at the end of every task that changes project state.
+- **Rule — summarize, don't append**: `activeContext.md` and `progress.md` are CURRENT-STATE
+  snapshots, not changelogs. Overwrite the relevant section to describe what is true now;
+  do not add a new dated "Current Focus" / entry on top of the old ones — that is how these
+  two files previously grew past 1,000 lines each of one-time bug narration. The permanent,
+  append-only history belongs in `knowledge/history/engine_features.md` and
+  `knowledge/history/bug_fixes.md` (Rule 4) — link to a dated entry there instead of
+  re-narrating it here. `systemPatterns.md`, `techContext.md`, `productContext.md` and
+  `projectbrief.md` are also current-state documents, not logs.
 
 ## 6. Modular Responsibility & File Boundaries
 
 - **Rule**: Keep entry points thin (`apps/api/src/index.ts`, `apps/web/src/main.tsx`/`App.tsx`) — business logic lives in `routes/`, `lib/`, `hooks/`, `pages/`, `components/`.
 - **Rule**: Files should not exceed 800 lines. Functions should stay small and focused (ideally <100 lines).
-  - Known standing violations to reduce opportunistically (only when already working in them, per Rule 8): `apps/api/src/routes/orders.ts` (~1,300 lines), `apps/web/src/pages/orders/OrderDetail.tsx` (~2,000 lines).
+  - Known standing violations to reduce opportunistically (only when already working in them, per Rule 8): `apps/api/src/routes/orders.ts` (~2,220 lines), `apps/web/src/pages/orders/OrderDetail.tsx` (~3,170 lines).
 - **Rule**: One file, one responsibility. No God objects/components; no centralized "manager" that owns unrelated concerns.
 - **Rule**: Do not merge files, collapse modules, or move logic between modules unless explicitly instructed.
 
