@@ -533,7 +533,7 @@ describe('bulkAddHasContent', () => {
     expect(bulkAddHasContent([withMaterial])).toBe(true);
   });
 
-  it('is true once the section config has a colour, note, or attribute typed', () => {
+  it('is true once the section config has a colour or attribute typed', () => {
     const withColor: BulkSection = { ...newBulkSection() };
     withColor.config = { ...withColor.config, color: 'White' };
     expect(bulkAddHasContent([withColor])).toBe(true);

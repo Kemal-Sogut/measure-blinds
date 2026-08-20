@@ -54,13 +54,16 @@ import { SectionCard } from './BulkAddSectionCard';
  * `dvh` and the safe-area padding matter). Duplicated rather than imported:
  * `OrderDetail.tsx` does not export it, and importing it back would invert
  * the dependency (`OrderDetail.tsx` imports THIS component, not the other
- * way around). `max-w-2xl` is wider than the other hand-rolled sheets'
- * `lg:max-w-lg` — this one carries a multi-column `HardwareRow` grid plus a
- * whole rows table, and the narrower width left both cramped on desktop.
+ * way around). `lg:max-w-5xl` is wider than the other hand-rolled sheets'
+ * `lg:max-w-lg` (and wider still than the single blind item popup's own
+ * `lg:max-w-3xl`) — this one carries a multi-column `HardwareRow` grid PLUS
+ * a whole rows table, stacked several sections deep, and the narrower width
+ * left all of it cramped on tablet/desktop. Unprefixed (no `max-w-*` below
+ * `lg:`), so a phone still gets the sheet at full width, exactly as before.
  */
 const SHEET_PANEL =
-  'max-h-[92dvh] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 ' +
-  'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:rounded-2xl lg:pb-4';
+  'max-h-[92dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 ' +
+  'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:max-w-5xl lg:rounded-2xl lg:pb-4';
 
 /**
  * Props for {@link BulkAddSheet}. `onAdd` receives the already-expanded
@@ -211,7 +214,7 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
           {itemCount > 0 && ` ${itemCount} item${itemCount !== 1 ? 's' : ''} so far.`}
         </p>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {sections.map((section, i) => (
             <SectionCard
               key={section.key}

@@ -8,7 +8,7 @@
  * Today a consultant adds blinds to an order one at a time, re-picking the
  * same blind type, material and hardware for every window in a room or
  * house. Bulk add flips that: the consultant configures ONE section (a
- * blind type plus its material/hardware/colour/note — everything that
+ * blind type plus its material/hardware/colour — everything that
  * stays the same across a run of windows) and then rattles off many
  * measurement rows (room name, panel widths, height) underneath it — one
  * `BlindDraft` line item per row. Several sections can exist side by side,
@@ -263,7 +263,11 @@ export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
  * Whether anything has actually been entered into the bulk-add sheet: a
  * measurement typed into any row, or a section's shared config touched
  * away from its blank defaults (blind type, material, any hardware slot,
- * colour, note, or an attribute).
+ * colour, or an attribute). The section config has no note field of its
+ * own to check here — it was removed entirely from the bulk-add sheet (a
+ * maintainer decision; the row-level item note stays editable later, per
+ * item, in the single-item edit form) — so `config.note` is never part of
+ * this predicate.
  *
  * This sheet can hold on-site measurements for a whole house — the most
  * expensive, hardest-to-redo state in the app — so its close handler
@@ -294,7 +298,6 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
     config.control_id !== '' ||
     config.installation_id !== '' ||
     config.color !== '' ||
-    config.note !== '' ||
     Object.values(config.attributes).some((v) => v.trim() !== '');
   return sections.some((s) => configHasContent(s.config) || s.rows.some(bulkRowHasContent));
 }

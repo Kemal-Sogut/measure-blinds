@@ -3074,7 +3074,7 @@ export default function OrderDetail() {
             onClick={cancelEdit}
           >
             <div
-              className={`${SHEET_PANEL} lg:max-w-lg`}
+              className={`${SHEET_PANEL} lg:max-w-3xl`}
               onClick={(e) => e.stopPropagation()}
             >
               <h2 className="mb-4 text-sm font-semibold text-text-primary">{title}</h2>
