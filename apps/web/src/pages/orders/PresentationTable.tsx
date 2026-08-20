@@ -28,9 +28,19 @@ import {
 } from '../../lib/optionBreakdown';
 import type { LineItem } from '../../types';
 
-/** Formats a number as dollars, e.g. `$1234.50`. Matches Order Overview. */
+/**
+ * Formats a number as dollars, e.g. `$1234.50`.
+ *
+ * Unlike the Order Overview's helper this one has to survive NEGATIVES —
+ * the adjustment column goes below zero whenever a consultant discounts a
+ * line — so the sign leads and the dollar sign hugs the digits. Naive
+ * interpolation yields `$-21.20`, which reads as a typo on a screen the
+ * customer is looking at. The U+2212 minus matches the discount row on
+ * the page's order-total strip.
+ */
 function money(value: number | null | undefined): string {
-  return `$${(Number(value) || 0).toFixed(2)}`;
+  const amount = Number(value) || 0;
+  return `${amount < 0 ? '−' : ''}$${Math.abs(amount).toFixed(2)}`;
 }
 
 /**
