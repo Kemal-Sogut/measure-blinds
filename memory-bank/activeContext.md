@@ -5,11 +5,16 @@
 > and `knowledge/history/bug_fixes.md`.
 
 ## Where things stand (as of 2026-08-20)
-Branch `main`, latest merge PR #35 (`feat/defaults-bulk-lineitems`). Since then, uncommitted on
-`main`: the 50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on
-confirm (see `knowledge/history/engine_features.md`, 2026-08-20). Verified: web `pnpm check`
-clean, `pnpm test` 305/305 (20 files), `pnpm lint` (oxlint) 0 warnings/errors; api `pnpm check`
-clean, `pnpm test` 340/340 (18 files).
+Working branch `claude/order-overview-filters-totals-940e9b` (worktree), off `main` at the
+50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on confirm.
+The branch adds the **Order Presentation view** — `/orders/:id/present`, its "Present to
+Customer" entry point below Confirm, `lib/optionBreakdown.ts`, `pages/orders/
+presentationFilters.ts`, and the `describeUnitCosts` pricing refactor on both twins (see
+`knowledge/history/engine_features.md`, 2026-08-20, and the design/plan in `knowledge/specs/`
+and `knowledge/plans/`). Verified: web `pnpm check` clean, `pnpm test` 336/336 (22 files),
+`pnpm lint` (oxlint) 0 warnings/errors; api `pnpm check` clean, `pnpm test` 345/345 (18
+files). Not yet merged, and the Presentation page's own shell has not been rendered — only its
+two child components, through a throwaway Vite harness.
 
 Live on `main`: server-authoritative pricing with per-type blind modules (Curtains is the one
 type with a divergent formula); per-type hardware scoping + price basis; per-blind-type saved
@@ -59,6 +64,20 @@ primitive layer.
 - Twin files (`lib/pricing.ts`, `lib/totals.ts`, `lib/blindTypes/*`, `lib/customerName.ts`,
   `lib/lineItemAdjustments.ts`) must be edited on both `apps/api` and `apps/web` — see
   AI_GUIDELINES §1.
+- `calculateUnitPrice` is now the SUM of `describeUnitCosts()` rather than a parallel
+  calculation. Two details are load-bearing and look like style if you don't know why: the
+  material leg is destructured OUT of the reduction, and `describeUnitCosts` inserts hardware
+  legs in the fixed order `cassette, bottom_rail, control, installation`. Float addition is not
+  associative, so this reproduces the historical `material + ((h1 + h2) + h3)` association
+  exactly — the refactor is bit-identical, not merely equivalent. Don't "tidy" either one.
+- Option cells on the Presentation page are FITTED to `round2(calcUnit × qty)` with the
+  material cell absorbing the correction, never summed independently. `line_total` is
+  `round2(unit_price × qty) + addonsTotal`, so independently-rounded legs miss it by up to two
+  or three cents and would show a phantom adjustment on an ordinary line. Because of the
+  fitting, the Adjustment column means only "override and/or add-ons", which is what lets the
+  page promise a row that adds up in front of a customer.
+- `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
+  `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
 - Money-triggered side effects (email + a persisted flag) belong in a `lib/` helper called
   from every door that can produce the event (a consultant's own action AND the e-Transfer
   webhook), never inline in one route — see `lib/warrantyIssue.ts`, `lib/payments.ts`.
