@@ -85,6 +85,89 @@ throwaway component-level Vite entry (the same technique used for the bulk-add r
 and 768px: AND/OR combination, column dropping, the empty state, exact reconciliation of every
 footer figure, 44px selects, and a body that does not scroll sideways while the table scrolls
 inside itself. Not yet driven inside the real authenticated app on a device.
+## 2026-08-20 — Installed orders quote the outstanding balance in "How to pay"
+Web-only (no API, schema, or pricing surface). An installed order that still owes money now
+shows the customer HOW MUCH to send, not just where.
+
+**`PaymentSection`** (`apps/web/src/components/PaymentSection.tsx`) previously took a single
+`depositDue?: number` and hard-coded the "Deposit due now (50% of total)" caption and deposit
+lead-in. Its figure slot is now a general `amountDue?: { amount; caption; instruction }`
+descriptor — the same amber box, the caller supplies the label. The component stays purely
+presentational and still never computes money.
+
+**`CustomerView`** (`apps/web/src/pages/customer-view/CustomerView.tsx`) builds that descriptor
+from server figures only (AI_GUIDELINES rule 1): the Worker's `deposit_due` with
+"Deposit due now (50% of total)" while the order awaits its first payment, or the Worker's
+`balance` (`total − amount_paid`, already in the payload) with "Pay your balance" once the order
+is `installed` and `balance > 0`. A partial deposit not yet at 50% still falls through to a
+"how to pay" with no headline figure, as before. The mount rule (`showHowToPay`) is unchanged.
+
+- This is the ONE figure now shown in two places on purpose: the totals block keeps the running
+  "Balance due", and the installed customer also sees that amount in the payment box, beside the
+  e-Transfer address they send it to. The deposit still appears nowhere else.
+
+### Verified
+web `tsc` clean, `oxlint` clean, `pnpm test` 305/305. The box's markup is unchanged from the
+already-shipping deposit box (only caption/amount/lead-in differ), confirmed against a
+token-accurate static render of both states; not exercised on the live token-gated customer
+page — the standing project-wide gap.
+
+## 2026-08-20 — Editing an expired estimate's validity date revives it to draft
+API-only (no web, schema, or pricing surface). Reopening a lapsed estimate no longer leaves it
+stuck on the `expired` tab: extending its expiry date brings it back into the workflow.
+
+**`PUT /api/orders/:id`** (`apps/api/src/routes/orders.ts`) now, after resolving the incoming
+`expiry_date`, computes `reviveToDraft = existing.status === 'expired' && expiry_date >= today`
+and, when true, writes `status: 'draft'` alongside the recalculated totals. The threshold is the
+exact inverse of the `expiry_date < today` rule that expired the order in `applyDefensiveExpiry`
+(so "today or later" un-expires; a still-past date leaves it expired). The target is `draft`,
+never `sent`, on purpose — no fresh estimate has reached the customer, so a new `/send` is the
+only path back to `sent`. Only an `expired` order is ever rewritten; every other status passes
+through untouched. The revive gets its own line in the activity trail
+("Expiry extended to today or later — estimate revived to draft.") on top of the usual
+"Order edited (was expired)." entry.
+
+No web change was needed: the editor already allows editing at any stage and shows the top-bar
+Save on an expired order (`OrderDetail.tsx` — "send after updating the expiry date"), and the
+page derives `status` straight from the server response (`existing?.status`) cached by
+`useCacheOrder`, so the revived `draft` renders on save with no client-side status logic.
+
+- Test harness gained update-payload capture (`db.updatePayloads`, mirroring `db.insertPayloads`)
+  so the written `status` can be asserted — updates were previously only counted in `db.calls`.
+
+### Verified
+api `tsc` clean, `pnpm test` 343/343 (three new cases in
+`PUT /api/orders/:id — expiry revive`: future expiry → `draft`, still-past expiry → unchanged,
+non-expired order → status never written). Not exercised on a live signed-in order — staff
+routes are behind `ProtectedRoute`, the standing project-wide gap.
+
+## 2026-08-20 — "Add order" from an appointment: new order with the customer pre-filled
+Web-only (no API, schema, or pricing surface). A consultant looking at an appointment can turn
+the visit into an order in one tap.
+
+**AppointmentDetail** (`apps/web/src/pages/calendar/AppointmentDetail.tsx`) gains an "Add
+order" button (brand-filled, first in the customer block's button row, shown whenever the
+appointment has a customer — both estimate and installation visits). It links to
+`/orders/new?customer=<customer.id>`.
+
+**OrderDetail** reads that param and pre-fills the customer picker. `prefillCustomerId` is the
+`?customer=` value but ONLY for a new order (`id` absent); `useCustomer(prefillCustomerId)`
+fetches it (the hook is disabled on `undefined`, so no request fires for an edit or a param-
+less `/orders/new`). A one-time effect (`prefillApplied` ref) drops the fetched customer into
+the existing `customer` state, and only while the consultant hasn't already picked one — so a
+later change or clear from the picker is never undone, and the apply never repeats. From there
+the order saves through the ordinary path (`customer_id: customer.id`); nothing about pricing
+or persistence changed.
+
+- Query param, not router state: it survives a refresh and needs no new plumbing, and the
+  single-customer GET (`useCustomer` → `GET /api/customers/:id`) already existed.
+- The pre-fill is a convenience only — the customer picker, quick-add, and clear all still work
+  exactly as before.
+
+### Verified
+web `tsc` clean, `oxlint` clean, `pnpm test` 305/305. Live/on-device click-through
+(appointment → Add order → order opens with customer set) not run — staff routes are behind
+`ProtectedRoute` + live data, the standing project-wide gap.
 
 ## 2026-08-20 — 50% deposit gates the production trigger; customer "how to pay" windowed; auto-scroll on confirm
 Three changes, one to money-lifecycle logic (api) and two to the public customer page (web).
@@ -118,7 +201,9 @@ if a final balance remains. `depositPaid` compares `amount_paid` to the server's
 (never derived client-side — AI_GUIDELINES rule 1) with the same half-cent tolerance, falling
 back to "any payment recorded" only if a Worker predating `deposit_due` served the payload.
 `PaymentSection` itself is unchanged (still renders whenever mounted); only the caller's mount
-rule and the two doc comments moved.
+rule and the two doc comments moved. The "PAYMENTS RECEIVED" receipt list still shows each
+payment, but its "Paid to date" subtotal row was removed — the customer sees the individual
+receipts and the "Balance due" line, without the running-total line in between.
 
 **Customer page — confirming scrolls back to the top.** Confirm is tapped from the fixed bar
 at the bottom; after the successful confirm + reload, `handleConfirm` calls

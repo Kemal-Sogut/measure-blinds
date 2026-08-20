@@ -31,9 +31,11 @@ interface FakeDb {
   calls: string[];
   /** Captured insert payloads keyed by table name */
   insertPayloads: Record<string, unknown[]>;
+  /** Captured update payloads keyed by table name */
+  updatePayloads: Record<string, unknown[]>;
 }
 
-const db: FakeDb = { responses: {}, orderInsertResults: [], calls: [], insertPayloads: {} };
+const db: FakeDb = { responses: {}, orderInsertResults: [], calls: [], insertPayloads: {}, updatePayloads: {} };
 
 /**
  * Minimal thenable query builder that mimics the supabase-js chain.
@@ -48,6 +50,9 @@ function makeBuilder(table: string) {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
       if (name === 'insert') {
         (db.insertPayloads[state.table] ??= []).push(args[0]);
+      }
+      if (name === 'update') {
+        (db.updatePayloads[state.table] ??= []).push(args[0]);
       }
       return builder;
     }) as unknown;
@@ -172,6 +177,7 @@ beforeEach(() => {
   db.calls = [];
   db.orderInsertResults = [];
   db.insertPayloads = {};
+  db.updatePayloads = {};
   db.responses = {
     'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
@@ -1780,6 +1786,52 @@ describe('PUT /api/orders/:id — visibility gate', () => {
     (body.line_items[1] as Record<string, unknown>).hidden = false;
     const res = await put(body);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('PUT /api/orders/:id — expiry revive', () => {
+  /** An ISO date `days` from today (negative = in the past). */
+  function isoFromToday(days: number) {
+    return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+  }
+
+  /** Seeds the pre-update read for order `o1` at the given status/expiry. */
+  function seedOrder(status: string, expiry_date: string) {
+    db.responses['orders.select'] = [{ id: 'o1', status, expiry_date, line_items: [] }];
+  }
+
+  async function put(body: unknown) {
+    return ordersApp.request('/o1', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+  }
+
+  it('revives an expired order to draft when the new expiry is today or later', async () => {
+    seedOrder('expired', isoFromToday(-30));
+    const body = { ...payload(), order_date: isoFromToday(0), expiry_date: isoFromToday(14) };
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.orders?.[0]).toMatchObject({ status: 'draft' });
+  });
+
+  it('leaves an expired order expired when the new expiry is still in the past', async () => {
+    seedOrder('expired', isoFromToday(-30));
+    // A past window that is still valid (expiry not before order date), so
+    // the only reason it does not revive is that it remains lapsed.
+    const body = { ...payload(), order_date: '2020-01-01', expiry_date: '2020-02-01' };
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.orders?.[0]).not.toHaveProperty('status');
+  });
+
+  it('never rewrites the status of a non-expired order', async () => {
+    seedOrder('sent', isoFromToday(-30));
+    const body = { ...payload(), order_date: isoFromToday(0), expiry_date: isoFromToday(14) };
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.orders?.[0]).not.toHaveProperty('status');
   });
 });
 
