@@ -62,8 +62,8 @@
  * lib/totals; the Worker recomputes authoritatively on save.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
@@ -106,7 +106,7 @@ import {
   type ItemIdentityFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
-import { useCustomerSearch } from '../../hooks/useCustomers';
+import { useCustomer, useCustomerSearch } from '../../hooks/useCustomers';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
 import {
@@ -476,8 +476,20 @@ const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cass
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
   const { data: logs } = useOrderLogs(id);
+
+  // New-order customer pre-fill. An "Add order" link (e.g. from an
+  // appointment's detail page) opens `/orders/new?customer=<id>`; the
+  // customer is fetched and dropped into the picker so the consultant
+  // starts on line items instead of re-finding a customer they were just
+  // looking at. Only for a NEW order — an existing order hydrates its own
+  // customer — and `useCustomer(undefined)` is disabled, so no request
+  // fires when the param is absent or this is an edit.
+  const prefillCustomerId = id ? undefined : searchParams.get('customer') ?? undefined;
+  const prefillCustomerQ = useCustomer(prefillCustomerId);
+  const prefillApplied = useRef(false);
 
   const materialsQ = useCatalogList<Material>('materials');
   const cassettesQ = useCatalogList<CassetteOption>('cassette-options');
@@ -643,6 +655,18 @@ export default function OrderDetail() {
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
+
+  // Drop the pre-filled customer in once it arrives, and only if the
+  // consultant hasn't already picked one — a later change or clear from
+  // the picker is never undone. The ref keeps this to a single apply,
+  // even though the effect re-runs as `customer` changes.
+  useEffect(() => {
+    if (id || prefillApplied.current) return;
+    if (prefillCustomerQ.data && !customer) {
+      setCustomer(prefillCustomerQ.data);
+      prefillApplied.current = true;
+    }
+  }, [id, prefillCustomerQ.data, customer]);
 
   // Expiry follows the order date in two cases: a chip term is selected
   // (its offset is re-applied whenever the order date moves), or nothing
@@ -1743,9 +1767,21 @@ export default function OrderDetail() {
               aria-label={`${p.receipt_sent_at ? 'Resend' : 'Send'} receipt for payment of $${Number(p.amount).toFixed(2)}`}
               className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:opacity-40"
             >
+              {/*
+                Receipt glyph: a slip of paper with a torn (zig-zag) bottom
+                edge and two item lines. Reads as "receipt" where the old
+                envelope read as "email" — the action mails a receipt, but
+                the thing being sent is what the icon should say.
+              */}
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" strokeWidth="2" />
-                <path d="m22 7-10 6L2 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path
+                  d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17l-2.33-1.4-2.33 1.4-2.33-1.4-2.34 1.4-2.33-1.4-2.33 1.4Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="M9 8h6M9 12h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
             </button>
             <button

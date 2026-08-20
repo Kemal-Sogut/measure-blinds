@@ -11,10 +11,13 @@
  * window, and the full customer block — name, email (mailto), phone
  * (tel), and the shipping address rendered as a link that opens a
  * Google Maps search for that address (so the consultant can get
- * directions in one tap). Installation visits also link through to
- * their order. Loads via `useAppointment`; scheduling changes still
- * happen from the calendar's section rows / the order page, so this
- * page deliberately stays a focused summary.
+ * directions in one tap). The customer block also carries an "Add order"
+ * action that opens a new order with this customer pre-filled
+ * (`/orders/new?customer=<id>`), turning a visit into an order in one tap.
+ * Installation visits also link through to their order. Loads via
+ * `useAppointment`; scheduling changes still happen from the calendar's
+ * section rows / the order page, so this page deliberately stays a focused
+ * summary.
  */
 
 import { useParams, Link } from 'react-router-dom';
@@ -168,6 +171,20 @@ export default function AppointmentDetail() {
           </InfoRow>
           {customer && (
             <div className="mt-3 flex flex-wrap gap-2">
+              {/*
+                Add order — opens a NEW order with this customer pre-filled
+                (OrderDetail reads `?customer=`), so a consultant can turn a
+                visit straight into an order without re-finding the person.
+              */}
+              <Link
+                to={`/orders/new?customer=${customer.id}`}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                Add order
+              </Link>
               <Link
                 to={`/customers/${customer.id}`}
                 className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"

@@ -766,10 +766,6 @@ export default function CustomerView() {
                       <span className="font-mono">−${Number(p.amount).toFixed(2)}</span>
                     </div>
                   ))}
-                  <div className="mt-1 flex justify-between border-t border-border-light pt-1 font-medium text-text-primary">
-                    <span>Paid to date</span>
-                    <span className="font-mono">−${Number(estimate.amount_paid).toFixed(2)}</span>
-                  </div>
                 </div>
               )}
               <div className="mt-2 flex justify-between border-t border-border-light pt-2 text-base font-semibold">

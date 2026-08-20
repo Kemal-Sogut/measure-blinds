@@ -938,7 +938,13 @@ app.get('/:id', async (c) => {
   return c.json({ data });
 });
 
-/** Updates an order — editable at ANY lifecycle stage, with full server recalc. */
+/**
+ * Updates an order — editable at ANY lifecycle stage, with full server
+ * recalc. Extending an `expired` estimate's validity date back to today
+ * or later revives it to `draft` (a clean re-start — deliberately NOT
+ * `sent`, since nothing has been re-sent to the customer yet); every
+ * other status is preserved. See the revive note at the `update` call.
+ */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
@@ -1012,6 +1018,16 @@ app.put('/:id', async (c) => {
     input.discount_value
   );
 
+  // Reviving a lapsed estimate: pushing an `expired` order's validity
+  // date to today-or-later returns it to `draft`. Draft, not `sent`, on
+  // purpose — no fresh estimate has reached the customer yet, so a new
+  // `/send` is the only path back to `sent`. This is the exact inverse
+  // of the `expiry_date < today` rule that expired it in
+  // `applyDefensiveExpiry`; a still-past date leaves the order expired,
+  // and no non-expired status is ever rewritten here.
+  const today = new Date().toISOString().slice(0, 10);
+  const reviveToDraft = existing.status === 'expired' && expiry_date >= today;
+
   const { error: upError } = await sb
     .from('orders')
     .update({
@@ -1020,6 +1036,7 @@ app.put('/:id', async (c) => {
       expiry_date,
       discount_type: input.discount_type,
       discount_value: input.discount_value,
+      ...(reviveToDraft ? { status: 'draft' } : {}),
       ...totals,
     })
     .eq('id', id);
@@ -1037,6 +1054,9 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+  if (reviveToDraft) {
+    await logOrderEvent(sb, id, 'Expiry extended to today or later — estimate revived to draft.');
+  }
 
   // Hand-entered money is the one thing on an order that no formula can
   // explain afterwards, so every override and add-on change gets its own

@@ -7,8 +7,11 @@
 ## What Works
 
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
-(+ expired), auto-expiry on sent. Confirmation is reversible by staff only, and only pre-
-payment. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
+(+ expired), auto-expiry on sent (only `sent` orders lapse). Editing an `expired` estimate's
+expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
+is the only path back) inside `PUT /api/orders/:id`, mirroring the `< today` rule that expired
+it; a still-past date leaves it expired, and no non-expired status is ever rewritten there.
+Confirmation is reversible by staff only, and only pre-payment. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
 the first payment, then an Invoice. Production starts automatically only when the ledger
 reaches the 50% deposit (`recordOrderPayment` gates awaiting_payment → in_progress on
 `round2(total/2)`; shared by the staff route and the e-Transfer webhook) — a sub-deposit
@@ -73,8 +76,9 @@ company info + logo, Terms & Conditions, e-Transfer details.
 pull-to-refresh in standalone mode (query invalidation, never a hard reload); one responsive
 shell for every width (collapsible rail at `md+`, full-screen overlay below, one
 `.page-container` fluid track); calendar surface over the installation/estimate-visit
-scheduling domain; address autocomplete built but switched off
-(`ADDRESS_SEARCH_ENABLED = false` in `AddressAutocomplete.tsx`).
+scheduling domain, whose appointment-detail page carries an "Add order" shortcut
+(`/orders/new?customer=<id>`, pre-fills the customer via `useCustomer`); address autocomplete
+built but switched off (`ADDRESS_SEARCH_ENABLED = false` in `AddressAutocomplete.tsx`).
 
 ## What's Left / Known Issues
 - **No real device has ever driven the app itself.** Every staff route sits behind
