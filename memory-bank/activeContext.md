@@ -5,27 +5,25 @@
 > and `knowledge/history/bug_fixes.md`.
 
 ## Where things stand (as of 2026-08-20)
-Working branch `claude/order-overview-filters-totals-940e9b` (worktree), off `main` at the
-50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on confirm.
-The branch adds the **Order Presentation view** — `/orders/:id/present`, its "Present to
-Customer" entry point below Confirm, `lib/optionBreakdown.ts`, `pages/orders/
-presentationFilters.ts`, and the `describeUnitCosts` pricing refactor on both twins (see
-`knowledge/history/engine_features.md`, 2026-08-20, and the design/plan in `knowledge/specs/`
-and `knowledge/plans/`). Verified: web `pnpm check` clean, `pnpm test` 336/336 (22 files),
-`pnpm lint` (oxlint) 0 warnings/errors; api `pnpm check` clean, `pnpm test` 345/345 (18
-files). Not yet merged, and the Presentation page's own shell has not been rendered — only its
-two child components, through a throwaway Vite harness.
-Branch `main`, latest merge PR #35 (`feat/defaults-bulk-lineitems`). Since then, uncommitted on
-`main`: the 50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on
-confirm + "Paid to date" removed from the customer view; an "Add order" shortcut on the
-appointment detail page that opens `/orders/new?customer=<id>` with the customer pre-filled; the
-send-receipt row icon swapped from an envelope to a receipt glyph; `PUT /api/orders/:id`
-reviving an `expired` estimate to `draft` when its expiry date is extended to today-or-later;
-and the customer "How to pay" box quoting the server `balance` ("Pay your balance") once an
-order is installed and still owing, via `PaymentSection`'s general `amountDue` descriptor (all
-dated 2026-08-20 in `knowledge/history/engine_features.md`, except the cosmetic icon swap).
-Verified: web `pnpm check` clean, `pnpm test` 305/305 (20 files), `pnpm lint` (oxlint) 0
-warnings/errors; api `pnpm check` clean, `pnpm test` 343/343 (18 files).
+Working branch `feat/manual-status-transition`, off `main` at the address-autocomplete
+re-enable (`40da819`). `main` is clean — the Order Presentation view and the order-overview
+filters/totals work merged through PR #37, and the 50%-deposit gate, customer "how to pay"
+windowing, expiry-revive and appointment "Add order" shortcut are all in.
+
+The branch makes the order lifecycle fully overridable by hand: a new unguarded
+`POST /api/orders/:id/status` sets any of the six timeline stages from any current status
+(including `expired`), reconciling `sent_at` / `confirmed_at` / `installed_at` off the TARGET
+stage index in both directions and dropping the installation appointment below `ready`; the
+Progress timeline in `OrderDetail.tsx` now renders every non-current stage as one enabled
+button through a single `handleSetStatus`. The six guarded lifecycle routes are untouched —
+they still back the email, payment, and customer-confirm flows — but `useMarkSent`,
+`useMarkInProgress` and `useRevertOrder` lost their only caller and were removed from
+`hooks/useOrders.ts`. See `knowledge/history/engine_features.md`, 2026-08-20, and the
+spec/plan in `docs/superpowers/` (local-only). Verified: api `pnpm check` clean, `pnpm test`
+112/112 in `orders.routes.test.ts` (8 new cases); web `pnpm check` clean, `pnpm test`
+336/336, `oxlint` 0 warnings. Not merged, not deployed, and the timeline has not been clicked
+in the running app — `/orders/:id` is behind `ProtectedRoute` and no signed-in session was
+available.
 
 Live on `main`: server-authoritative pricing with per-type blind modules (Curtains is the one
 type with a divergent formula); per-type hardware scoping + price basis; per-blind-type saved

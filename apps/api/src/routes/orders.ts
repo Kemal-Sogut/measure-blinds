@@ -2221,6 +2221,101 @@ app.post('/:id/revert', async (c) => {
   return c.json({ data });
 });
 
+/**
+ * Body for the manual status override: the stage to land on. Restricted
+ * to the six timeline stages — `expired` is a derived state of a lapsed
+ * estimate (the PUT expiry-revive path owns it) and is never a stage a
+ * team member picks, though an expired order may be moved OUT of it.
+ */
+const statusSchema = z
+  .object({
+    to: z.enum(['draft', 'sent', 'awaiting_payment', 'in_progress', 'ready', 'installed']),
+  })
+  .strict();
+
+/**
+ * Builds the stage-timestamp patch that makes an order's metadata agree
+ * with the stage it is being moved to, in EITHER direction.
+ *
+ * The target stage index decides everything: a stage at or before the
+ * target counts as passed, so its stamp is filled in with `now()` when
+ * missing (an existing stamp is kept — re-entering a stage must not
+ * rewrite the moment it first happened); a stage after the target is
+ * nulled. `review_requested_at` is deliberately absent: a customer who
+ * already received the review email must not receive it again after a
+ * re-install.
+ */
+function stageMetadataUpdate(
+  to: string,
+  existing: { sent_at: string | null; confirmed_at: string | null; installed_at: string | null }
+): Record<string, string | null> {
+  const toIdx = STAGE_ORDER.indexOf(to);
+  const now = new Date().toISOString();
+  const stampFor = (stage: string, current: string | null): string | null =>
+    toIdx >= STAGE_ORDER.indexOf(stage) ? current ?? now : null;
+  return {
+    sent_at: stampFor('sent', existing.sent_at),
+    confirmed_at: stampFor('awaiting_payment', existing.confirmed_at),
+    installed_at: stampFor('installed', existing.installed_at),
+  };
+}
+
+/**
+ * Sets an order to ANY lifecycle stage — the team member's manual
+ * override, used by the Progress timeline where every stage node is
+ * clickable regardless of the current status.
+ *
+ * Unlike the semantic lifecycle routes (`/confirm`, `/ready`,
+ * `/installed`, `/revert`) this one applies NO direction, editability, or
+ * expiry guard: real jobs go backwards, skip stages, and start mid-way.
+ * Those routes stay in place because they also serve the email, payment,
+ * and customer-confirm flows, where their guards still matter.
+ *
+ * Side effects are limited to stage bookkeeping: timestamps are
+ * reconciled by `stageMetadataUpdate`, and an installation appointment is
+ * dropped when the order lands below `ready` (the goods are no longer
+ * installable, and a stale visit must not sit on the calendar — the same
+ * rule `/revert` applies). It NEVER emails the customer, and never
+ * touches payments, warranty state, `cut_done_at`, or the cancellation
+ * request.
+ *
+ * 409 on a no-op (already in the target status), 404 on a missing order,
+ * 400 on any status outside the six timeline stages.
+ */
+app.post('/:id/status', async (c) => {
+  const parsed = statusSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const to = parsed.data.to;
+  const id = c.req.param('id');
+  const sb = createSupabaseAdmin(c.env);
+
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, status, sent_at, confirmed_at, installed_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+  if (existing.status === to) return c.json({ error: `Order is already ${to}.` }, 409);
+
+  const { error } = await sb
+    .from('orders')
+    .update({ status: to, ...stageMetadataUpdate(to, existing) })
+    .eq('id', id);
+  if (error) return c.json({ error: error.message }, 500);
+
+  // Below `ready` the goods are no longer installable — drop the order's
+  // installation appointment so no stale visit stays on the calendar.
+  if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('ready')) {
+    await sb.from('appointments').delete().eq('order_id', id);
+  }
+
+  await logOrderEvent(sb, id, `Status manually changed from ${existing.status} to ${to}.`);
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
 /** Deletes an order and its line items + payments (ON DELETE CASCADE). */
 app.delete('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);

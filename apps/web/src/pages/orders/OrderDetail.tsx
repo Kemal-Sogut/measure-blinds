@@ -83,15 +83,13 @@ import {
   useCreateOrder,
   useUpdateOrder,
   useSendOrder,
-  useMarkSent,
   useSendInvoice,
   useConfirmOrder,
   useUnconfirmOrder,
   useResolveCancelRequest,
-  useMarkInProgress,
   useMarkReady,
   useMarkInstalled,
-  useRevertOrder,
+  useSetOrderStatus,
   useDeleteOrder,
   useDuplicateOrder,
   useRecordPayment,
@@ -517,15 +515,13 @@ export default function OrderDetail() {
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
   const sendMut = useSendOrder();
-  const markSentMut = useMarkSent();
   const sendInvoiceMut = useSendInvoice();
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
   const resolveCancelMut = useResolveCancelRequest();
-  const inProgressMut = useMarkInProgress();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
-  const revertMut = useRevertOrder();
+  const setStatusMut = useSetOrderStatus();
   const deleteMut = useDeleteOrder();
   const duplicateMut = useDuplicateOrder();
   const paymentMut = useRecordPayment();
@@ -1285,15 +1281,40 @@ export default function OrderDetail() {
 
 
 
-  async function handleRevert(to: OrderStatus) {
+  /**
+   * Index of the order's current stage in {@link STAGES}. An `expired`
+   * estimate has no node of its own and sits where a lapsed `sent`
+   * estimate would — just past Sent — so the timeline can still show it
+   * and offer every stage as a move. Shared by `handleSetStatus` (move
+   * direction) and the timeline card (node styling).
+   */
+  const stageIndex = STAGES.findIndex((s) => s.key === status);
+  const curIdx = status === 'expired' ? 2 : stageIndex;
+
+  /**
+   * Moves the order to any lifecycle stage — the team member's manual
+   * override. Forward, backward, and across-stage moves all go through
+   * the one Worker route, which reconciles the stage timestamps.
+   *
+   * This is a bookkeeping action and NEVER emails the customer: sending
+   * the estimate is the exclusive job of the Send button in the top bar
+   * (see `handleSendEstimate`). A backward move is destructive enough to
+   * name its consequence in the prompt — an order dropping below Ready
+   * loses its installation appointment.
+   */
+  async function handleSetStatus(to: OrderStatus) {
     if (!id) return;
     const label = STAGES.find((s) => s.key === to)?.label ?? to;
-    if (!window.confirm(`Revert this order back to "${label}"? Later-stage progress is cleared.`)) return;
+    const backward = STAGES.findIndex((s) => s.key === to) < curIdx;
+    const prompt = backward
+      ? `Move this order back to "${label}"? Later-stage progress is cleared.`
+      : `Move this order to "${label}"?`;
+    if (!window.confirm(prompt)) return;
     try {
-      await revertMut.mutateAsync({ id, to });
-      toast.success(`Reverted to ${label}.`);
+      await setStatusMut.mutateAsync({ id, to });
+      toast.success(`Status changed to ${label}.`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Revert failed.');
+      toast.error(e instanceof Error ? e.message : 'Could not change status.');
     }
   }
 
@@ -1338,54 +1359,6 @@ export default function OrderDetail() {
       toast.success('Payment deleted.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not delete payment.');
-    }
-  }
-
-  /**
-   * Which forward stages the current status may jump to directly.
-   * Intermediate steps can be skipped (e.g. Awaiting Payment → Ready).
-   * 'in_progress' is never a manual target — it is reached by recording
-   * the first payment.
-   */
-  const ADVANCE_TARGETS: Record<string, OrderStatus[]> = {
-    draft: ['sent', 'awaiting_payment'],
-    sent: ['awaiting_payment'],
-    awaiting_payment: ['in_progress', 'ready', 'installed'],
-    in_progress: ['ready', 'installed'],
-    ready: ['installed'],
-  };
-  const canAdvanceTo = (target: OrderStatus): boolean =>
-    (ADVANCE_TARGETS[status] ?? []).includes(target);
-
-  /**
-   * Advances the order forward to the given target stage. Any later
-   * stage the backend supports may be chosen; skipped stages are simply
-   * marked done.
-   *
-   * Advancing is a bookkeeping action and NEVER emails the customer —
-   * the "sent" target uses the status-only `mark-sent` route, not the
-   * emailing `send` route. Emailing the estimate is the exclusive job of
-   * the Send button in the top bar (see `handleSendEstimate`).
-   */
-  async function handleAdvance(target: OrderStatus) {
-    if (!id) return;
-    const label = STAGES.find((s) => s.key === target)?.label ?? target;
-    if (!window.confirm(`Advance this order to "${label}"?`)) return;
-    try {
-      if (target === 'sent') {
-        await markSentMut.mutateAsync(id);
-      } else if (target === 'awaiting_payment') {
-        await confirmMut.mutateAsync(id);
-      } else if (target === 'in_progress') {
-        await inProgressMut.mutateAsync(id);
-      } else if (target === 'ready') {
-        await readyMut.mutateAsync(id);
-      } else if (target === 'installed') {
-        await installedMut.mutateAsync(id);
-      }
-      toast.success(`Advanced to ${label}.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not advance.');
     }
   }
 
@@ -1902,9 +1875,7 @@ export default function OrderDetail() {
     </section>
   );
 
-  /** Progress timeline with a per-stage revert control (earlier stages). */
-  const stageIndex = STAGES.findIndex((s) => s.key === status);
-  const curIdx = status === 'expired' ? 2 : stageIndex;
+  /** Progress timeline; every stage but the current one is a manual move. */
   const timelineCard = id && existing && (
     <section className="rounded-xl border border-border-light bg-surface p-4 shadow-md">
       <div className="mb-3 flex items-center gap-2.5">
@@ -1929,7 +1900,6 @@ export default function OrderDetail() {
         {STAGES.map((stage, i) => {
           const done = i < curIdx;
           const current = i === curIdx && status !== 'expired';
-          const canRevert = i < curIdx;
           return (
             <li key={stage.key} className="flex min-w-0 flex-col items-center gap-1.5">
               <div className="flex w-full items-center">
@@ -1949,43 +1919,26 @@ export default function OrderDetail() {
               <span className={`w-full break-words text-center text-[10px] leading-tight ${current ? 'font-semibold text-text-primary' : 'text-text-muted'}`}>
                 {stage.label}
               </span>
-              {canRevert ? (
+              {i !== curIdx ? (
                 <button
                   type="button"
-                  onClick={() => handleRevert(stage.key)}
-                  disabled={revertMut.isPending}
-                  title={`Revert to ${stage.label}`}
-                  aria-label={`Revert to ${stage.label}`}
-                  className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-brand-600 disabled:opacity-40"
+                  onClick={() => handleSetStatus(stage.key)}
+                  disabled={setStatusMut.isPending}
+                  title={i < curIdx ? `Move back to ${stage.label}` : `Move to ${stage.label}`}
+                  aria-label={i < curIdx ? `Move back to ${stage.label}` : `Move to ${stage.label}`}
+                  className={`flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken disabled:opacity-40 ${i < curIdx ? 'hover:text-brand-600' : 'hover:text-success'
+                    }`}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M4 12h11a5 5 0 0 1 0 10h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </button>
-              ) : i > curIdx ? (
-                <button
-                  type="button"
-                  onClick={() => handleAdvance(stage.key)}
-                  disabled={
-                    !canAdvanceTo(stage.key) ||
-                    status === 'expired' ||
-                    sendMut.isPending || markSentMut.isPending ||
-                    confirmMut.isPending ||
-                    inProgressMut.isPending ||
-                    readyMut.isPending || installedMut.isPending
-                  }
-                  title={
-                    !canAdvanceTo(stage.key)
-                      ? 'Confirm the order first'
-                      : `Advance to ${stage.label}`
-                  }
-                  aria-label={`Advance to ${stage.label}`}
-                  className="flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken hover:text-success disabled:opacity-40"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
+                  {i < curIdx ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M9 7 4 12l5 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M4 12h11a5 5 0 0 1 0 10h-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M20 6 9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  )}
                 </button>
               ) : (
                 <span className="h-6" aria-hidden="true" />

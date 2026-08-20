@@ -584,6 +584,116 @@ describe('POST /api/orders/:id/revert', () => {
   });
 });
 
+describe('POST /api/orders/:id/status', () => {
+  /**
+   * The manual override: any stage from any stage. Every case asserts on
+   * the captured `orders.update` payload, because the whole point of the
+   * route is that stage timestamps end up agreeing with the new status.
+   */
+  const setStatus = (id: string, to: string) =>
+    ordersApp.request(
+      `/${id}/status`,
+      { method: 'POST', body: JSON.stringify({ to }), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  /** The single orders.update payload the route wrote. */
+  const orderUpdate = () =>
+    (db.updatePayloads['orders'] as Array<Record<string, unknown>>)[0];
+
+  it('jumping draft → installed stamps every passed stage', async () => {
+    db.responses['orders.select'] = [
+      { id: 's1', status: 'draft', sent_at: null, confirmed_at: null, installed_at: null },
+    ];
+    const res = await setStatus('s1', 'installed');
+    expect(res.status).toBe(200);
+    const up = orderUpdate();
+    expect(up.status).toBe('installed');
+    expect(up.sent_at).toEqual(expect.any(String));
+    expect(up.confirmed_at).toEqual(expect.any(String));
+    expect(up.installed_at).toEqual(expect.any(String));
+  });
+
+  it('jumping installed → draft clears the stamps and drops the appointment', async () => {
+    db.responses['orders.select'] = [
+      {
+        id: 's2',
+        status: 'installed',
+        sent_at: '2026-08-01T00:00:00.000Z',
+        confirmed_at: '2026-08-02T00:00:00.000Z',
+        installed_at: '2026-08-03T00:00:00.000Z',
+      },
+    ];
+    const res = await setStatus('s2', 'draft');
+    expect(res.status).toBe(200);
+    const up = orderUpdate();
+    expect(up.status).toBe('draft');
+    expect(up.sent_at).toBeNull();
+    expect(up.confirmed_at).toBeNull();
+    expect(up.installed_at).toBeNull();
+    expect(db.calls).toContain('appointments.delete');
+  });
+
+  it('moves an expired estimate forward to awaiting_payment', async () => {
+    db.responses['orders.select'] = [
+      { id: 's3', status: 'expired', sent_at: '2026-07-01T00:00:00.000Z', confirmed_at: null, installed_at: null },
+    ];
+    const res = await setStatus('s3', 'awaiting_payment');
+    expect(res.status).toBe(200);
+    const up = orderUpdate();
+    expect(up.status).toBe('awaiting_payment');
+    // An existing stamp is never overwritten.
+    expect(up.sent_at).toBe('2026-07-01T00:00:00.000Z');
+    expect(up.confirmed_at).toEqual(expect.any(String));
+    expect(up.installed_at).toBeNull();
+    // Target is below `ready`, so any installation visit must go.
+    expect(db.calls).toContain('appointments.delete');
+  });
+
+  it('keeps the installation appointment when the target is ready or later', async () => {
+    db.responses['orders.select'] = [
+      { id: 's4', status: 'installed', sent_at: null, confirmed_at: null, installed_at: '2026-08-03T00:00:00.000Z' },
+    ];
+    const res = await setStatus('s4', 'ready');
+    expect(res.status).toBe(200);
+    expect(orderUpdate().installed_at).toBeNull();
+    expect(db.calls).not.toContain('appointments.delete');
+  });
+
+  it('logs the manual change with both stages', async () => {
+    db.responses['orders.select'] = [
+      { id: 's5', status: 'sent', sent_at: null, confirmed_at: null, installed_at: null },
+    ];
+    await setStatus('s5', 'ready');
+    const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+    expect(logs?.[0]?.message).toBe('Status manually changed from sent to ready.');
+  });
+
+  it('409 when the order is already in the target status, with no write', async () => {
+    db.responses['orders.select'] = [
+      { id: 's6', status: 'ready', sent_at: null, confirmed_at: null, installed_at: null },
+    ];
+    const res = await setStatus('s6', 'ready');
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('400 for a status outside the six lifecycle stages', async () => {
+    db.responses['orders.select'] = [
+      { id: 's7', status: 'draft', sent_at: null, confirmed_at: null, installed_at: null },
+    ];
+    const res = await setStatus('s7', 'expired');
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('404 for a missing order', async () => {
+    db.responses['orders.select'] = [];
+    const res = await setStatus('nope', 'ready');
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('DELETE /api/orders/:id', () => {
   it('deletes an existing order', async () => {
     db.responses['orders.select'] = [{ id: 'e1' }];
