@@ -82,6 +82,48 @@ export interface HardwareCharge {
 }
 
 /**
+ * The per-leg unit costs behind {@link BaseBlindType.calculateUnitPrice} —
+ * the material leg, plus one entry for each hardware charge the blind
+ * actually carries.
+ *
+ * Values are UNROUNDED per-blind costs, because the price rounds the SUM
+ * once rather than each leg; a consumer that needs displayable cents must
+ * round them itself and reconcile against the stored price (see
+ * `apps/web/src/lib/optionBreakdown.ts`, which fits them to it).
+ *
+ * A hardware key is ABSENT, not zero, when the blind carries no charge on
+ * that slot — the same distinction `BlindPricingInputs.hardware` makes, so
+ * "no cassette" and "a cassette that costs nothing" never collapse into
+ * one another.
+ */
+export interface UnitCostBreakdown {
+  material: number;
+  cassette?: number;
+  bottom_rail?: number;
+  control?: number;
+  installation?: number;
+}
+
+/**
+ * The order {@link BaseBlindType.describeUnitCosts} inserts hardware legs
+ * in — deliberately the same insertion order both callers already use
+ * (`resolveLineItems` on the Worker, `previewUnitPrice` in the editor).
+ *
+ * Not cosmetic. `calculateUnitPrice` reduces over these values and
+ * floating-point addition is not associative, so a different order could
+ * shift the last ULP and, at a half-cent boundary, the rounded cent. This
+ * constant is what makes deriving the price from the breakdown
+ * bit-identical to the arithmetic it replaced, rather than merely
+ * equivalent.
+ */
+const HARDWARE_LEG_ORDER: readonly CatalogSlot[] = [
+  'cassette',
+  'bottom_rail',
+  'control',
+  'installation',
+];
+
+/**
  * A declaration that one attribute key holds the id of a row in a priced
  * catalog table, plus where that row's name and numeric value get
  * snapshotted to.
@@ -323,6 +365,33 @@ export class BaseBlindType {
   }
 
   /**
+   * The unit price broken into its legs — what {@link calculateUnitPrice}
+   * sums, exposed so a surface can show a customer what each choice cost.
+   *
+   * This is the ONLY public route to a per-option figure. Reassembling one
+   * outside the class would mean a second interpretation of a price basis,
+   * which is exactly the duplication `hardwareCost` exists to prevent, so
+   * the price is derived FROM this rather than computed beside it.
+   *
+   * Every leg is charged on the MINIMISED width and height, identical to
+   * the price — two lines of one quote must not be priced off different
+   * dimensions.
+   */
+  describeUnitCosts(item: BlindPricingInputs): UnitCostBreakdown {
+    const widthCm = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
+    const heightCm = this.applyHeightMinimum(item.height_cm);
+    const ctx = { widthCm, heightCm, panelCount: item.panels.length };
+    const legs: UnitCostBreakdown = {
+      material: this.materialCost(item, widthCm, heightCm),
+    };
+    for (const slot of HARDWARE_LEG_ORDER) {
+      const charge = item.hardware[slot];
+      if (charge) legs[slot] = this.hardwareCost(charge, ctx);
+    }
+    return legs;
+  }
+
+  /**
    * Unit price of one blind: the material leg plus every hardware charge
    * it carries, each on its own basis, with the width/height minimums
    * applied first and the sum rounded to 2 decimals.
@@ -331,15 +400,18 @@ export class BaseBlindType {
    * different formula overrides `materialCost`; one that reaches in here
    * would be free to reinterpret a basis, which is exactly the drift this
    * shape exists to prevent.
+   *
+   * The material leg stays OUT of the reduction on purpose: this
+   * reproduces the historical association `material + ((h1 + h2) + h3)`
+   * exactly, so deriving the price from {@link describeUnitCosts} cannot
+   * move any existing price by a cent. See {@link HARDWARE_LEG_ORDER}.
    */
   calculateUnitPrice(item: BlindPricingInputs): number {
-    const widthCm = this.applyWidthMinimum(item.panels.reduce((a, b) => a + b, 0));
-    const heightCm = this.applyHeightMinimum(item.height_cm);
-    const ctx = { widthCm, heightCm, panelCount: item.panels.length };
-    const hardware = Object.values(item.hardware).reduce(
-      (sum, charge) => sum + (charge ? this.hardwareCost(charge, ctx) : 0),
+    const { material, ...hardwareLegs } = this.describeUnitCosts(item);
+    const hardware = Object.values(hardwareLegs).reduce<number>(
+      (sum, cost) => sum + (cost ?? 0),
       0
     );
-    return Math.round((this.materialCost(item, widthCm, heightCm) + hardware) * 100) / 100;
+    return Math.round((material + hardware) * 100) / 100;
   }
 }
