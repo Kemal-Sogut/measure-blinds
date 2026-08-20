@@ -40,10 +40,25 @@
  * to move focus — see that function's own JSDoc for why the DOM-focus half
  * of the fix (the `useEffect` + ref map in `PanelWidths`) is verified by
  * code-level reasoning rather than a test here.
+ *
+ * `insertPanelSeparator` gets the same treatment for the bulk-add row's
+ * "+" button (`RowFields` in `BulkAddSectionCard.tsx`): the decision of
+ * WHERE the `+` lands and where the caret goes afterwards, pulled out so a
+ * selection-replacement case, a caret-at-0 case and an empty-input case
+ * can all be pinned down without a mounted `<input>` to read
+ * `selectionStart`/`selectionEnd` off of. Only the caller's
+ * `.focus()`/`.setSelectionRange()` calls that carry the returned `caret`
+ * back onto the real DOM node are left untested, for the same reason
+ * `applyPanelEdit`'s own DOM-focus half is.
  */
 
 import { describe, it, expect } from 'vitest';
-import { parsePanelInput, formatPanelInput, applyPanelEdit } from './panelInput';
+import {
+  parsePanelInput,
+  formatPanelInput,
+  applyPanelEdit,
+  insertPanelSeparator,
+} from './panelInput';
 
 describe('parsePanelInput', () => {
   it('splits a multi-panel entry on "+" into trimmed widths', () => {
@@ -190,5 +205,63 @@ describe('applyPanelEdit', () => {
     const r = applyPanelEdit(['', '200'], 0, '100+120+140');
     expect(r.panels).toEqual(['100', '120', '140', '200']);
     expect(r.focusIndex).toBe(1);
+  });
+});
+
+describe('insertPanelSeparator', () => {
+  it('inserts at a collapsed caret (no selection) — the ordinary case', () => {
+    // Caret sits right after "118" in "118118" (typed without noticing the
+    // missing "+"): inserting at position 3 must produce "118+118".
+    const r = insertPanelSeparator('118118', 3, 3);
+    expect(r.value).toBe('118+118');
+    expect(r.caret).toBe(4);
+  });
+
+  it('inserting at the very end behaves like a plain append', () => {
+    const r = insertPanelSeparator('118.5', 5, 5);
+    expect(r.value).toBe('118.5+');
+    expect(r.caret).toBe(6);
+  });
+
+  it('inserting at caret 0 puts the separator before everything typed so far', () => {
+    const r = insertPanelSeparator('120', 0, 0);
+    expect(r.value).toBe('+120');
+    expect(r.caret).toBe(1);
+  });
+
+  it('handles an empty input — same as parsePanelInput(\'\') staying one blank panel', () => {
+    const r = insertPanelSeparator('', 0, 0);
+    expect(r.value).toBe('+');
+    expect(r.caret).toBe(1);
+  });
+
+  it('REPLACES a selection rather than inserting before it — the finding 2 regression case', () => {
+    // "118" selected out of "118.5" (offsets 0-3), tapping "+" must
+    // replace the highlighted "118", not splice "+" in front of it and
+    // leave the selection dangling: "118.5" -> "+.5", not "+118.5".
+    const r = insertPanelSeparator('118.5', 0, 3);
+    expect(r.value).toBe('+.5');
+    expect(r.caret).toBe(1);
+  });
+
+  it('replaces a selection in the middle of the string', () => {
+    // "0" selected out of "1200" (offsets 2-3): "12" + "+" + "0" -> "12+0".
+    const r = insertPanelSeparator('1200', 2, 3);
+    expect(r.value).toBe('12+0');
+    expect(r.caret).toBe(3);
+  });
+
+  it('treats a reversed range (selectionStart > selectionEnd) the same as the forward one', () => {
+    // Some selection APIs can report the anchor after the focus point;
+    // the result must not depend on which order the two arrived in.
+    const forward = insertPanelSeparator('118.5', 0, 3);
+    const reversed = insertPanelSeparator('118.5', 3, 0);
+    expect(reversed).toEqual(forward);
+  });
+
+  it('clamps an out-of-range selection instead of mis-slicing the string', () => {
+    const r = insertPanelSeparator('120', -5, 999);
+    expect(r.value).toBe('+');
+    expect(r.caret).toBe(1);
   });
 });

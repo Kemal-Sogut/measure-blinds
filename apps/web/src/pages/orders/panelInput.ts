@@ -12,6 +12,15 @@
  * can be unit-tested in isolation and reused by both the single-item form
  * and the bulk-add rows (a later task wires them into the `panels` field
  * inputs; this file is intentionally UI-free).
+ *
+ * `applyPanelEdit` and `insertPanelSeparator` are the two UI-free "what
+ * should happen" decisions behind the two ways a `+` can get INTO one of
+ * these fields: `applyPanelEdit` is what `PanelWidths` (the single-item
+ * form) runs on every keystroke, since typing `+` there works normally.
+ * `insertPanelSeparator` backs the bulk-add row's small "+" button instead
+ * — that field's `inputMode="decimal"` gives it no `+` key on iOS at all,
+ * so a button has to insert the character on the user's behalf, at
+ * whatever the current text selection is, same as any other text edit.
  */
 
 /**
@@ -127,4 +136,51 @@ export function applyPanelEdit(
   const next = panels.slice();
   next.splice(index, 1, ...parsePanelInput(value));
   return { panels: next, focusIndex: index + 1 };
+}
+
+/**
+ * Inserts a `+` panel separator into `value`, REPLACING the
+ * `[selectionStart, selectionEnd)` range rather than inserting blindly at
+ * one point — the same thing every native text field does when a keystroke
+ * lands on top of a selection. A COLLAPSED selection (`selectionStart ===
+ * selectionEnd`, the ordinary case: no text highlighted, just a caret)
+ * degrades to a plain insert at that one position, so a caller with no
+ * live selection to report can simply pass the same value for both.
+ *
+ * Exists as a pure function, separate from the button that calls it
+ * (`RowFields` in `BulkAddSectionCard.tsx`), for the same reason
+ * `applyPanelEdit` above is pure and separate from `PanelWidths`: so the
+ * actual decision — where the `+` lands and where the caret goes
+ * afterwards — is unit-testable without a DOM/React-rendering harness this
+ * repo does not have (no `@testing-library/react`, no jsdom environment).
+ * Only the caller's `.focus()` / `.setSelectionRange()` calls that carry
+ * the returned `caret` back onto the real input are left untested, for the
+ * same reason `applyPanelEdit`'s own DOM-focus half is.
+ *
+ * Both bounds are clamped to `[0, value.length]` and reordered if given
+ * reversed (`selectionStart > selectionEnd`) before use — defensive, since
+ * `HTMLInputElement.selectionStart`/`selectionEnd` should never actually
+ * violate either, but nothing at the type level enforces that on values
+ * handed in from outside a real input (e.g. a test, or a future caller).
+ *
+ * @param value the field's current raw string
+ * @param selectionStart one edge of the current selection — or the caret
+ *   position itself, for a collapsed selection
+ * @param selectionEnd the other edge (equal to `selectionStart` for a
+ *   collapsed selection, i.e. a plain caret with nothing highlighted)
+ * @returns `value` with the selected range replaced by `+`, and `caret` —
+ *   the offset immediately after the inserted `+`, where the caller must
+ *   move focus afterwards (see `RowFields`'s own doc for why)
+ */
+export function insertPanelSeparator(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+): { value: string; caret: number } {
+  const length = value.length;
+  const a = Math.min(Math.max(selectionStart, 0), length);
+  const b = Math.min(Math.max(selectionEnd, 0), length);
+  const start = Math.min(a, b);
+  const end = Math.max(a, b);
+  return { value: value.slice(0, start) + '+' + value.slice(end), caret: start + 1 };
 }

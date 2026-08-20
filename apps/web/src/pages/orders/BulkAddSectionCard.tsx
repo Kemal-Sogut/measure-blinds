@@ -30,17 +30,23 @@
  * columns alongside Blind type. This file needs the bare fields, not the
  * pre-paired component.
  *
- * `RowFields`'s width input also carries a small "+" button that inserts
- * the `panelInput.ts` `+` separator at the input's CURRENT CARET position
- * (never blindly appended) — added because the field uses
- * `inputMode="decimal"`, and iOS's decimal keypad has no `+` key at all,
- * making the shorthand otherwise untypeable on the phone this sheet is
- * used on. `PanelWidths` needs no equivalent: its own "+ Panel" button
- * already solves the same problem by adding a whole new panel input rather
- * than editing text, so a second plus-shaped control beside it would be
- * two similar-looking buttons doing different things (an explicit
- * maintainer decision) — see `RowFields`'s own doc for how the caret
- * position is found and restored.
+ * `RowFields`'s width input also carries a small "+" button — a full 44px
+ * touch target, not a decorative inset icon, since it is the ONLY way to
+ * type the `panelInput.ts` shorthand on the device this sheet targets (see
+ * below) — that replaces the input's current SELECTION with the `+`
+ * separator (a collapsed selection is just the caret), added because the
+ * field uses `inputMode="decimal"`, and iOS's decimal keypad has no `+` key
+ * at all, making the shorthand otherwise untypeable on the phone this sheet
+ * is used on. The actual "where does the `+` land" decision is
+ * `insertPanelSeparator`, a pure function in `panelInput.ts` unit-tested
+ * there for exactly the reason `applyPanelEdit` (the single-item form's
+ * own live-split logic) is: this file only reads the DOM node's live
+ * selection and hands it to that function. `PanelWidths` needs no
+ * equivalent button: its own "+ Panel" button already solves the same
+ * problem by adding a whole new panel input rather than editing text, so a
+ * second plus-shaped control beside it would be two similar-looking
+ * buttons doing different things (an explicit maintainer decision) — see
+ * `RowFields`'s own doc for the full rationale.
  *
  * Only `SectionCard` is exported; the rest are private helpers used
  * exclusively by it, kept in this file rather than `BulkAddSheet.tsx`
@@ -56,7 +62,7 @@ import {
   type Catalogs,
 } from './lineItemDrafts';
 import type { BulkMeasureRow, BulkSection } from './bulkAdd';
-import { parsePanelInput } from './panelInput';
+import { insertPanelSeparator, parsePanelInput } from './panelInput';
 import {
   AttributeSelect,
   FormSplitter,
@@ -167,6 +173,18 @@ function SectionAttributes({
  * plus an `aria-label` (screen-reader only) — every input keeps one
  * regardless of what a sighted user sees.
  *
+ * The row's own surface is `bg-surface-sunken` (a shade darker than the
+ * card's `bg-surface` white it sits inside, on TOP of the `border-light`
+ * outline it already had) — a `border-light` hairline alone reads as
+ * near-invisible on white, especially in daylight, so without a fill the
+ * card contrast fix above would stop one layer short: sections would read
+ * as cards, but the rows inside them would still blur into each other and
+ * the card behind them. This reuses an existing token (no new one), the
+ * same one this app already uses for "a slightly recessed group of
+ * controls" (segmented controls, muted chips) — each input inside keeps
+ * its own `bg-surface` white, so it still stands out against ITS row the
+ * same way it already stood out against the sheet before this fix.
+ *
  * Deliberately NOT the same shape as the single-item form's `PanelWidths`:
  * this row has ONE width input, no "+ Panel" button, and no per-panel
  * remove control (an explicit design decision — see this file's module
@@ -181,17 +199,36 @@ function SectionAttributes({
  * The width input also carries a small "+" button (`insertPlusAtCaret`
  * below), because `inputMode="decimal"` has no `+` key on iOS's on-screen
  * keypad — without it the shorthand above is simply untypeable on the
- * device this sheet is used on. It inserts at the CARET, not the end of
- * the string: a consultant who taps back into the first number to fix a
- * typo (correcting the `118.5` in `"118.5+118"`) must be able to add the
- * separator where their cursor actually is. `pendingCaret` + `widthInputRef`
- * restore both focus AND the caret position AFTER the insert, reusing the
- * same ref-map / "wants focus" pattern `BulkAddSheet.tsx`'s Enter-to-add-row
- * hop and `PanelWidths`'s own split-focus effect already use — the effect
- * runs once the DOM reflects the new value (passive effects run after
- * commit), so the caret lookup can never miss. Without restoring it, tapping
- * "+" a second time would keep landing at the end of the string instead of
- * where it was tapped, silently defeating the whole point of the button.
+ * device this sheet is used on. Because that makes it the ONLY way to type
+ * the shorthand on the target device — a core input path, not a secondary
+ * affordance — it is a full `h-11 w-11` (44px) touch target, flush against
+ * the input's own top-right corner (`absolute right-0 top-0`, `rounded-r-md`
+ * to continue the input's own rounding) rather than a smaller icon inset
+ * with margin around it; the input reserves `pr-12` so its own text never
+ * runs under the button. The actual insert/caret-placement decision is
+ * `insertPanelSeparator` (`panelInput.ts`) — a pure function, unit-tested
+ * there — which this button calls with the input's live
+ * `selectionStart`/`selectionEnd` so it REPLACES a selection instead of
+ * inserting in front of it (select "118" in "118.5" and tap "+": the
+ * selected text is what the `+` replaces, exactly like typing over a
+ * selection anywhere else). `el?.selectionStart`/`el?.selectionEnd` only
+ * fall back to `row.width_cm.length` when the ref itself has not attached
+ * yet — a defensive case this click handler cannot normally hit, since the
+ * button lives inside the same wrapper as the input it targets. Once
+ * mounted, a text input always returns a NUMERIC `selectionStart`, focused
+ * or not — an input that was never focused typically reports `0`, not the
+ * string's length — so this is NOT "falls back to the end when never
+ * focused"; an unfocused field's reported caret is wherever the browser
+ * last put it, most commonly the start.
+ *
+ * `pendingCaret` + `widthInputRef` restore both focus AND the caret
+ * position AFTER the insert, reusing the same ref-map / "wants focus"
+ * pattern `BulkAddSheet.tsx`'s Enter-to-add-row hop and `PanelWidths`'s own
+ * split-focus effect already use — the effect runs once the DOM reflects
+ * the new value (passive effects run after commit), so the caret lookup
+ * can never miss. Without restoring it, tapping "+" a second time would
+ * keep landing at the end of the string instead of where it was tapped,
+ * silently defeating the whole point of the button.
  *
  * `registerRoomInput` is a ref callback rather than a plain `ref` object:
  * the sheet keeps ONE map of room inputs keyed by row key (rows come and
@@ -232,25 +269,28 @@ function RowFields({
   }, [pendingCaret, row.width_cm]);
 
   /**
-   * Inserts a `+` panel separator into `width_cm` at the input's CURRENT
-   * caret position — falling back to the end of the value when the input
-   * never had focus (e.g. tapped straight from another row) — rather than
-   * blindly appending it. See this function's rationale in the doc comment
-   * above: `inputMode="decimal"` has no `+` key on iOS, so this button is
-   * the only way to type the shorthand on the device this sheet targets,
-   * and it must land the separator where the consultant is actually
-   * editing, not always at the end.
+   * Inserts a `+` panel separator into `width_cm`, replacing the input's
+   * CURRENT selection (a collapsed selection is just the caret) rather
+   * than blindly appending it. See this function's rationale in the doc
+   * comment above: `inputMode="decimal"` has no `+` key on iOS, so this
+   * button is the only way to type the shorthand on the device this sheet
+   * targets, and it must behave like typing over a selection anywhere
+   * else — replacing highlighted text, not inserting in front of it. The
+   * actual decision is `insertPanelSeparator` (`panelInput.ts`); this
+   * function only reads the live selection off the DOM node and writes
+   * the result back.
    */
   function insertPlusAtCaret() {
     const el = widthInputRef.current;
-    const caret = el?.selectionStart ?? row.width_cm.length;
-    const next = row.width_cm.slice(0, caret) + '+' + row.width_cm.slice(caret);
-    onChange({ ...row, width_cm: next });
-    setPendingCaret(caret + 1);
+    const start = el?.selectionStart ?? row.width_cm.length;
+    const end = el?.selectionEnd ?? start;
+    const { value, caret } = insertPanelSeparator(row.width_cm, start, end);
+    onChange({ ...row, width_cm: value });
+    setPendingCaret(caret);
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border-light p-2.5">
+    <div className="flex flex-col gap-1.5 rounded-md border border-border-light bg-surface-sunken p-2.5">
       <div className="flex items-start gap-2">
         <div className="grid min-w-0 flex-1 grid-cols-[4fr_3fr_3fr] gap-2">
           <input
@@ -270,13 +310,13 @@ function RowFields({
               aria-label="Width in centimeters — type + or tap the + button to add another panel"
               value={row.width_cm}
               onChange={(e) => onChange({ ...row, width_cm: e.target.value })}
-              className={`${INPUT} truncate pr-8 font-mono`}
+              className={`${INPUT} truncate pr-12 font-mono`}
             />
             <button
               type="button"
               onClick={insertPlusAtCaret}
               aria-label="Insert panel separator at cursor"
-              className="absolute right-1 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-sm border border-border-input bg-surface text-sm font-semibold leading-none text-brand-600"
+              className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-r-md border border-border-input bg-surface text-sm font-semibold leading-none text-brand-600"
             >
               +
             </button>
