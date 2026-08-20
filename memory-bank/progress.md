@@ -1,5 +1,57 @@
 # Progress
 
+## Bulk-add refinements: legacy popup retired, panel shorthand, incomplete rows, contrast pass (2026-08-19/20)
+Branch `feat/defaults-bulk-lineitems` off the batch below. Web-only — no API, schema, or
+pricing surface touched. Full detail in `engine_features.md` 2026-08-19/20 (one entry) and
+`bug_fixes.md` 2026-08-19 (two entries).
+
+**Works:** the older single-config "Add Measurements in Bulk" popup is gone — the 2026-08-17
+`BulkAddSheet.tsx` is now the only bulk-entry path, and it does more (multi-section, shared
+per-section config) than the popup it replaced ever did. Both the single-blind form and
+bulk-add rows now accept a typed panel-width shorthand (`118.5+118` = two panels); the
+single-blind form keeps its "+ Panel" button as an alternative, bulk-add gets a 44px "+"
+button instead (its width field is `inputMode="decimal"`, which has no `+` key on iOS).
+Bulk add no longer requires a blind type, material or hardware before a section can be typed
+into — a consultant can measure a whole house first and configure every window's product
+afterward, individually or through bulk edit; `buildPayload` still blocks a save that reaches
+the Worker with anything incomplete, and names the item. A blank measurement row (nothing
+typed in it at all) is silently skipped rather than becoming an empty line item. Section cards
+in the bulk-add sheet now read as visibly separate cards (`border-border-strong`, a shadow,
+and a `bg-brand-50` tint on the open one) with rows inside them visibly separated from the
+card (`bg-surface-sunken` + a border darker than that fill); Blind type/Material/Colour sit on
+one row; the section-level note field is gone (the per-item note in the single-item form
+covers it); both item popups are wider (`lg:max-w-3xl` single-item, `lg:max-w-5xl` bulk add).
+
+**Two bugs found and fixed in review, both in this work's own new code (see `bug_fixes.md`
+2026-08-19 for both):** the single-item form's live `+`-split left keyboard focus behind on
+the DOM node being typed into (index-keyed inputs), corrupting `118+118` typed one key at a
+time into `['118118','']`; and the bulk-add confirm button counted raw rows while
+`expandBulkSections` had started filtering blank ones, so an untouched sheet showed an
+enabled "Add 1 item" that silently added nothing on confirm. Both fixed with a shared pure
+predicate/helper (`applyPanelEdit`, `bulkRowHasContent`) plus, for the second, a defensive
+empty-result guard.
+
+**Verified:** web `tsc -b --noEmit` clean + vitest **305/305** (20 files, up from 282/282
+across 19 before this work — `panelInput.test.ts` is the new file); `oxlint` **0
+warnings/errors**. api untouched by any of this — `tsc --noEmit` clean + vitest **337/337**
+(18 files, unchanged).
+
+**Not done yet / known issues:**
+- **No part of this work has EVER been seen in a browser** — not "not yet on a real device,"
+  literally never rendered and looked at, by a human or an agent, since it was written. No
+  subagent across the plan's six tasks had a browser available, and every surface sits behind
+  `ProtectedRoute`. Owed before this is considered field-ready: the 44px caret button and the
+  live shorthand split on an actual iOS decimal keypad, the new card/row contrast in daylight,
+  and the wider popups on a tablet.
+- **The white input fill (`#ffffff`) against the new sunken row background (`#f1f2f5`) is
+  only 1.12:1 contrast** — pre-existing, not touched by this pass. If the measurement rows
+  still read flat once seen on a real device, this pairing is the next thing to look at (the
+  row's own border and the card-vs-row contrast were already the subject of two review rounds
+  in this pass; the input-vs-row pairing was flagged but deliberately left for a future pass).
+- Everything the 2026-08-17/18 batch below already listed as not done (drag reorder has no
+  `KeyboardSensor`, the defaults page's in-flight-PUT race, no API route test for
+  blind-type-defaults) is unchanged by this work — none of it touched those areas.
+
 ## Per-type defaults, bulk edit v2, bulk add, line-item row v2 (2026-08-17/18)
 Branch `feat/defaults-bulk-lineitems` off `main`. api + web + migration 38 (twelve tasks reviewed
 and committed, plus this docs/verification task). Full detail in `engine_features.md` 2026-08-17

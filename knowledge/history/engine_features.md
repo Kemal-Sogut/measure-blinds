@@ -1,5 +1,123 @@
 # Engine Features / Feature History
 
+## 2026-08-19/20 — Bulk-add refinements: legacy popup retired, panel shorthand, incomplete-row capture, contrast pass
+Web-only (no API, schema, or pricing surface). Branch `feat/defaults-bulk-lineitems`, spec
+`.superpowers/sdd/2026-08-18-bulkadd-refinements/` (continues from the 2026-08-17/18 batch
+below). Ten commits across five tasks, all reviewed (several with fix rounds) and committed —
+`git log --oneline 1f28c9f..1620e4a`.
+
+- **The older single-config "Add Measurements in Bulk" popup is retired** (`ada348c`) — fully
+  superseded by the 2026-08-17 `BulkAddSheet.tsx` entry below, which does everything the older
+  popup did (blank-blind capture, no type/material required) and more (multi-section, per-
+  section shared config). Deleted: `BulkMeasureForm` from `LineItemEditor.tsx` (420 → 283
+  lines); from `lineItemDrafts.ts` — `MeasurementRow`, `newMeasurementRow`,
+  `MeasurementRowState`, `measurementRowState`, `MeasurementRowCounts`,
+  `countMeasurementRows`, `measurementRowsToDrafts` (777 → 671 lines, back under the 800-line
+  cap the file had been sitting right at); from `OrderDetail.tsx` — the `'bulkMeasure'` sheet
+  state, `measureRows`, `openBulkMeasure`, `applyBulkMeasure`, `closeBulkMeasure` (3290 → 3168
+  lines). A follow-up commit (`a7c5149`) corrected the JSDoc on `NO_ADJUSTMENTS` and
+  `newBlindDraft`'s `BlindDraftDefaults` in `lineItemDrafts.ts`, both of which still named "the
+  bulk measurement popup" as a shared call site after it was gone — missed on the first pass
+  because the prose named no deleted identifier, only described a deleted concept.
+  `lineItemDrafts.ts` sits at 680 lines after that doc expansion, still under the cap.
+
+- **New pure module `panelInput.ts`** (`90801c0`, extended `da5c852`/`cccc973`/`f69a3f0`, now
+  186 lines) — `parsePanelInput`/`formatPanelInput` implement a typed shorthand where
+  `118.5+118` in one width field means two panels (118.5cm and 118cm), so a consultant can
+  type instead of tapping "+ Panel" for every extra panel. Deliberately does NOT validate that
+  a split part is a valid positive number — `parsePositive` (`lineItemDrafts.ts`) and the
+  save-time rules already own numeric validation, and this function runs on every keystroke
+  while the field is still mid-edit, so a half-typed `12.` (about to become `12.5`) has to
+  survive completely untouched or the cursor and the digit being typed get clobbered. Wired
+  into both entry forms (`da5c852`), per an explicit maintainer ruling that the shorthand
+  applies to both but the single form keeps its own "+ Panel" button too: bulk-add rows now
+  carry ONE `width_cm` string (`BulkMeasureRow.width_cm`) instead of a `panels` array —
+  `expandBulkSections`, `validateBulkSections`, `bulkAddHasContent`/`bulkRowHasContent` and
+  `BulkAddSectionCard.tsx` all read that one field, with the previous panels array gone from
+  all of them — and the single-blind form's `PanelWidths` (`blindForms/fields.tsx`) accepts
+  the same shorthand alongside its existing "+ Panel" button.
+  - **A bug in the live split was found and fixed during review** (`cccc973`) — see
+    `bug_fixes.md` 2026-08-19.
+  - **`insertPanelSeparator`** (added `f69a3f0`, a fix-round finding on the contrast/layout
+    task below) backs a 44px "+" button beside the bulk-add width input only — the single-item
+    form does not get one, since its own "+ Panel" button already solves the same problem and
+    a second plus-shaped control beside it would be two similar buttons doing different
+    things. The button exists because `inputMode="decimal"` gives iOS's on-screen keypad no
+    `+` key at all, making the shorthand otherwise untypeable on the target device.
+    `insertPanelSeparator` replaces the input's current text SELECTION with `+` (a collapsed
+    selection — the ordinary case, just a caret — degrades to a plain insert at that position),
+    the same behaviour any native text field gives a keystroke landing on a selection; an
+    earlier version of the button ignored `selectionEnd` and only inserted at `selectionStart`.
+
+- **Bulk add now accepts rows before the blind type or material are known** (`b41fa94`,
+  refined `ced893d`) — the on-site flow is "measure everything fast, configure after."
+  `validateBulkSections` no longer requires a blind type, material or any hardware slot; it
+  still rejects a section with zero rows and a present-but-malformed width or height (blank is
+  fine — a typo like `'12a'` or a stray `'-5'` is not), and — only once a type IS chosen —
+  still runs the type's `attributeSchema` against the section's `attributes` via
+  `parseDraftAttributes`. `expandBulkSections` now skips an entirely blank row
+  (`bulkRowHasContent`: no room name, no width, no height typed) instead of turning it into an
+  empty line item; a row with only one of the three filled in still expands, carrying its
+  unfilled fields through as empty strings. Completeness is enforced exactly where it always
+  was — `buildPayload` in `OrderDetail.tsx` blocks the save and names the first incomplete
+  item by number, same as a blind added one at a time with nothing picked yet. Bulk EDIT
+  (`lineItemBulk.ts`) is how a whole batch of incomplete items gets filled in at once
+  afterwards, back at the customer's house or later at a desk. Verified during review: a
+  blank-type item's `material_id` is always empty too, so `buildPayload` catches it on the
+  material check before it would ever reach an unguarded attribute parse — nothing incomplete
+  can silently reach the Worker.
+  - **A second bug was found and fixed in review** (`ced893d`) — see `bug_fixes.md`
+    2026-08-19.
+
+- **Contrast/layout pass on the bulk-add sheet** (`1cf5800`, two fix rounds: `f69a3f0`,
+  `1620e4a`; final sizes `BulkAddSectionCard.tsx` 530 lines, `BulkAddSheet.tsx` 291 lines) —
+  - New token `--color-border-strong` (`#b6bdcc`, `apps/web/src/index.css`) rather than a
+    hardcoded hex, so the fix is reusable and lives with the other border tokens. Section
+    cards changed to `rounded-xl border-border-strong bg-surface shadow-md` (mirroring the
+    order-details page's own cards), with the OPEN section marked by a `bg-brand-50` header
+    tint — reusing the same "active one is coloured" convention the calendar's "today" cell
+    already uses — instead of a heavier border, which would have introduced a third border
+    weight competing with the newly-uniform strong one.
+  - Blind type + Material + Colour now render as three equal columns on one row
+    (`grid grid-cols-1 sm:grid-cols-3`) instead of through the shared `MaterialAndColor`
+    (which pairs Material/Colour in its own 2-column grid that cannot be split into thirds
+    alongside Blind type) — a third deliberate near-duplicate in `BulkAddSectionCard.tsx`,
+    alongside the pre-existing `SectionTypeSelect`/`RowFields`.
+  - **The section's shared note field was removed outright** (a maintainer decision) — the
+    row-level item note stays editable later, per item, through the single-item edit form's
+    existing `NoteField`.
+  - Measurement rows now lay out Room/Width/Height on one line via
+    `grid-cols-[4fr_3fr_3fr]` (a 40/30/30 split using the `fr` form, so `gap-2` between the
+    columns is subtracted from the tracks automatically instead of overflowing them), with the
+    44px "+" separator button (see `insertPanelSeparator` above) inset into the width input's
+    own top-right corner.
+  - Both item popups widened: the blind add/edit popup (`OrderDetail.tsx`) to `lg:max-w-3xl`,
+    bulk add (`BulkAddSheet.tsx`) to `lg:max-w-5xl` — wider because it carries a multi-column
+    `HardwareRow` grid the single-item popup does not.
+  - **Two review rounds were needed on the row layer specifically.** The first pass paired
+    the new `bg-surface-sunken` row fill with `border-light` — measured LIGHTER than the fill
+    itself (`#edeef2` vs `#f1f2f5`, a 1.04:1 contrast ratio, contributing nothing at all).
+    Rewritten to `border-border-strong` on `bg-surface-sunken`: 1.68:1 against the row's own
+    fill and 1.89:1 against the white card behind it — a real jump against both surfaces it
+    separates, the same order of contrast the card's own border already makes against the
+    sheet, not a marginal one. Only existing tokens were used; no new one was added for this.
+
+- **Verified (this session, real command runs):** web `pnpm check` clean, `pnpm test`
+  **305/305** (20 files, up from the prior entry's 282/282 across 19 — `panelInput.test.ts`
+  new at 30 cases, plus growth in `bulkAdd.test.ts` and `lineItemDrafts.test.ts` as rows/tests
+  were removed and re-added across the five tasks), `pnpm lint` (oxlint) **0 warnings/errors**.
+  api unaffected by any of this — `pnpm check` clean, `pnpm test` **337/337** (18 files,
+  unchanged from the prior entry, no API surface touched by this work).
+
+- **Not verified in a browser.** The bulk-add sheet and the single-blind popup both sit behind
+  `ProtectedRoute`; no subagent that touched this work had a browser available. Owed: the 44px
+  "+" button and the live shorthand split on an actual iOS decimal keypad, the new card/row
+  contrast in daylight on the target device, and the wider popups on a tablet. **The white
+  input fill (`bg-surface`, `#ffffff`) against the new row background (`bg-surface-sunken`,
+  `#f1f2f5`) is only 1.12:1** — a pre-existing pairing, not touched by this pass — the next
+  thing to look at if the rows still read flat once seen on a real device. See
+  `memory-bank/progress.md` for the full known-issues list.
+
 ## 2026-08-17 — Line-item row v2: 3-dot menu, expandable detail panel, drag-and-drop reorder
 Web-only (no API, schema, or pricing surface). Branch `feat/defaults-bulk-lineitems`, spec
 `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/`. Reworks how one line item ROW looks and

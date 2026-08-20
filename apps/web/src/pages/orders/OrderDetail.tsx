@@ -119,7 +119,6 @@ import {
   BlindEditForm,
   FlatEditForm,
   BulkEditForm,
-  BulkMeasureForm,
 } from './LineItemEditor';
 import LineItemList from './LineItemList';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -127,11 +126,8 @@ import {
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
-  countMeasurementRows,
   flatDraftPrice,
-  measurementRowsToDrafts,
   newBlindDraft,
-  newMeasurementRow,
   parseAddons,
   parseDraftAttributes,
   parseOverride,
@@ -144,7 +140,6 @@ import {
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type MeasurementRow,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
@@ -532,7 +527,7 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   const [hydrated, setHydrated] = useState(false);
-  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkMeasure' | 'bulkAdd' | 'cancelDeny'>('none');
+  const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -542,9 +537,6 @@ export default function OrderDetail() {
   // canceling that editor discards the still-blank item.
   const [pendingNewKey, setPendingNewKey] = useState<string | null>(null);
   const [bulkState, setBulkState] = useState<BulkEditState>(EMPTY_BULK_STATE);
-  // Rows of the bulk measurement popup. Re-seeded on every open, so a
-  // cancelled measuring pass is never offered back half-typed.
-  const [measureRows, setMeasureRows] = useState<MeasurementRow[]>([]);
   const [customerTerm, setCustomerTerm] = useState('');
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
@@ -706,9 +698,9 @@ export default function OrderDetail() {
    * here would just be overwritten (or wrong) once a type is selected.
    * The type dropdown (`BlindTypeSelect`, via `applyTypeDefaults`) fills
    * material and every hardware slot with that type's SAVED defaults from
-   * Settings the moment a type is chosen. Shared by the single-blind and
-   * bulk-measurement paths (`addBlind`, `applyBulkMeasure`) so both start
-   * a blind identically blank.
+   * Settings the moment a type is chosen. Used by the single-blind path
+   * (`addBlind`) so a freshly added blind starts identically blank every
+   * time.
    */
   const blindDefaults: BlindDraftDefaults = { cassette_id: '', bottom_rail_id: '', control_id: '' };
 
@@ -857,8 +849,10 @@ export default function OrderDetail() {
     // SAVED defaults from Settings via `applyTypeDefaults`, which also
     // clears whichever slot the chosen type does not use and seeds
     // `attributes` from it. The factory also seeds the identity fields
-    // (no uid until the first save, visible), so this path and the bulk
-    // popup cannot disagree.
+    // (no uid until the first save, visible), so this path and the Bulk
+    // Add sheet's own section factory (`newBulkSection` in `bulkAdd.ts`,
+    // which calls this same `newBlindDraft`) cannot disagree on what a
+    // blank draft looks like.
     const draft = newBlindDraft(nextKey(), blindDefaults);
     setItems((list) => [...list, draft]);
     openNewItemEdit(draft);
@@ -985,53 +979,6 @@ export default function OrderDetail() {
   function applyBulkEdit() {
     setItems((list) => list.map((it) => (selected.has(it.key) ? applyBulkPatch(it, bulkState, catalogs) : it)));
     setSelected(new Set());
-    setSheet('none');
-  }
-
-  // ── Bulk measurements (widths and heights, no details) ────────────
-  /** How many blank rows the measurement popup opens with. */
-  const MEASURE_ROWS = 5;
-
-  /**
-   * Opens the measurement popup on a fresh set of blank rows. Never
-   * reopens the previous run: those rows have already become items, and
-   * offering them again is how a window gets entered twice.
-   */
-  function openBulkMeasure() {
-    setMeasureRows(Array.from({ length: MEASURE_ROWS }, () => newMeasurementRow(nextKey())));
-    setSheet('bulkMeasure');
-  }
-
-  /**
-   * Closes the popup, confirming first if anything has been typed.
-   *
-   * Unlike every other sheet here, this one can hold work that exists
-   * nowhere else — measurements read off a window minutes ago. A tap on
-   * the backdrop is easy to make by accident on a tablet, so it asks.
-   */
-  function closeBulkMeasure() {
-    const counts = countMeasurementRows(measureRows);
-    const typed = counts.ready + counts.incomplete;
-    if (typed > 0 && !window.confirm('Discard these measurements?')) return;
-    setMeasureRows([]);
-    setSheet('none');
-  }
-
-  /**
-   * Appends one blank blind item per completed row and closes the popup.
-   *
-   * No editor is opened afterwards, deliberately: the point of the pass is
-   * to capture every window's measurements in one go and choose type,
-   * material and options per item later. Half-filled rows are refused
-   * rather than skipped (the button is disabled while one exists), so a
-   * measurement taken on site cannot disappear here.
-   */
-  function applyBulkMeasure() {
-    const counts = countMeasurementRows(measureRows);
-    if (counts.ready === 0 || counts.incomplete > 0) return;
-    const drafts = measurementRowsToDrafts(measureRows, blindDefaults, nextKey);
-    setItems((list) => [...list, ...drafts]);
-    setMeasureRows([]);
     setSheet('none');
   }
 
@@ -2493,9 +2440,7 @@ export default function OrderDetail() {
                 {/*
                   Bulk add: one shared config per blind type ("section"),
                   many measurement rows underneath it — the fast path for
-                  a whole room or house of the SAME type. Distinct from
-                  the older bulk-measurement popup below, which captures
-                  only widths/heights with no type or options at all.
+                  a whole room or house of the SAME type.
                 */}
                 <button
                   onClick={() => setSheet('bulkAdd')}
@@ -2505,22 +2450,6 @@ export default function OrderDetail() {
                     <path d="M3 4h18v4H3z M3 10h18v4H3z M3 16h18v4H3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
                   </svg>
                   Bulk Add
-                </button>
-                {/*
-                  The measuring pass: every window's width and height in
-                  one popup, details chosen per item afterwards. Sits with
-                  the Add buttons because that is what it does — it adds
-                  blind items, just several at a time and blank.
-                */}
-                <button
-                  onClick={openBulkMeasure}
-                  className="flex h-[46px] items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M2 8h20v8H2z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                    <path d="M7 8v4M12 8v5M17 8v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  Add Measurements in Bulk
                 </button>
                 <div className="flex gap-2">
                   <button
@@ -3145,7 +3074,7 @@ export default function OrderDetail() {
             onClick={cancelEdit}
           >
             <div
-              className={`${SHEET_PANEL} lg:max-w-lg`}
+              className={`${SHEET_PANEL} lg:max-w-3xl`}
               onClick={(e) => e.stopPropagation()}
             >
               <h2 className="mb-4 text-sm font-semibold text-text-primary">{title}</h2>
@@ -3210,55 +3139,6 @@ export default function OrderDetail() {
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
                   Apply to selected
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Bulk measurement popup — widths and heights, no details */}
-      {sheet === 'bulkMeasure' && (() => {
-        const counts = countMeasurementRows(measureRows);
-        return (
-          <div
-            className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
-            onClick={closeBulkMeasure}
-          >
-            <div
-              className={`${SHEET_PANEL} lg:max-w-lg`}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h2 className="mb-1 text-sm font-semibold text-text-primary">Record measurements</h2>
-              <p className="mb-4 text-[13px] text-text-muted">
-                Enter each window's width and height. OK adds one blind item per row, ready for
-                its type and options.
-              </p>
-              <BulkMeasureForm
-                rows={measureRows}
-                onChange={setMeasureRows}
-                onAddRow={() => setMeasureRows((rows) => [...rows, newMeasurementRow(nextKey())])}
-                onRemoveRow={(key) =>
-                  setMeasureRows((rows) =>
-                    rows.length > 1 ? rows.filter((row) => row.key !== key) : rows
-                  )
-                }
-              />
-              <div className="mt-4 flex gap-2">
-                <button
-                  onClick={closeBulkMeasure}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={applyBulkMeasure}
-                  disabled={counts.ready === 0 || counts.incomplete > 0}
-                  className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-                >
-                  {counts.ready === 0
-                    ? 'OK'
-                    : `OK — add ${counts.ready} item${counts.ready !== 1 ? 's' : ''}`}
                 </button>
               </div>
             </div>

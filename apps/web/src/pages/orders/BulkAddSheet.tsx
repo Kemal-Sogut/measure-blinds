@@ -38,6 +38,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   bulkAddHasContent,
+  bulkRowHasContent,
   expandBulkSections,
   newBulkRow,
   newBulkSection,
@@ -53,13 +54,16 @@ import { SectionCard } from './BulkAddSectionCard';
  * `dvh` and the safe-area padding matter). Duplicated rather than imported:
  * `OrderDetail.tsx` does not export it, and importing it back would invert
  * the dependency (`OrderDetail.tsx` imports THIS component, not the other
- * way around). `max-w-2xl` is wider than the other hand-rolled sheets'
- * `lg:max-w-lg` — this one carries a multi-column `HardwareRow` grid plus a
- * whole rows table, and the narrower width left both cramped on desktop.
+ * way around). `lg:max-w-5xl` is wider than the other hand-rolled sheets'
+ * `lg:max-w-lg` (and wider still than the single blind item popup's own
+ * `lg:max-w-3xl`) — this one carries a multi-column `HardwareRow` grid PLUS
+ * a whole rows table, stacked several sections deep, and the narrower width
+ * left all of it cramped on tablet/desktop. Unprefixed (no `max-w-*` below
+ * `lg:`), so a phone still gets the sheet at full width, exactly as before.
  */
 const SHEET_PANEL =
-  'max-h-[92dvh] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 ' +
-  'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:rounded-2xl lg:pb-4';
+  'max-h-[92dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl bg-surface p-4 ' +
+  'pb-[max(1rem,env(safe-area-inset-bottom))] lg:max-h-[85vh] lg:max-w-5xl lg:rounded-2xl lg:pb-4';
 
 /**
  * Props for {@link BulkAddSheet}. `onAdd` receives the already-expanded
@@ -103,13 +107,11 @@ interface BulkAddSheetProps {
  *
  * Cancelling — the backdrop tap AND the Cancel button, both routed through
  * `handleCancel` so the guard cannot be bypassed by either path — confirms
- * first whenever `bulkAddHasContent(sections)` is true, mirroring the
- * older single-measurement popup's own guard
- * (`OrderDetail.tsx`'s `closeBulkMeasure`, whose own comment notes a
- * backdrop tap is easy to make by accident on a tablet). This sheet can
- * hold measurements for a whole house — the most expensive, hardest to
- * redo state in the app — so a stray tap must not be able to discard it
- * silently the way it could before this guard existed.
+ * first whenever `bulkAddHasContent(sections)` is true: a backdrop tap is
+ * easy to make by accident on a tablet, and this sheet can hold
+ * measurements for a whole house — the most expensive, hardest to redo
+ * state in the app — so a stray tap must not be able to discard it
+ * silently.
  */
 export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAddSheetProps) {
   const [sections, setSections] = useState<BulkSection[]>(() => [newBulkSection()]);
@@ -126,7 +128,12 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
 
   if (!open) return null;
 
-  const itemCount = sections.reduce((n, s) => n + s.rows.length, 0);
+  // Counts the same rows `expandBulkSections` will actually turn into
+  // items (`bulkRowHasContent`), not the raw row count — an untouched
+  // sheet's default blank row must count as zero, or the confirm button
+  // below would read "Add 1 item", stay enabled, and confirm would expand
+  // to an empty array and close with nothing added.
+  const itemCount = sections.reduce((n, s) => n + s.rows.filter(bulkRowHasContent).length, 0);
 
   /** Applies a sections update and clears any stale validation message. */
   function mutate(fn: (secs: BulkSection[]) => BulkSection[]) {
@@ -167,14 +174,30 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
     onCancel();
   }
 
-  /** Validates, then expands and hands the drafts up; blocks on the first error. */
+  /**
+   * Validates, then expands and hands the drafts up; blocks on the first
+   * error. The empty-result check is a defensive second gate alongside
+   * `disabled={itemCount === 0}` on the confirm button below (itself now
+   * driven by `bulkRowHasContent`, the same predicate `expandBulkSections`
+   * filters by) — validation alone cannot rule this out, since an
+   * all-blank-rows section trips no width/height/attribute check and
+   * still has a non-zero `rows.length`. Without this, a confirm reached
+   * some other way (a stale disabled state, a future caller) would call
+   * `onAdd([])`, silently closing the sheet with nothing added and no
+   * explanation — the exact dead end this guard exists to rule out.
+   */
   function handleConfirm() {
     const message = validateBulkSections(sections, catalogs);
     if (message) {
       setError(message);
       return;
     }
-    onAdd(expandBulkSections(sections));
+    const drafts = expandBulkSections(sections);
+    if (drafts.length === 0) {
+      setError('Add at least one row before confirming.');
+      return;
+    }
+    onAdd(drafts);
   }
 
   return (
@@ -185,11 +208,13 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk add blinds</h2>
         <p className="mb-4 text-[13px] text-text-muted">
-          Configure a section per blind type, then add a row for every window that shares it.
+          Configure a section per blind type, then add a row for every window that shares it. Type,
+          material and hardware can be left blank for now, but the order can't be saved until
+          they're filled in.
           {itemCount > 0 && ` ${itemCount} item${itemCount !== 1 ? 's' : ''} so far.`}
         </p>
 
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {sections.map((section, i) => (
             <SectionCard
               key={section.key}

@@ -54,6 +54,10 @@
   --color-border-input: #d8dbe3;     /* input strokes — a step darker than
                                         card hairlines so fields read as
                                         interactive */
+  --color-border-strong: #b6bdcc;    /* bulk-add section-card borders — a
+                                        step darker than border-input, so
+                                        a card visibly separates from the
+                                        sheet behind it */
   --color-text-primary: #101828;
   --color-text-secondary: #475467;
   --color-text-muted: #8a93a6;

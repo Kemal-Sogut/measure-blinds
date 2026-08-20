@@ -76,9 +76,12 @@ export interface PriceAdjustmentDraft {
  * The neutral adjustment fields: no override, no add-ons, and the
  * original price shown if one is ever set later.
  *
- * Every freshly created item starts from this — the three Add buttons and
- * the bulk measurement popup alike — so "a new item" cannot come to mean
- * two different things on two code paths.
+ * Every freshly created item spreads this in as its starting point:
+ * `newBlindDraft` below (and so, transitively, every blind it seeds),
+ * `OrderDetail.tsx`'s `addPreset` and `addCustom`, and `bulkAdd.ts`'s
+ * `expandBulkSections` (each row it expands into a blind item). Sharing
+ * one constant across every creation path is what keeps "a new item" from
+ * coming to mean a different starting price shape on some of them.
  */
 export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
   unit_price_override: '',
@@ -190,9 +193,15 @@ export interface BlindDraftDefaults {
  * until a type is chosen, and `BlindTypeSelect` then clears whichever of
  * the defaults that type turns out not to use.
  *
- * Shared by the "Add Standard Blind" button and the bulk measurement
- * popup, so a blind created either way starts identical — duplicating the
- * shape would let the two paths drift into seeding different defaults.
+ * The shared factory behind every blind-creating call site: `addBlind`'s
+ * "Add Standard Blind" button in `OrderDetail.tsx`, and `bulkAdd.ts`'s
+ * `newBulkSection` (a fresh section's blank `config`). Both pass an
+ * all-empty `BlindDraftDefaults` — real hardware defaults are not guessed
+ * here, they arrive later from `applyTypeDefaults` the instant a type is
+ * picked. A blind added the ordinary way and a bulk-add section's blank
+ * config therefore start from this identical shape — duplicating it per
+ * call site would let the two paths drift into seeding different
+ * defaults.
  */
 export function newBlindDraft(key: string, defaults: BlindDraftDefaults): BlindDraft {
   return {
@@ -406,112 +415,6 @@ export function bulkEditSelection(items: ItemDraft[], selected: Set<string>): Bu
   }
   if (blindsType === '') return { ok: false, reason: 'no_type' };
   return { ok: true, blindsType, keys: blinds.map((it) => it.key) };
-}
-
-/* ------------------------------------------------------------------ */
-/* Bulk measurement capture                                            */
-/* ------------------------------------------------------------------ */
-
-/**
- * One row of the bulk measurement popup: a room label and the ONE pair of
- * measurements that becomes a single blind line item.
- *
- * Both figures are raw strings for the same reason every draft field is —
- * a half-typed "12." must not fight the keyboard. `key` is a React list
- * key only and never leaves the browser.
- */
-export interface MeasurementRow {
-  key: string;
-  room_name: string;
-  width_cm: string;
-  height_cm: string;
-}
-
-/** A blank row, ready to type into. */
-export function newMeasurementRow(key: string): MeasurementRow {
-  return { key, room_name: '', width_cm: '', height_cm: '' };
-}
-
-/**
- * What one row does when the popup is confirmed:
- *
- * - `blank` — nothing typed at all. Ignored, which is what lets the popup
- *   open with more rows than the consultant turns out to need.
- * - `ready` — width AND height are positive numbers; becomes one item.
- * - `incomplete` — something was typed but the pair is unusable: only one
- *   of the two measurements, a room name with no measurements, or a value
- *   that is not a positive number.
- *
- * `incomplete` exists so a half-typed row can be REFUSED rather than
- * quietly skipped. Dropping one would lose a measurement that was taken
- * on site, and the consultant would not find out until the blind was
- * missing from the order — which costs a second visit.
- */
-export type MeasurementRowState = 'blank' | 'ready' | 'incomplete';
-
-/** Classifies one row; see `MeasurementRowState` for what each means. */
-export function measurementRowState(row: MeasurementRow): MeasurementRowState {
-  const width = row.width_cm.trim();
-  const height = row.height_cm.trim();
-  if (width === '' && height === '' && row.room_name.trim() === '') return 'blank';
-  if (parsePositive(width) !== null && parsePositive(height) !== null) return 'ready';
-  return 'incomplete';
-}
-
-/**
- * How many rows would become line items and how many are half-filled.
- * The popup's confirm button reads both: it applies `ready` rows only,
- * and stays disabled while `incomplete` is above zero.
- */
-export interface MeasurementRowCounts {
-  ready: number;
-  incomplete: number;
-}
-
-/** Counts the rows by state, ignoring blank ones. */
-export function countMeasurementRows(rows: MeasurementRow[]): MeasurementRowCounts {
-  let ready = 0;
-  let incomplete = 0;
-  for (const row of rows) {
-    const state = measurementRowState(row);
-    if (state === 'ready') ready += 1;
-    else if (state === 'incomplete') incomplete += 1;
-  }
-  return { ready, incomplete };
-}
-
-/**
- * Turns the ready rows into blind drafts — ONE item per width/height
- * pair, in the order they were typed.
- *
- * The items are deliberately left with NO blind type, material or
- * per-type option: the popup exists so a whole house can be measured in
- * one pass and the details chosen afterwards. Only the house default
- * hardware `newBlindDraft` seeds is carried, exactly as the single "Add
- * Standard Blind" button does — which also means these items are NOT
- * saveable until a type and material are picked (`buildPayload` names the
- * first one that is missing).
- *
- * The width becomes the item's single panel; a blind that needs several
- * panels is split afterwards in the item form ("+ Panel"), because a
- * panel breakdown is a detail rather than a measurement pass.
- *
- * Incomplete rows are SKIPPED, never guessed at — the caller must refuse
- * to apply while one exists (see `MeasurementRowState`).
- */
-export function measurementRowsToDrafts(
-  rows: MeasurementRow[],
-  defaults: BlindDraftDefaults,
-  nextKey: () => string
-): BlindDraft[] {
-  return rows
-    .filter((row) => measurementRowState(row) === 'ready')
-    .map((row) => ({
-      ...newBlindDraft(nextKey(), defaults),
-      room_name: row.room_name.trim(),
-      panels: [row.width_cm.trim()],
-      height_cm: row.height_cm.trim(),
-    }));
 }
 
 /**
