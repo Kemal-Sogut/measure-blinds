@@ -19,8 +19,12 @@ payment is recorded but does not advance, and staff may still advance an under-d
 order by hand. Deleting the LAST payment reverts in_progress → awaiting_payment; dropping
 below 50% while some payment remains does not (manual/threshold advances are not auto-undone).
 Order duplication re-prices from the current catalog and leaves payments/logs/appointment/
-warranty/public-token behind. Revert (backward-only) and delete (draft/expired only) are both
-guarded.
+warranty/public-token behind. Delete stays guarded (draft/expired only), but the STAGE itself
+no longer is: `POST /api/orders/:id/status` sets any of the six stages from any status,
+timeline-driven, with `sent_at`/`confirmed_at`/`installed_at` reconciled off the target stage
+index and the installation appointment dropped below `ready`. It never emails and never
+touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
+`/mark-sent`, `/in-progress`) remain for the email, payment, and customer-confirm flows.
 
 **Customer-facing:** a permanent public order-summary page (not one-shot) with a 5-step
 tracker (Confirmed → Awaiting Payment → In Production → Ready → Installed), the quoted 50%

@@ -3335,3 +3335,52 @@ to real edit events instead of to effect runs removes both cases.
 web `tsc -b --noEmit` clean, `oxlint` clean, vitest 336/336. NOT verified: live typing
 against Photon in the running app — `/customers/new` is behind `ProtectedRoute` and no
 signed-in session was available in this environment.
+
+## 2026-08-20 - Manual any-stage order status transition
+
+The order lifecycle used to be movable only along whitelisted paths: five forward routes
+that each 409'd unless the current status was one they accepted (`/in-progress` took only
+`awaiting_payment`; `/mark-sent` and `/confirm` only `draft`/`sent`, and `/mark-sent` also
+rejected a lapsed `expiry_date`), plus `/revert` for strictly-earlier targets. The Progress
+timeline mirrored that whitelist in an `ADVANCE_TARGETS` map and rendered the rest disabled.
+Real jobs do not follow it — an order marked installed by mistake, a walk-in that starts at
+Ready without ever being emailed, an expired estimate that becomes a live job the same day.
+
+**API — `POST /api/orders/:id/status`** (`apps/api/src/routes/orders.ts`). Body
+`{ to }`, `.strict()`, restricted to the six timeline stages. NO direction guard, NO
+`EDITABLE` guard, NO expiry guard. 409 only on a no-op (already in the target status), 404
+on a missing order, 400 on any other status. `expired` is accepted as a SOURCE and needs no
+special handling on the server, because reconciliation reads the TARGET index only. Logs
+`Status manually changed from <from> to <to>.`
+
+**Timestamp reconciliation (`stageMetadataUpdate`).** The target's index in `STAGE_ORDER`
+decides every stamp in both directions: a stage at or before the target counts as passed, so
+`sent_at` / `confirmed_at` / `installed_at` are filled with `now()` when missing and left
+alone when already set (re-entering a stage must not rewrite when it first happened); a stage
+after the target is nulled. Landing below `ready` deletes the order's installation
+appointment — the same stale-visit rule `/revert` applies. `review_requested_at` is
+deliberately excluded: a customer who already got the review email must not get it again
+after a re-install. Stamping `installed_at` matters beyond display — it drives the
+post-installation review-request cron.
+
+**Guarded routes unchanged.** `/mark-sent`, `/confirm`, `/in-progress`, `/ready`,
+`/installed`, `/revert` keep their semantics: they are also driven by the payment path, the
+customer-facing confirm, and the email flows, where the guards still carry weight. The new
+route never emails and never touches payments, warranty state, `cut_done_at`, or the
+cancellation request.
+
+**Web.** `useSetOrderStatus()` replaces `useRevertOrder` in `hooks/useOrders.ts`;
+`useMarkSent` and `useMarkInProgress` were removed with it, since the timeline was their only
+caller (the Worker routes remain). In `OrderDetail.tsx`, `ADVANCE_TARGETS`, `canAdvanceTo`,
+`handleAdvance` and `handleRevert` collapse into one `handleSetStatus`, and every stage node
+except the current one renders an enabled button — back-arrow below, check above, one confirm
+dialog whose copy names the consequence on a backward move. `stageIndex`/`curIdx` moved above
+the handler so the move direction and the node styling share one definition.
+
+### Verified
+api 112/112 in `orders.routes.test.ts` (8 new cases: draft to installed stamps all three;
+installed to draft clears all three and deletes the appointment; expired to awaiting_payment
+keeps an existing `sent_at`; a target of ready or later keeps the appointment; the log line;
+409 no-op with no write; 400 on `expired`; 404), web 336/336, both `tsc --noEmit` clean,
+`oxlint` clean. NOT verified: the timeline clicked in the running app — `/orders/:id` is
+behind `ProtectedRoute` and no signed-in session was available in this environment.
