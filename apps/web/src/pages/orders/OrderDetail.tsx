@@ -28,6 +28,10 @@
  * Every post-draft stage additionally offers an Order Overview action
  * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
  * itemised listing of the line items (sizes, options, notes, totals).
+ * Every UNCONFIRMED stage (draft, sent, expired) offers a Present to
+ * Customer action directly below Confirm, which saves and then navigates
+ * to `/orders/:id/present` — the filterable, per-option view shown to the
+ * customer in person.
  * Save (green), Send (blue), Download (gray) and Delete (icon-only,
  * red, saved orders) live in the TOP BAR
  * (PageHeader right slot, icon-only on phones) at every stage; the
@@ -427,6 +431,12 @@ const ICONS = {
     <ActionIcon>
       <path d="M8 6h13M8 12h13M8 18h13" />
       <path d="M3 6h.01M3 12h.01M3 18h.01" />
+    </ActionIcon>
+  ),
+  present: (
+    <ActionIcon>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
     </ActionIcon>
   ),
   labels: (
@@ -1203,6 +1213,22 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Opens the customer presentation view.
+   *
+   * Saves first, for the same reason `handleConfirm` does: the page reads
+   * the SERVER row, so on a draft that has just been typed an unsaved
+   * order would be presented empty or stale. Navigates in the SAME tab
+   * rather than opening one — a `window.open` after an `await` is treated
+   * as a popup and blocked, and handing one tablet across a table beats
+   * juggling tabs anyway.
+   */
+  async function handlePresent() {
+    const savedId = await save();
+    if (!savedId) return;
+    navigate(`/orders/${savedId}/present`);
+  }
+
   async function handleReverse() {
     if (!id) return;
     try {
@@ -1965,17 +1991,25 @@ export default function OrderDetail() {
       onClick: handleConfirm,
       disabled: !canAct || !customer || items.length === 0 || confirmMut.isPending,
     };
+    const present: StageAction = {
+      key: 'present',
+      icon: ICONS.present,
+      label: 'Present to Customer',
+      short: 'Present',
+      onClick: handlePresent,
+      disabled: !canAct || !customer || items.length === 0,
+    };
 
     // Before Draft (unsaved) — nothing here; the top-bar Save is the
     // only available action.
     if (!id) return { primary: null, secondary: [] };
 
     // Draft — confirm the order (Send/Save live in the top bar).
-    if (status === 'draft') return { primary: confirm, secondary: [] };
+    if (status === 'draft') return { primary: confirm, secondary: [present] };
 
     // Sent — confirm the order.
     if (status === 'sent') {
-      return { primary: confirm, secondary: [overview] };
+      return { primary: confirm, secondary: [present, overview] };
     }
 
     // Awaiting payment — the payment itself is recorded from the
@@ -2046,9 +2080,10 @@ export default function OrderDetail() {
       return { primary: null, secondary: [overview] };
     }
 
-    // Expired — only the Overview remains here (Save/Send/Download are
-    // in the top bar; send after updating the expiry date).
-    return { primary: null, secondary: [overview] };
+    // Expired — the estimate lapsed but was never confirmed, so the
+    // presentation view still applies here (Save/Send/Download are in the
+    // top bar; send after updating the expiry date).
+    return { primary: null, secondary: [present, overview] };
   };
 
   /**
