@@ -13,15 +13,19 @@
  *   not found / draft → generic error card
  *   expired           → "contact us for a new quote" card
  *   sent              → summary + terms tick + Confirm button (estimate)
- *   confirmed         → e-Transfer details FIRST (with the 50% deposit
- *                       quoted while the order awaits its first payment)
- *                       + progress tracker + summary + cancellation block
+ *   confirmed         → e-Transfer details FIRST (quoting the 50% deposit
+ *                       while the order awaits its first payment, and the
+ *                       remaining balance once it is installed and still
+ *                       owed) + progress tracker + summary + cancellation
+ *                       block
  *
  * The e-Transfer details are shown only while the customer has a transfer
  * to make: the deposit is still due, or the order is installed and a
  * balance remains. Once the 50% deposit is in and production is under way
  * they are hidden — nothing is expected — and they reappear at
- * installation if a final balance is owed (`showHowToPay`).
+ * installation if a final balance is owed (`showHowToPay`). The figure the
+ * box quotes follows the same split: the server's `deposit_due` up front,
+ * the server's `balance` (total − paid) at installation.
  *
  * Confirming shows NO success banner. The banner used to sit directly
  * under the header and say "thank you"; that slot now holds the payment
@@ -625,6 +629,27 @@ export default function CustomerView() {
     confirmed &&
     estimate.balance > 0 &&
     (!depositPaid || estimate.status === 'installed');
+  // The single figure the "How to pay" box quotes, with its label — or
+  // none. Both amounts are the server's (`deposit_due`, `balance` =
+  // total − amount_paid), never derived here (AI_GUIDELINES rule 1). The
+  // 50% deposit is quoted while the order awaits its first payment; once
+  // it is installed with a balance still owing, the SAME box quotes that
+  // remaining balance so the amount sits beside the e-Transfer address.
+  // A partial deposit not yet at 50% falls through to no headline figure.
+  let amountDue: { amount: number; caption: string; instruction: string } | undefined;
+  if (showDeposit && estimate.deposit_due !== undefined) {
+    amountDue = {
+      amount: estimate.deposit_due,
+      caption: 'Deposit due now (50% of total)',
+      instruction: 'Please send this deposit by Interac e-Transfer to:',
+    };
+  } else if (estimate.status === 'installed' && estimate.balance > 0) {
+    amountDue = {
+      amount: estimate.balance,
+      caption: 'Final Balance',
+      instruction: 'Please send your balance by Interac e-Transfer to:',
+    };
+  }
   const c = estimate.company;
   const cust = estimate.customer;
 
@@ -678,7 +703,7 @@ export default function CustomerView() {
             payToEmail={c?.etransfer_email ?? ''}
             instructions={c?.etransfer_instructions}
             orderNumber={estimate.order_number}
-            depositDue={showDeposit ? estimate.deposit_due : undefined}
+            amountDue={amountDue}
           />
         )}
 

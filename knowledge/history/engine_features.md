@@ -1,5 +1,32 @@
 # Engine Features / Feature History
 
+## 2026-08-20 — Installed orders quote the outstanding balance in "How to pay"
+Web-only (no API, schema, or pricing surface). An installed order that still owes money now
+shows the customer HOW MUCH to send, not just where.
+
+**`PaymentSection`** (`apps/web/src/components/PaymentSection.tsx`) previously took a single
+`depositDue?: number` and hard-coded the "Deposit due now (50% of total)" caption and deposit
+lead-in. Its figure slot is now a general `amountDue?: { amount; caption; instruction }`
+descriptor — the same amber box, the caller supplies the label. The component stays purely
+presentational and still never computes money.
+
+**`CustomerView`** (`apps/web/src/pages/customer-view/CustomerView.tsx`) builds that descriptor
+from server figures only (AI_GUIDELINES rule 1): the Worker's `deposit_due` with
+"Deposit due now (50% of total)" while the order awaits its first payment, or the Worker's
+`balance` (`total − amount_paid`, already in the payload) with "Pay your balance" once the order
+is `installed` and `balance > 0`. A partial deposit not yet at 50% still falls through to a
+"how to pay" with no headline figure, as before. The mount rule (`showHowToPay`) is unchanged.
+
+- This is the ONE figure now shown in two places on purpose: the totals block keeps the running
+  "Balance due", and the installed customer also sees that amount in the payment box, beside the
+  e-Transfer address they send it to. The deposit still appears nowhere else.
+
+### Verified
+web `tsc` clean, `oxlint` clean, `pnpm test` 305/305. The box's markup is unchanged from the
+already-shipping deposit box (only caption/amount/lead-in differ), confirmed against a
+token-accurate static render of both states; not exercised on the live token-gated customer
+page — the standing project-wide gap.
+
 ## 2026-08-20 — Editing an expired estimate's validity date revives it to draft
 API-only (no web, schema, or pricing surface). Reopening a lapsed estimate no longer leaves it
 stuck on the `expired` tab: extending its expiry date brings it back into the workflow.

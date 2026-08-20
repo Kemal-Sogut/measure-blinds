@@ -9,9 +9,11 @@ Branch `main`, latest merge PR #35 (`feat/defaults-bulk-lineitems`). Since then,
 `main`: the 50%-deposit production gate + customer-page "how to pay" windowing + auto-scroll on
 confirm + "Paid to date" removed from the customer view; an "Add order" shortcut on the
 appointment detail page that opens `/orders/new?customer=<id>` with the customer pre-filled; the
-send-receipt row icon swapped from an envelope to a receipt glyph; and `PUT /api/orders/:id`
-reviving an `expired` estimate to `draft` when its expiry date is extended to today-or-later
-(all dated 2026-08-20 in `knowledge/history/engine_features.md`, except the cosmetic icon swap).
+send-receipt row icon swapped from an envelope to a receipt glyph; `PUT /api/orders/:id`
+reviving an `expired` estimate to `draft` when its expiry date is extended to today-or-later;
+and the customer "How to pay" box quoting the server `balance` ("Pay your balance") once an
+order is installed and still owing, via `PaymentSection`'s general `amountDue` descriptor (all
+dated 2026-08-20 in `knowledge/history/engine_features.md`, except the cosmetic icon swap).
 Verified: web `pnpm check` clean, `pnpm test` 305/305 (20 files), `pnpm lint` (oxlint) 0
 warnings/errors; api `pnpm check` clean, `pnpm test` 343/343 (18 files).
 
@@ -75,7 +77,9 @@ primitive layer.
   advance must not be auto-undone.
 - The customer page must never derive money (AI_GUIDELINES rule 1): "deposit reached?" on
   `CustomerView` compares `amount_paid` to the server's `deposit_due`, it does not compute
-  `total/2` itself.
+  `total/2` itself. Likewise the "How to pay" figure is always a server field the page merely
+  selects and labels — `deposit_due` up front, `balance` (total − paid) once installed —
+  through `PaymentSection`'s `amountDue` descriptor; the box never does arithmetic.
 - Expiry is symmetric across ONE threshold (`today`, `YYYY-MM-DD` string compare):
   `applyDefensiveExpiry` expires a `sent` order when `expiry_date < today`; `PUT /api/orders/:id`
   revives an `expired` order to `draft` when the edited `expiry_date >= today`. Revive targets

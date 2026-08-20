@@ -28,7 +28,11 @@ deposit, e-Transfer instructions, cancellation request/withdraw, installation co
 request, and collapsible line items/terms. The "HOW TO PAY" block is windowed to when the
 customer actually owes a transfer (`showHowToPay`): shown while the deposit is outstanding,
 hidden once the 50% is in and the order is in production/ready, and shown again at
-installation if a balance remains. Confirming scrolls the page back to the top (Confirm sits
+installation if a balance remains. Its single figure follows the same split — the server's
+`deposit_due` ("Deposit due now (50% of total)") up front, the server's `balance`
+(total − paid, "Pay your balance") once installed and owing — via `PaymentSection`'s general
+`amountDue` descriptor; the balance is the one figure deliberately shown twice (totals block +
+payment box, beside the address). Confirming scrolls the page back to the top (Confirm sits
 in the fixed bottom bar). Confirm is gated behind a Terms checkbox (UI-only — see Known
 Issues).
 
