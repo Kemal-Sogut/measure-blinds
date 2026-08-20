@@ -6,21 +6,25 @@
  * every customer-entry surface (the full `CustomerForm` page and the
  * quick `CustomerCreateModal`).
  *
- * CURRENT BEHAVIOR: the search-as-you-type dropdown is switched OFF via
- * `ADDRESS_SEARCH_ENABLED` (see below) — the component renders a plain
- * controlled input and `onSelect` never fires. Callers keep passing
- * `onSelect` so that re-enabling the switch needs no call-site change.
- *
- * WHEN ENABLED: as the consultant types, it debounces the term and
- * queries Photon (`lib/addressSearch`); picking a suggestion fires
+ * BEHAVIOR: as the consultant types, the term is debounced (300 ms) and
+ * sent to Photon (`lib/addressSearch`); picking a suggestion fires
  * `onSelect` with a normalised, form-ready address so the parent can
  * auto-fill line 1, city, province, and postal code in one tap.
  *
+ * SELECTION LOCK: once a suggestion has been chosen, lookup goes dormant
+ * — no debounce reaction, no request, no dropdown — until the consultant
+ * edits the field again (any keystroke, including a deletion). Without
+ * the lock the auto-filled line 1 is itself a search term, so the list
+ * would re-open over a field the consultant has already finished with,
+ * and a blur/refocus would bring it back. The lock is released inside the
+ * input's own `onChange`, which fires for real edits only — a parent
+ * re-rendering the filled value never releases it.
+ *
  * In either mode the component behaves as a normal controlled input:
- * `onChange` mirrors every keystroke back to the parent's
- * Address-Line-1 field, so manual entry (or editing after an auto-fill)
- * always works. Autocomplete is strictly additive — a network failure
- * degrades to plain typing, never an error state.
+ * `onChange` mirrors each keystroke back to the parent's Address-Line-1
+ * field, so manual entry (or editing after an auto-fill) always works.
+ * Autocomplete is strictly additive — a network failure degrades to
+ * plain typing, never an error state.
  *
  * Interaction while enabled: ↑/↓ move the highlight, Enter selects it,
  * Escape or a blur closes the list (blur is delayed so a mouse click on
@@ -37,16 +41,17 @@ const INPUT_CLS =
 /**
  * Master switch for search-as-you-type address lookup.
  *
- * Disabled 2026-08-01: the Photon results proved unreliable in the field
- * (wrong or missing streets for real service-area addresses), so the
- * dropdown is off and this component behaves as a plain controlled text
- * input. `onSelect` therefore never fires while this is false.
+ * Disabled 2026-08-01 (Photon returned wrong or missing streets for real
+ * service-area addresses), re-enabled 2026-08-20 at the operator's request
+ * and now paired with the selection lock described in the module header, so
+ * a completed address is never re-queried.
  *
- * The query layer in `lib/addressSearch.ts` is deliberately left intact
- * and still correct — flipping this to `true` restores the full
- * autocomplete with no other edit anywhere in the tree.
+ * Setting this back to `false` restores the plain-input fallback: no
+ * debounce reaction, no `AbortController`, no Photon request, and `onSelect`
+ * never fires. The query layer in `lib/addressSearch.ts` is independent of
+ * this flag, so flipping it either way needs no other edit in the tree.
  */
-const ADDRESS_SEARCH_ENABLED = false;
+const ADDRESS_SEARCH_ENABLED = true;
 
 export default function AddressAutocomplete({
   label,
@@ -71,9 +76,10 @@ export default function AddressAutocomplete({
   const [highlight, setHighlight] = useState(-1);
   const [loading, setLoading] = useState(false);
 
-  // Suppress the search that would otherwise fire from the onChange a
-  // selection triggers (auto-filling line 1 should not re-open the list).
-  const skipNextSearch = useRef(false);
+  // True from the moment a suggestion is applied until the consultant
+  // edits the field again. While set, the debounce effect performs no
+  // lookup, so an auto-filled address cannot re-open its own dropdown.
+  const selectionLocked = useRef(false);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const debounced = useDebouncedValue(value, 300);
@@ -84,10 +90,8 @@ export default function AddressAutocomplete({
     // off; the component renders as a plain input (see the early return
     // after the hooks).
     if (!ADDRESS_SEARCH_ENABLED) return;
-    if (skipNextSearch.current) {
-      skipNextSearch.current = false;
-      return;
-    }
+    // Address already picked and untouched since — stay dormant.
+    if (selectionLocked.current) return;
     const term = debounced.trim();
     if (term.length < 3) {
       setSuggestions([]);
@@ -98,6 +102,10 @@ export default function AddressAutocomplete({
     setLoading(true);
     searchAddresses(term, controller.signal)
       .then((results) => {
+        // Only a selection can take the lock while this request is in
+        // flight, and it closes the list itself — re-check so a late
+        // response cannot re-open it over the filled field.
+        if (selectionLocked.current) return;
         setSuggestions(results);
         setOpen(results.length > 0);
         setHighlight(-1);
@@ -111,13 +119,24 @@ export default function AddressAutocomplete({
     if (blurTimer.current) clearTimeout(blurTimer.current);
   }, []);
 
-  /** Applies a chosen suggestion and closes the dropdown. */
+  /** Applies a chosen suggestion, closes the dropdown and takes the lock. */
   function choose(s: AddressSuggestion) {
-    skipNextSearch.current = true;
+    selectionLocked.current = true;
     onSelect(s);
     setOpen(false);
     setSuggestions([]);
     setHighlight(-1);
+    setLoading(false);
+  }
+
+  /**
+   * Handles a real edit of the field: releases the selection lock — the
+   * consultant typed or deleted, so lookup is wanted again — and mirrors
+   * the text to the parent's line-1 state.
+   */
+  function handleChange(next: string) {
+    selectionLocked.current = false;
+    onChange(next);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -172,9 +191,9 @@ export default function AddressAutocomplete({
         role="combobox"
         aria-expanded={open}
         aria-autocomplete="list"
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => handleChange(e.target.value)}
         onKeyDown={handleKeyDown}
-        onFocus={() => suggestions.length > 0 && setOpen(true)}
+        onFocus={() => !selectionLocked.current && suggestions.length > 0 && setOpen(true)}
         onBlur={() => {
           // Delay so a click on a suggestion row registers first.
           blurTimer.current = setTimeout(() => setOpen(false), 150);

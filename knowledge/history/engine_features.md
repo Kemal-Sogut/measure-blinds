@@ -3303,3 +3303,35 @@ payload, and from the PDF), web 223/223 after merging `main` (bulk measurement c
 the single-type bulk edit), both `tsc --noEmit` clean, `oxlint` clean,
 `vite build` clean. The PDF test inflates the content streams and decodes pdf-lib's hex
 string literals, so the "not printed" assertion cannot pass vacuously.
+
+## 2026-08-20 - Address autocomplete re-enabled, with a selection lock
+
+Change in `apps/web/src/components/AddressAutocomplete.tsx` only — no call-site, prop, or
+`lib/addressSearch.ts` change, exactly as the 2026-08-01 shutdown entry in `bug_fixes.md`
+predicted.
+
+**Re-enabled:** `ADDRESS_SEARCH_ENABLED = true`. Search-as-you-type is live again on both
+customer-entry surfaces (`CustomerForm.tsx` shipping + billing, `CustomerCreateModal.tsx`):
+3+ characters, debounced 300 ms, Photon results, tap/Enter fills line 1 + city + province +
+postal code in one go. The operator asked for it back knowing the field-accuracy complaint
+that closed it; the accuracy of Photon's data itself was not touched.
+
+**Selection lock (the new behaviour):** a `selectionLocked` ref, set in `choose()` and
+released only inside the input's own `onChange`. While locked the debounce `useEffect`
+returns before building a term, the `onFocus` re-open is suppressed, and an in-flight
+response that resolves after the pick is dropped. So once an address has been chosen the
+field is inert — no dropdown, no request — until the consultant types or deletes a
+character, at which point lookup resumes normally.
+
+**Why a lock and not the old one-shot `skipNextSearch` flag.** The auto-filled line 1 IS a
+valid search term, so the naive component re-queries the address it just filled and re-opens
+the list over a finished field. The previous flag suppressed exactly one effect run, which
+mis-fires twice: if the chosen `line1` equals the text already in the field the debounced
+value never changes, the effect never runs, and the flag survives to swallow the consultant's
+NEXT genuine search; and a blur/refocus could still re-open the stale list. Keying the lock
+to real edit events instead of to effect runs removes both cases.
+
+### Verified
+web `tsc -b --noEmit` clean, `oxlint` clean, vitest 336/336. NOT verified: live typing
+against Photon in the running app — `/customers/new` is behind `ProtectedRoute` and no
+signed-in session was available in this environment.

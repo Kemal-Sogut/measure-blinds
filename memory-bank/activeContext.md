@@ -60,8 +60,11 @@ primitive layer.
 - `OrderDetail.tsx` (~3,170 lines) and `apps/api/src/routes/orders.ts` (~2,220 lines) are well
   past the 800-line guideline (AI_GUIDELINES §6) — reduce opportunistically when already
   working in them, per §8.
-- Address autocomplete code exists (`lib/addressSearch.ts` + `AddressAutocomplete.tsx`) but is
-  switched off (`ADDRESS_SEARCH_ENABLED = false`); re-enabling is a one-line flip.
+- Address autocomplete (`lib/addressSearch.ts` + `AddressAutocomplete.tsx`) is ON again
+  (`ADDRESS_SEARCH_ENABLED = true`, 2026-08-20) with a selection lock that keeps the dropdown
+  dormant after a pick until the field is typed in or deleted from. The Photon accuracy
+  complaint that closed it on 2026-08-01 was accepted, not fixed — expect wrong or missing
+  streets for some service-area addresses. Live in-app behaviour is unverified.
 
 ## Active decisions / learnings not obvious from the code
 - Hono literal routes (e.g. `/calendar`, `/settings/blind-type-defaults`) must be registered

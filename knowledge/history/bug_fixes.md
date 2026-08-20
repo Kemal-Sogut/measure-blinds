@@ -675,6 +675,12 @@ Bug fix in `apps/web/src/lib/labels.test.ts` and `apps/web/src/lib/labels.ts` (d
 
 ## 2026-08-01 - Address autocomplete returned wrong or missing streets; switched off
 Change in `apps/web/src/components/AddressAutocomplete.tsx` only.
+> **Superseded 2026-08-20** — the operator asked for the lookup back, so
+> `ADDRESS_SEARCH_ENABLED` is `true` again and the one-shot `skipNextSearch` flag described
+> below was replaced by a selection lock. See the 2026-08-20 entry in `engine_features.md`.
+> The Photon accuracy complaint that motivated this shutdown was never fixed — it was
+> accepted. Everything below is kept because the two-guard/hook-order reasoning still
+> governs the `false` branch.
 - **Cause:** the Photon (`photon.komoot.io`) results were unreliable in the field — wrong or
   missing streets for real service-area addresses — so the dropdown cost the consultant more
   time than typing the address did. The lookup was NOT diagnosed further; it was turned off.

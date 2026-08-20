@@ -95,8 +95,9 @@ pull-to-refresh in standalone mode (query invalidation, never a hard reload); on
 shell for every width (collapsible rail at `md+`, full-screen overlay below, one
 `.page-container` fluid track); calendar surface over the installation/estimate-visit
 scheduling domain, whose appointment-detail page carries an "Add order" shortcut
-(`/orders/new?customer=<id>`, pre-fills the customer via `useCustomer`); address autocomplete
-built but switched off (`ADDRESS_SEARCH_ENABLED = false` in `AddressAutocomplete.tsx`).
+(`/orders/new?customer=<id>`, pre-fills the customer via `useCustomer`); Photon address
+autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = true` in
+`AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.
 
 ## What's Left / Known Issues
 - **No real device has ever driven the app itself.** Every staff route sits behind
