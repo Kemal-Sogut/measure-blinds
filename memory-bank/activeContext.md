@@ -6,6 +6,13 @@ Branch `feat/defaults-bulk-lineitems`, spec `.superpowers/sdd/2026-08-18-bulkadd
 docs and full verification. Full detail in `engine_features.md` 2026-08-19/20 (one entry) and
 `bug_fixes.md` 2026-08-19 (two entries).
 
+- **2026-08-20 follow-up (maintainer report):** the bulk-add measurement row is now TWO lines —
+  room name + ✕ above, Width/Height at `grid-cols-[3fr_2fr]` below — because the one-line
+  40/30/30 split left the Width field unreadable on a phone once its 44px "+" button and the
+  `pr-12` it reserves were subtracted from a 30% track. Layout only. Verified in a browser via a
+  throwaway Vite entry rendering `SectionCard` directly (the order editor is behind
+  `ProtectedRoute` and no local login exists), which is the first browser check any part of this
+  sheet has had; harness deleted after. See `bug_fixes.md` 2026-08-20.
 - **The older "Add Measurements in Bulk" popup is gone.** `BulkMeasureForm`
   (`LineItemEditor.tsx`), `MeasurementRow`/`measurementRowState`/`countMeasurementRows`/
   `measurementRowsToDrafts` (`lineItemDrafts.ts`), and the `'bulkMeasure'` sheet plumbing
@@ -42,7 +49,9 @@ docs and full verification. Full detail in `engine_features.md` 2026-08-19/20 (o
   `bg-brand-50` tint marking the open one; Blind type/Material/Colour on one row; the
   section-level note field removed outright (the per-item note in the single-item form still
   covers it); measurement rows at Room 40% / Width 30% / Height 30%
-  (`grid-cols-[4fr_3fr_3fr]`); both item popups widened (`lg:max-w-3xl` single-item,
+  (`grid-cols-[4fr_3fr_3fr]`) — **since replaced (2026-08-20) by a TWO-LINE row**: room + ✕
+  above, Width/Height at `grid-cols-[3fr_2fr]` below, because the width input's 44px "+" button
+  left a 30% track with under four readable digits; both item popups widened (`lg:max-w-3xl` single-item,
   `lg:max-w-5xl` bulk add). Two review rounds were needed on the ROW layer specifically: the
   first left a border (`border-light`) LIGHTER than its own fill (1.04:1 — contributing
   nothing); it is now `border-border-strong` on `bg-surface-sunken`, 1.68:1 against the row's

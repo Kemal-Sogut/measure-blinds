@@ -162,16 +162,33 @@ function SectionAttributes({
 
 /**
  * One measurement row's fields — room name, a single width entry, height,
- * and a remove control — laid out on ONE LINE: `grid-cols-[4fr_3fr_3fr]`
- * splits Room/Width/Height 40/30/30 (the `fr` form rather than literal
- * percentages, so `gap-2` between the columns is subtracted from the track
- * sizes automatically instead of overflowing them). The ✕ remove control
- * sits OUTSIDE that grid, as a fixed `h-11 w-11` flex sibling — it does not
- * eat into the 40/30/30 split. All three inputs keep the 44px (`h-11`)
- * touch height the rest of this sheet uses; at this density their visible
- * `<label>` is gone in favour of a `placeholder` (still visible when empty)
- * plus an `aria-label` (screen-reader only) — every input keeps one
- * regardless of what a sighted user sees.
+ * and a remove control — laid out on TWO LINES: room name (plus the ✕
+ * remove control) on the first, Width and Height sharing the second as
+ * `grid-cols-[3fr_2fr]` — 60/40, not an even split, because the width
+ * input gives up 48px (`pr-12`) of its own track to the "+" button below
+ * while height gives up nothing, and a width can hold a multi-panel
+ * `118.5+118` where a height holds three digits. Measured at 375px CSS
+ * width (the phone this sheet targets), an even split left the width
+ * field truncating that exact value; 60/40 fits it with room to spare.
+ *
+ * This replaced an earlier ONE-LINE `grid-cols-[4fr_3fr_3fr]` (Room/Width/
+ * Height at 40/30/30, ✕ outside the grid) because the width input's own
+ * 44px "+" button — see below, and note it is NOT optional chrome but the
+ * only way to type the panel shorthand on iOS — consumed nearly all of a
+ * 30% track on a phone: what was left showed barely a digit or two of the
+ * value being typed. Giving width and height a full line of their own
+ * roughly triples the width field's readable text area at the cost of one
+ * extra line per row. Room name absorbs the ✕'s 44px (rather than the ✕
+ * spanning both lines, which would take that width away from Width/Height
+ * instead) precisely because a room name is the field that least needs the
+ * space — "Living room" fits comfortably, whereas a two-panel width like
+ * `118.5+118` in `font-mono` does not.
+ *
+ * All three inputs keep the 44px (`h-11`) touch height the rest of this
+ * sheet uses; at this density their visible `<label>` is gone in favour of
+ * a `placeholder` (still visible when empty) plus an `aria-label`
+ * (screen-reader only) — every input keeps one regardless of what a
+ * sighted user sees.
  *
  * The row's own surface is `bg-surface-sunken` (`#f1f2f5`) on
  * `border-border-strong` (`#b6bdcc`) — a fill AND a border darker than
@@ -297,53 +314,16 @@ function RowFields({
   }
 
   return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-border-strong bg-surface-sunken p-2.5">
-      <div className="flex items-start gap-2">
-        <div className="grid min-w-0 flex-1 grid-cols-[4fr_3fr_3fr] gap-2">
-          <input
-            ref={registerRoomInput}
-            placeholder="Room"
-            aria-label="Room name"
-            value={row.room_name}
-            onChange={(e) => onChange({ ...row, room_name: e.target.value })}
-            className={INPUT}
-          />
-
-          <div className="relative min-w-0">
-            <input
-              ref={widthInputRef}
-              inputMode="decimal"
-              placeholder="Width (cm)"
-              aria-label="Width in centimeters — type + or tap the + button to add another panel"
-              value={row.width_cm}
-              onChange={(e) => onChange({ ...row, width_cm: e.target.value })}
-              className={`${INPUT} truncate pr-12 font-mono`}
-            />
-            <button
-              type="button"
-              onClick={insertPlusAtCaret}
-              aria-label="Insert panel separator at cursor"
-              className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-r-md border border-border-input bg-surface text-sm font-semibold leading-none text-brand-600"
-            >
-              +
-            </button>
-          </div>
-
-          <input
-            inputMode="decimal"
-            placeholder="Height (cm)"
-            aria-label="Height in centimeters"
-            value={row.height_cm}
-            onChange={(e) => onChange({ ...row, height_cm: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                onEnterHeight();
-              }
-            }}
-            className={`${INPUT} font-mono`}
-          />
-        </div>
+    <div className="flex flex-col gap-2 rounded-md border border-border-strong bg-surface-sunken p-2.5">
+      <div className="flex items-center gap-2">
+        <input
+          ref={registerRoomInput}
+          placeholder="Room"
+          aria-label="Room name"
+          value={row.room_name}
+          onChange={(e) => onChange({ ...row, room_name: e.target.value })}
+          className={INPUT}
+        />
 
         <button
           type="button"
@@ -353,6 +333,43 @@ function RowFields({
         >
           ✕
         </button>
+      </div>
+
+      <div className="grid grid-cols-[3fr_2fr] gap-2">
+        <div className="relative min-w-0">
+          <input
+            ref={widthInputRef}
+            inputMode="decimal"
+            placeholder="Width (cm)"
+            aria-label="Width in centimeters — type + or tap the + button to add another panel"
+            value={row.width_cm}
+            onChange={(e) => onChange({ ...row, width_cm: e.target.value })}
+            className={`${INPUT} truncate pr-12 font-mono`}
+          />
+          <button
+            type="button"
+            onClick={insertPlusAtCaret}
+            aria-label="Insert panel separator at cursor"
+            className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-r-md border border-border-input bg-surface text-sm font-semibold leading-none text-brand-600"
+          >
+            +
+          </button>
+        </div>
+
+        <input
+          inputMode="decimal"
+          placeholder="Height (cm)"
+          aria-label="Height in centimeters"
+          value={row.height_cm}
+          onChange={(e) => onChange({ ...row, height_cm: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onEnterHeight();
+            }
+          }}
+          className={`${INPUT} font-mono`}
+        />
       </div>
 
       <p className="pl-0.5 text-[11px] text-text-muted">
