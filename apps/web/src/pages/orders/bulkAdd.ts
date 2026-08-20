@@ -164,6 +164,25 @@ export function newBulkSection(): BulkSection {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Whether a single bulk-add row has anything actually typed into it — a
+ * room name, a width, or a height. This is the ONE definition of "blank
+ * row" for the whole bulk-add flow, used by three different call sites
+ * that each need to answer the same question from a different angle:
+ * `expandBulkSections` filters rows by it (a blank row produces no item),
+ * `bulkAddHasContent` checks per-row content by it (a blank row is not
+ * "unsaved progress" worth a discard confirmation), and the sheet's own
+ * item counter (`itemCount` in `BulkAddSheet.tsx`) counts by it too (the
+ * confirm button must show — and gate on — the number of items that will
+ * actually be created, not the raw row count). Three independent copies of
+ * this same three-field check is exactly how those three would quietly
+ * disagree again — one shared definition is what keeps the count, the
+ * enabled state, and the expansion result unable to disagree.
+ */
+export function bulkRowHasContent(row: BulkMeasureRow): boolean {
+  return row.room_name.trim() !== '' || row.width_cm.trim() !== '' || row.height_cm.trim() !== '';
+}
+
+/**
  * Expands bulk-add sections into order line-item drafts: one draft per
  * measurement row THAT HAS SOMETHING IN IT, carrying its section's blind
  * configuration and the row's room + measurements. An entirely blank row
@@ -222,9 +241,7 @@ export function newBulkSection(): BulkSection {
 export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
   return sections.flatMap((s) =>
     s.rows
-      .filter(
-        (r) => r.room_name.trim() !== '' || r.width_cm.trim() !== '' || r.height_cm.trim() !== ''
-      )
+      .filter(bulkRowHasContent)
       .map((r) => ({
         ...s.config,
         key: nextKey(),
@@ -262,12 +279,13 @@ export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
  * measurement yet, or a blind type picked with nothing else filled in, is
  * still real unsaved progress a consultant would not want a stray tap to
  * throw away, even though neither would pass validation.
+ *
+ * Per-row content is `bulkRowHasContent` — the same predicate
+ * `expandBulkSections` filters blank rows by and the sheet's item counter
+ * counts by, so this guard can never disagree with either about what a
+ * "blank" row is.
  */
 export function bulkAddHasContent(sections: BulkSection[]): boolean {
-  const rowHasContent = (row: BulkMeasureRow) =>
-    row.room_name.trim() !== '' ||
-    row.height_cm.trim() !== '' ||
-    row.width_cm.trim() !== '';
   const configHasContent = (config: BlindDraft) =>
     config.blinds_type !== '' ||
     config.material_id !== '' ||
@@ -278,7 +296,7 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
     config.color !== '' ||
     config.note !== '' ||
     Object.values(config.attributes).some((v) => v.trim() !== '');
-  return sections.some((s) => configHasContent(s.config) || s.rows.some(rowHasContent));
+  return sections.some((s) => configHasContent(s.config) || s.rows.some(bulkRowHasContent));
 }
 
 /* ------------------------------------------------------------------ */

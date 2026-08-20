@@ -44,6 +44,7 @@ import { describe, it, expect } from 'vitest';
 import type { BlindDraft, Catalogs } from './lineItemDrafts';
 import {
   bulkAddHasContent,
+  bulkRowHasContent,
   expandBulkSections,
   newBulkRow,
   newBulkSection,
@@ -282,6 +283,40 @@ describe('expandBulkSections', () => {
     expect(d.bottom_rail_id).toBe('');
     expect(d.control_id).toBe('');
     expect(d.installation_id).toBe('');
+  });
+
+  it('an untouched sheet (default section, blank row) counts zero items and expands to nothing', () => {
+    // Regression test for the bug this fix-round addresses: before it,
+    // `BulkAddSheet.tsx`'s `itemCount` counted raw rows instead of rows
+    // with content, so an untouched sheet showed "Add 1 item", the
+    // confirm button was enabled, `validateBulkSections` returned `null`
+    // (an all-blank row trips no width/height/attribute check), and
+    // confirming silently expanded to an empty array and closed with
+    // nothing added. This mirrors the sheet's `itemCount` expression
+    // exactly, using the same exported `bulkRowHasContent` the sheet now
+    // uses, so a regression to that shared predicate is caught here too
+    // (there is no jsdom/testing-library in this repo to render the sheet
+    // itself and assert on the rendered button).
+    const sections = [newBulkSection()];
+    const itemCount = sections.reduce((n, s) => n + s.rows.filter(bulkRowHasContent).length, 0);
+    expect(itemCount).toBe(0);
+    expect(expandBulkSections(sections)).toEqual([]);
+  });
+});
+
+describe('bulkRowHasContent', () => {
+  it('is false for an entirely blank row', () => {
+    expect(bulkRowHasContent(newBulkRow())).toBe(false);
+  });
+
+  it('is true once a room name, width, or height has been typed', () => {
+    expect(bulkRowHasContent({ ...newBulkRow(), room_name: 'Bedroom' })).toBe(true);
+    expect(bulkRowHasContent({ ...newBulkRow(), width_cm: '120' })).toBe(true);
+    expect(bulkRowHasContent({ ...newBulkRow(), height_cm: '200' })).toBe(true);
+  });
+
+  it('is false for whitespace-only fields (not real content)', () => {
+    expect(bulkRowHasContent({ ...newBulkRow(), room_name: '   ' })).toBe(false);
   });
 });
 

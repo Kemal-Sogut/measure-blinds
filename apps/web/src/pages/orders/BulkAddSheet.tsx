@@ -38,6 +38,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   bulkAddHasContent,
+  bulkRowHasContent,
   expandBulkSections,
   newBulkRow,
   newBulkSection,
@@ -124,7 +125,12 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
 
   if (!open) return null;
 
-  const itemCount = sections.reduce((n, s) => n + s.rows.length, 0);
+  // Counts the same rows `expandBulkSections` will actually turn into
+  // items (`bulkRowHasContent`), not the raw row count — an untouched
+  // sheet's default blank row must count as zero, or the confirm button
+  // below would read "Add 1 item", stay enabled, and confirm would expand
+  // to an empty array and close with nothing added.
+  const itemCount = sections.reduce((n, s) => n + s.rows.filter(bulkRowHasContent).length, 0);
 
   /** Applies a sections update and clears any stale validation message. */
   function mutate(fn: (secs: BulkSection[]) => BulkSection[]) {
@@ -165,14 +171,30 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
     onCancel();
   }
 
-  /** Validates, then expands and hands the drafts up; blocks on the first error. */
+  /**
+   * Validates, then expands and hands the drafts up; blocks on the first
+   * error. The empty-result check is a defensive second gate alongside
+   * `disabled={itemCount === 0}` on the confirm button below (itself now
+   * driven by `bulkRowHasContent`, the same predicate `expandBulkSections`
+   * filters by) — validation alone cannot rule this out, since an
+   * all-blank-rows section trips no width/height/attribute check and
+   * still has a non-zero `rows.length`. Without this, a confirm reached
+   * some other way (a stale disabled state, a future caller) would call
+   * `onAdd([])`, silently closing the sheet with nothing added and no
+   * explanation — the exact dead end this guard exists to rule out.
+   */
   function handleConfirm() {
     const message = validateBulkSections(sections, catalogs);
     if (message) {
       setError(message);
       return;
     }
-    onAdd(expandBulkSections(sections));
+    const drafts = expandBulkSections(sections);
+    if (drafts.length === 0) {
+      setError('Add at least one row before confirming.');
+      return;
+    }
+    onAdd(drafts);
   }
 
   return (
