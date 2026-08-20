@@ -286,18 +286,6 @@ export function useSendOrder(): UseMutationResult<Order, Error, { id: string; me
   });
 }
 
-/**
- * Marks an estimate as sent WITHOUT emailing it (draft → sent).
- *
- * The counterpart to {@link useSendOrder} for estimates delivered in
- * person, printed, or handed over off-channel. Backs the Progress-
- * timeline advance control, which must never email a customer — only
- * the explicit Send action does that.
- */
-export function useMarkSent() {
-  return useLifecycleMutation((id) => `/api/orders/${id}/mark-sent`);
-}
-
 /** Emails the invoice for a confirmed order — no stage change. */
 export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; message?: string }> {
   const cache = useCacheOrder();
@@ -345,11 +333,6 @@ export function useConfirmOrder() {
 /** Reverse a confirmation — user only (awaiting_payment → sent). */
 export function useUnconfirmOrder() {
   return useLifecycleMutation((id) => `/api/orders/${id}/unconfirm`);
-}
-
-/** Move an awaiting-payment order to in-progress without a payment. */
-export function useMarkInProgress() {
-  return useLifecycleMutation((id) => `/api/orders/${id}/in-progress`);
 }
 
 /** Mark an in-progress order ready (goods ready to install). */
@@ -418,8 +401,17 @@ export function useMarkInstalled() {
   return useLifecycleMutation((id) => `/api/orders/${id}/installed`);
 }
 
-/** Reverts an order to an earlier lifecycle stage (manual override). */
-export function useRevertOrder(): UseMutationResult<
+/**
+ * Sets an order to ANY lifecycle stage — the manual override behind the
+ * Progress timeline, where a team member may jump forward, backward, or
+ * across stages in one action.
+ *
+ * The Worker reconciles the order's stage timestamps and clears a stale
+ * installation appointment, so the order it returns is authoritative and
+ * goes straight into the detail cache (which also refreshes the list and
+ * the activity log, since the move writes a log line).
+ */
+export function useSetOrderStatus(): UseMutationResult<
   Order,
   Error,
   { id: string; to: OrderStatus }
@@ -428,7 +420,7 @@ export function useRevertOrder(): UseMutationResult<
   return useMutation({
     mutationFn: async ({ id, to }) =>
       (
-        await apiFetch<Envelope<Order>>(`/api/orders/${id}/revert`, {
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/status`, {
           method: 'POST',
           body: JSON.stringify({ to }),
         })
