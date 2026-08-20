@@ -451,3 +451,83 @@ describe('hardware price basis', () => {
     ).toBe(0);
   });
 });
+
+describe('describeUnitCosts', () => {
+  /** A blind carrying a charge on all four slots, one per basis family. */
+  const loaded: BlindInputs = blind({
+    panels: [140],
+    height_cm: 200,
+    material_price_per_sqm: 50,
+    hardware: {
+      cassette: { price: 12, basis: 'per_m' },
+      bottom_rail: { price: 8, basis: 'per_m' },
+      control: { price: 25, basis: 'per_panel' },
+      installation: { price: 30, basis: 'per_unit' },
+    },
+  });
+
+  it('reports the material leg plus one leg per charge carried', () => {
+    // toBeCloseTo, not toBe: (140/100) * 12 is 16.799999999999997 in
+    // IEEE-754. The legs are deliberately unrounded — the price rounds
+    // their SUM once — so exact equality would fail for reasons that have
+    // nothing to do with the formula.
+    const legs = getBlindType('Roller').describeUnitCosts(loaded);
+    expect(legs.material).toBeCloseTo(140, 10); // 140 × 200 × 50 / 10000
+    expect(legs.cassette).toBeCloseTo(16.8, 10); // 1.4 m × 12
+    expect(legs.bottom_rail).toBeCloseTo(11.2, 10); // 1.4 m × 8
+    expect(legs.control).toBeCloseTo(25, 10); // 1 panel × 25
+    expect(legs.installation).toBeCloseTo(30, 10); // flat
+  });
+
+  it('omits a slot the blind does not carry rather than reporting it as 0', () => {
+    const legs = getBlindType('Roller').describeUnitCosts(blind());
+    expect(Object.keys(legs)).toEqual(['material']);
+    expect(legs.control).toBeUndefined();
+  });
+
+  it('inserts hardware legs in the order both callers build the map', () => {
+    // Not cosmetic: calculateUnitPrice reduces over these values and
+    // floating-point addition is not associative, so a different order
+    // could shift the last ULP and, at a half-cent boundary, the cent.
+    expect(Object.keys(getBlindType('Roller').describeUnitCosts(loaded))).toEqual([
+      'material',
+      'cassette',
+      'bottom_rail',
+      'control',
+      'installation',
+    ]);
+  });
+
+  it('applies the width and height minimums, like the price does', () => {
+    const small = blind({
+      panels: [60],
+      height_cm: 150,
+      material_price_per_sqm: 50,
+      hardware: { cassette: { price: 12, basis: 'per_m' } },
+    });
+    const legs = getBlindType('Roller').describeUnitCosts(small);
+    expect(legs.material).toBeCloseTo(100, 10); // minimised to 100cm × 200cm
+    expect(legs.cassette).toBeCloseTo(12, 10); // charged on the minimised 100cm
+  });
+
+  it('sums to calculateUnitPrice for every registered blind type', () => {
+    for (const type of [
+      'Roller',
+      'Zebra',
+      'Sunscreen/Solar',
+      'Roman',
+      'Honeycomb',
+      'Shutter',
+      'Vertical Panel',
+      'Vertical Roller',
+      'Vertical Sheer',
+      'Curtains',
+    ]) {
+      const module = getBlindType(type);
+      const { material, ...hw } = module.describeUnitCosts(loaded);
+      const summed =
+        Math.round((material + Object.values(hw).reduce((s, c) => s + (c ?? 0), 0)) * 100) / 100;
+      expect(summed).toBe(module.calculateUnitPrice(loaded));
+    }
+  });
+});

@@ -1,5 +1,90 @@
 # Engine Features / Feature History
 
+## 2026-08-20 — Order Presentation view (filters + per-option column totals) + `describeUnitCosts`
+A new customer-facing page, plus the one pricing change it needed. Money paths are
+behaviourally unchanged — see the bit-identical note below.
+
+**`BaseBlindType.describeUnitCosts()` (both twins, `lib/blindTypes/base.ts`).** The per-leg
+costs behind `calculateUnitPrice` (the material leg plus one `hardwareCost` call per slot the
+blind carries) were both `protected`, so no surface could say what an individual option cost
+without a SECOND copy of the basis maths. A new public `describeUnitCosts(item):
+UnitCostBreakdown` returns them, and `calculateUnitPrice` is now the sum of its result rather
+than a parallel calculation — the same reasoning that made `curtains.ts` stop computing its
+own control charge ("duplicating that maths here is what used to let the two drift apart").
+A hardware key is ABSENT, not zero, when the blind carries no charge on that slot.
+
+- **The refactor is bit-identical, not merely equivalent, and that took care.** Floating-point
+  addition is NOT associative. The old code summed hardware from zero and added material last
+  (`material + ((h1 + h2) + h3)`); a naive `sum(Object.values(breakdown))` would produce
+  `(((material + h1) + h2) + h3)`, a different association, a possible last-ULP difference and
+  therefore in principle a different cent at a half-cent boundary. So `calculateUnitPrice`
+  destructures the material leg OUT of the reduction, and `describeUnitCosts` inserts hardware
+  legs in the fixed order `cassette, bottom_rail, control, installation` — already the
+  insertion order both callers use (`resolveLineItems` on the Worker, `previewUnitPrice` in the
+  editor). Both `pricing.test.ts` suites gained the same 5 assertions, including a key-order
+  test that exists purely to protect this; every pre-existing expected value passed unmodified.
+
+**`lib/optionBreakdown.ts` (web).** Turns a SAVED `LineItem` back into pricing inputs from its
+own snapshot columns — nothing else in the app did this; the editor builds them from the
+catalog and the Worker from catalog rows at save time. Returns per-column cells
+(`material | color | cassette | bottom_rail | control | installation`), an adjustment, and the
+stored line total.
+
+- **Cells are FITTED to the stored price, not summed independently of it.** `line_total` is
+  `round2(unit_price × qty) + addonsTotal(addons)`, so `Σ round2(leg × qty)` is a different
+  number — with five legs it can differ by two or three cents (verified case: W=101, H=205,
+  $47.50/m², cassette $5.66/m, rail $6.66/m, control $19.99/panel, install $33.33, qty 4 →
+  naive material cell $393.40 against a row needing $393.38). Left alone that shows a phantom
+  adjustment on an ordinary line, which is exactly the "why doesn't this add up?" moment the
+  column exists to prevent. So hardware cells are computed directly and the MATERIAL cell
+  closes the gap: it is always present and always the largest leg.
+- `base_unit_price` is read in preference to `unit_price`, because on an overridden line that
+  is the price the OPTIONS produced — leaving the override itself to appear as the adjustment.
+  Same definition `originalLineTotal` already uses for the "was" price.
+- Invariant, directly tested: `Σ cells + adjustment === line_total`, exactly, on every row —
+  so `Σ column totals === overall total` too. The adjustment is therefore only ever real money
+  (a price override, custom add-ons), never rounding noise.
+
+**`/orders/:id/present` (`pages/orders/OrderPresentation.tsx`, lazy + guarded route).** One row
+per blind, one column per option type carrying what that choice cost, `<tfoot>` totals under
+each column. Columns for option types no visible blind carries are dropped entirely (an order
+of plain rollers renders narrow, not four columns of `—`), as is the Adjustment column when no
+visible line has one. An option costing nothing prints its bare name — no `$0.00`. `hidden`
+line items are excluded throughout (unlike `/overview`, which still shows them).
+
+- **Filter bar (`PresentationFilterBar.tsx` + pure `presentationFilters.ts`):** stacked
+  `[field] [value] [✕]` rows plus "+ Add filter". Every value is harvested from the ORDER's own
+  line items with a blind count (`Cordless (3)`), so a filter that matches nothing cannot be
+  built; a field no blind carries a value for is omitted from the dropdown entirely. Counts are
+  over ALL blinds, not the filtered subset, so they don't jump while a filter is being built.
+  **AND across fields, OR within one** — "cordless AND fabric-wrapped" narrows, "cordless OR
+  motorised" widens; ANDing everywhere would make two values of one field a guaranteed empty
+  table. A valueless row matches everything, so adding a filter never blanks the table
+  mid-gesture. Zero matches gets an explicit message, not a table with a `$0` footer.
+- **Two totals, deliberately labelled apart.** The table's overall total is `Σ line_total` of
+  what is visible and moves with the filters. The order strip (subtotal → discount → HST →
+  total) is read VERBATIM from the server row and never recomputed (AI_GUIDELINES §1) —
+  applying 13% to a filtered subset would put a fabricated number in front of a customer. While
+  filtered it carries "Showing 6 of 14 blinds · order total unchanged". Preset/custom lines get
+  an "Other items" section that counts toward the overall total but drops out once an OPTION
+  filter is active ("the cordless ones" cannot include a call-out fee).
+- **Entry point:** a "Present to Customer" `StageAction` (`ICONS.present`) placed FIRST in
+  `secondary` on the unconfirmed stages only — `draft` (which had no secondary actions at all
+  before), `sent` and `expired` — so it renders directly below the primary Confirm button in
+  both the desktop rail and the mobile sticky bar. It SAVES first (`const savedId = await
+  save()`, the `handleConfirm` pattern) because the page reads the server row, then navigates
+  in the SAME tab rather than `window.open` — a popup opened after an `await` is blocked, and
+  handing one tablet across a table beats juggling tabs.
+- Money helper here takes the sign OUT of the dollar interpolation (`−$21.20`, not `$-21.20`)
+  because the adjustment column goes negative on a discounted line — caught in browser
+  verification, not by a test.
+
+Verification: web `pnpm check` clean, `pnpm test` 336/336 (22 files), `pnpm lint` 0/0; api
+`pnpm check` clean, `pnpm test` 345/345 (18 files). The components were driven through a
+throwaway component-level Vite entry (the same technique used for the bulk-add row) at 1280px
+and 768px: AND/OR combination, column dropping, the empty state, exact reconciliation of every
+footer figure, 44px selects, and a body that does not scroll sideways while the table scrolls
+inside itself. Not yet driven inside the real authenticated app on a device.
 ## 2026-08-20 — Installed orders quote the outstanding balance in "How to pay"
 Web-only (no API, schema, or pricing surface). An installed order that still owes money now
 shows the customer HOW MUCH to send, not just where.

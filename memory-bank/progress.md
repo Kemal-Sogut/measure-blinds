@@ -72,6 +72,20 @@ Production labels (browser `window.print()`, one 3x1.5in label per unit of quant
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).
 
+**Order Presentation (`/orders/:id/present`):** the customer-facing view a consultant turns
+toward the customer in person, reached from a "Present to Customer" action directly below
+Confirm on the UNCONFIRMED stages only (draft, sent, expired); it saves before navigating,
+same tab. One row per blind, one column per option type carrying that option's money, plus
+`<tfoot>` totals per column that track a stackable filter bar (AND across option types, OR
+within one; every value harvested from the order's own line items with a blind count). Unused
+option columns and the Adjustment column drop out; hidden items are excluded; an option that
+adds nothing prints its bare name. Per-option money comes from the new public
+`BaseBlindType.describeUnitCosts()` — `calculateUnitPrice` is now the SUM of that breakdown,
+so a price basis is still interpreted in exactly one place. Cells are fitted to the stored
+price so `Σ cells + adjustment === line_total` exactly on every row. The filter-tracking
+overall total and the server-authoritative order strip (subtotal/discount/HST/total, never
+recomputed) are deliberately separate numbers.
+
 **Settings/catalogs:** Materials (per-blind-type, many-to-many linking), cassette/bottom-rail/
 control/installation option catalogs (scoped per type, price + basis), per-type defaults,
 company info + logo, Terms & Conditions, e-Transfer details.
@@ -87,9 +101,12 @@ built but switched off (`ADDRESS_SEARCH_ENABLED = false` in `AddressAutocomplete
 ## What's Left / Known Issues
 - **No real device has ever driven the app itself.** Every staff route sits behind
   `ProtectedRoute`, so verification to date is types + tests + production builds, occasionally
-  a signed-in desktop-Chrome session, or (once, 2026-08-20) a throwaway component-level Vite
-  harness for the bulk-add row — never the live app on a real phone/tablet. This is the
-  standing gap behind nearly every "verify before field use" note below.
+  a signed-in desktop-Chrome session, or (twice, 2026-08-20) a throwaway component-level Vite
+  harness — for the bulk-add row, and for the Order Presentation table and filter bar — never
+  the live app on a real phone/tablet. This is the standing gap behind nearly every "verify
+  before field use" note below. The Presentation page's own shell (data fetch, order-total
+  strip, other-items section, print layout) has therefore never been rendered at all; only its
+  two child components have.
 - Bulk-add's newest UI still has real gaps beyond the row-width fix above: the live
   panel-shorthand split has not been tried on an actual iOS decimal keypad, and the card/row
   contrast pass and wider popups have never been rendered and looked at by a human or an
