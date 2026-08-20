@@ -25,10 +25,25 @@
  *   produced returns the original array, and formatting what `parse`
  *   produced (for inputs without incidental whitespace) returns the
  *   original string.
+ *
+ * `applyPanelEdit` gets its own `describe` below: it is the pure
+ * state-transition half of `PanelWidths`' (`blindForms/fields.tsx`) live
+ * split-on-`+` behaviour, pulled out specifically so it can be tested
+ * without rendering — this repo has no `@testing-library/react` or jsdom
+ * test environment to simulate real `onChange`/focus events against a
+ * mounted component. Its cases simulate a live typing sequence as
+ * SEPARATE calls (one per keystroke-driven `onChange`, exactly how
+ * `PanelWidths` drives it), pinning the exact corruption a naive
+ * index-keyed re-render causes when focus is not moved after a split: the
+ * next keystroke landing back in the first panel instead of the new one.
+ * `applyPanelEdit`'s `focusIndex` return value is what `PanelWidths` uses
+ * to move focus — see that function's own JSDoc for why the DOM-focus half
+ * of the fix (the `useEffect` + ref map in `PanelWidths`) is verified by
+ * code-level reasoning rather than a test here.
  */
 
 import { describe, it, expect } from 'vitest';
-import { parsePanelInput, formatPanelInput } from './panelInput';
+import { parsePanelInput, formatPanelInput, applyPanelEdit } from './panelInput';
 
 describe('parsePanelInput', () => {
   it('splits a multi-panel entry on "+" into trimmed widths', () => {
@@ -116,5 +131,64 @@ describe('round-trip', () => {
     for (const value of cases) {
       expect(formatPanelInput(parsePanelInput(value))).toBe(value);
     }
+  });
+});
+
+describe('applyPanelEdit', () => {
+  it('pins the corruption case: "118+118" typed as separate keystroke events into panel 0 must end up ["118","118"], not ["118118",""]', () => {
+    // Simulates typing '118', then '+', then '118' as three separate
+    // change events (the granularity that matters — the middle event is
+    // the one where the split happens and focus must move). Each call
+    // below plays the role of one onChange firing against whichever panel
+    // currently holds focus, exactly as `PanelWidths` drives it.
+    let panels = [''];
+
+    // Typed '1', '11', '118' — ordinary typing, no '+' yet, same panel.
+    let r = applyPanelEdit(panels, 0, '118');
+    panels = r.panels;
+    expect(panels).toEqual(['118']);
+    expect(r.focusIndex).toBeNull(); // no split: nothing to refocus
+
+    // Typed '+' — the split happens on THIS keystroke.
+    r = applyPanelEdit(panels, 0, '118+');
+    panels = r.panels;
+    expect(panels).toEqual(['118', '']);
+    // The trailing panel is ready and waiting — this is what a caller
+    // (PanelWidths) must move focus to.
+    expect(r.focusIndex).toBe(1);
+    const focusIndex = r.focusIndex;
+    if (focusIndex === null) throw new Error('expected a focus index after a split');
+
+    // The bug this guards: if focus were NOT moved, the next keystroke
+    // would still target panel 0, corrupting it to '1181'. Simulating the
+    // CORRECT behaviour — typing lands in the panel `focusIndex` named —
+    // proves panel 0 stays exactly '118', untouched by what comes next.
+    r = applyPanelEdit(panels, focusIndex, '1');
+    panels = r.panels;
+    expect(panels).toEqual(['118', '1']);
+    expect(panels[0]).toBe('118'); // must NOT have become '1181'
+
+    r = applyPanelEdit(panels, 1, '11');
+    panels = r.panels;
+    r = applyPanelEdit(panels, 1, '118');
+    panels = r.panels;
+    expect(panels).toEqual(['118', '118']);
+  });
+
+  it('a plain value with no "+" updates only the edited panel and asks for no focus change', () => {
+    const r = applyPanelEdit(['100', '200'], 1, '250');
+    expect(r.panels).toEqual(['100', '250']);
+    expect(r.focusIndex).toBeNull();
+  });
+
+  it('leaves every OTHER panel in the row untouched by a split', () => {
+    const r = applyPanelEdit(['50', '', '200'], 1, '118.5+118');
+    expect(r.panels).toEqual(['50', '118.5', '118', '200']);
+  });
+
+  it('reports the first newly-created index after a multi-way split, not the last', () => {
+    const r = applyPanelEdit(['', '200'], 0, '100+120+140');
+    expect(r.panels).toEqual(['100', '120', '140', '200']);
+    expect(r.focusIndex).toBe(1);
   });
 });

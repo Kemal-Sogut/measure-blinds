@@ -76,3 +76,55 @@ export function parsePanelInput(value: string): string[] {
 export function formatPanelInput(panels: string[]): string {
   return panels.join('+');
 }
+
+/**
+ * Applies one panel-width input's new raw value into a `panels` array,
+ * expanding `+` shorthand via `parsePanelInput` in place of the single
+ * panel being edited, and reports which index — if any — a caller must
+ * move keyboard focus to afterwards.
+ *
+ * Exists as a pure function, separate from the component that calls it
+ * (`PanelWidths` in `blindForms/fields.tsx`), specifically so the FOCUS
+ * decision can be unit-tested without a DOM/React-rendering harness this
+ * repo does not have (no `@testing-library/react`, no jsdom environment —
+ * see `panelInput.test.ts`'s own doc for what that lets this file's tests
+ * pin down and what they cannot).
+ *
+ * The focus index matters because of a real corruption bug this function
+ * exists to prevent: `PanelWidths` renders one `<input>` per panel keyed
+ * by ARRAY INDEX. When a split inserts new panels, React reconciles the
+ * index the user was typing into as the SAME DOM node (same key, no
+ * unmount) and force-corrects its value down from the live keystroke
+ * (e.g. `'118+'`) to the shorter split result (`'118'`) — but does nothing
+ * to move focus. Left alone, the browser's caret and React's idea of
+ * "which input has focus" both stay on that same node, so the very next
+ * keystroke lands back in the FIRST panel instead of the new one the split
+ * just created — `'118+118'` typed one character at a time would silently
+ * produce panels `['118118', '']` instead of `['118', '118']`. The caller
+ * MUST explicitly focus `focusIndex` (the first newly-created panel, i.e.
+ * `index + 1` — always a real index, since `parsePanelInput` always splits
+ * a `+`-containing value into 2 or more parts) once the new panel's input
+ * has mounted, or this bug reappears.
+ *
+ * @param panels current panel-width strings, in display order
+ * @param index which panel is being edited
+ * @param value that panel input's new raw value (post-keystroke)
+ * @returns `panels` with `index` updated (or expanded, if `value` contains
+ *   `+`), and `focusIndex` — the panel index to focus next, or `null` when
+ *   no split happened and the edited input should simply keep its own
+ *   focus, which it already has and nothing needs to move it there
+ */
+export function applyPanelEdit(
+  panels: string[],
+  index: number,
+  value: string
+): { panels: string[]; focusIndex: number | null } {
+  if (!value.includes('+')) {
+    const next = panels.slice();
+    next[index] = value;
+    return { panels: next, focusIndex: null };
+  }
+  const next = panels.slice();
+  next.splice(index, 1, ...parsePanelInput(value));
+  return { panels: next, focusIndex: index + 1 };
+}

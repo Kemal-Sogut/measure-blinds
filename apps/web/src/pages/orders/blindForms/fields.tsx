@@ -22,7 +22,7 @@
  * the control shrink and clip its own label instead. Do not remove it.
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   applyTypeDefaults,
   materialsForType,
@@ -33,7 +33,7 @@ import {
   type Catalogs,
 } from '../lineItemDrafts';
 import { clearPriceOverride } from '../lineItemBulk';
-import { parsePanelInput } from '../panelInput';
+import { applyPanelEdit } from '../panelInput';
 
 /* ------------------------------------------------------------------ */
 /* Tokens                                                              */
@@ -222,29 +222,54 @@ export function RoomField({ draft, onChange }: Pick<BlindFormProps, 'draft' | 'o
  * it (an explicit maintainer decision — unlike the bulk-add sheet's row,
  * which drops the button and offers the shorthand only). Typing a value
  * containing `+` into ANY one panel input — not just the last — expands it
- * on that same keystroke: `setPanel` runs the typed value through
- * `parsePanelInput` and splices the result into the `panels` array in
- * place of the single panel being edited, so `'118.5+118'` typed into
- * panel 1 of `['', '200']` yields `['118.5', '118', '200']` — that panel
- * plus the following ones, with every OTHER panel in the row left
- * untouched. A value with no `+` is stored as-is, same as before this
- * shorthand existed, so ordinary single-panel typing (including a
- * half-typed `12.`) is completely unaffected. The button remains because
- * tapping is still the faster, error-free path for someone who is not
- * already thinking in shorthand — this input never forces one style over
- * the other.
+ * on that same keystroke: `setPanel` calls `applyPanelEdit` (`panelInput.ts`),
+ * which splices `parsePanelInput`'s result into the `panels` array in place
+ * of the single panel being edited, so `'118.5+118'` typed into panel 1 of
+ * `['', '200']` yields `['118.5', '118', '200']` — that panel plus the
+ * following ones, with every OTHER panel in the row left untouched. A value
+ * with no `+` is stored as-is, same as before this shorthand existed, so
+ * ordinary single-panel typing (including a half-typed `12.`) is completely
+ * unaffected. The button remains because tapping is still the faster,
+ * error-free path for someone who is not already thinking in shorthand —
+ * this input never forces one style over the other.
+ *
+ * A split MUST also move keyboard focus to the newly-created panel, or
+ * on-site typing silently corrupts data: these inputs are keyed by array
+ * INDEX, so after a split React reconciles the panel the user was typing
+ * into as the SAME node (no unmount) and force-corrects its value down to
+ * the shorter split result, but leaves focus exactly where it was. Without
+ * an explicit refocus, the next keystroke would land back in that same
+ * (now shorter) input instead of the new one, silently turning
+ * `'118+118'` typed one key at a time into panels `['118118', '']` rather
+ * than `['118', '118']`. `pendingFocusIndex` + `panelInputRefs` fix this by
+ * reusing `BulkAddSheet.tsx`'s own Enter-to-add-row focus-hop pattern
+ * (a "wants focus" index in state, a ref map keyed by array index, and an
+ * effect that focuses it and clears the pending index): `setPanel` records
+ * `applyPanelEdit`'s `focusIndex` when a split happens, and the effect
+ * below runs after the new panel's input has actually mounted (refs attach
+ * during React's commit phase, before passive effects run — the same
+ * ordering fact `BulkAddSheet.tsx`'s own doc comment relies on), so the ref
+ * lookup can never miss.
  */
 export function PanelWidths({ draft, onChange }: Pick<BlindFormProps, 'draft' | 'onChange'>) {
   const panelSum = draft.panels.reduce((a, p) => a + (parsePositive(p) ?? 0), 0);
+  const [pendingFocusIndex, setPendingFocusIndex] = useState<number | null>(null);
+  const panelInputRefs = useRef(new Map<number, HTMLInputElement>());
+
+  useEffect(() => {
+    if (pendingFocusIndex === null) return;
+    const el = panelInputRefs.current.get(pendingFocusIndex);
+    if (el) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+    setPendingFocusIndex(null);
+  }, [pendingFocusIndex]);
 
   function setPanel(i: number, value: string) {
-    const panels = draft.panels.slice();
-    if (value.includes('+')) {
-      panels.splice(i, 1, ...parsePanelInput(value));
-    } else {
-      panels[i] = value;
-    }
+    const { panels, focusIndex } = applyPanelEdit(draft.panels, i, value);
     onChange({ ...draft, panels });
+    if (focusIndex !== null) setPendingFocusIndex(focusIndex);
   }
 
   return (
@@ -258,6 +283,10 @@ export function PanelWidths({ draft, onChange }: Pick<BlindFormProps, 'draft' | 
           {draft.panels.map((p, i) => (
             <div key={i} className="relative min-w-0 flex-1">
               <input
+                ref={(el) => {
+                  if (el) panelInputRefs.current.set(i, el);
+                  else panelInputRefs.current.delete(i);
+                }}
                 inputMode="decimal"
                 value={p}
                 onChange={(e) => setPanel(i, e.target.value)}
