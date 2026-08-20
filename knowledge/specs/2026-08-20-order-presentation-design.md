@@ -208,28 +208,59 @@ A slot is **absent** (not zero) when its `*_id` is null — matching how both th
 and the Worker build the map. `attributes` is passed through as stored, so Curtains'
 `pleat_multiplier` prices its material leg correctly. Null rates coerce to 0.
 
-### 5.3 Cell values and the penny
-
-For a column's leg `L` on a line of quantity `q`: cell amount = `round2(L × q)`.
+### 5.3 Cell values, and making the row add up
 
 Rendering: `Cordless (+$50.00)` when the amount is non-zero, bare `Cordless` when it
 is zero — per the requirement not to print `$0`. Colour is always name-only (it is
 free-text with no pricing effect). An absent slot renders `—`.
 
-Because legs are rounded individually for display but summed-then-rounded for the
-price, the displayed cells can miss the line total by a cent. A **largest-remainder
-correction** pushes that cent onto the material leg (always the largest), so the
-displayed row sums exactly. The Adjustment column is therefore reserved for real
-money and never shows rounding noise.
+The arithmetic needs care, because the stored line total is built by a different
+rounding path than "round each leg and add them up". From `lineItemAdjustments.ts`:
+
+```
+unit_price  = round2(override ?? Σ legs)
+line_total  = round2(unit_price × quantity) + addonsTotal(addons)
+```
+
+So `Σ round2(leg × q)` and `round2(round2(Σ legs) × q)` are not the same number —
+with up to five legs they can differ by two or three cents. Left alone that surfaces
+as a phantom `$0.02` in the Adjustment column of an ordinary, un-overridden line,
+which is exactly the "why doesn't this add up?" moment the column exists to prevent.
+
+The cells are therefore **fitted to the authoritative figure** rather than computed
+independently of it:
+
+```
+calcUnit    = base_unit_price ?? unit_price      // the CALCULATED price per blind
+optionsLine = round2(calcUnit × quantity)        // what the options come to on this line
+legs        = describeUnitCosts(inputs)          // unrounded, per blind
+
+cell[slot]  = round2(legs[slot] × quantity)      for each hardware slot
+cell.material = round2(optionsLine − Σ cell[slot])
+```
+
+Material carries the correction because it is always present and always the largest
+leg, so a two-cent adjustment is invisible there and cannot push a cell negative.
+`Σ cells === optionsLine` exactly, by construction.
+
+`calcUnit` deliberately reads `base_unit_price` first: on an overridden line that is
+the price the options actually produced, and `unit_price` is the consultant's typed
+figure. This matches how `originalLineTotal` already defines the "was" price.
 
 ### 5.4 Adjustment column
 
-`adjustment = round2(line_total − Σ displayed cells)`.
+```
+adjustment = round2(line_total − optionsLine)
+```
 
-Non-zero only from a consultant price override (`base_unit_price !== null`) or custom
-add-ons (`addons[]`). Rendered as a quiet column, blank when zero, so **every row's
-option columns sum exactly to its line total** and the column totals sum exactly to
-the overall total. Nothing on screen ever fails to add up in front of a customer.
+which resolves to `addonsTotal(addons) + (unit_price − base_unit_price) × quantity` —
+i.e. **only real money**: a consultant price override, custom add-ons, or both. Never
+rounding noise, because §5.3 fitted the cells to `optionsLine`.
+
+Rendered as a quiet column, blank when zero. The invariant it buys:
+`Σ option cells + adjustment === line_total` on every row, exactly, and therefore
+`Σ column totals === overall total` exactly. Nothing on screen ever fails to add up in
+front of a customer.
 
 ## 6. Filters
 
@@ -344,7 +375,7 @@ grows by roughly 20 lines rather than absorbing the feature.
 |---|---|
 | `apps/web/src/lib/pricing.test.ts` | `Σ describeUnitCosts() === calculateUnitPrice()` across every basis and for Curtains; `describeUnitCosts` key order is `cassette, bottom_rail, control, installation` (§5.1.1); existing expected values unchanged and unmodified |
 | `apps/api/src/lib/pricing.test.ts` | the same assertions, mirrored |
-| `apps/web/src/lib/optionBreakdown.test.ts` | absent vs zero slots; each of the four bases; qty > 1; width/height minimums applied; penny correction; adjustment from an override; adjustment from add-ons; cells sum to `line_total` |
+| `apps/web/src/lib/optionBreakdown.test.ts` | absent vs zero slots; each of the four bases; qty > 1; width/height minimums applied; material absorbs the fitting correction (§5.3); an ordinary un-overridden line has adjustment exactly 0; adjustment from an override; adjustment from add-ons; both together; `Σ cells + adjustment === line_total` on every case |
 | `apps/web/src/pages/orders/presentationFilters.test.ts` | facet extraction with counts; fields with no values omitted; AND-across / OR-within incl. the 10-window worked example; valueless filter matches everything; empty result |
 
 Verification per AI_GUIDELINES §9: `pnpm check`, `pnpm test`, `pnpm lint` in
