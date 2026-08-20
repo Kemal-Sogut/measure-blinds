@@ -305,6 +305,95 @@ describe('itemContent color', () => {
 });
 
 /**
+ * Per-option money on the specification block: what each hardware choice
+ * added to the LINE, so the reader can account for the line total instead
+ * of taking one figure on trust.
+ *
+ * The figures come from `lib/optionBreakdown.ts`, which is tested on its
+ * own; what matters here is that the right ones reach the right lines and
+ * that a line without money still prints its option name.
+ */
+describe('itemContent option prices', () => {
+  /** Two blinds, one charge on each basis — the fixture from `optionBreakdown.test.ts`. */
+  const priced: PdfDocumentData['line_items'][number] = {
+    item_type: 'blind',
+    room_name: 'Living Room',
+    blinds_type: 'Roller',
+    panels: [70, 70],
+    height_cm: 200,
+    material_name: 'Blackout White',
+    cassette_name: 'Standard Cassette',
+    cassette_id: 'cas-1',
+    cassette_price_per_m: 10,
+    cassette_price_basis: 'per_m',
+    bottom_rail_name: 'Regular Rail',
+    bottom_rail_id: 'rail-1',
+    bottom_rail_price_per_m: 5,
+    bottom_rail_price_basis: 'per_sqm',
+    control_name: 'Chain Control',
+    control_id: 'ctl-1',
+    control_price_per_item: 12,
+    control_price_basis: 'per_panel',
+    installation_name: 'Standard Rod',
+    installation_id: 'inst-1',
+    installation_price_per_item: 30,
+    installation_price_basis: 'per_unit',
+    color: 'White 02',
+    description: '',
+    quantity: 2,
+    unit_price: 220,
+    line_total: 440,
+  };
+
+  it('prints each hardware option with what it added to the line', () => {
+    expect(itemContent(priced).attrs).toEqual([
+      'Panels: 70 + 70 cm (total 140 cm) x H 200 cm',
+      'Material: Blackout White',
+      'Color: White 02',
+      'Cassette: Standard Cassette — $28.00',
+      'Bottom rail: Regular Rail — $28.00',
+      'Control: Chain Control — $48.00',
+      'Installation: Standard Rod — $60.00',
+    ]);
+  });
+
+  it('leaves material and colour without a figure', () => {
+    // Material is the fabric the blind is made of rather than an extra
+    // chosen on top, and colour carries no charge at all.
+    const { attrs } = itemContent(priced);
+    expect(attrs).toContain('Material: Blackout White');
+    expect(attrs).toContain('Color: White 02');
+  });
+
+  it('prints the name alone for an option that added nothing', () => {
+    const free = { ...priced, cassette_price_per_m: 0 };
+    expect(itemContent(free).attrs).toContain('Cassette: Standard Cassette');
+  });
+
+  it('prints names alone on a row with no stored price bases', () => {
+    // Warranty and receipt payloads are assembled elsewhere and carry no
+    // rate columns; a document built from one must still name its options.
+    const bare = {
+      ...priced,
+      cassette_id: undefined,
+      cassette_price_per_m: undefined,
+      cassette_price_basis: undefined,
+      bottom_rail_id: undefined,
+      bottom_rail_price_per_m: undefined,
+      bottom_rail_price_basis: undefined,
+      control_id: undefined,
+      control_price_per_item: undefined,
+      control_price_basis: undefined,
+      installation_id: undefined,
+      installation_price_per_item: undefined,
+      installation_price_basis: undefined,
+    };
+    expect(itemContent(bare).attrs.some((a) => a.includes(' — $'))).toBe(false);
+    expect(itemContent(bare).attrs).toContain('Control: Chain Control');
+  });
+});
+
+/**
  * Flat items on a document: the title heads the row, the description
  * becomes indented detail lines, and add-ons print with their prices.
  */

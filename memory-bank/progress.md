@@ -69,7 +69,13 @@ price override only when something that actually feeds the price changed.
 
 **Documents & communications:** branded estimate/invoice PDFs (pdf-lib) with a clickable
 "View your order online" link matching the app's brand blue (`#2563eb`) throughout — button,
-web, and email templates now agree. Warranty certificates issue automatically on paid-in-full
+web, and email templates now agree. Each blind's four hardware options print what they added
+to the LINE beside their names on both the PDF and the public customer page
+(`Cassette: Standard — $28.00`); a zero-cost option prints its name alone, and material,
+colour and blind-type attributes carry no figure. The amounts come from
+`apps/api/src/lib/optionBreakdown.ts` (`optionLineAmounts`) — snapshot columns back through
+`describeUnitCosts`, × quantity, rounded — and reach the unauthenticated page as
+`option_prices` on the public payload, never as rates or price bases. Warranty certificates issue automatically on paid-in-full
 (10y products / 2y motorised parts, parts-only — no workmanship cover), resendable, staff-
 downloadable. Payment receipt emails per payment. 13 responsive HTML email templates.
 Production labels (browser `window.print()`, one 3x1.5in label per unit of quantity, shop-code

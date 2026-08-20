@@ -32,6 +32,8 @@
 import { PDFDocument, PDFFont, PDFPage, PDFString, StandardFonts, rgb } from 'pdf-lib';
 import { displayName } from './customerName';
 import { getBlindType } from './blindTypes';
+import type { CatalogSlot, PriceBasis } from './blindTypes/base';
+import { optionLineAmounts } from './optionBreakdown';
 import { originalLineTotal, type Addon } from './lineItemAdjustments';
 
 /** A single recorded payment, printed on invoices. */
@@ -73,6 +75,25 @@ export interface PdfDocumentData {
     control_name: string | null;
     /** Rod/track slot; null for a type with none scoped to it. */
     installation_name?: string | null;
+    /**
+     * Snapshotted hardware ids, rates and price bases — the inputs
+     * `optionLineAmounts` needs to print what each option added to the
+     * line. Optional and nullable because warranty and receipt payloads
+     * are assembled elsewhere in the codebase: an older assembled object
+     * simply prints its option names with no figures beside them.
+     */
+    cassette_id?: string | null;
+    cassette_price_per_m?: number | string | null;
+    cassette_price_basis?: PriceBasis | null;
+    bottom_rail_id?: string | null;
+    bottom_rail_price_per_m?: number | string | null;
+    bottom_rail_price_basis?: PriceBasis | null;
+    control_id?: string | null;
+    control_price_per_item?: number | string | null;
+    control_price_basis?: PriceBasis | null;
+    installation_id?: string | null;
+    installation_price_per_item?: number | string | null;
+    installation_price_basis?: PriceBasis | null;
     color?: string | null;
     description: string | null;
     note?: string | null;
@@ -201,6 +222,13 @@ export function addressLines(a: {
  * (presets, custom lines) print their description alone with no
  * attributes.
  *
+ * The four hardware options additionally carry what they added to this
+ * LINE (`optionLineAmounts`, i.e. the leg × quantity), so the reader can
+ * account for the line total rather than take it on trust. An option
+ * costing nothing prints its name alone — and Material, Color and the
+ * blind type's own attributes never carry a figure (see
+ * `lib/optionBreakdown.ts` for why).
+ *
  * Exported for unit tests, which assert the attribute order and the
  * omission rules without having to parse rendered PDF bytes.
  */
@@ -214,16 +242,25 @@ export function itemContent(li: PdfDocumentData['line_items'][number]): {
   const addonLines = (li.addons ?? []).map((a) => `${a.label} — ${money(a.price)}`);
   if (li.item_type === 'blind') {
     const title = [li.room_name || 'Blind', li.blinds_type].filter(Boolean).join(' — ');
+    // What each hardware choice added to THIS line, so a reader can see
+    // where the line total came from instead of taking one figure on
+    // trust. An option that added nothing prints its name alone: "$0.00"
+    // beside a choice says nothing the missing figure does not.
+    const amounts = optionLineAmounts(li);
+    const priced = (label: string, name: string, slot: CatalogSlot): string => {
+      const amount = amounts[slot];
+      return amount ? `${label}: ${name} — ${money(amount)}` : `${label}: ${name}`;
+    };
     const attrs = [
       li.panels?.length
         ? `Panels: ${li.panels.join(' + ')} cm (total ${li.panels.reduce((a, b) => a + b, 0)} cm) x H ${li.height_cm} cm`
         : null,
       li.material_name ? `Material: ${li.material_name}` : null,
       li.color?.trim() ? `Color: ${li.color.trim()}` : null,
-      li.cassette_name ? `Cassette: ${li.cassette_name}` : null,
-      li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : null,
-      li.control_name ? `Control: ${li.control_name}` : null,
-      li.installation_name ? `Installation: ${li.installation_name}` : null,
+      li.cassette_name ? priced('Cassette', li.cassette_name, 'cassette') : null,
+      li.bottom_rail_name ? priced('Bottom rail', li.bottom_rail_name, 'bottom_rail') : null,
+      li.control_name ? priced('Control', li.control_name, 'control') : null,
+      li.installation_name ? priced('Installation', li.installation_name, 'installation') : null,
       // The blind type's own inputs, formatted by the type itself so the
       // PDF, the manufacturer copy and the customer page cannot disagree
       // about labels. Positioned with the other SPECIFICATION lines; the

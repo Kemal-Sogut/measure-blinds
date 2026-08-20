@@ -25,6 +25,20 @@ spec/plan in `docs/superpowers/` (local-only). Verified: api `pnpm check` clean,
 in the running app — `/orders/:id` is behind `ProtectedRoute` and no signed-in session was
 available.
 
+Uncommitted in the working tree (on `main`): per-option prices on the customer's documents.
+The four hardware options (cassette, bottom rail, control, installation) now print what they
+added to the LINE beside their names on the estimate/invoice PDF and the public customer page
+— `Cassette: Standard — $28.00` — with a zero-cost option printing its name alone, and
+material/colour/blind-type attributes staying bare. New `apps/api/src/lib/optionBreakdown.ts`
+(`optionLineAmounts`) rebuilds the priced `hardware` map from the row's snapshot columns and
+reads the legs back out of `describeUnitCosts`, so no price basis is interpreted twice; it is
+the server twin of the hardware half of `apps/web/src/lib/optionBreakdown.ts`. The public
+payload gained `option_prices` per line item — computed server-side because that endpoint is
+unauthenticated and the page holds no catalog (rule 1); the rates and bases never leave the
+Worker. Verified: api 380/380, web 336/336, both `pnpm check` clean, `oxlint` clean; NOT seen
+in a browser (the customer page needs a live token + running Worker). See
+`knowledge/history/engine_features.md`, 2026-08-20.
+
 Live on `main`: server-authoritative pricing with per-type blind modules (Curtains is the one
 type with a divergent formula); per-type hardware scoping + price basis; per-blind-type saved
 defaults (Settings → Defaults); bulk-add (multi-section, works before a type/material is

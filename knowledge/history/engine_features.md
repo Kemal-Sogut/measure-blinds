@@ -3384,3 +3384,54 @@ keeps an existing `sent_at`; a target of ready or later keeps the appointment; t
 409 no-op with no write; 400 on `expired`; 404), web 336/336, both `tsc --noEmit` clean,
 `oxlint` clean. NOT verified: the timeline clicked in the running app — `/orders/:id` is
 behind `ProtectedRoute` and no signed-in session was available in this environment.
+
+## 2026-08-20 - Per-option prices on the customer's documents
+
+Every hardware option a blind carries now prints what it ADDED TO THE LINE beside its name,
+on the estimate/invoice PDF and on the public customer page: `Cassette: Standard — $28.00`.
+An option that added nothing prints its name alone — "$0.00" beside a choice tells a customer
+nothing the missing figure does not already say. Material, Color and a blind type's own
+attribute lines stay bare: material is the fabric the blind is made of rather than an extra
+chosen on top (and is the leg the internal presentation table fits its rounding into), and
+colour carries no charge at all.
+
+**`apps/api/src/lib/optionBreakdown.ts` (new).** `optionLineAmounts(item)` rebuilds the
+`hardware` map from the item's own SNAPSHOT columns (`<slot>_id`, the rate column, and
+`<slot>_price_basis`), feeds it to `getBlindType(blinds_type).describeUnitCosts` — the same
+call that produced `unit_price`, so no price basis is ever interpreted twice — and returns
+`round2(leg × quantity)` per slot. Line-level, not per-blind: the figure sits beside an option
+on a document whose money column is the line total. `material_price_per_sqm` is passed as 0
+because only the hardware legs are read back out.
+
+Absent-vs-zero is preserved exactly as `resolveLineItems` and the web twin define it: a slot
+is ABSENT when its id is null (no such option), and a pre-migration-36 row carrying an id with
+a null basis is also absent — the rate alone cannot say what was charged, and guessing would
+invent money on a historical document. A chosen option costing nothing is `0`, which is a
+different fact and reaches the document as a named option.
+
+Twin of the hardware half of `apps/web/src/lib/optionBreakdown.ts` (which serves the internal
+Order Presentation table from the full `LineItem` type). Both read the same columns under the
+same rule; a change to that rule lands on both sides.
+
+**PDF** (`apps/api/src/lib/pdf.ts`). `itemContent` calls `optionLineAmounts(li)` and appends
+` — $x.xx` to the four hardware lines. `PdfDocumentData['line_items']` gained the id / rate /
+basis columns as OPTIONAL — warranty and receipt payloads are assembled elsewhere and an older
+assembled object simply prints its option names bare. `toPdfData` already spreads the whole
+row, so no route change was needed.
+
+**Public page** (`apps/api/src/routes/public.ts` → `CustomerView.tsx`). The Worker sends a new
+`option_prices: { cassette?, bottom_rail?, control?, installation? }` per line item. Computed
+server-side for the same reason every other figure on that payload is: the page holds no
+catalog and may not derive money (rule 1), and the endpoint is unauthenticated, so the rate
+columns and price bases stay on the server — a customer is shown what a choice cost them, not
+the shop's price list. `PublicLineItem.option_prices` is optional, so a page served by an
+older Worker renders the names bare.
+
+### Verified
+api 380/380 (12 new: 8 in `optionBreakdown.test.ts` covering each basis, both dimension
+minimums, cent rounding, zero-vs-absent, the null-basis legacy row, non-blind items and
+PostgREST string columns; 4 in `pdf.test.ts` for the rendered lines; 1 in
+`public.routes.test.ts` asserting `option_prices` is sent while `price_basis` and the rate
+columns never appear in the response bytes), web 336/336, both `tsc --noEmit` clean, `oxlint`
+clean. NOT verified in a browser: the customer page needs a live order token and the running
+Worker, neither available in this environment.

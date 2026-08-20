@@ -343,6 +343,49 @@ describe('GET /public/estimate/:token', () => {
     expect(body.data.line_items[0].room_name).toBe('Living Room');
   });
 
+  it('sends per-option money but never the rates or bases behind it', async () => {
+    // The page prints what each hardware choice cost the customer. It may
+    // not derive that itself (no catalog, and AI_GUIDELINES rule 1), so
+    // the Worker computes it — while the shop's rate columns and price
+    // bases stay server-side, since this endpoint is unauthenticated.
+    db.order = {
+      ...sentOrder(),
+      line_items: [
+        {
+          item_type: 'blind',
+          room_name: 'Living Room',
+          blinds_type: 'Roller',
+          panels: [70, 70],
+          height_cm: 200,
+          material_name: 'Blackout White',
+          cassette_name: 'Standard',
+          cassette_id: 'cas-1',
+          cassette_price_per_m: 10,
+          cassette_price_basis: 'per_m',
+          control_name: 'Chain',
+          control_id: 'ctl-1',
+          control_price_per_item: 12,
+          control_price_basis: 'per_panel',
+          color: 'White',
+          description: '',
+          note: '',
+          attributes: {},
+          quantity: 2,
+          unit_price: 100,
+          line_total: 200,
+        },
+      ],
+    };
+    const res = await req(`/estimate/${TOKEN}`);
+    const raw = await res.text();
+    expect(raw).not.toContain('price_basis');
+    expect(raw).not.toContain('cassette_price_per_m');
+
+    const body = JSON.parse(raw) as { data: { line_items: Record<string, unknown>[] } };
+    // per_m: 140/100 × 10 = 14.00 × 2 blinds; per_panel: 2 × 12 = 24.00 × 2.
+    expect(body.data.line_items[0].option_prices).toEqual({ cassette: 28, control: 48 });
+  });
+
   it('defensively expires a stale sent order on read', async () => {
     db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
     const res = await req(`/estimate/${TOKEN}`);

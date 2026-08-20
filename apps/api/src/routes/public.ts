@@ -46,6 +46,7 @@ import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { getBlindType } from '../lib/blindTypes';
 import { originalLineTotal } from '../lib/lineItemAdjustments';
+import { optionLineAmounts, type OptionPricedItem } from '../lib/optionBreakdown';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -322,6 +323,16 @@ app.get('/estimate/:token', async (c) => {
             (li.attributes ?? {}) as Record<string, string | number | boolean>
           )
           .map((a) => `${a.label}: ${a.value}`),
+        /**
+         * What each hardware option added to this LINE, computed HERE for
+         * the same reason the money above is: the page has no catalog and
+         * may not derive money of its own (AI_GUIDELINES rule 1). Only the
+         * slots the blind actually carries appear; the page prints a name
+         * alone for anything absent or zero. The rate columns and the
+         * price bases behind these figures stay on the server — a customer
+         * is shown what a choice cost them, not the shop's price list.
+         */
+        option_prices: optionLineAmounts(li as OptionPricedItem),
         quantity: li.quantity,
         unit_price: li.unit_price,
         line_total: li.line_total,

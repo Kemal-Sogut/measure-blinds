@@ -100,6 +100,15 @@ interface PublicLineItem {
    * Optional so a page served by an older Worker still renders.
    */
   attribute_lines?: string[] | null;
+  /**
+   * What each hardware option added to THIS line (leg × quantity),
+   * already computed by the Worker — this page holds no catalog and may
+   * not derive money of its own (AI_GUIDELINES rule 1). A slot is absent
+   * when the blind carries no such option, or when the row predates the
+   * stored price basis; the whole object is absent on a payload served by
+   * an older Worker, which simply renders the option names bare.
+   */
+  option_prices?: Partial<Record<'cassette' | 'bottom_rail' | 'control' | 'installation', number>> | null;
   color: string | null;
   /** Headline for a flat item; `''` on blinds and pre-title rows. */
   title?: string | null;
@@ -199,6 +208,19 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
   // documents a customer may hold side by side read the same way.
   const addonLines = (li.addons ?? []).map((a) => `${a.label} — $${a.price.toFixed(2)}`);
   if (li.item_type === 'blind') {
+    // Hardware options carry what they added to this line, matching the
+    // PDF. An option that added nothing prints its name alone — "$0.00"
+    // beside a choice tells the customer nothing — and material, colour
+    // and the type's own attributes never carry a figure at all.
+    const prices = li.option_prices ?? {};
+    const priced = (
+      label: string,
+      name: string,
+      slot: 'cassette' | 'bottom_rail' | 'control' | 'installation'
+    ): string => {
+      const amount = prices[slot];
+      return amount ? `${label}: ${name} — $${amount.toFixed(2)}` : `${label}: ${name}`;
+    };
     return {
       title: [li.room_name || 'Blind', li.blinds_type].filter(Boolean).join(' — '),
       attrs: [
@@ -207,10 +229,10 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
           : '',
         li.material_name ? `Material: ${li.material_name}` : '',
         li.color?.trim() ? `Color: ${li.color.trim()}` : '',
-        li.cassette_name ? `Cassette: ${li.cassette_name}` : '',
-        li.bottom_rail_name ? `Bottom rail: ${li.bottom_rail_name}` : '',
-        li.control_name ? `Control: ${li.control_name}` : '',
-        li.installation_name ? `Installation: ${li.installation_name}` : '',
+        li.cassette_name ? priced('Cassette', li.cassette_name, 'cassette') : '',
+        li.bottom_rail_name ? priced('Bottom rail', li.bottom_rail_name, 'bottom_rail') : '',
+        li.control_name ? priced('Control', li.control_name, 'control') : '',
+        li.installation_name ? priced('Installation', li.installation_name, 'installation') : '',
         // Already formatted server-side; same position as on the PDF.
         ...(li.attribute_lines ?? []),
         li.note?.trim() ? `Note: ${li.note.trim()}` : '',
