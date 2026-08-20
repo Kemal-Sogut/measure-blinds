@@ -91,6 +91,9 @@ below). Ten commits across five tasks, all reviewed (several with fix rounds) an
     columns is subtracted from the tracks automatically instead of overflowing them), with the
     44px "+" separator button (see `insertPanelSeparator` above) inset into the width input's
     own top-right corner.
+    **SUPERSEDED 2026-08-20** — that one-line split left the width field unreadable on a phone
+    (the "+" button's `pr-12` reservation consumed most of a 30% track); rows are now two lines,
+    room + ✕ above, Width/Height at `grid-cols-[3fr_2fr]` below. See `bug_fixes.md`, 2026-08-20.
   - Both item popups widened: the blind add/edit popup (`OrderDetail.tsx`) to `lg:max-w-3xl`,
     bulk add (`BulkAddSheet.tsx`) to `lg:max-w-5xl` — wider because it carries a multi-column
     `HardwareRow` grid the single-item popup does not.

@@ -1,5 +1,17 @@
 # Progress
 
+## Bulk-add measurement row split onto two lines (2026-08-20)
+Web-only follow-up to the batch below, on maintainer report: the one-line row's Width field was
+unreadable on a phone — the 44px "+" panel-separator button (and its `pr-12` reservation) took
+most of the field's 30% track, leaving under four readable digits. `RowFields`
+(`BulkAddSectionCard.tsx`) now renders TWO lines: room name + the ✕ remove control above, Width
+and Height below at `grid-cols-[3fr_2fr]` (60/40, since only the width field gives up width to a
+button and only a width holds a multi-panel `118.5+118`). Layout only — no behaviour, state, or
+validation change. First browser-verified change in this sheet: rendered through a throwaway
+Vite entry (the order editor is behind `ProtectedRoute`, no local login), confirmed at 375x812
+that `118.5+118` is fully visible and that "+" still inserts at the live caret; harness deleted.
+Detail in `bug_fixes.md` 2026-08-20.
+
 ## Bulk-add refinements: legacy popup retired, panel shorthand, incomplete rows, contrast pass (2026-08-19/20)
 Branch `feat/defaults-bulk-lineitems` off the batch below. Web-only — no API, schema, or
 pricing surface touched. Full detail in `engine_features.md` 2026-08-19/20 (one entry) and

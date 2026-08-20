@@ -1,5 +1,32 @@
 # Bug Fixes History
 
+## 2026-08-20 — Bulk-add width field was unreadable: the 44px "+" button ate a 30% grid track
+- **Issue:** reported by the maintainer against the one-line measurement row shipped the day
+  before (`grid-cols-[4fr_3fr_3fr]`, Room/Width/Height at 40/30/30 in `BulkAddSectionCard.tsx`).
+  On a 375px phone the Width input's own value was unreadable — barely a digit or two visible —
+  so a consultant could not confirm what they had typed without selecting the field's text.
+- **Cause:** the width input is the ONLY one of the three carrying the 44px panel-separator
+  "+" button, and reserves `pr-12` (48px) for it so its text never runs under the button. Its
+  30% track came to ~92px on a 375px viewport; minus `px-3`'s left inset and that 48px
+  reservation, ~32px of readable text remained — under four monospace digits. The 40/30/30
+  split was chosen for the three fields as if they were interchangeable; one of them is not.
+- **Fix:** the row is now TWO lines — room name (plus the ✕ remove control, which no longer
+  competes with the measurements for width) on the first, Width and Height on the second as
+  `grid-cols-[3fr_2fr]`. 60/40 rather than an even split, for the same reason the one-line
+  split failed: only the width field gives up 48px to a button, and only a width can hold a
+  multi-panel value like `118.5+118`. Nothing about the row's behaviour changed — same inputs,
+  same `insertPanelSeparator` caret handling, same Enter-to-add-row hop, same "Panels total"
+  caption.
+- **Verified in a browser** (the first time any part of this sheet has been): a throwaway Vite
+  entry rendering `SectionCard` directly, since the order editor sits behind `ProtectedRoute`
+  and no login is available locally. At 375x812 the width field now shows `118.5+118` in full
+  where the even 50/50 split still truncated it to `118.5+1…`; the "+" button still inserts at
+  the live caret (caret 5 in `118.5+118` → `118.5++118`, caret 6). Harness deleted afterwards.
+- **Lesson:** an `fr` split across "similar" inputs is only fair if they carry the same chrome.
+  A field with a 44px in-field button has ~48px less usable width than its neighbours at every
+  viewport, so it needs either a bigger track or a line of its own — sizing it as an equal
+  sibling silently hands the button most of the field.
+
 ## 2026-08-19 — Live panel-width shorthand split left focus behind, corrupting keystroke-by-keystroke typing
 - **Issue:** found in review of the panel-width shorthand (`da5c852`, branch
   `feat/defaults-bulk-lineitems`). Typing `118+118` into a single-item blind's panel-width
