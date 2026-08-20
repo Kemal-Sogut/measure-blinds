@@ -142,9 +142,48 @@ point: the two cannot drift, because there is only one calculation. A basis is s
 interpreted in exactly one place (`hardwareCost`), and a type that overrides
 `materialCost` (Curtains) gets its own material leg reported for free.
 
-`calculateUnitPrice` keeps its current rounding — legs summed unrounded, the sum
-rounded once to 2dp — so **every existing price is bit-identical**. This is
-refactoring behind a stable result, not a pricing change.
+This is the shape the class already argues for. `curtains.ts` stopped computing its
+own control charge because "duplicating that maths here is what used to let the two
+drift apart", and `calculateUnitPrice` is documented as deliberately NOT an override
+point so that a basis cannot come to mean two things. A `describeUnitCosts` computed
+*alongside* the price would reintroduce exactly that — a second copy of what `per_m`
+means, on each twin.
+
+#### 5.1.1 Preserving the arithmetic exactly
+
+Floating-point addition is not associative, so "sums the same legs" is not by itself
+enough to guarantee the same price. Today's association is:
+
+```
+hardware = ((0 + h1) + h2) + h3      // Object.values(item.hardware) order
+price    = round2(material + hardware)
+```
+
+A naive `sum(Object.values(breakdown))` would instead produce
+`(((material + h1) + h2) + h3)` — a different association, a possible last-ULP
+difference, and therefore in principle a different cent whenever the true value lands
+within ~1e-13 of a half-cent boundary. Vanishingly unlikely, but this function prices
+every order the business has ever quoted, and the cost of making it impossible rather
+than improbable is one line.
+
+`calculateUnitPrice` therefore keeps the material leg out of the reduction:
+
+```ts
+calculateUnitPrice(item: BlindPricingInputs): number {
+  const { material, ...hw } = this.describeUnitCosts(item);
+  const hardware = Object.values(hw).reduce((sum, cost) => sum + cost, 0);
+  return Math.round((material + hardware) * 100) / 100;
+}
+```
+
+**Requirement:** `describeUnitCosts` must insert hardware slots in the fixed order
+`cassette, bottom_rail, control, installation`. That is already the insertion order
+both callers use — [`orders.ts:631`](../../apps/api/src/routes/orders.ts) on the
+Worker and [`lineItemDrafts.ts:633`](../../apps/web/src/pages/orders/lineItemDrafts.ts)
+in the editor — so the reduction sees the same operands in the same order it sees
+today. Same operands, same association, same result: **every existing price is
+bit-identical**, provably rather than probably. This is a refactor behind a stable
+result, not a pricing change.
 
 Per AI_GUIDELINES §1 this is a twin edit: identical change to
 `apps/api/src/lib/blindTypes/base.ts`, plus the mirrored assertion in both
@@ -303,7 +342,7 @@ grows by roughly 20 lines rather than absorbing the feature.
 
 | Suite | Covers |
 |---|---|
-| `apps/web/src/lib/pricing.test.ts` | `Σ describeUnitCosts() === calculateUnitPrice()` across every basis and for Curtains; existing expected values unchanged |
+| `apps/web/src/lib/pricing.test.ts` | `Σ describeUnitCosts() === calculateUnitPrice()` across every basis and for Curtains; `describeUnitCosts` key order is `cassette, bottom_rail, control, installation` (§5.1.1); existing expected values unchanged and unmodified |
 | `apps/api/src/lib/pricing.test.ts` | the same assertions, mirrored |
 | `apps/web/src/lib/optionBreakdown.test.ts` | absent vs zero slots; each of the four bases; qty > 1; width/height minimums applied; penny correction; adjustment from an override; adjustment from add-ons; cells sum to `line_total` |
 | `apps/web/src/pages/orders/presentationFilters.test.ts` | facet extraction with counts; fields with no values omitted; AND-across / OR-within incl. the 10-window worked example; valueless filter matches everything; empty result |
@@ -325,9 +364,10 @@ suites run).
 - **Twin drift.** The `base.ts` edit must land on both sides in the same change. The
   mirrored test assertion is what catches a one-sided edit.
 - **Pricing regression.** `calculateUnitPrice` is the single most load-bearing function
-  in the app. The refactor keeps summed-unrounded-then-rounded-once semantics exactly;
-  the existing expected-value tests on both sides are the guard, and they must pass
-  unmodified.
+  in the app. §5.1.1 keeps not just the rounding but the exact operand order and
+  association, so the result is bit-identical rather than merely equivalent. The
+  existing expected-value tests on both sides are the guard and must pass **unmodified**
+  — if either suite needs a number changed, the refactor is wrong, not the test.
 - **Historical rows.** Orders saved before migrations 35/36 may carry null bases or
   null rates. Absent-vs-zero handling (§5.2) is specified for this and is directly
   tested.
