@@ -183,7 +183,9 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk add blinds</h2>
         <p className="mb-4 text-[13px] text-text-muted">
-          Configure a section per blind type, then add a row for every window that shares it.
+          Configure a section per blind type, then add a row for every window that shares it. Type,
+          material and hardware can be left blank for now, but the order can't be saved until
+          they're filled in.
           {itemCount > 0 && ` ${itemCount} item${itemCount !== 1 ? 's' : ''} so far.`}
         </p>
 

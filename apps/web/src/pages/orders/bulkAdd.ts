@@ -44,7 +44,6 @@ import {
   newBlindDraft,
   parseDraftAttributes,
   parsePositive,
-  slotsForType,
   NO_ADJUSTMENTS,
   type BlindDraft,
   type BlindDraftDefaults,
@@ -165,13 +164,18 @@ export function newBulkSection(): BulkSection {
 /* ------------------------------------------------------------------ */
 
 /**
- * Expands bulk-add sections into order line-item drafts: one draft
- * per measurement row, carrying its section's blind configuration and the
- * row's room + measurements. Quantity is fixed at 1 per row (spec: a
- * duplicate room is typed twice, not counted as quantity 2 — two rows for
- * "Bedroom" become two separate line items, each independently editable
- * and removable afterwards). Pure — hosts append the result to the items
- * state.
+ * Expands bulk-add sections into order line-item drafts: one draft per
+ * measurement row THAT HAS SOMETHING IN IT, carrying its section's blind
+ * configuration and the row's room + measurements. An entirely blank row
+ * (no room name, no width, no height — e.g. the sheet's own default
+ * starting row before anything is typed) is SKIPPED rather than turned
+ * into an empty item; a row with only one of the three filled in (a room
+ * name jotted down before the tape measure comes out, say) is NOT blank
+ * and still becomes an item, with its unfilled fields carried through as
+ * empty strings. Quantity is fixed at 1 per row (spec: a duplicate room is
+ * typed twice, not counted as quantity 2 — two rows for "Bedroom" become
+ * two separate line items, each independently editable and removable
+ * afterwards). Pure — hosts append the result to the items state.
  *
  * Field provenance per output draft:
  * - From the ROW: `room_name`, `panels` (derived from the row's `width_cm`
@@ -180,7 +184,9 @@ export function newBulkSection(): BulkSection {
  *   `material_id`, every hardware slot, `color`, `note`, `attributes`
  *   (copied, not shared — see below), `uid`/`hidden` (both start at
  *   the config's blank values: `null` / `false`, since every expanded item
- *   is new and unsaved).
+ *   is new and unsaved). These may themselves be blank strings, when the
+ *   section was never configured beyond its rows — `validateBulkSections`
+ *   deliberately allows that; see that function's doc for why.
  * - Fixed regardless of either: `key` (a fresh one per item, so no two
  *   expanded drafts — or an expanded draft and its section's own `config`
  *   — ever collide), `quantity` (`'1'`), and the price-adjustment fields
@@ -206,8 +212,8 @@ export function newBulkSection(): BulkSection {
  * this module's contract may rely on every future caller preserving that
  * discipline. Order across sections and rows is preserved: section 1's
  * rows all precede section 2's, and each section's rows keep the order
- * they were typed in, because `flatMap` is order-preserving and this
- * function does no reordering of its own.
+ * they were typed in, because both the blank-row filter and `flatMap` are
+ * order-preserving and this function does no reordering of its own.
  *
  * Does not validate — call `validateBulkSections` first and only expand
  * once it returns `null`, same division of labor `buildPayload` keeps
@@ -215,16 +221,20 @@ export function newBulkSection(): BulkSection {
  */
 export function expandBulkSections(sections: BulkSection[]): BlindDraft[] {
   return sections.flatMap((s) =>
-    s.rows.map((r) => ({
-      ...s.config,
-      key: nextKey(),
-      room_name: r.room_name,
-      panels: parsePanelInput(r.width_cm),
-      height_cm: r.height_cm,
-      attributes: { ...s.config.attributes },
-      quantity: '1',
-      ...NO_ADJUSTMENTS,
-    }))
+    s.rows
+      .filter(
+        (r) => r.room_name.trim() !== '' || r.width_cm.trim() !== '' || r.height_cm.trim() !== ''
+      )
+      .map((r) => ({
+        ...s.config,
+        key: nextKey(),
+        room_name: r.room_name,
+        panels: parsePanelInput(r.width_cm),
+        height_cm: r.height_cm,
+        attributes: { ...s.config.attributes },
+        quantity: '1',
+        ...NO_ADJUSTMENTS,
+      }))
   );
 }
 
@@ -280,45 +290,80 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
  * order, returning the first problem found as a user-facing message, or
  * `null` when every section is ready to expand.
  *
- * MUST mirror `buildPayload`'s rules, message wording, AND CHECK ORDER in
- * `OrderDetail.tsx` (e.g. "choose a material.", "choose a cassette.",
- * "enter every panel width.") — the Worker enforces the identical
- * constraints on save, so a section that passes here and is then expanded
- * must always be acceptable to `buildPayload`'s own per-item checks. The
- * two are independent implementations by necessity (this checks ONE
- * config against MANY rows before expansion; `buildPayload` checks
- * already-expanded, one-config-per-item drafts after it) and must be kept
- * in sync by hand if either changes — including the ORDER checks run in,
- * because when a section has more than one problem at once, the order
- * decides which message the consultant sees first, and the two functions
- * must agree on that or the same broken section would report two
- * different "first" problems depending on which check ran it.
+ * DELIBERATELY PERMISSIVE — this is not a partial implementation, it is
+ * the whole point, so read this before "fixing" it back in. Bulk add
+ * exists for on-site measuring: a consultant walks room to room capturing
+ * widths and heights before anyone has decided what blind type, material
+ * or hardware goes in each window. An earlier version of this function
+ * required a blind type, a material and every hardware slot the chosen
+ * type uses before a section could expand at all — which meant the
+ * consultant could not even START measuring until those product decisions
+ * were made, defeating the entire point of a fast, on-site bulk tool. The
+ * maintainer decided bulk add MAY create incomplete line items: an
+ * expanded item with a blank `blinds_type` (or material, or hardware)
+ * lands in the order as an ordinary draft, exactly like a blind added one
+ * at a time with nothing picked yet. Bulk EDIT (the sibling
+ * `lineItemBulk.ts`) is how a whole batch of those gets filled in at once
+ * afterwards, back at the customer's house or later at a desk.
  *
- * `buildPayload` checks a blind item in this order: panels, height,
- * material, each hardware slot the type uses, quantity, then the type's
- * own attribute schema. This function follows the same order, mapped onto
- * sections-of-rows: PER-ROW measurement checks (panels, height — the
- * physical numbers a tape measure produced) run before the PER-SECTION
- * configuration checks (type, material, hardware, attributes — the shared
- * picks that apply to every row underneath). One check has no
- * `buildPayload` counterpart at all: whether a blind type has been chosen.
- * `buildPayload` never names this explicitly (an untyped blind's
- * `material_id` is always empty too, since `materialsForType('')` offers
- * nothing to pick, so it falls through to "choose a material" instead) —
- * bulk add's config UI has an explicit type picker per section, so this
- * function raises a dedicated message for it, placed immediately before
- * the material check it would otherwise be folded into. Quantity is
- * skipped entirely: `expandBulkSections` fixes every row's quantity to
- * `'1'` regardless of what the section's config carries, so validating the
- * config's own `quantity` field would reject or accept sections based on a
- * value the expansion never actually uses.
+ * COMPLETENESS IS ENFORCED LATER, AT SAVE — not here. `buildPayload` in
+ * `OrderDetail.tsx` is what actually blocks an incomplete item from
+ * reaching the Worker: it walks every item in the order (bulk-added or
+ * not — by the time it runs, a bulk-add item is just an item like any
+ * other) and returns a message naming the first offender, for example:
+ *   if (!it.material_id) return `Item ${i + 1}: choose a material.`;
+ *   if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
+ *   if (attributes === null) return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
+ * (plus the matching bottom-rail, control and installation checks). A
+ * future reader who finds a blind-type / material / hardware check
+ * missing from HERE and "fixes" it by adding one back would be
+ * reintroducing the exact on-site dead end this relaxation exists to
+ * remove — go read `buildPayload`'s blind-item branch first; it is the
+ * real gate, and it already covers every field this function used to.
  *
- * Checked per ROW within a section, first:
- * - every panel produced by running the row's `width_cm` shorthand string
- *   through `parsePanelInput` is a positive number (a blank `width_cm`
- *   parses to one blank panel — see `parsePanelInput` — which then fails
- *   the positive-number check the same as any other empty panel would);
- * - the height is a positive number.
+ * What THIS function still rejects, because nothing downstream catches
+ * these and letting them through would silently corrupt a measurement
+ * rather than just leave a product choice for later:
+ * - a section with zero rows: nothing to expand, and nothing for
+ *   `buildPayload` to ever see, so no later check would ever catch an
+ *   empty section either;
+ * - a row's width or height that was actually TYPED but is not a
+ *   positive number: a BLANK measurement is fine (filled in on-site
+ *   later, same as a blank blind type), but a typo like "12a" or a stray
+ *   "-5" must never silently become a saved measurement nobody actually
+ *   entered;
+ * - a chosen type's attributes, but ONLY once `blinds_type` is non-blank:
+ *   `parseDraftAttributes` looks a schema up BY that type, so running it
+ *   against a blank type is meaningless (there is nothing to validate
+ *   against) and would effectively force a type pick before the config
+ *   could ever pass — exactly the requirement being removed. A row with a
+ *   type chosen but garbage attributes still needs to be caught here,
+ *   because `expandBulkSections` copies `config.attributes` verbatim onto
+ *   every row it produces, and by the time `buildPayload` rejects the
+ *   first of those already-expanded items it is too late to fix them all
+ *   at once from one place.
+ *
+ * `catalogs` is unused by this function's own checks now — the material
+ * and hardware-slot checks that used `slotsForType(catalogs, ...)`, plus
+ * the blind-type-chosen check, are gone. The parameter stays anyway
+ * (renamed `_catalogs` to satisfy the unused-parameter check), so the
+ * sheet's existing call site (`BulkAddSheet.tsx`) needs no change, and so
+ * a future completeness check that legitimately needs catalog data (added
+ * back here on purpose, not by accident) has somewhere to read it from
+ * without a signature change.
+ *
+ * Checked per ROW within a section, first — mirrors the OLD per-row-then-
+ * per-section ordering, even though the per-section side has shrunk to
+ * one check:
+ * - if `width_cm` was typed (non-blank once trimmed), every panel
+ *   `parsePanelInput` splits it into must be a positive number;
+ * - if `height_cm` was typed (non-blank once trimmed), it must be a
+ *   positive number.
+ * Neither is checked when blank — see `expandBulkSections`, which drops
+ * an entirely blank row (no room, no width, no height) instead of
+ * expanding it into an empty item; a row with only ONE of the three typed
+ * is not "entirely blank" and still expands, blank fields and all, which
+ * is exactly why an untyped width or height must not be an error here.
  *
  * `room_name` is DELIBERATELY not checked — an empty room is allowed, same
  * as a saved blind line item today (`buildPayload` never requires one).
@@ -326,22 +371,11 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
  * Checked per SECTION (the shared config, checked once rather than once
  * per row — mirrors how the fields are actually entered in the sheet),
  * after its rows:
- * - a blind type is chosen (see above — no `buildPayload` counterpart);
- * - a material is chosen;
- * - every hardware slot the chosen type actually USES has a pick
- *   (`slotsForType` — the same data-driven scoping `buildPayload` and the
- *   form dropdowns use, so a type that doesn't use e.g. installation is
- *   never blocked on it, and one that does is never let through without
- *   it);
- * - the type's attribute schema accepts the config's `attributes`
+ * - the chosen type's attribute schema accepts the config's `attributes`
  *   (`parseDraftAttributes` — the SAME parse `buildPayload` runs on every
  *   item and `blindDraftPrice` runs for the live preview; e.g. Curtains'
- *   `pleat_type_id`, when present, must be a real uuid). Checked here, at
- *   the section, because `attributes` lives on the shared config and would
- *   otherwise fail identically on every row expanded from it — surfacing
- *   it once per section, before expansion, means the consultant never
- *   discovers an unsavable config only after `buildPayload` rejects the
- *   FIRST of what might be many already-expanded items.
+ *   `pleat_type_id`, when present, must be a real uuid), but only when
+ *   `cfg.blinds_type` is chosen — see above.
  *
  * `section.rows.length === 0` is checked before that section's row loop
  * (there is nothing to iterate otherwise) and has no `buildPayload`
@@ -354,31 +388,23 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
  * how a consultant counts sections/rows on screen — not how the arrays are
  * indexed.
  */
-export function validateBulkSections(sections: BulkSection[], catalogs: Catalogs): string | null {
+export function validateBulkSections(sections: BulkSection[], _catalogs: Catalogs): string | null {
   for (const [s, section] of sections.entries()) {
     if (section.rows.length === 0) return `Section ${s + 1}: add at least one row.`;
 
     for (const [r, row] of section.rows.entries()) {
-      const panels = parsePanelInput(row.width_cm).map(parsePositive);
-      if (panels.some((p) => p === null))
-        return `Section ${s + 1}, row ${r + 1}: enter every panel width.`;
-      if (!parsePositive(row.height_cm)) return `Section ${s + 1}, row ${r + 1}: enter a height.`;
+      if (row.width_cm.trim() !== '') {
+        const panels = parsePanelInput(row.width_cm).map(parsePositive);
+        if (panels.some((p) => p === null))
+          return `Section ${s + 1}, row ${r + 1}: enter a valid width.`;
+      }
+      if (row.height_cm.trim() !== '' && !parsePositive(row.height_cm))
+        return `Section ${s + 1}, row ${r + 1}: enter a valid height.`;
     }
 
     const cfg = section.config;
-    if (!cfg.blinds_type) return `Section ${s + 1}: choose a blind type.`;
-    if (!cfg.material_id) return `Section ${s + 1}: choose a material.`;
-
-    const uses = slotsForType(catalogs, cfg.blinds_type);
-    if (uses.has('cassette') && !cfg.cassette_id) return `Section ${s + 1}: choose a cassette.`;
-    if (uses.has('bottom_rail') && !cfg.bottom_rail_id)
-      return `Section ${s + 1}: choose a bottom rail.`;
-    if (uses.has('control') && !cfg.control_id) return `Section ${s + 1}: choose a control option.`;
-    if (uses.has('installation') && !cfg.installation_id)
-      return `Section ${s + 1}: choose an installation option.`;
-
-    if (parseDraftAttributes(cfg) === null)
-      return `Section ${s + 1}: check the ${cfg.blinds_type || 'blind'} options.`;
+    if (cfg.blinds_type && parseDraftAttributes(cfg) === null)
+      return `Section ${s + 1}: check the ${cfg.blinds_type} options.`;
   }
   return null;
 }

@@ -6,28 +6,38 @@
  *
  * `expandBulkSections` is the pure fan-out at the heart of bulk add: one
  * section (a shared blind configuration) times many measurement rows
- * becomes one `BlindDraft` per row. The cases below pin down the exact
- * field provenance (which fields come from the section vs. the row), the
- * ORDER items come out in (section 1 before section 2, row order preserved
- * within a section — the consultant reads the list back and expects it to
- * match what they typed), that a row's `width_cm` shorthand (`'118.5+118'`)
- * expands into the draft's `panels` array via `parsePanelInput`, and that
- * each draft owns its own `panels` array AND its own `attributes` object
- * rather than sharing the config's references (a later per-item edit —
- * e.g. "+ Panel" or a Curtains pleat pick in the single-item form — must
- * not silently rewrite the section's `config` it came from, or a SIBLING
+ * becomes one `BlindDraft` per row it has content in — an entirely blank
+ * row (no room, no width, no height) is skipped rather than turned into
+ * an empty item, matching a freshly opened sheet's own blank starting
+ * row. The cases below pin down the exact field provenance (which fields
+ * come from the section vs. the row), the ORDER items come out in
+ * (section 1 before section 2, row order preserved within a section —
+ * the consultant reads the list back and expects it to match what they
+ * typed), that a row's `width_cm` shorthand (`'118.5+118'`) expands into
+ * the draft's `panels` array via `parsePanelInput`, and that each draft
+ * owns its own `panels` array AND its own `attributes` object rather
+ * than sharing the config's references (a later per-item edit — e.g. "+
+ * Panel" or a Curtains pleat pick in the single-item form — must not
+ * silently rewrite the section's `config` it came from, or a SIBLING
  * item expanded from the same section, which a shared reference would
  * allow).
  *
- * `validateBulkSections` mirrors `buildPayload`'s rules, message style AND
- * CHECK ORDER in `OrderDetail.tsx` (same wording: "choose a material.",
- * "choose a cassette.", "enter every panel width.", "check the Curtains
- * options."; same order: measurement checks before configuration checks)
- * — the Worker enforces the exact same constraints on save, so a bulk-add
- * section that passes this check must always be acceptable to
- * `buildPayload` once expanded. Section/row numbers in messages are
- * ONE-based, matching how `buildPayload` numbers items and how a
- * consultant counts rows on screen.
+ * `validateBulkSections` is DELIBERATELY more permissive than
+ * `buildPayload`: it no longer requires a blind type, a material, or any
+ * hardware slot, because bulk add exists for on-site measuring before
+ * those product decisions are made. A section with none of those picked
+ * validates as `null` and expands into items carrying those fields
+ * blank — `buildPayload` in `OrderDetail.tsx` is what blocks the actual
+ * SAVE and names the offending item once the order is otherwise ready
+ * ("choose a blind type.", "choose a material.", "choose a cassette.",
+ * etc.). What this function keeps rejecting: a section with zero rows, a
+ * row whose width or height was actually TYPED but is not a positive
+ * number (a blank one is fine — that is the whole point), and a chosen
+ * type's attributes — but only once a type has actually been chosen,
+ * since `parseDraftAttributes` cannot judge a type that was never
+ * picked. Section/row numbers in messages are ONE-based, matching how
+ * `buildPayload` numbers items and how a consultant counts rows on
+ * screen.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -235,6 +245,44 @@ describe('expandBulkSections', () => {
     expect(d2.attributes).not.toBe(cfg.attributes);
     expect(d1.attributes).not.toBe(d2.attributes);
   });
+
+  it('skips an entirely blank row instead of expanding it into an empty item', () => {
+    const s = section({
+      rows: [row({ key: 'r1' }), row({ key: 'r2', room_name: '', width_cm: '', height_cm: '' })],
+    });
+    const drafts = expandBulkSections([s]);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].room_name).toBe('Living Room');
+  });
+
+  it('keeps a row with only a room name typed — not entirely blank', () => {
+    const s = section({
+      rows: [row({ key: 'r1', room_name: 'Hallway', width_cm: '', height_cm: '' })],
+    });
+    const drafts = expandBulkSections([s]);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].room_name).toBe('Hallway');
+    expect(drafts[0].panels).toEqual(['']);
+    expect(drafts[0].height_cm).toBe('');
+  });
+
+  it('a section with no type, material, or hardware expands with those fields blank', () => {
+    const bareConfig = rollerConfig({
+      blinds_type: '',
+      material_id: '',
+      cassette_id: '',
+      bottom_rail_id: '',
+      control_id: '',
+      installation_id: '',
+    });
+    const [d] = expandBulkSections([section({ config: bareConfig })]);
+    expect(d.blinds_type).toBe('');
+    expect(d.material_id).toBe('');
+    expect(d.cassette_id).toBe('');
+    expect(d.bottom_rail_id).toBe('');
+    expect(d.control_id).toBe('');
+    expect(d.installation_id).toBe('');
+  });
 });
 
 describe('validateBulkSections', () => {
@@ -242,72 +290,53 @@ describe('validateBulkSections', () => {
     expect(validateBulkSections([section()], catalogs())).toBeNull();
   });
 
-  it('section without type / material → message naming the section number', () => {
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ blinds_type: '' }) })], catalogs())
-    ).toBe('Section 1: choose a blind type.');
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ material_id: '' }) })], catalogs())
-    ).toBe('Section 1: choose a material.');
+  it('a section with no blind type, material, or hardware validates as null', () => {
+    const bareConfig = rollerConfig({
+      blinds_type: '',
+      material_id: '',
+      cassette_id: '',
+      bottom_rail_id: '',
+      control_id: '',
+      installation_id: '',
+    });
+    expect(validateBulkSections([section({ config: bareConfig })], catalogs())).toBeNull();
   });
 
-  it('missing slot pick for a used slot → message (same rule as buildPayload)', () => {
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ cassette_id: '' }) })], catalogs())
-    ).toBe('Section 1: choose a cassette.');
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ bottom_rail_id: '' }) })], catalogs())
-    ).toBe('Section 1: choose a bottom rail.');
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ control_id: '' }) })], catalogs())
-    ).toBe('Section 1: choose a control option.');
-    expect(
-      validateBulkSections([section({ config: rollerConfig({ installation_id: '' }) })], catalogs())
-    ).toBe('Section 1: choose an installation option.');
+  it('skips the attribute check entirely when no type is chosen, even with garbage attributes', () => {
+    // `parseDraftAttributes` looks a schema up BY the chosen type; a blank
+    // type has no schema to check against, so running the check anyway
+    // would effectively force a type pick before validation could pass —
+    // exactly the requirement this task removes.
+    const bareConfig = rollerConfig({
+      blinds_type: '',
+      material_id: '',
+      cassette_id: '',
+      bottom_rail_id: '',
+      control_id: '',
+      installation_id: '',
+      attributes: { anything: 'garbage', pleat_type_id: 'not-a-uuid' },
+    });
+    expect(validateBulkSections([section({ config: bareConfig })], catalogs())).toBeNull();
   });
 
-  it('does not require a slot the type does not use', () => {
-    // No installation option is scoped to Roller in this catalog, so the
-    // slot is unused and an empty id must not block validation — exactly
-    // as `slotsForType`-gated `buildPayload` behaves for e.g. Curtains and
-    // its unused cassette/bottom-rail slots.
-    const noInstall = catalogs({ installationOptions: [] });
-    expect(
-      validateBulkSections(
-        [section({ config: rollerConfig({ installation_id: '' }) })],
-        noInstall
-      )
-    ).toBeNull();
-  });
-
-  it('invalid attributes for the section blind type → message matching buildPayload wording', () => {
+  it('invalid attributes for a CHOSEN blind type still errors, even with no material or hardware picked', () => {
     // `attributes` lives on the shared config; a bad value there would
     // otherwise fail identically on every row expanded from it, and only
     // surface once `buildPayload` rejects the first already-expanded item.
     // Curtains' `pleat_type_id` is optional but, when present, must be a
-    // real uuid — this fixture supplies neither a cassette nor a bottom
-    // rail scoped to Curtains, so those slots are unused and stay out of
-    // the way of the attributes check being exercised.
+    // real uuid — and this task's whole point is that a bulk-add section
+    // no longer needs a material or any hardware picked for this check to
+    // still catch a bad value.
     const CURTAINS = { id: 't-curtains', name: 'Curtains', active: true, sort_order: 1 };
-    const curtainCatalogs = catalogs({
-      blindTypes: [ROLLER, CURTAINS],
-      materials: [
-        ...catalogs().materials,
-        {
-          id: 'm-curtains',
-          name: 'Curtain Fabric',
-          price_per_sqm: 40,
-          active: true,
-          sort_order: 1,
-          width_cm: null,
-          blind_type_ids: [CURTAINS.id],
-        },
-      ],
-    });
+    const curtainCatalogs = catalogs({ blindTypes: [ROLLER, CURTAINS] });
     const badAttributes = section({
       config: rollerConfig({
         blinds_type: 'Curtains',
-        material_id: 'm-curtains',
+        material_id: '',
+        cassette_id: '',
+        bottom_rail_id: '',
+        control_id: '',
+        installation_id: '',
         attributes: { pleat_type_id: 'not-a-uuid' },
       }),
     });
@@ -316,20 +345,35 @@ describe('validateBulkSections', () => {
     );
   });
 
-  it('row with empty room allowed, but missing panel width or height → message naming section+row', () => {
+  it('row with empty room, width, or height is allowed — nothing is required until typed', () => {
     const withEmptyRoom = section({ rows: [row({ room_name: '' })] });
     expect(validateBulkSections([withEmptyRoom], catalogs())).toBeNull();
 
-    const missingPanel = section({
-      rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '' })],
+    const withEmptyWidth = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '' })] });
+    expect(validateBulkSections([withEmptyWidth], catalogs())).toBeNull();
+
+    const withEmptyHeight = section({
+      rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: '' })],
     });
-    expect(validateBulkSections([missingPanel], catalogs())).toBe(
-      'Section 1, row 2: enter every panel width.'
+    expect(validateBulkSections([withEmptyHeight], catalogs())).toBeNull();
+  });
+
+  it('a typed but malformed width or height still errors — a typo must not silently become an item', () => {
+    const badWidth = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: 'abc' })] });
+    expect(validateBulkSections([badWidth], catalogs())).toBe(
+      'Section 1, row 2: enter a valid width.'
     );
 
-    const missingHeight = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: '' })] });
-    expect(validateBulkSections([missingHeight], catalogs())).toBe(
-      'Section 1, row 2: enter a height.'
+    const negativeWidth = section({
+      rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '-5' })],
+    });
+    expect(validateBulkSections([negativeWidth], catalogs())).toBe(
+      'Section 1, row 2: enter a valid width.'
+    );
+
+    const badHeight = section({ rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: 'abc' })] });
+    expect(validateBulkSections([badHeight], catalogs())).toBe(
+      'Section 1, row 2: enter a valid height.'
     );
   });
 
@@ -340,7 +384,7 @@ describe('validateBulkSections', () => {
       rows: [row({ key: 'r1' }), row({ key: 'r2', width_cm: '100+abc+50' })],
     });
     expect(validateBulkSections([middleInvalid], catalogs())).toBe(
-      'Section 1, row 2: enter every panel width.'
+      'Section 1, row 2: enter a valid width.'
     );
   });
 
@@ -352,11 +396,8 @@ describe('validateBulkSections', () => {
 
   it('names the second section when only it is invalid', () => {
     expect(
-      validateBulkSections(
-        [section({ key: 's1' }), section({ key: 's2', config: rollerConfig({ material_id: '' }) })],
-        catalogs()
-      )
-    ).toBe('Section 2: choose a material.');
+      validateBulkSections([section({ key: 's1' }), section({ key: 's2', rows: [] })], catalogs())
+    ).toBe('Section 2: add at least one row.');
   });
 
   it('names the second row of the second section when only it is invalid', () => {
@@ -366,12 +407,12 @@ describe('validateBulkSections', () => {
           section({ key: 's1' }),
           section({
             key: 's2',
-            rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: '' })],
+            rows: [row({ key: 'r1' }), row({ key: 'r2', height_cm: 'nope' })],
           }),
         ],
         catalogs()
       )
-    ).toBe('Section 2, row 2: enter a height.');
+    ).toBe('Section 2, row 2: enter a valid height.');
   });
 });
 
