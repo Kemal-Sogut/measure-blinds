@@ -1,5 +1,59 @@
 # Bug Fixes History
 
+## 2026-08-19 — Live panel-width shorthand split left focus behind, corrupting keystroke-by-keystroke typing
+- **Issue:** found in review of the panel-width shorthand (`da5c852`, branch
+  `feat/defaults-bulk-lineitems`). Typing `118+118` into a single-item blind's panel-width
+  field ONE CHARACTER AT A TIME — the only way a phone's on-screen keyboard produces it —
+  corrupted into panels `['118118', '']` instead of the intended `['118', '118']`. Pasting the
+  same string worked fine (a single `onChange` event), which is what let the bug through the
+  first review pass.
+- **Cause:** `PanelWidths` (`blindForms/fields.tsx`) renders one `<input>` per panel keyed by
+  ARRAY INDEX. `setPanel()` spliced a `+`-split value straight into the `panels` array on
+  every keystroke; React's reconciler then reused the SAME DOM node for the index the
+  consultant was still typing into, force-correcting its `value` down from the live keystroke
+  (`'118+'`) to the shorter split result (`'118'`) — but nothing told the browser to move
+  keyboard focus to the newly-created panel the split had just produced. The caret stayed
+  exactly where it was, so the next keystroke landed back in the original, now-shorter input.
+- **Fix (`cccc973`):** extracted the pure state transition into `applyPanelEdit`
+  (`panelInput.ts`) — unit-testable without the DOM/React-rendering harness this repo does not
+  have (no `@testing-library/react`, no jsdom) — which reports a `focusIndex` (the first
+  newly-created panel, `index + 1`) alongside the updated `panels` array. `PanelWidths` reuses
+  `BulkAddSheet.tsx`'s existing pending-focus/ref-map/effect pattern to explicitly move focus
+  to that index once the new panel's input has mounted.
+- **Lesson:** an array of same-shaped inputs keyed by index, where one edit can both correct a
+  DIFFERENT index's live value AND insert a brand-new index, needs an explicit post-mutation
+  focus decision — React reconciling "same key" as "same DOM node" silently rewrites a live
+  keystroke without ever telling the browser's caret to move. The failure mode only appears
+  typing character by character; a paste-based manual test cannot reproduce it, which is
+  exactly why it survived the first review pass.
+
+## 2026-08-19 — Bulk-add confirm button counted raw rows while expansion filtered blank ones
+- **Issue:** found in review of allowing bulk-add rows before a type is chosen (`b41fa94`,
+  branch `feat/defaults-bulk-lineitems`, which made `expandBulkSections` skip entirely blank
+  rows). `BulkAddSheet.tsx`'s own `itemCount` still counted RAW `rows.length`, so a completely
+  untouched sheet — its default single blank row — read "Add 1 item" with the confirm button
+  ENABLED. Tapping it ran `validateBulkSections` (which an all-blank row trips no check in,
+  now that type/material are no longer required either), expanded to an empty array via
+  `expandBulkSections`, and closed the sheet having added nothing at all, with no error shown.
+- **Cause:** `expandBulkSections`'s new blank-row filter and `itemCount`'s row count were two
+  independent implementations of "how many items will this sheet produce," and only the
+  former was updated when the filter was added — the same class of drift this branch's
+  2026-08-17 `validateBulkSections` entry above already warned about, this time between a
+  count and the function it is supposed to be counting.
+- **Fix (`ced893d`):** extracted the shared predicate `bulkRowHasContent(row)` (`bulkAdd.ts`) —
+  true once a room name, width or height has actually been typed — and made
+  `expandBulkSections`, `bulkAddHasContent` (the discard-confirmation guard) and the sheet's
+  `itemCount` all read it, so the three can no longer disagree about what counts as a blank
+  row. Also added a defensive second gate in `handleConfirm`: if `expandBulkSections` ever
+  still returns an empty array, it sets an inline error ("Add at least one row before
+  confirming.") instead of calling `onAdd([])` and closing silently.
+- **Lesson:** when a filter is added to what a function PRODUCES, every other place that
+  independently predicts or gates on that same count needs the identical predicate, not a
+  parallel one that happens to agree today. A cheap defensive check at the one call site that
+  would otherwise fail silently (an empty-array guard right before the close) is worth adding
+  even after the root predicate is unified, since it turns any future re-drift into a visible
+  error message instead of a sheet that quietly does nothing.
+
 ## 2026-08-18 — Final whole-branch review fix wave (defaults/bulk/line-item batch)
 Branch `feat/defaults-bulk-lineitems`. Five defects found in the FINAL review of the whole
 branch (money handling itself was found correct end to end); all fixed in one pass, one

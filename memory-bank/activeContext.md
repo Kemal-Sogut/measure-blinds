@@ -1,5 +1,65 @@
 # Active Context
 
+## Current Focus — 2026-08-19/20: Bulk-add refinements
+Branch `feat/defaults-bulk-lineitems`, spec `.superpowers/sdd/2026-08-18-bulkadd-refinements/`
+(continues from the batch below). Five tasks, all reviewed and committed; this is Task 6 —
+docs and full verification. Full detail in `engine_features.md` 2026-08-19/20 (one entry) and
+`bug_fixes.md` 2026-08-19 (two entries).
+
+- **The older "Add Measurements in Bulk" popup is gone.** `BulkMeasureForm`
+  (`LineItemEditor.tsx`), `MeasurementRow`/`measurementRowState`/`countMeasurementRows`/
+  `measurementRowsToDrafts` (`lineItemDrafts.ts`), and the `'bulkMeasure'` sheet plumbing
+  (`OrderDetail.tsx`) are all deleted — fully superseded by the 2026-08-17 `BulkAddSheet.tsx`.
+  `lineItemDrafts.ts` dropped from 777 to 671 lines (680 after a follow-up JSDoc fix), back
+  comfortably under the 800-line cap it had been sitting right at.
+- **New pure module `panelInput.ts`**: `parsePanelInput`/`formatPanelInput` implement a typed
+  shorthand — `118.5+118` in one width field means two panels. Wired into both entry forms per
+  an explicit maintainer ruling: bulk-add rows now carry a single `width_cm` string instead of
+  a `panels` array, and the single-blind form's `PanelWidths` accepts the shorthand ALONGSIDE
+  its existing "+ Panel" button (kept, not replaced). A 44px "+" button was added beside the
+  bulk-add width input only, because iOS's `inputMode="decimal"` keypad has no `+` key at all
+  — otherwise the shorthand would be untypeable on the target device.
+- **Bulk add now accepts rows before the blind type/material are known** — the on-site flow is
+  measure everything fast, configure the product details afterward, back at a desk. Blind
+  type/material/hardware are no longer required by `validateBulkSections`; a section with zero
+  rows or a present-but-malformed width/height is still rejected, and (once a type IS chosen)
+  its attributes are still checked. `buildPayload` (`OrderDetail.tsx`) is unchanged and still
+  the thing that actually blocks a save with an incomplete item, naming it by number — the
+  same rule an ordinary blind added one at a time with nothing picked already lives under.
+- **Two bugs found and fixed in review, both on this task's own new code:**
+  1. The live `+`-split in the single-item panel-width field reused the DOM input the
+     consultant was typing into (index-keyed inputs) and never moved focus, so `118+118` typed
+     one key at a time corrupted into `['118118','']`. Fixed with a pure `applyPanelEdit`
+     (`panelInput.ts`) plus a pending-focus effect copied from `BulkAddSheet.tsx`'s own
+     pattern.
+  2. The bulk-add confirm button's item count kept reading raw `rows.length` after
+     `expandBulkSections` started filtering blank rows, so an untouched sheet showed an
+     enabled "Add 1 item" that silently closed on confirm with nothing added. Fixed with one
+     shared `bulkRowHasContent` predicate now driving the count, the enabled state and the
+     expansion, plus a defensive empty-result guard.
+- **A contrast/layout pass on the bulk-add sheet:** new `--color-border-strong` (`#b6bdcc`)
+  token; section cards now `rounded-xl border-border-strong bg-surface shadow-md` with a
+  `bg-brand-50` tint marking the open one; Blind type/Material/Colour on one row; the
+  section-level note field removed outright (the per-item note in the single-item form still
+  covers it); measurement rows at Room 40% / Width 30% / Height 30%
+  (`grid-cols-[4fr_3fr_3fr]`); both item popups widened (`lg:max-w-3xl` single-item,
+  `lg:max-w-5xl` bulk add). Two review rounds were needed on the ROW layer specifically: the
+  first left a border (`border-light`) LIGHTER than its own fill (1.04:1 — contributing
+  nothing); it is now `border-border-strong` on `bg-surface-sunken`, 1.68:1 against the row's
+  own fill and 1.89:1 against the card.
+- **Verified (real command runs, this task):** web `pnpm check` clean, `pnpm test`
+  **305/305** (20 files, up from 282/282 across 19 — `panelInput.test.ts` is the new file, 30
+  cases), `pnpm lint` (oxlint) **0 warnings/errors**; api unaffected by any of this work —
+  `pnpm check` clean, `pnpm test` **337/337** (18 files, unchanged).
+- **NOT verified: any browser, for any part of this work.** No subagent across all six tasks
+  of this plan had a browser available, and the order editor sits behind `ProtectedRoute` —
+  this is a stronger statement than "not yet checked on a phone": the whole feature (the new
+  44px caret button, the live shorthand split, the card/row contrast, the wider popups) has
+  never been rendered and looked at by anyone, human or agent, since it was written.
+  **Known, standing gap once it is:** the white input fill (`bg-surface`, `#ffffff`) against
+  the new sunken row background (`#f1f2f5`) is only 1.12:1 contrast — pre-existing, not
+  touched by this pass — the next thing to look at if rows still read flat on a real device.
+
 ## Current Focus — 2026-08-17/18: Per-type defaults, bulk edit v2, bulk add, line-item row v2
 Branch `feat/defaults-bulk-lineitems`, spec `.superpowers/sdd/2026-08-17-defaults-bulk-lineitems/`.
 Touches api, web AND schema (migration 38). Twelve tasks, all reviewed and committed; this is
