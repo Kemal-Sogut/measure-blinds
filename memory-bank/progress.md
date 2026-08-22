@@ -103,22 +103,21 @@ customer, never printed, absent from the PDF, the public customer view,
 material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
 hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
 priced; a note surfaces billed-vs-measured area when minimums inflated it. Two discounting
-instruments:
-- **Per material.** Each row's rate box is prefilled with the rate in force, has a reset
-  button inside it, and an "Apply to N lines" button that reprices every visible, priceable
-  line using that material (at that rate unit) into the line's existing
-  `unit_price_override` — so line totals, subtotal and order total move, and the change
-  SURVIVES A SAVE. Repricing runs through `blindDraftInputs` + `calculateBlindUnitPriceForType`
-  with one field swapped; no formula is reimplemented. A line carrying a HAND-TYPED override
-  is skipped and counted, never overwritten, and Reset clears only what Apply itself wrote —
-  tracked by the optional, session-only `BlindDraft.material_rate_applied` (`unit:rate`).
-  Logic in the pure `materialRateOverrides.ts`; row counts are recounted from the drafts
-  each render rather than remembered.
+instruments, **both of which are pure discount math — neither touches a line item**:
+- **Per material.** Each row's rate box is prefilled with the catalog rate and has a reset
+  button inside it. Typing a lower rate and pressing "Discount $X" adds
+  `(catalog rate − typed rate) × that material's billed quantity` to the order's fixed
+  discount. A rate above the catalog rate is clamped to $0.00 with the button disabled.
 - **Across the order.** A `$/m²` rate (and, only when a Curtains line is present, a separate
-  `$/m` rate) whose give-back an Apply button writes into the order's existing FIXED
-  discount. **This rate is scratchpad state — not persisted**; reopening shows only the
-  plain dollar discount. The dialog warns in red when both instruments are in play, because
-  they discount the same fabric twice.
+  `$/m` rate) applied over every material at once, plus a "Remove $X" button.
+
+Both compose through `applyGiveBackPart`: **additive, keyed and reversible.** A second Apply
+sits on top of the first, re-applying one row swaps that row's own figure rather than
+stacking, Reset takes exactly that row's figure back out, and a hand-typed discount is the
+base it all sits on. **The contributions map is session state** — after a reload the discount
+is a plain dollar figure and Reset can no longer undo an earlier session. Applying switches a
+percentage discount to fixed (discarding the percentage), with a warning. Using both
+instruments on the same fabric double-counts it; the dialog warns in red.
 
 Backed by a new public `BaseBlindType.describeMaterialUsage()` (both twins) alongside
 `describeUnitCosts`, which Curtains overrides to report running metres; deliberately NOT the
@@ -140,17 +139,16 @@ autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = tru
 `AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.
 
 ## What's Left / Known Issues
-- **The Material usage dialog has never been rendered or clicked, in any browser.** This is
+- **The Material usage dialog has never been rendered inside the real order page.** This is
   a harder blocker than the general "no real device" gap below: the dev server boots, but
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or
   VITE_SUPABASE_ANON_KEY` at module init because no `apps/web/.env` exists in this
   worktree (only `.env.example`), so the app never renders past a blank page — no login
   screen, no route, nothing to click at all. The code passed type-check, both
-  `pricing.test.ts`/`materialUsage.test.ts`/`materialRateOverrides.test.ts` suites, and lint
-  (0 errors, 0 warnings), but no one has seen the trigger row, the dialog opening, the
-  per-material rate box / reset / "Apply to N lines" flow moving the order total, the
-  give-back changing the discount field, the mobile bottom sheet, or the two-rate-input
-  case. Needs
+  `pricing.test.ts`/`materialUsage.test.ts` suites, and lint (0 errors, 0 warnings), and the
+  dialog itself has been driven in a throwaway component harness (see below) — but no one has
+  seen the trigger row in the real totals rail, the mobile totals card, or a save round-trip.
+  Needs
   `apps/web/.env` populated (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
   `lgbxxlwsdeuhdgzrjjen`) plus a valid login and `apps/api/.dev.vars` before this can be
   driven end to end.

@@ -176,8 +176,7 @@ section as the reference implementation for future collapsible UI.
   inherit the base `sqm` formula; Curtains overrides it to report `running_m` (width minimum
   only, pleat fullness applied before the hem allowance is added, mirroring `materialCost`'s
   own shape). It backs the internal Material usage panel
-  (`apps/web/src/pages/orders/MaterialUsageDialog.tsx` + `materialUsage.ts` +
-  `materialRateOverrides.ts`) — never the PDF,
+  (`apps/web/src/pages/orders/MaterialUsageDialog.tsx` + `materialUsage.ts`) — never the PDF,
   the customer view, or `/orders/:id/present`.
   - **It is held consistent with `materialCost` BY TEST, not by construction.** The tempting
     refactor — deriving `materialCost` from `describeMaterialUsage(item).quantity × rate` —
@@ -193,24 +192,27 @@ section as the reference implementation for future collapsible UI.
     to the `CASES` table in both `pricing.test.ts` suites — that table is hand-maintained,
     not derived from the registry, so an eleventh type with a divergent `materialCost` and
     no new `CASES` row drifts silently rather than failing the test.
-- **A per-material rate lands on lines as `unit_price_override`, with SESSION provenance
-  (2026-08-22).** The Material usage dialog can reprice every line using one material at a
-  new $/m². There is no per-order material rate in the schema and the Worker re-prices from
-  the catalog on save, so the only field that can carry the change is the existing per-line
-  `unit_price_override` — an accepted client input. `materialRateOverrides.ts` recomputes
-  each affected line through `blindDraftInputs` + `calculateBlindUnitPriceForType` with
-  `material_price_per_sqm` swapped, so no formula is duplicated, and writes the result there.
-  - **`BlindDraft.material_rate_applied` (optional, `unit:rate`) is what tells the tool's own
-    overrides apart from hand-typed ones.** It carries two promises: Apply skips (and counts)
-    a line a consultant priced by hand, and Reset clears only what Apply wrote, for that
-    material AND rate unit. The unit is stored, not re-derived, so a material scoped to both
-    Curtains and a m²-priced type resets one row without disturbing the other.
-  - **The flag is session state — nothing serialises it.** After a save-and-reopen those
-    overrides read as hand-typed and the dialog declines to touch them. That is the safe
-    direction (never silently reprice something it can no longer prove it wrote), but it
-    means a re-applied rate after a reload needs the line's override cleared by hand first.
-  - An applied override is a FIXED price and does not follow later measurement edits — the
-    same contract as a manual override, stated on screen rather than assumed.
+- **Fabric give-backs COMPOSE the order discount; they never touch a line item
+  (2026-08-22).** The Material usage dialog offers two ways to discount fabric — a rate per
+  material, and one rate across the order — and both resolve to a dollar figure added to the
+  order's single FIXED discount by `applyGiveBackPart` (`materialUsage.ts`). No unit price is
+  overridden and no line is repriced, so a price a consultant typed on a line is never at
+  risk from using the dialog.
+  - **Keyed contributions, not a running total.** `Record<key, number>` (keys from
+    `materialRowKey`, plus `ORDER_WIDE_GIVE_BACK`) records what each instrument last
+    contributed. That is what makes Apply additive but idempotent — re-applying one row
+    swaps its own figure rather than stacking a second copy — and makes Reset exact
+    (`amount: 0` removes just that key). A hand-typed discount is the base underneath.
+  - **The map is session state.** Nothing persists a per-material rate, so after a reload the
+    discount is a plain dollar figure and Reset can no longer take an earlier session's
+    contributions back out. Said on screen rather than assumed.
+  - Clamped at zero in both directions: a rate above the catalog rate yields $0.00 with a
+    disabled button, and the composed discount can never go negative.
+  - **An earlier iteration wrote per-line `unit_price_override` and was replaced.** It made
+    the give-back survive a save, but it consumed the one field a consultant uses to price a
+    line by hand and needed a session-only provenance flag to tell the two apart. Discount
+    composition needs neither. Do not reintroduce the override path without that trade-off
+    being asked for again.
 - **One column can mean two things, keyed by type (2026-08-10).** `materials.price_per_sqm`
   is dollars per m² for every type except Curtains, where it is dollars per RUNNING METRE.
   Accepted deliberately over a second column; the mitigation is that `MaterialsForType`

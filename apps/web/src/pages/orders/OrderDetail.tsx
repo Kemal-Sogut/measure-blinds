@@ -145,8 +145,7 @@ import {
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
-import { summarizeMaterialUsage } from './materialUsage';
-import { applyMaterialRate, materialRowKey, revertMaterialRate } from './materialRateOverrides';
+import { applyGiveBackPart, summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import { nextKey } from './draftKeys';
@@ -557,6 +556,12 @@ export default function OrderDetail() {
   const [runningGiveBackRate, setRunningGiveBackRate] = useState('');
   /** Per-material rate inputs, keyed by `materialRowKey`. */
   const [materialRateDrafts, setMaterialRateDrafts] = useState<Record<string, string>>({});
+  /**
+   * What each give-back instrument has already contributed to the fixed
+   * discount. Session-only: nothing persists a per-material rate, so a
+   * reload leaves a plain dollar discount and an empty map.
+   */
+  const [giveBackParts, setGiveBackParts] = useState<Record<string, number>>({});
   const [hydrated, setHydrated] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
@@ -2747,35 +2752,29 @@ export default function OrderDetail() {
         open={materialUsageOpen}
         onClose={() => setMaterialUsageOpen(false)}
         summary={materialUsage}
-        items={items}
-        catalogs={catalogs}
         rateDrafts={materialRateDrafts}
         onRateDraftChange={(key, value) =>
           setMaterialRateDrafts((drafts) => ({ ...drafts, [key]: value }))
         }
-        // Both handlers rewrite the drafts through the pure helpers in
-        // `materialRateOverrides.ts`; nothing about pricing is decided
-        // here. The rate box is re-seeded on reset so it agrees with the
-        // lines it just restored.
-        onApplyRate={(materialId, unit, rate) =>
-          setItems((list) => applyMaterialRate(list, catalogs, materialId, unit, rate).items)
-        }
-        onResetRate={(materialId, unit) => {
-          setItems((list) => revertMaterialRate(list, materialId, unit).items);
-          setMaterialRateDrafts((drafts) => {
-            const next = { ...drafts };
-            delete next[materialRowKey(materialId, unit)];
-            return next;
-          });
+        appliedParts={giveBackParts}
+        // The ONE place a give-back turns into money. No line item is
+        // touched: `applyGiveBackPart` composes this contribution on top
+        // of the discount already in force, swapping whatever the same
+        // key contributed before, so Apply is additive and Reset (amount
+        // 0) is exact. A percentage discount has no dollar base to add
+        // to, so it is replaced — the dialog warns before that happens.
+        onApplyGiveBack={(key, amount) => {
+          const base = discountType === 'fixed' ? Number(discountValue) || 0 : 0;
+          const composed = applyGiveBackPart(giveBackParts, base, key, amount);
+          setDiscountType('fixed');
+          setDiscountValue(composed.discount.toFixed(2));
+          setGiveBackParts(composed.parts);
         }}
         sqmRate={sqmGiveBackRate}
         onSqmRateChange={setSqmGiveBackRate}
         runningRate={runningGiveBackRate}
         onRunningRateChange={setRunningGiveBackRate}
-        onApplyDiscount={(amount) => {
-          setDiscountType('fixed');
-          setDiscountValue(amount.toFixed(2));
-        }}
+        discountIsPercent={discountType === 'percent'}
       />
 
       {/* Quick add-customer pop-up; the new customer is auto-selected. */}
