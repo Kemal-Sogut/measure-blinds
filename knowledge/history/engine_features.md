@@ -1,5 +1,94 @@
 # Engine Features / Feature History
 
+## 2026-08-22 — Material usage panel + `describeMaterialUsage`
+An internal order-editor panel that turns "how much fabric is this order, and at what
+rate?" into an answerable question, plus the one new blind-type method it needed.
+Money paths are unchanged — see the §4.2 rationale below for why the existing material
+formula was deliberately left alone.
+
+**The Material usage panel** (`apps/web/src/pages/orders/MaterialUsagePanel.tsx`), a
+`<details>` rendered immediately above the discount control at BOTH totals sites in
+`OrderDetail.tsx` (the `xl:hidden` mobile totals card and the desktop summary rail, via
+a single `materialUsagePanel` JSX variable so the two cannot drift). It lists billed
+quantity, rate, and material-leg revenue per material — grouped by material AND rate
+unit, so a m²-priced fabric and a running-metre Curtains fabric never pool into one
+number — with a footer note when billed area exceeds measured area (minimum-width/
+height inflation). It accepts a `$/m²` rate and, only when a `running_m` row exists, a
+separate `$/m` rate, computes the resulting give-back in dollars, and an Apply button
+writes that dollar figure into the order's existing FIXED discount
+(`setDiscountType('fixed')` + `setDiscountValue`) — there is no stored per-m² discount
+type. **It is internal-only**: never shown to a customer, never printed, absent from
+the PDF, the public customer view, `/orders/:id/present`, and `/orders/:id/overview`.
+**The give-back rate is scratchpad state, not persisted anywhere.** Reopening the order
+later shows only the plain dollar discount that resulted — no record of the $/m² or
+$/m that produced it survives a reload; the panel says so on screen in its own JSDoc
+and copy so nobody assumes otherwise. Rows exclude hidden lines (matching the order
+totals), and preset/custom/incomplete-blind lines are counted into an `excludedCount`
+note rather than priced with a guessed area. Manual price overrides and custom add-ons
+never distort the reported figures: `amount` is computed from the option-derived
+material leg (`describeUnitCosts(inputs).material × qty`), never from the stored/
+overridden unit price.
+
+Aggregation lives in a new pure, React-free `apps/web/src/pages/orders/materialUsage.ts`
+(`summarizeMaterialUsage`, `giveBackAmount`), built and tested independently of the
+component (`materialUsage.test.ts`). To share the price preview's exact completeness
+gating (same `slotsForType`, `resolveCatalogRefs`, attribute parsing) instead of a
+second looser copy, `lineItemDrafts.ts` now exports `blindDraftInputs(draft, catalogs)`
+— the priced-inputs assembly extracted out of `blindDraftPrice`, which is rewritten as
+a thin caller of it. `lineItemDrafts.test.ts` was not edited and still pins
+`blindDraftPrice`'s behaviour unchanged.
+
+**`BaseBlindType.describeMaterialUsage(item)`** — a new PUBLIC method added to BOTH
+blind-type twins (`apps/api/src/lib/blindTypes/base.ts`, `apps/web/src/lib/blindTypes/
+base.ts`), alongside `describeUnitCosts` (2026-08-20) as the second first-class
+reporting concept on the hierarchy. Returns `{ unit: 'sqm' | 'running_m'; quantity;
+measured }` for ONE blind, on the SAME minimised dimensions `materialCost` charges.
+`quantity` is BILLED — width/height minimum rules applied, matching what the material
+leg actually charged; `measured` skips the minimums and exists only for the panel's
+footer figure, never for pricing. Nine of the ten canonical types inherit the base
+`sqm` formula unchanged. **Curtains overrides it** (`blindTypes/curtains.ts`, both
+twins) to report `running_m`: only the width minimum is applied (Curtains ignores
+height, as `materialCost` already does), the pleat-fullness multiplier is applied to
+the minimised width, and the per-panel hem allowance is added AFTER that
+multiplication — mirroring `materialCost`'s own shape exactly, hem included outside
+the fullness math.
+
+**Why `materialCost` was NOT refactored to derive from `describeMaterialUsage`**
+(design §4.2, `knowledge/specs/2026-08-21-material-usage-discount-design.md`). The
+obvious refactor — `materialCost = describeMaterialUsage(item).quantity × rate` — would
+make "material leg equals usage × rate" true by construction. It was rejected: `(W × H
+× price) / 10000` and `((W × H) / 10000) × price` are not bit-identical in IEEE-754,
+and reassociating the material leg on a production system with historical orders could
+move a stored cent at a half-cent boundary — the same class of hazard
+`HARDWARE_LEG_ORDER` (2026-08-20) exists to contain. **The compromise is two separate
+expressions of one idea, held together by a test rather than by construction.** Both
+`pricing.test.ts` suites (api and web) gained a consistency case table spanning every
+blind type — under-minimum width, under-minimum height, tier boundaries, multi-panel,
+and Curtains at several pleat multipliers — asserting `describeUnitCosts(item).material
+≈ describeMaterialUsage(item).quantity × material_price_per_sqm` to within a tenth of a
+cent. **Deleting that test removes the only guard against the two expressions
+drifting apart** — there is no other mechanism keeping them in sync.
+
+**Warning for future maintainers, stated in the base method's own JSDoc:** any new
+blind type that overrides `materialCost` MUST also override `describeMaterialUsage`,
+or it will report the base area formula against its own (different) price, and the
+consistency test above will fail. Curtains is the only type that needs the override
+today, but the rule applies to any future type with a divergent material formula.
+
+### Verified
+web `pnpm check` clean, `pnpm test` 377/377 (23 files), `pnpm lint` 0/0; api `pnpm
+check` clean, `pnpm test` 391/391 (19 files). `lineItemDrafts.test.ts` passed
+unmodified, confirming the `blindDraftInputs` extraction did not change
+`blindDraftPrice`'s behaviour. **Not verified in a running browser.** The dev server
+boots but `apps/web/src/lib/supabaseClient.ts` throws at module init
+(`Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY`) because no `apps/web/.env`
+exists in this worktree, so the app never renders past a blank page — no login screen,
+no route, nothing to click. The panel's underlying calculation is covered by
+`materialUsage.test.ts`, but nobody has seen it on screen: not the collapsed summary
+line, not the expand/rate/Apply flow, not the discount field actually updating, not
+mobile layout, not the two-rate-input case (a `running_m` row present). This is a known
+open item, not a soft "should probably check" — see `memory-bank/progress.md`.
+
 ## 2026-08-20 — Order Presentation view (filters + per-option column totals) + `describeUnitCosts`
 A new customer-facing page, plus the one pricing change it needed. Money paths are
 behaviourally unchanged — see the bit-identical note below.

@@ -4,40 +4,28 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-08-20)
-Working branch `feat/manual-status-transition`, off `main` at the address-autocomplete
-re-enable (`40da819`). `main` is clean — the Order Presentation view and the order-overview
-filters/totals work merged through PR #37, and the 50%-deposit gate, customer "how to pay"
-windowing, expiry-revive and appointment "Add order" shortcut are all in.
+## Where things stand (as of 2026-08-22)
+Working branch `claude/competent-neumann-16a922`, off `main` at `be8972d` (per-option prices
+on the customer's documents — now committed on `main`, not in-flight; see below). This
+branch adds the Material usage panel and its $/m² (and, for Curtains, $/m) discount
+give-back calculator to the order editor, plus the `describeMaterialUsage` blind-type
+method behind it (7 commits, `3866df5..5374d86`). Full detail, including the
+`materialCost` vs. `describeMaterialUsage` bit-identity rationale, is in
+`knowledge/history/engine_features.md`, 2026-08-22; the approved design is
+`knowledge/specs/2026-08-21-material-usage-discount-design.md`. Verified: web `pnpm check`
+clean, `pnpm test` 377/377 (23 files), `pnpm lint` 0/0; api `pnpm check` clean, `pnpm test`
+391/391 (19 files). **Not verified in a browser** — no `apps/web/.env` exists in this
+worktree, so `supabaseClient.ts` throws at module init before React mounts any route and
+the panel has never been seen on screen (see "Next steps" below). Not merged, not deployed.
 
-The branch makes the order lifecycle fully overridable by hand: a new unguarded
-`POST /api/orders/:id/status` sets any of the six timeline stages from any current status
-(including `expired`), reconciling `sent_at` / `confirmed_at` / `installed_at` off the TARGET
-stage index in both directions and dropping the installation appointment below `ready`; the
-Progress timeline in `OrderDetail.tsx` now renders every non-current stage as one enabled
-button through a single `handleSetStatus`. The six guarded lifecycle routes are untouched —
-they still back the email, payment, and customer-confirm flows — but `useMarkSent`,
-`useMarkInProgress` and `useRevertOrder` lost their only caller and were removed from
-`hooks/useOrders.ts`. See `knowledge/history/engine_features.md`, 2026-08-20, and the
-spec/plan in `docs/superpowers/` (local-only). Verified: api `pnpm check` clean, `pnpm test`
-112/112 in `orders.routes.test.ts` (8 new cases); web `pnpm check` clean, `pnpm test`
-336/336, `oxlint` 0 warnings. Not merged, not deployed, and the timeline has not been clicked
-in the running app — `/orders/:id` is behind `ProtectedRoute` and no signed-in session was
-available.
-
-Uncommitted in the working tree (on `main`): per-option prices on the customer's documents.
-The four hardware options (cassette, bottom rail, control, installation) now print what they
-added to the LINE beside their names on the estimate/invoice PDF and the public customer page
-— `Cassette: Standard — $28.00` — with a zero-cost option printing its name alone, and
-material/colour/blind-type attributes staying bare. New `apps/api/src/lib/optionBreakdown.ts`
-(`optionLineAmounts`) rebuilds the priced `hardware` map from the row's snapshot columns and
-reads the legs back out of `describeUnitCosts`, so no price basis is interpreted twice; it is
-the server twin of the hardware half of `apps/web/src/lib/optionBreakdown.ts`. The public
-payload gained `option_prices` per line item — computed server-side because that endpoint is
-unauthenticated and the page holds no catalog (rule 1); the rates and bases never leave the
-Worker. Verified: api 380/380, web 336/336, both `pnpm check` clean, `oxlint` clean; NOT seen
-in a browser (the customer page needs a live token + running Worker). See
-`knowledge/history/engine_features.md`, 2026-08-20.
+`main` itself is clean and carries, most recently: the fully manual order-lifecycle override
+(`POST /api/orders/:id/status`, every Progress-timeline stage a one-click move — merged via
+PR #38, `knowledge/history/engine_features.md` 2026-08-20) and per-option prices on the
+customer's documents (the four hardware options print what they added to the line beside
+their names on the estimate/invoice PDF and the public customer page, via
+`apps/api/src/lib/optionBreakdown.ts`'s `optionLineAmounts` and the public payload's
+`option_prices`). Both were previously tracked here as in-flight/uncommitted; both are now
+plain commits on `main` (`1cf4fea`, `be8972d`).
 
 Live on `main`: server-authoritative pricing with per-type blind modules (Curtains is the one
 type with a divergent formula); per-type hardware scoping + price basis; per-blind-type saved
@@ -50,6 +38,16 @@ install + pull-to-refresh; the soft-dashboard UI redesign with a shared `compone
 primitive layer.
 
 ## Next steps / open work
+- **The Material usage panel has never been rendered.** This worktree has no
+  `apps/web/.env` (only `.env.example`), so `apps/web/src/lib/supabaseClient.ts` throws
+  `Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY` at module init and the app never
+  gets past a blank page — no login screen, no route, nothing to click. The code passed
+  type-check, both test suites, and lint, but nobody has seen the collapsed summary line,
+  the expand/rate/Apply flow, the discount field actually updating, the mobile layout, or
+  the two-rate-input case (a `running_m` row present alongside a `sqm` one). Needs
+  `apps/web/.env` (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
+  `lgbxxlwsdeuhdgzrjjen`), a valid login, and `apps/api/.dev.vars` with the service-role
+  key before this can be driven end to end.
 - Nothing in this app has been driven on a real phone by a human — every staff route sits
   behind `ProtectedRoute`, so the standing ask across almost every branch has been "verify on
   an actual device." The one exception: on a 2026-08-20 maintainer report that the bulk-add
@@ -104,6 +102,13 @@ primitive layer.
   page promise a row that adds up in front of a customer.
 - `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
   `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
+- `blindDraftInputs(draft, catalogs)` (`lineItemDrafts.ts`) is the priced-inputs assembly
+  extracted out of `blindDraftPrice` so a second consumer (the Material usage panel's
+  aggregator) shares the exact same completeness gating instead of a looser copy.
+  `blindDraftPrice` is now a thin caller of it — reach for `blindDraftInputs` for anything
+  that needs a blind draft's `BlindPricingInputs` without wanting the dollar figure.
+- `describeMaterialUsage` (blind-type modules) is pinned to `materialCost` by a test, not
+  by construction — see `systemPatterns.md`. Don't refactor one to derive from the other.
 - Money-triggered side effects (email + a persisted flag) belong in a `lib/` helper called
   from every door that can produce the event (a consultant's own action AND the e-Transfer
   webhook), never inline in one route — see `lib/warrantyIssue.ts`, `lib/payments.ts`.

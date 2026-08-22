@@ -96,6 +96,23 @@ price so `Σ cells + adjustment === line_total` exactly on every row. The filter
 overall total and the server-authoritative order strip (subtotal/discount/HST/total, never
 recomputed) are deliberately separate numbers.
 
+**Material usage panel (`OrderDetail.tsx`, above the discount control at both
+breakpoints):** internal-only — never shown to a customer, never printed, absent from the
+PDF, the public customer view, `/orders/:id/present`, and `/orders/:id/overview`. Shows
+billed material quantity, rate, and material-leg revenue per material, grouped by material
+AND rate unit (m² / running metre), hidden lines dropped and preset/custom/incomplete lines
+counted as excluded rather than priced; a footer note surfaces billed-vs-measured area when
+minimums inflated it. Accepts a `$/m²` rate (and, only when a Curtains line is present, a
+separate `$/m` rate), computes the resulting give-back, and an Apply button writes that
+dollar figure into the order's existing FIXED discount. **The give-back rate is scratchpad
+state — it is not persisted**; reopening the order shows only the plain dollar discount,
+with no record of the rate that produced it. Backed by a new public
+`BaseBlindType.describeMaterialUsage()` (both twins) alongside `describeUnitCosts`, which
+Curtains overrides to report running metres; deliberately NOT the source of `materialCost`
+(bit-identity risk to historical orders) — the two are held together by a consistency test
+in both `pricing.test.ts` suites instead. See `knowledge/history/engine_features.md`,
+2026-08-22, for the full rationale.
+
 **Settings/catalogs:** Materials (per-blind-type, many-to-many linking), cassette/bottom-rail/
 control/installation option catalogs (scoped per type, price + basis), per-type defaults,
 company info + logo, Terms & Conditions, e-Transfer details.
@@ -110,6 +127,18 @@ autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = tru
 `AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.
 
 ## What's Left / Known Issues
+- **The Material usage panel has never been rendered or clicked, in any browser.** This is
+  a harder blocker than the general "no real device" gap below: the dev server boots, but
+  `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or
+  VITE_SUPABASE_ANON_KEY` at module init because no `apps/web/.env` exists in this
+  worktree (only `.env.example`), so the app never renders past a blank page — no login
+  screen, no route, nothing to click at all. The panel's code passed type-check, both
+  `pricing.test.ts`/`materialUsage.test.ts` suites, and lint (0 errors, 0 warnings), but no
+  one has seen the collapsed summary text, the expand/rate/Apply interaction, the discount
+  field actually changing, the mobile layout, or the two-rate-input case. Needs
+  `apps/web/.env` populated (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
+  `lgbxxlwsdeuhdgzrjjen`) plus a valid login and `apps/api/.dev.vars` before this can be
+  driven end to end.
 - **No real device has ever driven the app itself.** Every staff route sits behind
   `ProtectedRoute`, so verification to date is types + tests + production builds, occasionally
   a signed-in desktop-Chrome session, or (twice, 2026-08-20) a throwaway component-level Vite
