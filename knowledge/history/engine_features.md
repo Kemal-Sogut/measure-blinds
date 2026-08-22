@@ -1,5 +1,54 @@
 # Engine Features / Feature History
 
+## 2026-08-22 — Material usage becomes a dialog, with per-material editable rates
+Two changes to the panel added earlier the same day (entry below), driven by the panel
+being unreadable in the ~280px summary rail and by the need to discount ONE fabric
+rather than the whole job.
+
+**The panel is now a dialog.** `MaterialUsagePanel.tsx` was renamed to
+`MaterialUsageDialog.tsx` and split into two exports. `MaterialUsageTrigger` is a
+single stateless summary row ("Material usage · 5.60 m²") that still renders above the
+discount control at BOTH totals sites; `MaterialUsageDialog` is the content, built on
+`components/ui/Modal` (bottom sheet below `lg`, centred dialog above) and rendered
+EXACTLY ONCE for the page, beside the other overlays. Rendering it twice — the pattern
+the old inline panel used — would stack two dialogs when open. Rows are now stacked
+cards rather than table rows, which is what makes a per-row editor fit at all.
+
+**Per-material editable rates.** Each material row carries a rate box prefilled with
+the rate in force (the applied rate, else the catalog rate), a reset button INSIDE the
+box, and an "Apply to N lines" button. Apply reprices every visible, priceable line
+using that material — at that rate unit — and writes the result into each line's
+existing `unit_price_override`, so the line totals, subtotal and order total all move
+and the change SURVIVES A SAVE. This is the only mechanism that can persist: there is
+no per-order material rate in the schema and the Worker re-prices from the catalog.
+Repricing goes through `blindDraftInputs` + `calculateBlindUnitPriceForType` with one
+field swapped, so no area formula or leg arithmetic is reimplemented.
+
+**A hand-typed line price is never destroyed.** New `BlindDraft.material_rate_applied`
+(OPTIONAL, session-only, no column behind it) records which overrides this tool wrote,
+as `unit:rate`. Apply skips — and counts — any line whose override it did not write;
+Reset clears only the lines it did write, for that material and rate unit only. After a
+save-and-reopen the provenance is gone and those overrides read as hand-typed, which is
+the safe direction: the dialog will decline to touch them rather than silently reprice.
+
+**The order-wide give-back is unchanged and still present**, in its own section at the
+bottom of the dialog: one $/metre figure across every material, totalled into the
+FIXED discount. Using both instruments at once double-discounts, so the dialog says so
+in red when a per-material rate is already in force and a give-back is pending.
+
+Logic lives in a new pure, React-free `apps/web/src/pages/orders/materialRateOverrides.ts`
+(`materialRowKey`, `encodeAppliedRate`/`decodeAppliedRate`, `applyMaterialRate`,
+`revertMaterialRate`, `materialRateStatus`) with 20 tests in `materialRateOverrides.test.ts`.
+Row status (applied rate, target/applied/hand-priced counts) is RECOUNTED from the
+drafts on every render rather than remembered, so deleting, cloning or hiding a line
+cannot leave the dialog describing lines that no longer exist. Known limits, both
+stated on screen: an applied override is a fixed price and does not follow later
+measurement edits (same contract as a manual override), and the row's "$X fabric at the
+catalog rate" figure deliberately does not move when a rate is applied — it is the
+baseline, and the effect is visible in the order total. Nothing under `lib/` changed,
+so the api/web pricing twins are untouched.
+
+
 ## 2026-08-22 — Material usage panel + `describeMaterialUsage`
 An internal order-editor panel that turns "how much fabric is this order, and at what
 rate?" into an answerable question, plus the one new blind-type method it needed.

@@ -96,22 +96,35 @@ price so `Σ cells + adjustment === line_total` exactly on every row. The filter
 overall total and the server-authoritative order strip (subtotal/discount/HST/total, never
 recomputed) are deliberately separate numbers.
 
-**Material usage panel (`OrderDetail.tsx`, above the discount control at both
-breakpoints):** internal-only — never shown to a customer, never printed, absent from the
-PDF, the public customer view, `/orders/:id/present`, and `/orders/:id/overview`. Shows
-billed material quantity, rate, and material-leg revenue per material, grouped by material
-AND rate unit (m² / running metre), hidden lines dropped and preset/custom/incomplete lines
-counted as excluded rather than priced; a footer note surfaces billed-vs-measured area when
-minimums inflated it. Accepts a `$/m²` rate (and, only when a Curtains line is present, a
-separate `$/m` rate), computes the resulting give-back, and an Apply button writes that
-dollar figure into the order's existing FIXED discount. **The give-back rate is scratchpad
-state — it is not persisted**; reopening the order shows only the plain dollar discount,
-with no record of the rate that produced it. Backed by a new public
-`BaseBlindType.describeMaterialUsage()` (both twins) alongside `describeUnitCosts`, which
-Curtains overrides to report running metres; deliberately NOT the source of `materialCost`
-(bit-identity risk to historical orders) — the two are held together by a consistency test
-in both `pricing.test.ts` suites instead. See `knowledge/history/engine_features.md`,
-2026-08-22, for the full rationale.
+**Material usage dialog (trigger row above the discount control at both breakpoints;
+`MaterialUsageDialog.tsx`, rendered once for the page):** internal-only — never shown to a
+customer, never printed, absent from the PDF, the public customer view,
+`/orders/:id/present`, and `/orders/:id/overview`. Shows billed material quantity, rate, and
+material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
+hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
+priced; a note surfaces billed-vs-measured area when minimums inflated it. Two discounting
+instruments:
+- **Per material.** Each row's rate box is prefilled with the rate in force, has a reset
+  button inside it, and an "Apply to N lines" button that reprices every visible, priceable
+  line using that material (at that rate unit) into the line's existing
+  `unit_price_override` — so line totals, subtotal and order total move, and the change
+  SURVIVES A SAVE. Repricing runs through `blindDraftInputs` + `calculateBlindUnitPriceForType`
+  with one field swapped; no formula is reimplemented. A line carrying a HAND-TYPED override
+  is skipped and counted, never overwritten, and Reset clears only what Apply itself wrote —
+  tracked by the optional, session-only `BlindDraft.material_rate_applied` (`unit:rate`).
+  Logic in the pure `materialRateOverrides.ts`; row counts are recounted from the drafts
+  each render rather than remembered.
+- **Across the order.** A `$/m²` rate (and, only when a Curtains line is present, a separate
+  `$/m` rate) whose give-back an Apply button writes into the order's existing FIXED
+  discount. **This rate is scratchpad state — not persisted**; reopening shows only the
+  plain dollar discount. The dialog warns in red when both instruments are in play, because
+  they discount the same fabric twice.
+
+Backed by a new public `BaseBlindType.describeMaterialUsage()` (both twins) alongside
+`describeUnitCosts`, which Curtains overrides to report running metres; deliberately NOT the
+source of `materialCost` (bit-identity risk to historical orders) — the two are held
+together by a consistency test in both `pricing.test.ts` suites instead. See
+`knowledge/history/engine_features.md`, 2026-08-22 (two entries), for the full rationale.
 
 **Settings/catalogs:** Materials (per-blind-type, many-to-many linking), cassette/bottom-rail/
 control/installation option catalogs (scoped per type, price + basis), per-type defaults,
@@ -127,15 +140,17 @@ autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = tru
 `AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.
 
 ## What's Left / Known Issues
-- **The Material usage panel has never been rendered or clicked, in any browser.** This is
+- **The Material usage dialog has never been rendered or clicked, in any browser.** This is
   a harder blocker than the general "no real device" gap below: the dev server boots, but
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or
   VITE_SUPABASE_ANON_KEY` at module init because no `apps/web/.env` exists in this
   worktree (only `.env.example`), so the app never renders past a blank page — no login
-  screen, no route, nothing to click at all. The panel's code passed type-check, both
-  `pricing.test.ts`/`materialUsage.test.ts` suites, and lint (0 errors, 0 warnings), but no
-  one has seen the collapsed summary text, the expand/rate/Apply interaction, the discount
-  field actually changing, the mobile layout, or the two-rate-input case. Needs
+  screen, no route, nothing to click at all. The code passed type-check, both
+  `pricing.test.ts`/`materialUsage.test.ts`/`materialRateOverrides.test.ts` suites, and lint
+  (0 errors, 0 warnings), but no one has seen the trigger row, the dialog opening, the
+  per-material rate box / reset / "Apply to N lines" flow moving the order total, the
+  give-back changing the discount field, the mobile bottom sheet, or the two-rate-input
+  case. Needs
   `apps/web/.env` populated (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
   `lgbxxlwsdeuhdgzrjjen`) plus a valid login and `apps/api/.dev.vars` before this can be
   driven end to end.

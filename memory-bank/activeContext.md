@@ -7,16 +7,18 @@
 ## Where things stand (as of 2026-08-22)
 Working branch `claude/competent-neumann-16a922`, off `main` at `be8972d` (per-option prices
 on the customer's documents — now committed on `main`, not in-flight; see below). This
-branch adds the Material usage panel and its $/m² (and, for Curtains, $/m) discount
-give-back calculator to the order editor, plus the `describeMaterialUsage` blind-type
-method behind it (9 commits, `be8972d..04434d4`). Full detail, including the
-`materialCost` vs. `describeMaterialUsage` bit-identity rationale, is in
-`knowledge/history/engine_features.md`, 2026-08-22; the approved design is
+branch adds the internal Material usage DIALOG to the order editor — fabric quantity and
+rate per material, a per-material editable rate that reprices the lines using it, and the
+order-wide $/m² (and, for Curtains, $/m) give-back that writes the fixed discount — plus
+the `describeMaterialUsage` blind-type method behind it. Open on PR #39. Full detail,
+including the `materialCost` vs. `describeMaterialUsage` bit-identity rationale and the
+per-material rate design, is in `knowledge/history/engine_features.md`, 2026-08-22 (two
+entries); the approved design for the original panel is
 `knowledge/specs/2026-08-21-material-usage-discount-design.md`. Verified: web `pnpm check`
-clean, `pnpm test` 377/377 (23 files), `pnpm lint` 0/0; api `pnpm check` clean, `pnpm test`
+clean, `pnpm test` 397/397 (24 files), `pnpm lint` 0/0; api `pnpm check` clean, `pnpm test`
 391/391 (19 files). **Not verified in a browser** — no `apps/web/.env` exists in this
 worktree, so `supabaseClient.ts` throws at module init before React mounts any route and
-the panel has never been seen on screen (see "Next steps" below). Not merged, not deployed.
+the dialog has never been seen on screen (see "Next steps" below). Not merged, not deployed.
 
 `main` itself is clean and carries, most recently: the fully manual order-lifecycle override
 (`POST /api/orders/:id/status`, every Progress-timeline stage a one-click move — merged via
@@ -38,12 +40,13 @@ install + pull-to-refresh; the soft-dashboard UI redesign with a shared `compone
 primitive layer.
 
 ## Next steps / open work
-- **The Material usage panel has never been rendered.** This worktree has no
+- **The Material usage dialog has never been rendered.** This worktree has no
   `apps/web/.env` (only `.env.example`), so `apps/web/src/lib/supabaseClient.ts` throws
   `Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY` at module init and the app never
   gets past a blank page — no login screen, no route, nothing to click. The code passed
-  type-check, both test suites, and lint, but nobody has seen the collapsed summary line,
-  the expand/rate/Apply flow, the discount field actually updating, the mobile layout, or
+  type-check, both test suites, and lint, but nobody has seen the trigger row, the dialog
+  opening, the per-material rate box / reset button / "Apply to N lines" flow moving the
+  order total, the give-back writing the discount field, the mobile bottom-sheet layout, or
   the two-rate-input case (a `running_m` row present alongside a `sqm` one). Needs
   `apps/web/.env` (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
   `lgbxxlwsdeuhdgzrjjen`), a valid login, and `apps/api/.dev.vars` with the service-role
