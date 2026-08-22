@@ -42,7 +42,12 @@
  */
 
 import { z } from 'zod';
-import { BaseBlindType, type BlindAttributes, type BlindPricingInputs } from './base';
+import {
+  BaseBlindType,
+  type BlindAttributes,
+  type BlindPricingInputs,
+  type MaterialUsage,
+} from './base';
 
 /**
  * Fabric consumed by the side hems and returns of ONE finished panel, in
@@ -118,6 +123,29 @@ export class CurtainsBlindType extends BaseBlindType {
       (widthCm / 100) * pleat * item.material_price_per_sqm +
       item.panels.length * HEM_ALLOWANCE_M * item.material_price_per_sqm
     );
+  }
+
+  /**
+   * Curtains buy fabric by the running metre of finished width, so this
+   * reports metres rather than square metres and ignores height exactly
+   * as `materialCost` does — the drop is measured and printed on the
+   * manufacturer copy, but it does not price.
+   *
+   * The hem allowance is added AFTER the fullness multiplication, matching
+   * the leg above: a hem does not get wider because the curtain is
+   * gathered more. `measured` skips only the width minimum, which is the
+   * only minimum this type applies.
+   */
+  describeMaterialUsage(item: BlindPricingInputs): MaterialUsage {
+    const rawWidthCm = item.panels.reduce((a, b) => a + b, 0);
+    const widthCm = this.applyWidthMinimum(rawWidthCm);
+    const pleat = numericOr(item.attributes.pleat_multiplier, 1);
+    const hem = item.panels.length * HEM_ALLOWANCE_M;
+    return {
+      unit: 'running_m',
+      quantity: (widthCm / 100) * pleat + hem,
+      measured: (rawWidthCm / 100) * pleat + hem,
+    };
   }
 }
 

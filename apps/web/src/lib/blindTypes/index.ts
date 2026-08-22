@@ -8,7 +8,12 @@
  * reaching into individual blind-type files.
  */
 
-export { BaseBlindType, type BlindPricingInputs } from './base';
+export {
+  BaseBlindType,
+  type BlindPricingInputs,
+  type MaterialUnit,
+  type MaterialUsage,
+} from './base';
 export { getBlindType, normalizeBlindType } from './registry';
 export { RollerBlindType } from './roller';
 export { ZebraBlindType } from './zebra';

@@ -73,6 +73,35 @@ export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control' | 'installation
 export type PriceBasis = 'per_m' | 'per_sqm' | 'per_unit' | 'per_panel';
 
 /**
+ * The unit a blind type's `material_price_per_sqm` rate is actually
+ * quoted in. The column name is a historical simplification: every type
+ * except Curtains genuinely charges by the square metre, while Curtains
+ * charges by the running metre of finished width. Reporting surfaces MUST
+ * carry this alongside any quantity, or a running metre and a square
+ * metre would silently pool into one meaningless number.
+ */
+export type MaterialUnit = 'sqm' | 'running_m';
+
+/**
+ * How much material ONE blind is charged for, in the unit its rate is
+ * quoted in. Produced by {@link BaseBlindType.describeMaterialUsage} for
+ * reporting — the internal Material usage panel — and never for pricing.
+ *
+ * `quantity` is BILLED: the minimum rules are applied, so it matches what
+ * the material leg actually charged. `measured` is the same figure with
+ * the minimums skipped, and exists only so a reader can see how much of
+ * the billed area is minimum inflation rather than fabric the customer
+ * had. Neither is multiplied by the line's `quantity` — that is the
+ * caller's job, because this class never sees how many identical blinds
+ * a line carries.
+ */
+export interface MaterialUsage {
+  unit: MaterialUnit;
+  quantity: number;
+  measured: number;
+}
+
+/**
  * One hardware charge: a server-fetched rate and the basis it is charged
  * on. Never assembled by a client — `resolveLineItems` reads both columns
  * from the catalog row itself.
@@ -321,6 +350,35 @@ export class BaseBlindType {
     if (heightCm < 100) return 100;
     if (heightCm < 200) return 200;
     return heightCm;
+  }
+
+  /**
+   * How much material this blind consumes, for the internal Material
+   * usage report. Reports on the same minimised dimensions `materialCost`
+   * charges, so the two describe one quote rather than two.
+   *
+   * NOT the source of {@link BaseBlindType.materialCost}, deliberately.
+   * `(w * h * rate) / 10000` and `((w * h) / 10000) * rate` are not
+   * bit-identical in IEEE-754, and rewriting the leg to consume this
+   * could move a stored cent on a half-cent boundary — the same hazard
+   * `HARDWARE_LEG_ORDER` exists to contain. The two are instead pinned
+   * together by the "material leg equals usage x rate" case table in both
+   * `pricing.test.ts` suites; that test is what makes this safe, so it
+   * must not be deleted.
+   *
+   * A type that overrides `materialCost` MUST override this too, or it
+   * will report the base area formula against its own price and that
+   * test will fail. Curtains is the only such type today.
+   */
+  describeMaterialUsage(item: BlindPricingInputs): MaterialUsage {
+    const rawWidthCm = item.panels.reduce((a, b) => a + b, 0);
+    const widthCm = this.applyWidthMinimum(rawWidthCm);
+    const heightCm = this.applyHeightMinimum(item.height_cm);
+    return {
+      unit: 'sqm',
+      quantity: (widthCm * heightCm) / 10000,
+      measured: (rawWidthCm * item.height_cm) / 10000,
+    };
   }
 
   /**
