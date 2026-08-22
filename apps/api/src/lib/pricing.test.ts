@@ -512,3 +512,116 @@ describe('describeUnitCosts (server)', () => {
     }
   });
 });
+
+describe('describeMaterialUsage (server)', () => {
+  /** A blind whose raw dimensions are BELOW both minimums, so billed and measured differ. */
+  function small(): BlindPricingInputs {
+    return {
+      panels: [60],
+      height_cm: 80,
+      material_price_per_sqm: 50,
+      hardware: {},
+      attributes: {},
+    };
+  }
+
+  it('reports billed square metres with the minimums applied', () => {
+    // 60cm → 100cm, 80cm → 100cm, so 1.00 m² is billed on 0.48 m² measured.
+    const usage = getBlindType('Roller').describeMaterialUsage(small());
+    expect(usage.unit).toBe('sqm');
+    expect(usage.quantity).toBeCloseTo(1, 10);
+    expect(usage.measured).toBeCloseTo(0.48, 10);
+  });
+
+  it('reports billed and measured as equal once both minimums are cleared', () => {
+    const usage = getBlindType('Roller').describeMaterialUsage({
+      ...small(),
+      panels: [140],
+      height_cm: 200,
+    });
+    expect(usage.quantity).toBeCloseTo(2.8, 10);
+    expect(usage.measured).toBeCloseTo(2.8, 10);
+  });
+
+  it('sums panel widths before applying the width minimum', () => {
+    const usage = getBlindType('Roller').describeMaterialUsage({
+      ...small(),
+      panels: [70, 90],
+      height_cm: 200,
+    });
+    expect(usage.quantity).toBeCloseTo(3.2, 10);
+  });
+
+  it('reports running metres for Curtains, not square metres', () => {
+    // 3.0 m × 2.5 fullness + 1 panel × 0.5 m hem = 8.00 running metres.
+    const usage = getBlindType('Curtains').describeMaterialUsage({
+      panels: [300],
+      height_cm: 200,
+      material_price_per_sqm: 40,
+      hardware: {},
+      attributes: { pleat_multiplier: 2.5 },
+    });
+    expect(usage.unit).toBe('running_m');
+    expect(usage.quantity).toBeCloseTo(8, 10);
+  });
+
+  it('leaves the Curtains hem allowance out of the fullness multiplication', () => {
+    // Fullness 1 → 3.0 + 2 panels × 0.5 = 4.00, NOT (3.0 + 1.0) × 1.
+    const usage = getBlindType('Curtains').describeMaterialUsage({
+      panels: [150, 150],
+      height_cm: 200,
+      material_price_per_sqm: 40,
+      hardware: {},
+      attributes: { pleat_multiplier: 1 },
+    });
+    expect(usage.quantity).toBeCloseTo(4, 10);
+  });
+
+  it('applies the width minimum to Curtains but never the height minimum', () => {
+    // 60cm → 100cm = 1.0 m running × 2 + 1 hem × 0.5 = 2.50; height is irrelevant.
+    const usage = getBlindType('Curtains').describeMaterialUsage({
+      panels: [60],
+      height_cm: 80,
+      material_price_per_sqm: 40,
+      hardware: {},
+      attributes: { pleat_multiplier: 2 },
+    });
+    expect(usage.quantity).toBeCloseTo(2.5, 10);
+    expect(usage.measured).toBeCloseTo(1.7, 10);
+  });
+});
+
+describe('describeMaterialUsage agrees with the material leg it reports on', () => {
+  /**
+   * The spec (§4.2) deliberately does NOT derive `materialCost` from
+   * `describeMaterialUsage`, because reassociating the multiplication
+   * could move a stored cent. This test is the entire mitigation for
+   * that decision: it is what turns a silent drift between the two
+   * expressions into a failure.
+   */
+  const CASES: { type: string; item: BlindPricingInputs }[] = [
+    { type: 'Roller', item: { panels: [60], height_cm: 80, material_price_per_sqm: 45, hardware: {}, attributes: {} } },
+    { type: 'Roller', item: { panels: [140], height_cm: 200, material_price_per_sqm: 50, hardware: {}, attributes: {} } },
+    { type: 'Roller', item: { panels: [120], height_cm: 150, material_price_per_sqm: 33.33, hardware: {}, attributes: {} } },
+    { type: 'Roller', item: { panels: [100], height_cm: 200, material_price_per_sqm: 19.99, hardware: {}, attributes: {} } },
+    { type: 'Zebra', item: { panels: [70, 90], height_cm: 210, material_price_per_sqm: 62.5, hardware: {}, attributes: {} } },
+    { type: 'Roman', item: { panels: [99.9], height_cm: 199, material_price_per_sqm: 41.1, hardware: {}, attributes: {} } },
+    { type: 'Sunscreen/Solar', item: { panels: [250], height_cm: 260, material_price_per_sqm: 77, hardware: {}, attributes: {} } },
+    { type: 'Honeycomb', item: { panels: [180], height_cm: 100, material_price_per_sqm: 55, hardware: {}, attributes: {} } },
+    { type: 'Shutter', item: { panels: [200], height_cm: 200, material_price_per_sqm: 120, hardware: {}, attributes: {} } },
+    { type: 'Vertical Sheer', item: { panels: [160], height_cm: 240, material_price_per_sqm: 48.75, hardware: {}, attributes: {} } },
+    { type: 'Vertical Panel', item: { panels: [300], height_cm: 300, material_price_per_sqm: 30, hardware: {}, attributes: {} } },
+    { type: 'Vertical Roller', item: { panels: [110], height_cm: 105, material_price_per_sqm: 66.6, hardware: {}, attributes: {} } },
+    { type: 'Curtains', item: { panels: [300], height_cm: 200, material_price_per_sqm: 40, hardware: {}, attributes: { pleat_multiplier: 2.5 } } },
+    { type: 'Curtains', item: { panels: [150, 150], height_cm: 200, material_price_per_sqm: 62, hardware: {}, attributes: { pleat_multiplier: 2 } } },
+    { type: 'Curtains', item: { panels: [60], height_cm: 90, material_price_per_sqm: 39.95, hardware: {}, attributes: { pleat_multiplier: 3 } } },
+    { type: 'Curtains', item: { panels: [420], height_cm: 280, material_price_per_sqm: 88.5, hardware: {}, attributes: {} } },
+  ];
+
+  it.each(CASES)('$type: material leg equals usage x rate', ({ type, item }) => {
+    const blindType = getBlindType(type);
+    const usage = blindType.describeMaterialUsage(item);
+    const leg = blindType.describeUnitCosts(item).material;
+    expect(usage.quantity * item.material_price_per_sqm).toBeCloseTo(leg, 6);
+  });
+});
