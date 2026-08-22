@@ -10,39 +10,46 @@
  * at what rate, and what does charging less per metre come to. Two
  * instruments sit side by side because they do different jobs:
  *
- * - PER MATERIAL (one editor per row). Type a new rate for one material
- *   and Apply reprices every line using it, writing a real per-line price.
- *   This is the precise instrument: a rate change on one fabric only.
- *   The arithmetic lives in `materialRateOverrides.ts`, which also owns
- *   the promise that a hand-priced line is never overwritten.
- * - ACROSS THE ORDER (the give-back row at the bottom). One $/metre
- *   figure over every material, totalled into the order's FIXED discount.
- *   This is the blunt instrument, and it is the ORIGINAL behaviour of
- *   this panel — kept because "take $5/m² off the whole job" is still how
+ * - PER MATERIAL (one editor per row). Type a lower rate for ONE material
+ *   and Apply adds `(catalog rate − your rate) × that material's billed
+ *   quantity` to the order's discount. The precise instrument.
+ * - ACROSS THE ORDER (the give-back row at the bottom). One $/metre figure
+ *   over EVERY material at once. The blunt instrument, and the original
+ *   behaviour of this panel — "take $5/m² off the whole job" is still how
  *   most quotes get closed.
  *
- * Using both at once double-discounts, so the dialog says so on screen
- * rather than trusting anyone to notice.
+ * BOTH ARE PURE DISCOUNT MATH. Neither touches a line item: no unit price
+ * is overridden, no line is repriced, and nothing a consultant typed into
+ * a line is at risk from using this. Every Apply composes into the order's
+ * single FIXED discount through `applyGiveBackPart`, which is additive — a
+ * second Apply sits on top of the first rather than replacing it,
+ * re-applying one row swaps that row's own figure, and Reset takes exactly
+ * that row's figure back out. Applying a per-material rate AND an
+ * order-wide rate that covers the same fabric does discount it twice, so
+ * the dialog says so on screen.
  *
  * It is a dialog rather than an inline panel because the summary rail is
  * roughly 280px wide: a table with a per-row editor and two buttons in it
  * was unreadable there. The rail keeps only {@link MaterialUsageTrigger},
  * a one-line summary that opens this.
  *
- * Every quantity and rate comes from `summarizeMaterialUsage`; no area,
- * quantity or price basis is re-derived here. The component sums
- * pre-aggregated per-unit totals and subtracts a give-back rate from a
- * catalog rate — display arithmetic on scalars `materialUsage.ts` already
- * computed, not a second pricing path.
+ * Every quantity, rate and dollar figure comes from `materialUsage.ts`;
+ * no area, quantity or price basis is re-derived here. The component
+ * renders pre-computed scalars and owns no arithmetic of its own beyond
+ * formatting.
  */
 
 import { useMemo } from 'react';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import type { MaterialUnit } from '../../lib/blindTypes';
-import type { Catalogs, ItemDraft } from './lineItemDrafts';
-import { giveBackAmount, type MaterialUsageSummary } from './materialUsage';
-import { materialRateStatus, materialRowKey } from './materialRateOverrides';
+import {
+  giveBackAmount,
+  materialRowKey,
+  rowGiveBack,
+  ORDER_WIDE_GIVE_BACK,
+  type MaterialUsageSummary,
+} from './materialUsage';
 
 /** Short label for a rate unit, used in headers, totals and inputs. */
 const UNIT_LABEL: Record<MaterialUnit, string> = {
@@ -67,13 +74,6 @@ function lines(n: number): string {
   return `${n} line${n === 1 ? '' : 's'}`;
 }
 
-/** The one-line summary of every rate unit the order uses. */
-function summaryLineOf(summary: MaterialUsageSummary): string {
-  return usedUnitsOf(summary)
-    .map(({ unit, figures }) => `${figures.quantity.toFixed(2)} ${UNIT_LABEL[unit]}`)
-    .join(' · ');
-}
-
 /**
  * The units this order actually uses, paired with their figures, so no
  * caller has to assert a `Partial<Record>` lookup is present.
@@ -83,6 +83,13 @@ function usedUnitsOf(summary: MaterialUsageSummary) {
     const figures = summary.totals[unit];
     return figures ? [{ unit, figures }] : [];
   });
+}
+
+/** The one-line summary of every rate unit the order uses. */
+function summaryLineOf(summary: MaterialUsageSummary): string {
+  return usedUnitsOf(summary)
+    .map(({ unit, figures }) => `${figures.quantity.toFixed(2)} ${UNIT_LABEL[unit]}`)
+    .join(' · ');
 }
 
 /**
@@ -130,42 +137,41 @@ export function MaterialUsageTrigger({
  * Every piece of state is LIFTED into the parent (`OrderDetail`, beside
  * `discountValue`) rather than held here, for two independent reasons.
  * `Modal` unmounts its children when closed, so local state would be
- * silently wiped every time the dialog was dismissed — including a rate
- * the consultant had already applied to lines. And the trigger renders at
- * two breakpoints that CSS merely hides, so anything shared between them
- * has to live above both. Do not push these back down into `useState`.
+ * silently wiped every time the dialog was dismissed — including the
+ * record of what each row has already contributed to the discount. And
+ * the trigger renders at two breakpoints that CSS merely hides, so
+ * anything shared between them has to live above both. Do not push these
+ * back down into `useState`.
  */
 export interface MaterialUsageDialogProps {
   open: boolean;
   onClose: () => void;
-  /** Pre-aggregated usage, computed once by the parent for both surfaces. */
-  summary: MaterialUsageSummary;
-  /** The editor's current drafts, hidden ones included — the report filters. */
-  items: ItemDraft[];
   /**
-   * The live catalog cache (materials, blind types, etc.), the same one
-   * the rest of the line-item editor reads. The dialog reports TODAY'S
-   * rate from this cache, not a stored snapshot from when the order's
-   * lines were priced — a material's rate can have moved since.
+   * Pre-aggregated usage, computed once by the parent for both surfaces.
+   * Its rates are TODAY'S catalog rates, not a stored snapshot from when
+   * the order's lines were priced — a material's rate can have moved.
    */
-  catalogs: Catalogs;
+  summary: MaterialUsageSummary;
   /**
    * Per-material rate inputs keyed by {@link materialRowKey}, as raw
    * strings. A key that is ABSENT means "untouched", which is what lets
-   * each box fall back to the applied rate, or failing that the catalog
-   * rate, without the parent having to seed anything.
+   * each box fall back to the catalog rate without the parent having to
+   * seed anything.
    */
   rateDrafts: Record<string, string>;
   onRateDraftChange: (key: string, value: string) => void;
-  /** Reprices every line of this material+unit at `rate`. */
-  onApplyRate: (materialId: string, unit: MaterialUnit, rate: number) => void;
   /**
-   * Returns this material+unit's lines to their calculated price AND
-   * drops its `rateDrafts` entry, so the box falls back to showing the
-   * catalog rate again. Both halves are the parent's job because the
-   * draft map is the parent's state.
+   * What each row has already added to the discount, keyed the same way
+   * (plus {@link ORDER_WIDE_GIVE_BACK}). Read-only here — the parent owns
+   * the composition, this only reports and offers to change it.
    */
-  onResetRate: (materialId: string, unit: MaterialUnit) => void;
+  appliedParts: Record<string, number>;
+  /**
+   * Composes `amount` into the order's fixed discount under `key`,
+   * replacing whatever that key contributed before. `0` removes the
+   * contribution — that is what the reset button sends.
+   */
+  onApplyGiveBack: (key: string, amount: number) => void;
   /**
    * Order-wide give-back rate for `sqm`-priced materials, held as a raw
    * string for the same reason the per-material ones are.
@@ -175,8 +181,12 @@ export interface MaterialUsageDialogProps {
   /** Order-wide give-back rate for `running_m` materials (Curtains). */
   runningRate: string;
   onRunningRateChange: (value: string) => void;
-  /** Sets the order's fixed discount to this dollar amount. */
-  onApplyDiscount: (amount: number) => void;
+  /**
+   * True when the order's discount is currently a PERCENTAGE. Applying
+   * anything here switches it to a fixed dollar figure, which discards
+   * the percentage — worth saying out loud before it happens.
+   */
+  discountIsPercent: boolean;
 }
 
 /**
@@ -187,17 +197,15 @@ export function MaterialUsageDialog({
   open,
   onClose,
   summary,
-  items,
-  catalogs,
   rateDrafts,
   onRateDraftChange,
-  onApplyRate,
-  onResetRate,
+  appliedParts,
+  onApplyGiveBack,
   sqmRate,
   onSqmRateChange,
   runningRate,
   onRunningRateChange,
-  onApplyDiscount,
+  discountIsPercent,
 }: MaterialUsageDialogProps) {
   const rates = useMemo(
     () => ({
@@ -207,16 +215,7 @@ export function MaterialUsageDialog({
     [sqmRate, runningRate]
   );
 
-  const giveBack = useMemo(() => giveBackAmount(summary, rates), [summary, rates]);
-
-  // Recounted from the drafts on every render rather than remembered, so
-  // the dialog can only describe what the lines actually say — see
-  // `materialRateStatus`.
-  const statuses = useMemo(
-    () =>
-      summary.rows.map((row) => materialRateStatus(items, catalogs, row.materialId, row.unit)),
-    [summary.rows, items, catalogs]
-  );
+  const orderWideGiveBack = useMemo(() => giveBackAmount(summary, rates), [summary, rates]);
 
   // A material scoped to both Curtains and a m²-priced type is TWO rows
   // under one name. Left unqualified they read as a duplicate row rather
@@ -236,14 +235,10 @@ export function MaterialUsageDialog({
   const hasSqm = usedUnits.some((u) => u.unit === 'sqm');
   const hasRunning = usedUnits.some((u) => u.unit === 'running_m');
   const totalAmount = usedUnits.reduce((sum, u) => sum + u.figures.amount, 0);
-  const anyApplied = statuses.some((s) => s.appliedLines > 0);
-  // True when the give-back rate for ANY row exceeds that row's own
-  // catalog rate — the give-back would exceed that row's entire fabric
-  // revenue, which is worth calling out even though Apply stays enabled.
-  const exceedsRate = summary.rows.some((row) => {
-    const rate = rates[row.unit];
-    return rate !== undefined && rate > row.rate;
-  });
+  const anyMaterialApplied = summary.rows.some(
+    (row) => (appliedParts[materialRowKey(row.materialId, row.unit)] ?? 0) > 0
+  );
+  const orderWideApplied = appliedParts[ORDER_WIDE_GIVE_BACK] ?? 0;
 
   return (
     <Modal
@@ -259,16 +254,16 @@ export function MaterialUsageDialog({
       }
     >
       <div className="flex flex-col gap-3">
-        {summary.rows.map((row, i) => {
-          const status = statuses[i];
+        {summary.rows.map((row) => {
           const key = materialRowKey(row.materialId, row.unit);
-          // Untouched box shows the rate now in force: what was applied,
-          // or the catalog rate when nothing has been.
-          const original = status.appliedRate ?? row.rate;
-          const draft = rateDrafts[key] ?? original.toFixed(2);
+          const draft = rateDrafts[key] ?? row.rate.toFixed(2);
           const typed = parseRate(draft);
-          const repriceable = status.targetLines - status.manualLines;
-          const dirty = draft !== row.rate.toFixed(2) || status.appliedLines > 0;
+          const applied = appliedParts[key] ?? 0;
+          const pending = typed === null ? 0 : rowGiveBack(row, typed);
+          const above = typed !== null && typed > row.rate;
+          // Nothing to put back when the box still reads the catalog rate
+          // and this row has contributed nothing.
+          const dirty = draft !== row.rate.toFixed(2) || applied > 0;
 
           return (
             <section
@@ -290,13 +285,9 @@ export function MaterialUsageDialog({
                 </span>
               </div>
 
-              {/* The catalog-rate fabric revenue for this material. It
-                  deliberately does NOT move when a rate is applied: it is
-                  the baseline the change is being measured against, and
-                  the effect of applying is visible in the order total. */}
               <p className="text-[12px] text-text-secondary">
-                ${row.amount.toFixed(2)} fabric at the catalog rate of ${row.rate.toFixed(2)} /{' '}
-                {UNIT_LABEL[row.unit]} · {lines(status.targetLines)}
+                ${row.amount.toFixed(2)} fabric at ${row.rate.toFixed(2)} / {UNIT_LABEL[row.unit]} ·{' '}
+                {lines(row.lineCount)}
               </p>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -322,7 +313,10 @@ export function MaterialUsageDialog({
                       // accessible name are indistinguishable to a screen
                       // reader even when the visible heading disambiguates.
                       aria-label={`Reset ${row.materialName} (per ${UNIT_LABEL[row.unit]}) to the catalog rate`}
-                      onClick={() => onResetRate(row.materialId, row.unit)}
+                      onClick={() => {
+                        onRateDraftChange(key, row.rate.toFixed(2));
+                        onApplyGiveBack(key, 0);
+                      }}
                       className="absolute right-1 flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken disabled:opacity-30"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -341,27 +335,25 @@ export function MaterialUsageDialog({
                 <Button
                   size="sm"
                   variant="secondary"
-                  disabled={typed === null || repriceable === 0}
+                  disabled={pending <= 0}
                   // Named for the same reason the reset button is: several
-                  // rows can legitimately read "Apply to 1 line".
-                  aria-label={`Apply the ${row.materialName} rate per ${UNIT_LABEL[row.unit]} to ${lines(repriceable)}`}
-                  onClick={() => {
-                    if (typed !== null) onApplyRate(row.materialId, row.unit, typed);
-                  }}
+                  // rows can legitimately offer the same dollar figure.
+                  aria-label={`Discount ${row.materialName} per ${UNIT_LABEL[row.unit]} by $${pending.toFixed(2)}`}
+                  onClick={() => onApplyGiveBack(key, pending)}
                 >
-                  Apply to {lines(repriceable)}
+                  Discount ${pending.toFixed(2)}
                 </Button>
               </div>
 
-              {status.appliedLines > 0 && (
-                <p className="text-[12px] text-success">
-                  Charging ${status.appliedRate?.toFixed(2)} / {UNIT_LABEL[row.unit]} on{' '}
-                  {lines(status.appliedLines)}.
+              {above && (
+                <p className="text-[12px] text-text-secondary">
+                  Above the catalog rate — this dialog only discounts, so there is nothing to
+                  apply.
                 </p>
               )}
-              {status.manualLines > 0 && (
-                <p className="text-[12px] text-text-secondary">
-                  {lines(status.manualLines)} priced by hand — left unchanged.
+              {applied > 0 && (
+                <p className="text-[12px] text-success">
+                  Adding ${applied.toFixed(2)} to the discount.
                 </p>
               )}
             </section>
@@ -396,15 +388,10 @@ export function MaterialUsageDialog({
           </p>
         )}
 
-        <p className="px-1 text-[12px] text-text-secondary">
-          Applying a rate writes a fixed price on each line, exactly like a manual override: it will
-          not follow later changes to that line's measurements. Apply again after editing one.
-        </p>
-
         <section className="flex flex-col gap-2 rounded-md border border-border-light p-3">
           <h3 className="text-sm font-semibold text-text-primary">Give back across the order</h3>
           <p className="text-[12px] text-text-secondary">
-            One rate over every material, totalled into the order's fixed discount.
+            One rate over every material at once, added to the same discount.
           </p>
 
           <div className="flex flex-wrap items-end gap-2">
@@ -435,33 +422,39 @@ export function MaterialUsageDialog({
             <Button
               size="sm"
               variant="secondary"
-              disabled={giveBack <= 0}
-              onClick={() => onApplyDiscount(giveBack)}
+              disabled={orderWideGiveBack <= 0}
+              onClick={() => onApplyGiveBack(ORDER_WIDE_GIVE_BACK, orderWideGiveBack)}
             >
-              Apply ${giveBack.toFixed(2)}
+              Discount ${orderWideGiveBack.toFixed(2)}
             </Button>
+            {orderWideApplied > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onApplyGiveBack(ORDER_WIDE_GIVE_BACK, 0)}
+              >
+                Remove ${orderWideApplied.toFixed(2)}
+              </Button>
+            )}
           </div>
 
-          {exceedsRate && (
-            <p className="text-[12px] text-text-secondary">
-              The give-back exceeds the fabric rate on at least one material.
-            </p>
-          )}
-
-          {/* The two instruments discount the same money by different
-              routes, so using both is almost always a mistake. */}
-          {anyApplied && giveBack > 0 && (
+          {/* The two instruments discount the same fabric by different
+              routes, so using both double-counts whatever they overlap on. */}
+          {anyMaterialApplied && orderWideGiveBack > 0 && (
             <p className="text-[12px] text-danger">
-              A per-material rate is already in force. Adding this discount on top would give the
-              same fabric away twice.
+              A per-material discount is already in force. This rate covers those materials too, so
+              applying it would give the same fabric away twice.
             </p>
           )}
-
-          <p className="text-[12px] text-text-secondary">
-            Sets the order's fixed discount. The rate itself is not saved, and the give-back is
-            calculated on fabric but applied to the whole subtotal.
-          </p>
         </section>
+
+        <p className="px-1 text-[12px] text-text-secondary">
+          Nothing here changes a line item's price — every figure is added to the order's fixed
+          discount, on top of whatever is already there.
+          {discountIsPercent && ' Applying will replace the current percentage discount.'} The rates
+          themselves are not saved, so after a reload the discount is just a dollar figure and Reset
+          can no longer take these back out.
+        </p>
       </div>
     </Modal>
   );

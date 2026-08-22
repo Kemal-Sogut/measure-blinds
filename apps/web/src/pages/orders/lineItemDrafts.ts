@@ -132,24 +132,6 @@ export interface BlindDraft extends PriceAdjustmentDraft {
    */
   attributes: Record<string, string>;
   quantity: string;
-  /**
-   * PROVENANCE for `unit_price_override`: set only when the Material
-   * usage dialog's per-material rate wrote that override, and holding the
-   * `unit:rate` it wrote it from (see `materialRateOverrides.ts`).
-   *
-   * This is what lets the dialog tell its own work apart from a price a
-   * consultant typed by hand, so Apply can leave hand-priced lines alone
-   * and Reset can undo only what it wrote. Without it the second Apply
-   * would skip the lines the first one had just repriced.
-   *
-   * OPTIONAL on purpose. There is no such column on `line_items` and
-   * nothing serialises it, so it does not survive a save-and-reopen; a
-   * reloaded order presents these overrides as hand-typed, which is the
-   * safe reading. Leaving the field absent also means every existing
-   * construction path (`newBlindDraft`, `toDrafts`, bulk add, clone) keeps
-   * saying "no applied rate here" without being edited.
-   */
-  material_rate_applied?: string;
 }
 
 /** Editable state of one preset/custom line item. */

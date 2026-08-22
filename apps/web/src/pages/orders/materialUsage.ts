@@ -17,7 +17,7 @@
  * travels alongside it so the panel can show how much of the billed area
  * is minimum inflation rather than fabric the customer had.
  *
- * Deliberately React-free and separate from `MaterialUsagePanel.tsx`, for
+ * Deliberately React-free and separate from `MaterialUsageDialog.tsx`, for
  * the same Fast Refresh reason `lineItemDrafts.ts` is: a module exporting
  * both components and plain functions cannot be hot-swapped safely.
  */
@@ -28,6 +28,21 @@ import { blindDraftInputs, type Catalogs, type ItemDraft } from './lineItemDraft
 /** Rounds to whole cents, as every money helper in the app does. */
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+/**
+ * Identity of one material row — material AND rate unit.
+ *
+ * Both halves are load-bearing. Materials are scoped to blind types
+ * through `material_blind_types`, and that join permits one material
+ * linked to both Curtains and a m²-priced type; without the unit in the
+ * key, running metres and square metres would pool into one meaningless
+ * number. The dialog reuses this key to store that row's rate input and
+ * its applied give-back, so the grouping and the UI can never disagree
+ * about what "one row" is.
+ */
+export function materialRowKey(materialId: string, unit: MaterialUnit): string {
+  return `${materialId}::${unit}`;
 }
 
 /**
@@ -51,6 +66,8 @@ export interface MaterialUsageRow {
   rate: number;
   /** Fabric-leg revenue across those lines. */
   amount: number;
+  /** How many visible lines contributed, for the dialog's own context. */
+  lineCount: number;
 }
 
 /** Order-wide billed figures for one rate unit. */
@@ -123,7 +140,7 @@ export function summarizeMaterialUsage(
     const usage = blindType.describeMaterialUsage(inputs);
     const rate = inputs.material_price_per_sqm;
     const qty = inputs.quantity;
-    const key = `${material.id}::${usage.unit}`;
+    const key = materialRowKey(material.id, usage.unit);
 
     const row = groups.get(key) ?? {
       materialId: material.id,
@@ -133,7 +150,9 @@ export function summarizeMaterialUsage(
       measuredQuantity: 0,
       rate,
       amount: 0,
+      lineCount: 0,
     };
+    row.lineCount += 1;
     row.quantity += usage.quantity * qty;
     row.measuredQuantity += usage.measured * qty;
     // The fabric leg, taken from the type's own breakdown rather than
@@ -179,4 +198,70 @@ export function giveBackAmount(
     total += figures.quantity * rate;
   }
   return round2(total);
+}
+
+/**
+ * The dollar give-back one material row comes to at a reduced rate.
+ *
+ * Clamped at zero: a rate typed ABOVE the catalog rate is a typo or a
+ * change of mind, never a request to add a negative discount — the
+ * discount field is money the customer comes off, and it has no
+ * meaningful negative. The dialog says so on screen rather than letting a
+ * silent zero look like a working Apply.
+ */
+export function rowGiveBack(row: MaterialUsageRow, rate: number): number {
+  if (!Number.isFinite(rate) || rate < 0) return 0;
+  return round2(Math.max(0, row.rate - rate) * row.quantity);
+}
+
+/**
+ * The key {@link applyGiveBackPart} files the order-wide give-back under.
+ *
+ * Cannot collide with a {@link materialRowKey}, which always contains
+ * `::` between a uuid and a unit.
+ */
+export const ORDER_WIDE_GIVE_BACK = 'order-wide';
+
+/** A composed discount: the new total, and the parts it is made of. */
+export interface GiveBackComposition {
+  discount: number;
+  parts: Record<string, number>;
+}
+
+/**
+ * Adds (or replaces, or removes) ONE give-back contribution on top of the
+ * discount already in force.
+ *
+ * This is what makes the dialog's Apply buttons additive rather than
+ * destructive: they never overwrite a line item and never overwrite each
+ * other. `parts` remembers what each row last contributed, so re-applying
+ * a row at a different rate SWAPS that row's figure instead of stacking a
+ * second copy of it, and applying `0` (the reset) takes the row's
+ * contribution back out. Anything the consultant typed into the discount
+ * field by hand is the base everything else sits on, and survives both.
+ *
+ * `parts` is session state deliberately: nothing persists a per-material
+ * rate, so after a reload the discount is just a dollar figure and this
+ * map starts empty — which means Reset can no longer take back what an
+ * earlier session added. The dialog says so.
+ *
+ * Clamped at zero, because a negative discount is not a thing. Returns
+ * whole cents for the same reason `giveBackAmount` does: the result goes
+ * straight into the fixed-discount field.
+ */
+export function applyGiveBackPart(
+  parts: Record<string, number>,
+  currentDiscount: number,
+  key: string,
+  amount: number
+): GiveBackComposition {
+  const base = Number.isFinite(currentDiscount) ? currentDiscount : 0;
+  const previous = parts[key] ?? 0;
+  const discount = round2(Math.max(0, base - previous + Math.max(0, amount)));
+
+  const next = { ...parts };
+  if (amount > 0) next[key] = round2(amount);
+  else delete next[key];
+
+  return { discount, parts: next };
 }

@@ -12,7 +12,14 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { summarizeMaterialUsage, giveBackAmount } from './materialUsage';
+import {
+  summarizeMaterialUsage,
+  giveBackAmount,
+  materialRowKey,
+  rowGiveBack,
+  applyGiveBackPart,
+  ORDER_WIDE_GIVE_BACK,
+} from './materialUsage';
 import type { BlindDraft, Catalogs, FlatDraft, ItemDraft } from './lineItemDrafts';
 
 const ROLLER = { id: 'bt-roller', name: 'Roller', active: true, sort_order: 0 };
@@ -245,5 +252,90 @@ describe('giveBackAmount', () => {
     const summary = summarizeMaterialUsage([blind()], catalogs());
     // 2.80 m² × $3.333 = 9.3324 → 9.33
     expect(giveBackAmount(summary, { sqm: 3.333 })).toBe(9.33);
+  });
+});
+
+describe('rowGiveBack', () => {
+  const row = {
+    materialId: 'm1',
+    materialName: 'Blackout Ivory',
+    unit: 'sqm' as const,
+    quantity: 10,
+    measuredQuantity: 10,
+    rate: 73,
+    amount: 730,
+    lineCount: 2,
+  };
+
+  it('is the rate difference times the billed quantity', () => {
+    // $73 → $70 over 10 m².
+    expect(rowGiveBack(row, 70)).toBe(30);
+  });
+
+  it('is zero at the catalog rate', () => {
+    expect(rowGiveBack(row, 73)).toBe(0);
+  });
+
+  it('clamps a rate above the catalog rate rather than inventing a surcharge', () => {
+    expect(rowGiveBack(row, 90)).toBe(0);
+  });
+
+  it('rejects unusable rates', () => {
+    expect(rowGiveBack(row, Number.NaN)).toBe(0);
+    expect(rowGiveBack(row, -5)).toBe(0);
+  });
+
+  it('rounds to whole cents, because it lands in the discount field', () => {
+    expect(rowGiveBack({ ...row, quantity: 3.333, rate: 10 }, 9.99)).toBe(0.03);
+  });
+});
+
+describe('applyGiveBackPart', () => {
+  const key = materialRowKey('m1', 'sqm');
+
+  it('adds on top of a discount that is already there', () => {
+    const result = applyGiveBackPart({}, 25, key, 30);
+    expect(result.discount).toBe(55);
+    expect(result.parts).toEqual({ [key]: 30 });
+  });
+
+  it('stacks two different contributions', () => {
+    const first = applyGiveBackPart({}, 0, key, 30);
+    const second = applyGiveBackPart(first.parts, first.discount, ORDER_WIDE_GIVE_BACK, 20);
+    expect(second.discount).toBe(50);
+    expect(second.parts).toEqual({ [key]: 30, [ORDER_WIDE_GIVE_BACK]: 20 });
+  });
+
+  it('SWAPS a key rather than stacking it, so re-applying a row is idempotent', () => {
+    const first = applyGiveBackPart({}, 0, key, 30);
+    const again = applyGiveBackPart(first.parts, first.discount, key, 45);
+    expect(again.discount).toBe(45);
+    expect(again.parts).toEqual({ [key]: 45 });
+  });
+
+  it('takes a contribution back out on zero, leaving the manual base', () => {
+    const typed = applyGiveBackPart({}, 12, key, 30);
+    expect(typed.discount).toBe(42);
+    const reset = applyGiveBackPart(typed.parts, typed.discount, key, 0);
+    expect(reset.discount).toBe(12);
+    expect(reset.parts).toEqual({});
+  });
+
+  it('removes only the key it is given', () => {
+    const a = applyGiveBackPart({}, 0, key, 30);
+    const b = applyGiveBackPart(a.parts, a.discount, ORDER_WIDE_GIVE_BACK, 20);
+    const c = applyGiveBackPart(b.parts, b.discount, key, 0);
+    expect(c.discount).toBe(20);
+    expect(c.parts).toEqual({ [ORDER_WIDE_GIVE_BACK]: 20 });
+  });
+
+  it('never produces a negative discount', () => {
+    // The consultant lowered the discount field by hand after applying.
+    const result = applyGiveBackPart({ [key]: 30 }, 5, key, 0);
+    expect(result.discount).toBe(0);
+  });
+
+  it('treats a missing or unusable current discount as zero', () => {
+    expect(applyGiveBackPart({}, Number.NaN, key, 30).discount).toBe(30);
   });
 });
