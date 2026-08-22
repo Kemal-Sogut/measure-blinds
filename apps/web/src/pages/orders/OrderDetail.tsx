@@ -144,6 +144,7 @@ import {
   type Catalogs,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
+import { MaterialUsagePanel } from './MaterialUsagePanel';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import { nextKey } from './draftKeys';
@@ -544,6 +545,12 @@ export default function OrderDetail() {
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
+  // Lifted out of MaterialUsagePanel — see MaterialUsagePanelProps' own
+  // JSDoc for why: the panel's JSX is shared across two breakpoints that
+  // both stay mounted, so local state would give each breakpoint its own
+  // independent copy of a typed-in give-back rate.
+  const [sqmGiveBackRate, setSqmGiveBackRate] = useState('');
+  const [runningGiveBackRate, setRunningGiveBackRate] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
@@ -1632,6 +1639,29 @@ export default function OrderDetail() {
     </div>
   );
 
+  /**
+   * Internal fabric breakdown, rendered above the discount control at
+   * both breakpoints. Defined once for the same reason `discountControl`
+   * is: two copies of this JSX would drift.
+   *
+   * Applying writes into the FIXED discount because there is no stored
+   * per-m² discount type — see the panel's own docs.
+   */
+  const materialUsagePanel = (
+    <MaterialUsagePanel
+      items={items}
+      catalogs={catalogs}
+      sqmRate={sqmGiveBackRate}
+      onSqmRateChange={setSqmGiveBackRate}
+      runningRate={runningGiveBackRate}
+      onRunningRateChange={setRunningGiveBackRate}
+      onApplyDiscount={(amount) => {
+        setDiscountType('fixed');
+        setDiscountValue(amount.toFixed(2));
+      }}
+    />
+  );
+
   /** Shared totals rows (subtotal → discount → taxable → HST → total). */
   const totalsRows = (
     <>
@@ -2496,6 +2526,7 @@ export default function OrderDetail() {
             {/* Totals card for every width below `xl`, where the summary
                 rail is not rendered. Same content, different container. */}
             <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md xl:hidden">
+              {materialUsagePanel}
               {discountControl}
               {totalsRows}
             </section>
@@ -2604,6 +2635,7 @@ export default function OrderDetail() {
               </div>
             ))}
             <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
+              {materialUsagePanel}
               {discountControl}
               {totalsRows}
               {postConfirm && (

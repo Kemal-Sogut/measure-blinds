@@ -168,6 +168,30 @@ section as the reference implementation for future collapsible UI.
     necessity; they must still agree.
   - EMPTY MEANS NONE, the OPPOSITE of `material_blind_types` (no links = every type). Both
     conventions are deliberate and both are live.
+- **Billed material quantity is a first-class blind-type concept (2026-08-22), alongside
+  `describeUnitCosts` (2026-08-20).** `BaseBlindType.describeMaterialUsage(item)` returns
+  `{ unit: 'sqm' | 'running_m'; quantity; measured }` for ONE blind, on the same minimised
+  dimensions `materialCost` charges — `quantity` is billed (minimums applied, matches the
+  material leg's own money), `measured` skips the minimums and is reporting-only. Nine types
+  inherit the base `sqm` formula; Curtains overrides it to report `running_m` (width minimum
+  only, pleat fullness applied before the hem allowance is added, mirroring `materialCost`'s
+  own shape). It backs the internal Material usage panel
+  (`apps/web/src/pages/orders/MaterialUsagePanel.tsx` + `materialUsage.ts`) — never the PDF,
+  the customer view, or `/orders/:id/present`.
+  - **It is held consistent with `materialCost` BY TEST, not by construction.** The tempting
+    refactor — deriving `materialCost` from `describeMaterialUsage(item).quantity × rate` —
+    was deliberately rejected (design §4.2,
+    `knowledge/specs/2026-08-21-material-usage-discount-design.md`): `(W × H × price) /
+    10000` and `((W × H) / 10000) × price` are not bit-identical in IEEE-754, and
+    reassociating the material leg could move a stored cent at a half-cent boundary on a
+    production system with historical orders — the same hazard `HARDWARE_LEG_ORDER` exists to
+    contain. Instead, both `pricing.test.ts` suites carry a case table asserting
+    `describeUnitCosts(item).material ≈ describeMaterialUsage(item).quantity × rate`; deleting
+    that test removes the ONLY guard against the two drifting apart. Any future blind type
+    that overrides `materialCost` MUST also override `describeMaterialUsage` AND add a row
+    to the `CASES` table in both `pricing.test.ts` suites — that table is hand-maintained,
+    not derived from the registry, so an eleventh type with a divergent `materialCost` and
+    no new `CASES` row drifts silently rather than failing the test.
 - **One column can mean two things, keyed by type (2026-08-10).** `materials.price_per_sqm`
   is dollars per m² for every type except Curtains, where it is dollars per RUNNING METRE.
   Accepted deliberately over a second column; the mitigation is that `MaterialsForType`

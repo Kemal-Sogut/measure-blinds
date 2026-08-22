@@ -22,7 +22,7 @@
  * itself, so nothing here can influence what is charged.
  */
 
-import { calculateBlindUnitPriceForType } from '../../lib/pricing';
+import { calculateBlindUnitPriceForType, type BlindInputs } from '../../lib/pricing';
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { getBlindType } from '../../lib/blindTypes';
 import type {
@@ -591,14 +591,23 @@ function adjustedDraftPrice(
 }
 
 /**
- * Live price preview for a blind draft. Returns null until every field
- * the SELECTED TYPE requires is filled — which hardware options those
- * are comes from `slotsForType`, the same scoping the form renders from
- * and the Worker validates against, because Curtains has neither a
- * cassette nor a bottom rail scoped to it and would otherwise never
- * price. A slot the type does not use contributes 0 rather than blocking.
+ * Resolves a blind draft to the priced inputs its type's module expects,
+ * or null when the draft is not yet complete enough to price.
+ *
+ * Split out of {@link blindDraftPrice} so the Material usage report can
+ * ask a draft the same question the price preview asks — what does this
+ * blind resolve to — without a second, looser copy of the completeness
+ * gating. A row the editor refuses to price must not appear in the usage
+ * report with a confident area figure, and sharing this function is what
+ * guarantees that.
+ *
+ * Which hardware slots are REQUIRED comes from `slotsForType`, the same
+ * scoping the form renders from and the Worker validates against: a slot
+ * the selected type does not use contributes nothing rather than
+ * blocking, because Curtains has neither a cassette nor a bottom rail
+ * scoped to it and would otherwise never resolve.
  */
-export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPrice | null {
+export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindInputs | null {
   const blindType = getBlindType(draft.blinds_type);
   const uses = slotsForType(catalogs, draft.blinds_type);
   const panels = draft.panels.map(parsePositive);
@@ -652,16 +661,31 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
     return null;
   }
 
-  // Dispatch to the selected blind type's module (default fallback).
-  const base = calculateBlindUnitPriceForType(draft.blinds_type, {
+  return {
     panels: panels as number[],
     height_cm: height,
     material_price_per_sqm: Number(material.price_per_sqm),
     hardware,
     quantity: qty,
     attributes: resolved,
-  });
-  return adjustedDraftPrice(base, qty, draft, true);
+  };
+}
+
+/**
+ * Live price preview for a blind draft. Returns null until every field
+ * the SELECTED TYPE requires is filled — see {@link blindDraftInputs},
+ * which owns that completeness rule and the input assembly. This function
+ * adds only the type dispatch and the override/add-on adjustment, so the
+ * preview and the Material usage report can never disagree about which
+ * drafts are ready.
+ */
+export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPrice | null {
+  const inputs = blindDraftInputs(draft, catalogs);
+  if (!inputs) return null;
+
+  // Dispatch to the selected blind type's module (default fallback).
+  const base = calculateBlindUnitPriceForType(draft.blinds_type, inputs);
+  return adjustedDraftPrice(base, inputs.quantity, draft, true);
 }
 
 /**
