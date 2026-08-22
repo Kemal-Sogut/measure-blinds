@@ -144,7 +144,9 @@ import {
   type Catalogs,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
-import { MaterialUsagePanel } from './MaterialUsagePanel';
+import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
+import { summarizeMaterialUsage } from './materialUsage';
+import { applyMaterialRate, materialRowKey, revertMaterialRate } from './materialRateOverrides';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import { nextKey } from './draftKeys';
@@ -545,12 +547,16 @@ export default function OrderDetail() {
   const [items, setItems] = useState<ItemDraft[]>([]);
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
-  // Lifted out of MaterialUsagePanel — see MaterialUsagePanelProps' own
-  // JSDoc for why: the panel's JSX is shared across two breakpoints that
-  // both stay mounted, so local state would give each breakpoint its own
-  // independent copy of a typed-in give-back rate.
+  // ── Material usage dialog ───────────────────────────────────────
+  // All of this is lifted out of the dialog — see MaterialUsageDialogProps'
+  // own JSDoc for why: `Modal` unmounts its children when closed, and the
+  // trigger renders at two breakpoints that both stay mounted, so local
+  // state would be wiped on dismissal and duplicated across widths.
+  const [materialUsageOpen, setMaterialUsageOpen] = useState(false);
   const [sqmGiveBackRate, setSqmGiveBackRate] = useState('');
   const [runningGiveBackRate, setRunningGiveBackRate] = useState('');
+  /** Per-material rate inputs, keyed by `materialRowKey`. */
+  const [materialRateDrafts, setMaterialRateDrafts] = useState<Record<string, string>>({});
   const [hydrated, setHydrated] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
@@ -763,6 +769,13 @@ export default function OrderDetail() {
       }),
     [itemPrices, items, discountType, discountValue]
   );
+
+  /**
+   * Fabric usage for the Material usage dialog, computed HERE rather than
+   * inside it because both the dialog and its trigger read it, and the
+   * trigger renders at two breakpoints. One aggregation, one answer.
+   */
+  const materialUsage = useMemo(() => summarizeMaterialUsage(items, catalogs), [items, catalogs]);
 
   const status = existing?.status ?? 'draft';
   // Orders are editable at every lifecycle stage — the Worker recomputes
@@ -1640,26 +1653,14 @@ export default function OrderDetail() {
   );
 
   /**
-   * Internal fabric breakdown, rendered above the discount control at
-   * both breakpoints. Defined once for the same reason `discountControl`
-   * is: two copies of this JSX would drift.
-   *
-   * Applying writes into the FIXED discount because there is no stored
-   * per-m² discount type — see the panel's own docs.
+   * Opens the internal fabric breakdown. Rendered above the discount
+   * control at both breakpoints, and defined once for the same reason
+   * `discountControl` is: two copies of this JSX would drift. The DIALOG
+   * itself is rendered exactly once, further down beside the other
+   * overlays — two would stack on top of each other when open.
    */
-  const materialUsagePanel = (
-    <MaterialUsagePanel
-      items={items}
-      catalogs={catalogs}
-      sqmRate={sqmGiveBackRate}
-      onSqmRateChange={setSqmGiveBackRate}
-      runningRate={runningGiveBackRate}
-      onRunningRateChange={setRunningGiveBackRate}
-      onApplyDiscount={(amount) => {
-        setDiscountType('fixed');
-        setDiscountValue(amount.toFixed(2));
-      }}
-    />
+  const materialUsageTrigger = (
+    <MaterialUsageTrigger summary={materialUsage} onOpen={() => setMaterialUsageOpen(true)} />
   );
 
   /** Shared totals rows (subtotal → discount → taxable → HST → total). */
@@ -2526,7 +2527,7 @@ export default function OrderDetail() {
             {/* Totals card for every width below `xl`, where the summary
                 rail is not rendered. Same content, different container. */}
             <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md xl:hidden">
-              {materialUsagePanel}
+              {materialUsageTrigger}
               {discountControl}
               {totalsRows}
             </section>
@@ -2635,7 +2636,7 @@ export default function OrderDetail() {
               </div>
             ))}
             <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
-              {materialUsagePanel}
+              {materialUsageTrigger}
               {discountControl}
               {totalsRows}
               {postConfirm && (
@@ -2738,6 +2739,44 @@ export default function OrderDetail() {
           </div>
         </div>
       )}
+
+      {/* Internal fabric breakdown and its two discounting instruments.
+          Rendered ONCE for the whole page — its trigger is what appears
+          at each breakpoint. */}
+      <MaterialUsageDialog
+        open={materialUsageOpen}
+        onClose={() => setMaterialUsageOpen(false)}
+        summary={materialUsage}
+        items={items}
+        catalogs={catalogs}
+        rateDrafts={materialRateDrafts}
+        onRateDraftChange={(key, value) =>
+          setMaterialRateDrafts((drafts) => ({ ...drafts, [key]: value }))
+        }
+        // Both handlers rewrite the drafts through the pure helpers in
+        // `materialRateOverrides.ts`; nothing about pricing is decided
+        // here. The rate box is re-seeded on reset so it agrees with the
+        // lines it just restored.
+        onApplyRate={(materialId, unit, rate) =>
+          setItems((list) => applyMaterialRate(list, catalogs, materialId, unit, rate).items)
+        }
+        onResetRate={(materialId, unit) => {
+          setItems((list) => revertMaterialRate(list, materialId, unit).items);
+          setMaterialRateDrafts((drafts) => {
+            const next = { ...drafts };
+            delete next[materialRowKey(materialId, unit)];
+            return next;
+          });
+        }}
+        sqmRate={sqmGiveBackRate}
+        onSqmRateChange={setSqmGiveBackRate}
+        runningRate={runningGiveBackRate}
+        onRunningRateChange={setRunningGiveBackRate}
+        onApplyDiscount={(amount) => {
+          setDiscountType('fixed');
+          setDiscountValue(amount.toFixed(2));
+        }}
+      />
 
       {/* Quick add-customer pop-up; the new customer is auto-selected. */}
       {addingCustomer && (
