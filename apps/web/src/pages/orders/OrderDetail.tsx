@@ -144,6 +144,7 @@ import {
   type Catalogs,
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
+import { MaterialUsagePanel } from './MaterialUsagePanel';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import { nextKey } from './draftKeys';
@@ -1632,6 +1633,25 @@ export default function OrderDetail() {
     </div>
   );
 
+  /**
+   * Internal fabric breakdown, rendered above the discount control at
+   * both breakpoints. Defined once for the same reason `discountControl`
+   * is: two copies of this JSX would drift.
+   *
+   * Applying writes into the FIXED discount because there is no stored
+   * per-m² discount type — see the panel's own docs.
+   */
+  const materialUsagePanel = (
+    <MaterialUsagePanel
+      items={items}
+      catalogs={catalogs}
+      onApplyDiscount={(amount) => {
+        setDiscountType('fixed');
+        setDiscountValue(amount.toFixed(2));
+      }}
+    />
+  );
+
   /** Shared totals rows (subtotal → discount → taxable → HST → total). */
   const totalsRows = (
     <>
@@ -2496,6 +2516,7 @@ export default function OrderDetail() {
             {/* Totals card for every width below `xl`, where the summary
                 rail is not rendered. Same content, different container. */}
             <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md xl:hidden">
+              {materialUsagePanel}
               {discountControl}
               {totalsRows}
             </section>
@@ -2604,6 +2625,7 @@ export default function OrderDetail() {
               </div>
             ))}
             <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
+              {materialUsagePanel}
               {discountControl}
               {totalsRows}
               {postConfirm && (
