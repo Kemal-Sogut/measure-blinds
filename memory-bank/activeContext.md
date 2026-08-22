@@ -9,7 +9,7 @@ Working branch `claude/competent-neumann-16a922`, off `main` at `be8972d` (per-o
 on the customer's documents — now committed on `main`, not in-flight; see below). This
 branch adds the Material usage panel and its $/m² (and, for Curtains, $/m) discount
 give-back calculator to the order editor, plus the `describeMaterialUsage` blind-type
-method behind it (7 commits, `3866df5..5374d86`). Full detail, including the
+method behind it (9 commits, `be8972d..04434d4`). Full detail, including the
 `materialCost` vs. `describeMaterialUsage` bit-identity rationale, is in
 `knowledge/history/engine_features.md`, 2026-08-22; the approved design is
 `knowledge/specs/2026-08-21-material-usage-discount-design.md`. Verified: web `pnpm check`

@@ -365,9 +365,12 @@ export class BaseBlindType {
    * `pricing.test.ts` suites; that test is what makes this safe, so it
    * must not be deleted.
    *
-   * A type that overrides `materialCost` MUST override this too, or it
-   * will report the base area formula against its own price and that
-   * test will fail. Curtains is the only such type today.
+   * A type that overrides `materialCost` MUST also override this AND add
+   * a row to the `CASES` table in both `pricing.test.ts` suites — that
+   * table is hand-maintained, not derived from the type registry, so a
+   * new type with a divergent `materialCost` and no new `CASES` row
+   * drifts silently rather than failing a test. Curtains is the only
+   * type that does both today.
    */
   describeMaterialUsage(item: BlindPricingInputs): MaterialUsage {
     const rawWidthCm = item.panels.reduce((a, b) => a + b, 0);

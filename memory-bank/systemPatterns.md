@@ -188,8 +188,10 @@ section as the reference implementation for future collapsible UI.
     contain. Instead, both `pricing.test.ts` suites carry a case table asserting
     `describeUnitCosts(item).material ≈ describeMaterialUsage(item).quantity × rate`; deleting
     that test removes the ONLY guard against the two drifting apart. Any future blind type
-    that overrides `materialCost` MUST also override `describeMaterialUsage`, or it silently
-    reports the base area formula against its own price and that test fails.
+    that overrides `materialCost` MUST also override `describeMaterialUsage` AND add a row
+    to the `CASES` table in both `pricing.test.ts` suites — that table is hand-maintained,
+    not derived from the registry, so an eleventh type with a divergent `materialCost` and
+    no new `CASES` row drifts silently rather than failing the test.
 - **One column can mean two things, keyed by type (2026-08-10).** `materials.price_per_sqm`
   is dollars per m² for every type except Curtains, where it is dollars per RUNNING METRE.
   Accepted deliberately over a second column; the mitigation is that `MaterialsForType`

@@ -70,9 +70,12 @@ cent. **Deleting that test removes the only guard against the two expressions
 drifting apart** — there is no other mechanism keeping them in sync.
 
 **Warning for future maintainers, stated in the base method's own JSDoc:** any new
-blind type that overrides `materialCost` MUST also override `describeMaterialUsage`,
-or it will report the base area formula against its own (different) price, and the
-consistency test above will fail. Curtains is the only type that needs the override
+blind type that overrides `materialCost` MUST also override `describeMaterialUsage`
+AND add a row to the `CASES` table in both `pricing.test.ts` suites — that table is
+hand-maintained, not derived from the blind-type registry, so it does not self-extend.
+A new type with a divergent `materialCost` and no new `CASES` row drifts silently
+rather than failing the consistency test above. Curtains is the only type that needs
+the override
 today, but the rule applies to any future type with a divergent material formula.
 
 ### Verified
