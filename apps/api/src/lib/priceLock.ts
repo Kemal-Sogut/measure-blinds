@@ -2,17 +2,18 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Per-line-item price lock — the rule that keeps a CONFIRMED order's
- * prices from moving when the pricing formula or the catalog changes
- * underneath it.
+ * Per-line-item price lock — the rule that keeps a QUOTED price from
+ * moving when the pricing formula or the catalog changes underneath it.
  *
  * Every save re-runs `resolveLineItems` over today's catalog, so before
- * migration 39 reopening a confirmed invoice and pressing Save was
- * enough to re-price it. The lock freezes each item's calculated base
- * price (`line_items.locked_base_price`) at confirmation time, next to a
- * FINGERPRINT of the inputs that produced it
- * (`line_items.locked_inputs_fingerprint`). A later save compares the
- * fingerprint of what the client sent against the stored one:
+ * migration 39 reopening an estimate and pressing Save was enough to
+ * re-price it. The lock freezes each item's calculated base price
+ * (`line_items.locked_base_price`) the moment the estimate reaches the
+ * customer — `POST /:id/send` or `/mark-sent`, not confirmation, because
+ * quoting the figure is the commitment and confirming only accepts one
+ * already made — next to a FINGERPRINT of the inputs that produced it
+ * (`line_items.locked_inputs_fingerprint`). Every later save compares
+ * the fingerprint of what the client sent against the stored one:
  *
  *   - equal   → the frozen price is reused verbatim, together with the
  *               catalog snapshots that explain it (a frozen price must
@@ -20,8 +21,9 @@
  *   - differs → the item's pricing inputs were genuinely edited, so it
  *               is re-priced with today's logic and re-locked at the new
  *               figure. This is the deliberate, documented door through
- *               which a formula change can still reach a confirmed
- *               order: only for the item someone actually changed.
+ *               which a formula change can still reach a sent estimate
+ *               or an invoice: only for the item someone actually
+ *               changed.
  *
  * The fingerprint covers ONLY what feeds the pricing formula. Quantity,
  * add-ons, the manual unit-price override, visibility, room name, colour
@@ -166,8 +168,8 @@ export function pricingFingerprint(input: PriceLockInput): string {
 /**
  * Whether a stored lock still describes the item the client just sent.
  *
- * `lock` is null for every item on a draft/sent estimate, and the answer
- * is then no — nothing is frozen before an order is confirmed.
+ * `lock` is null for every item of a DRAFT order, and the answer is then
+ * no — nothing is frozen until the estimate goes out.
  */
 export function lockApplies(lock: PriceLock | null | undefined, input: PriceLockInput): boolean {
   return !!lock && lock.fingerprint === pricingFingerprint(input);

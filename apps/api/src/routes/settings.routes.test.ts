@@ -220,3 +220,39 @@ describe('installation options catalog', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('company settings — maintenance mode', () => {
+  /** PUTs a JSON body to the company singleton route. */
+  function put(body: unknown) {
+    return settingsApp.request(
+      '/company',
+      { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  }
+
+  it('accepts the maintenance flag and message', async () => {
+    db.responses['company_settings.update'] = [
+      { id: 1, maintenance_mode: true, maintenance_message: 'Back shortly.' },
+    ];
+    const res = await put({ maintenance_mode: true, maintenance_message: 'Back shortly.' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { maintenance_mode: boolean } };
+    expect(body.data.maintenance_mode).toBe(true);
+  });
+
+  it('rejects a non-boolean flag', async () => {
+    const res = await put({ maintenance_mode: 'yes' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a message beyond the 500-character limit', async () => {
+    const res = await put({ maintenance_message: 'x'.repeat(501) });
+    expect(res.status).toBe(400);
+  });
+
+  it('still rejects unknown keys — the schema stays strict', async () => {
+    const res = await put({ maintenance_mode: true, total: 999 });
+    expect(res.status).toBe(400);
+  });
+});

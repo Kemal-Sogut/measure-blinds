@@ -2317,8 +2317,16 @@ describe('per-item price lock (migration 39)', () => {
     expect(added.locked_inputs_fingerprint).toEqual(expect.any(String));
   });
 
-  it('leaves an unconfirmed order live-priced', async () => {
+  it('holds the quoted price on a SENT estimate, before any confirmation', async () => {
     seedExisting('sent', [lockedBlindRow(), lockedPresetRow()]);
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].unit_price).toBe(182);
+  });
+
+  it('leaves a DRAFT order live-priced', async () => {
+    seedExisting('draft', [lockedBlindRow(), lockedPresetRow()]);
     db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
     const res = await put(editPayload());
     expect(res.status).toBe(200);
@@ -2327,6 +2335,22 @@ describe('per-item price lock (migration 39)', () => {
     expect(blind.unit_price).toBe(336);
     expect(blind.locked_base_price).toBeNull();
     expect(blind.locked_inputs_fingerprint).toBeNull();
+  });
+
+  it('returns a revived estimate to live pricing in the same save', async () => {
+    // Expired + a new expiry today-or-later means the order goes back to
+    // `draft`: a fresh quote, priced from today's catalog.
+    const future = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+    seedExisting('expired', [lockedBlindRow(), lockedPresetRow()]);
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
+    const body = editPayload();
+    body.expiry_date = future;
+    body.order_date = new Date().toISOString().slice(0, 10);
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    expect(blind.unit_price).toBe(336);
+    expect(blind.locked_base_price).toBeNull();
   });
 
   it('freezes every item when the order is confirmed', async () => {
@@ -2400,11 +2424,128 @@ describe('per-item price lock (migration 39)', () => {
     expect(savedRows()[0].unit_price).toBe(75);
   });
 
-  it('releases the locks when a confirmation is reversed', async () => {
+  it('keeps the locks when a confirmation is reversed', async () => {
+    // Back to `sent`, where the customer still holds the estimate that
+    // quoted these prices — reversing the confirmation is not a re-quote.
     db.responses['orders.select'] = [{ id: 'o1', status: 'awaiting_payment' }];
     const res = await ordersApp.request('/o1/unconfirm', { method: 'POST' }, ENV);
     expect(res.status).toBe(200);
     const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
-    expect(writes).toContainEqual({ locked_base_price: null, locked_inputs_fingerprint: null });
+    expect(writes).not.toContainEqual({
+      locked_base_price: null,
+      locked_inputs_fingerprint: null,
+    });
+  });
+
+  /** A draft order ready to be sent, with one unlocked blind on it. */
+  function seedSendable() {
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        status: 'draft',
+        order_number: 'F0307-900',
+        order_date: new Date().toISOString().slice(0, 10),
+        expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+        subtotal: 182, discount_amount: 0, taxable_amount: 182, tax_amount: 23.66, total: 205.66,
+        public_token: null,
+        terms_snapshot: null,
+        line_items: [],
+        payments: [],
+        customer: {
+          first_name: 'A', last_name: 'B', email: 'a@example.com', phone: '',
+          shipping_address_line1: '', shipping_address_line2: '', shipping_city: '',
+          shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true,
+          billing_address_line1: '', billing_address_line2: '', billing_city: '',
+          billing_province: '', billing_postal_code: '',
+        },
+      },
+    ];
+    db.responses['company_settings.select'] = [
+      { company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 },
+    ];
+    // The unlocked row `freezeOrderPrices` reads (it filters on
+    // `locked_base_price is null`, which the fake client ignores).
+    db.responses['line_items.select'] = [
+      {
+        id: 'li1',
+        item_type: 'blind',
+        blinds_type: 'Roller',
+        panels: [70, 70],
+        height_cm: 200,
+        material_id: MATERIAL.id,
+        cassette_id: CASSETTE.id,
+        bottom_rail_id: BOTTOM_RAIL.id,
+        control_id: CONTROL.id,
+        installation_id: null,
+        attributes: {},
+        unit_price: 182,
+        base_unit_price: null,
+      },
+    ];
+  }
+
+  /** Runs `fn` with Resend intercepted so no mail is attempted. */
+  async function withResendStubbed(fn: () => Promise<void>) {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) {
+        return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      await fn();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+
+  it('freezes the prices when the estimate is emailed', async () => {
+    seedSendable();
+    await withResendStubbed(async () => {
+      const res = await ordersApp.request('/o1/send', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(writes.map((w) => w.locked_base_price)).toEqual([182]);
+    const logs = (db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>;
+    expect(logs.map((l) => l.message)).toContain('Item prices locked at send.');
+  });
+
+  it('freezes the prices when the estimate is marked sent without an email', async () => {
+    seedSendable();
+    await withResendStubbed(async () => {
+      const res = await ordersApp.request('/o1/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(writes.map((w) => w.locked_base_price)).toEqual([182]);
+  });
+
+  it('releases the locks only on a revert all the way to draft', async () => {
+    db.responses['orders.select'] = [{ id: 'o1', status: 'ready' }];
+    const toSent = await ordersApp.request(
+      '/o1/status',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'sent' }) },
+      ENV
+    );
+    expect(toSent.status).toBe(200);
+    expect((db.updatePayloads['line_items'] ?? []) as unknown[]).not.toContainEqual({
+      locked_base_price: null,
+      locked_inputs_fingerprint: null,
+    });
+
+    db.updatePayloads = {};
+    db.responses['orders.select'] = [{ id: 'o1', status: 'ready' }];
+    const toDraft = await ordersApp.request(
+      '/o1/status',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to: 'draft' }) },
+      ENV
+    );
+    expect(toDraft.status).toBe(200);
+    expect((db.updatePayloads['line_items'] ?? []) as unknown[]).toContainEqual({
+      locked_base_price: null,
+      locked_inputs_fingerprint: null,
+    });
   });
 });

@@ -72,15 +72,15 @@ export interface PriceAdjustmentDraft {
   show_original_price: boolean;
   addons: DraftAddon[];
   /**
-   * The price this item was FROZEN at when the order was confirmed, and
-   * the fingerprint of the inputs behind it (migration 39). `null` on
-   * every item of a draft/sent estimate and on any item added in this
+   * The price this item was FROZEN at when the estimate went out to the
+   * customer, and the fingerprint of the inputs behind it (migration 39).
+   * `null` on every item of a DRAFT order and on any item added in this
    * editing session — nothing is frozen until the Worker says so.
    *
    * The preview consults it exactly as the Worker does: while the
    * fingerprint still matches, this is the price, no formula runs, and
-   * a catalog change made since confirmation is invisible here because
-   * it is invisible in the database too. Never sent back — the payload
+   * a catalog change made since the send is invisible here because it is
+   * invisible in the database too. Never sent back — the payload
    * schema is `.strict()` and the lock is server-owned.
    */
   lock: PriceLock | null;
@@ -101,9 +101,9 @@ export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
   unit_price_override: '',
   show_original_price: true,
   addons: [],
-  // A new item has never been confirmed, so it is live-priced — even when
-  // it is being added to an order that IS confirmed. The Worker prices it
-  // from today's catalog and locks it on that save.
+  // A new item was never quoted, so it is live-priced — even when it is
+  // being added to an order whose other items are frozen. The Worker
+  // prices it from today's catalog and locks it on that save.
   lock: null,
 };
 
@@ -630,8 +630,8 @@ function lockInputFromDraft(draft: ItemDraft): PriceLockInput | null {
 
 /**
  * The frozen price still in force for a draft, or null when the item is
- * live-priced — because it was never confirmed, or because its pricing
- * inputs have been edited since.
+ * live-priced — because the order is still a draft, or because this
+ * item's pricing inputs have been edited since it was quoted.
  */
 function lockedBase(draft: ItemDraft): number | null {
   if (!draft.lock) return null;
@@ -640,7 +640,7 @@ function lockedBase(draft: ItemDraft): number | null {
 }
 
 /**
- * Whether this draft is currently showing its confirmed, frozen price —
+ * Whether this draft is currently showing its quoted, frozen price —
  * what the editor's lock badge renders from. Turns false the moment a
  * pricing input is edited, which is also the moment the price on screen
  * starts moving again.
@@ -783,7 +783,7 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
  */
 export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPrice | null {
   // The frozen price wins before any catalog is consulted: a locked item
-  // must preview at its confirmed figure even when the material it names
+  // must preview at its quoted figure even when the material it names
   // has since been deleted from Settings, which is exactly the case the
   // formula path below refuses to price at all.
   const frozen = lockedBase(draft);

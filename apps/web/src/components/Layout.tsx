@@ -28,6 +28,11 @@
  * `inert` is the one mechanism that removes the background from both
  * the tab order and the accessibility tree.
  *
+ * `MaintenanceBanner` is mounted here for the same reason: the switch
+ * it reports closes only the CUSTOMER surfaces, so no authenticated page
+ * would otherwise look any different while customers are being turned
+ * away. It renders nothing unless the flag is on.
+ *
  * `PullToRefresh` is mounted here rather than per page because the
  * installed home-screen app has no reload affordance anywhere: no
  * address bar, no reload button, and no native overscroll gesture. One
@@ -40,6 +45,7 @@
 import type { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 import PullToRefresh from './PullToRefresh';
+import MaintenanceBanner from './MaintenanceBanner';
 import { useSidebar } from '../hooks/useSidebar';
 
 export default function Layout({ children }: { children: ReactNode }) {
@@ -54,6 +60,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       <Sidebar />
       <PullToRefresh />
       <div className="app-shell-main min-w-0" inert={mobileOpen}>
+        <MaintenanceBanner />
         {children}
       </div>
     </div>

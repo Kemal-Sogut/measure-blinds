@@ -33,17 +33,36 @@ render-only and untested, like the rest of the dialog's UI. NOTE: `apps/web/.env
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 
-**Also uncommitted, and the one change here that needs a DATABASE migration applied before
-deploy:** the per-item price lock on confirmed orders (migration 39,
+**Also uncommitted, and needing its own DATABASE migration applied before deploy:**
+customer-facing **maintenance mode** (migration 40,
+`supabase/migrations/20260825000040_company_maintenance_mode.sql`). `company_settings` gains
+`maintenance_mode boolean not null default false` + `maintenance_message text not null
+default ''`. A single `app.use('*')` gate in `apps/api/src/routes/public.ts` — after the rate
+limiter, before every handler — answers all eight `/public/*` routes with
+`503 { error, maintenance: true, message }` while the flag is on, touching no order or
+appointment row; `/api/*` stays open on purpose. Staff flip it on Company Info
+(`CompanyInfo.tsx`), where the switch saves IMMEDIATELY rather than waiting for Save, and
+`MaintenanceBanner` in `Layout` keeps an amber strip on every authenticated page so the state
+is impossible to forget. Customers get a "Back shortly" card via
+`apps/web/src/lib/maintenance.ts`, which requires the 503 AND the explicit flag so a real
+outage still reads as an error. Verified: api 428/428, web 425/425, `tsc` + `oxlint` clean
+both sides; NOT seen in a browser (needs the migration applied). Detail in
+`knowledge/history/engine_features.md`, 2026-08-25.
+
+**Also uncommitted, and the one other change here that needs a DATABASE migration applied
+before deploy:** the per-item price lock, in force from SEND onward (migration 39,
 `supabase/migrations/20260825000039_line_items_price_lock.sql`). `line_items` gains
-`locked_base_price` + `locked_inputs_fingerprint`; `POST /:id/confirm` freezes every item at
-its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of that item's
-pricing inputs still matches, and any reversal of the confirmation releases the locks. New
+`locked_base_price` + `locked_inputs_fingerprint`; `POST /:id/send` and `/mark-sent` freeze
+every item at its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of
+that item's pricing inputs still matches, and `/confirm` plus any manual stage move to `sent`
+or beyond freeze whatever is not frozen yet. `draft` is the only live-priced status: only
+returning an order to draft (manual status change, or reviving a lapsed estimate) releases a
+lock — unconfirming does not, since the order lands back on `sent`. New
 modules: `apps/api/src/lib/priceLock.ts` (pure fingerprint rule) + its live-preview twin
 `apps/web/src/lib/priceLock.ts`, and `apps/api/src/lib/priceLockStore.ts` (freeze/release/read).
 Editor drafts carry `lock`, the preview prices from it, and `LineItemRow` shows a padlock while
-it holds. Detail in `knowledge/history/engine_features.md`, 2026-08-25. Verified: api 416/416,
-web 421/421, both `tsc` clean, `oxlint` clean; NOT seen in a browser. **Apply the migration
+it holds. Detail in `knowledge/history/engine_features.md`, 2026-08-25. Verified: api 429/429,
+web 425/425, both `tsc` clean, `oxlint` clean; NOT seen in a browser. **Apply the migration
 before deploying the Worker** — every save writes both columns, so the new Worker against the
 old schema would fail every order write.
 

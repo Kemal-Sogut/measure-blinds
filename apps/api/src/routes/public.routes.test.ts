@@ -22,13 +22,37 @@ interface FakeDb {
   calls: string[];
   /** Payload of the most recent orders UPDATE that passed its guards. */
   lastUpdate: Record<string, unknown> | null;
+  /**
+   * The company_settings singleton every SELECT on that table returns.
+   * Seeded per test so the maintenance gate (which reads exactly this
+   * row before any route runs) can be flipped without a second fake.
+   */
+  company: Record<string, unknown>;
 }
+
+/** Default company_settings row: shop open, brand fields populated. */
+function openCompany(): Record<string, unknown> {
+  return {
+    company_name: 'Blinds Nisa',
+    logo_url: null,
+    email: 'biz@example.com',
+    phone: '',
+    address: '',
+    hst_number: 'HST1',
+    etransfer_email: 'pay@example.com',
+    etransfer_instructions: '50% deposit please.',
+    maintenance_mode: false,
+    maintenance_message: '',
+  };
+}
+
 const db: FakeDb = {
   order: null,
   appointment: null,
   updated: false,
   calls: [],
   lastUpdate: null,
+  company: openCompany(),
 };
 
 /**
@@ -75,7 +99,7 @@ function makeBuilder(table: string) {
   const resolve = () => {
     db.calls.push(`${state.table}.${state.op}`);
     if (state.table === 'company_settings') {
-      return { data: { company_name: 'Blinds Nisa', logo_url: null, email: 'biz@example.com', phone: '', address: '', hst_number: 'HST1', etransfer_email: 'pay@example.com', etransfer_instructions: '50% deposit please.' } };
+      return { data: db.company };
     }
     if (state.table === 'appointments') return { data: db.appointment };
     if (state.table !== 'orders') return { data: null };
@@ -224,6 +248,7 @@ beforeEach(() => {
   db.updated = false;
   db.calls = [];
   db.lastUpdate = null;
+  db.company = openCompany();
   sentEmails.length = 0;
 });
 
@@ -552,10 +577,13 @@ describe('POST /public/estimate/:token/cancel-request', () => {
     expect((db.lastUpdate?.cancel_request_note as string).length).toBe(500);
   });
 
-  it('404 for a malformed token before any DB access', async () => {
+  it('404 for a malformed token before any order lookup', async () => {
     const res = await postJson('/estimate/not-a-uuid/cancel-request', {});
     expect(res.status).toBe(404);
-    expect(db.calls).toHaveLength(0);
+    // The maintenance gate reads the settings singleton on every public
+    // request; what must NOT happen is an orders lookup, which is what
+    // would let a caller probe token existence with junk.
+    expect(db.calls).toEqual(['company_settings.select']);
   });
 });
 
@@ -644,10 +672,12 @@ describe('POST /public/estimate/:token/view', () => {
     expect(db.calls).not.toContain('order_logs.insert');
   });
 
-  it('404s a malformed token without touching the DB', async () => {
+  it('404s a malformed token without touching an order', async () => {
     const res = await req('/estimate/not-a-uuid/view', 'POST');
     expect(res.status).toBe(404);
-    expect(db.calls).toEqual([]);
+    // Only the maintenance gate's settings read — no orders access, so a
+    // junk token still reveals nothing about which tokens exist.
+    expect(db.calls).toEqual(['company_settings.select']);
   });
 
   it('404s an unknown token', async () => {
@@ -689,5 +719,49 @@ describe('rate limiting', () => {
     }
     expect(statuses.slice(0, 5).every((s) => s === 200)).toBe(true);
     expect(statuses[5]).toBe(429);
+  });
+});
+
+describe('maintenance mode gate', () => {
+  it('refuses every public route with 503 while maintenance_mode is on', async () => {
+    db.company.maintenance_mode = true;
+    const routes: Array<[string, string]> = [
+      ['GET', `/estimate/${TOKEN}`],
+      ['POST', `/estimate/${TOKEN}/view`],
+      ['POST', `/estimate/${TOKEN}/confirm`],
+      ['POST', `/estimate/${TOKEN}/cancel-request`],
+      ['POST', `/estimate/${TOKEN}/cancel-withdraw`],
+      ['GET', `/appointment/${TOKEN}`],
+      ['POST', `/appointment/${TOKEN}/confirm`],
+      ['POST', `/appointment/${TOKEN}/request`],
+    ];
+    for (const [method, path] of routes) {
+      const res = await req(path, method);
+      expect(res.status, path).toBe(503);
+      expect(((await res.json()) as { maintenance?: boolean }).maintenance, path).toBe(true);
+    }
+  });
+
+  it('serves the configured message, falling back to a default line', async () => {
+    db.company.maintenance_mode = true;
+    db.company.maintenance_message = 'Back at 3pm — sorry!';
+    const withMsg = (await (await req(`/estimate/${TOKEN}`)).json()) as { message: string };
+    expect(withMsg.message).toBe('Back at 3pm — sorry!');
+
+    db.company.maintenance_message = '';
+    const fallback = (await (await req(`/estimate/${TOKEN}`)).json()) as { message: string };
+    expect(fallback.message.length).toBeGreaterThan(0);
+  });
+
+  it('changes no order state while closed', async () => {
+    db.company.maintenance_mode = true;
+    await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(db.updated).toBe(false);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('leaves every route working when the flag is off', async () => {
+    const res = await req(`/estimate/${TOKEN}`);
+    expect(res.status).toBe(200);
   });
 });

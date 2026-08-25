@@ -74,6 +74,7 @@ import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
 import { displayName } from '../../lib/customerName';
+import { maintenanceMessage } from '../../lib/maintenance';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -456,6 +457,11 @@ export default function CustomerView() {
 
   const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Set when the Worker refuses with its maintenance 503. Held apart
+  // from `loadError` because it is not an error about THIS order — the
+  // shop is closed, the order is fine, and it outranks whatever the page
+  // was showing before (a switch can be flipped mid-visit).
+  const [maintenance, setMaintenance] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   // Terms disclosure + the acceptance tick that gates Confirm. Both are
   // page state: the checkbox's "Terms & Conditions" link opens the
@@ -475,7 +481,9 @@ export default function CustomerView() {
     try {
       const res = await fetch(`${API_URL}/public/estimate/${token}`);
       const body = await res.json().catch(() => null);
-      if (!res.ok) setLoadError((body as { error?: string })?.error ?? 'Order not found.');
+      const closed = maintenanceMessage(res, body);
+      if (closed) setMaintenance(closed);
+      else if (!res.ok) setLoadError((body as { error?: string })?.error ?? 'Order not found.');
       else setEstimate((body as { data: PublicEstimate }).data);
     } catch {
       setLoadError('Could not load your order. Please try again.');
@@ -530,6 +538,8 @@ export default function CustomerView() {
     try {
       const res = await fetch(`${API_URL}/public/estimate/${token}/confirm`, { method: 'POST' });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const closed = maintenanceMessage(res, body);
+      if (closed) return setMaintenance(closed);
       if (res.ok || res.status === 409) {
         await load();
         // Confirm is tapped from the fixed bar at the bottom of the page,
@@ -564,6 +574,8 @@ export default function CustomerView() {
         body: JSON.stringify(note !== undefined ? { note } : {}),
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const closed = maintenanceMessage(res, body);
+      if (closed) return setMaintenance(closed);
       if (!res.ok) setActionError(body?.error ?? 'Something went wrong. Please try again.');
       await load();
     } catch {
@@ -573,6 +585,9 @@ export default function CustomerView() {
     }
   }
 
+  // Outranks every other state: while the shop is closed the page must
+  // say so rather than show a stale order or a misleading "not found".
+  if (maintenance) return <Message icon="🛠️" title="Back shortly" body={maintenance} />;
   if (loadError) return <Message icon="🔍" title="Order not found" body={loadError} />;
   if (!estimate) {
     return (

@@ -21,6 +21,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { maintenanceMessage } from '../../lib/maintenance';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -83,6 +84,11 @@ export default function AppointmentView() {
   const { token } = useParams<{ token: string }>();
   const [appt, setAppt] = useState<PublicAppointment | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The Worker's maintenance 503 (migration 40): the shop is closed, the
+  // appointment is fine. Kept apart from `loadError` so the customer is
+  // never told their visit does not exist, and outranks the rest of the
+  // page because the switch can be flipped mid-visit.
+  const [maintenance, setMaintenance] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
@@ -96,7 +102,10 @@ export default function AppointmentView() {
         const res = await fetch(`${API_URL}/public/appointment/${token}`);
         const body = await res.json().catch(() => null);
         if (cancelled) return;
-        if (!res.ok) setLoadError((body as { error?: string })?.error ?? 'Appointment not found.');
+        const closed = maintenanceMessage(res, body);
+        if (closed) setMaintenance(closed);
+        else if (!res.ok)
+          setLoadError((body as { error?: string })?.error ?? 'Appointment not found.');
         else setAppt((body as { data: PublicAppointment }).data);
       } catch {
         if (!cancelled) setLoadError('Could not load the appointment. Please try again.');
@@ -116,7 +125,9 @@ export default function AppointmentView() {
         method: 'POST',
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setAppt((a) => (a ? { ...a, status: 'confirmed' } : a));
+      const closed = maintenanceMessage(res, body);
+      if (closed) setMaintenance(closed);
+      else if (res.ok) setAppt((a) => (a ? { ...a, status: 'confirmed' } : a));
       else setError(body?.error ?? 'Could not confirm. Please try again.');
     } catch {
       setError('Network problem — please try again.');
@@ -136,7 +147,9 @@ export default function AppointmentView() {
         body: JSON.stringify({ note }),
       });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      if (res.ok) setAppt((a) => (a ? { ...a, status: 'change_requested' } : a));
+      const closed = maintenanceMessage(res, body);
+      if (closed) setMaintenance(closed);
+      else if (res.ok) setAppt((a) => (a ? { ...a, status: 'change_requested' } : a));
       else setError(body?.error ?? 'Could not send your request. Please try again.');
     } catch {
       setError('Network problem — please try again.');
@@ -145,6 +158,8 @@ export default function AppointmentView() {
     }
   }
 
+  // Outranks every other state — see the CustomerView twin.
+  if (maintenance) return <Message icon="🛠️" title="Back shortly" body={maintenance} />;
   if (loadError) return <Message icon="🔍" title="Appointment not found" body={loadError} />;
   if (!appt) {
     return (

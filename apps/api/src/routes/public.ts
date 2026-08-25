@@ -24,6 +24,12 @@
  *   POST /appointment/:token/confirm  confirm the proposed window
  *   POST /appointment/:token/request  ask for a different time (+note)
  *
+ * Every endpoint above sits behind the rate limiter and then the
+ * MAINTENANCE GATE: when staff flip `company_settings.maintenance_mode`
+ * on, this whole group answers 503 with the configured message and no
+ * order or appointment record is touched. Only the customer surfaces
+ * close — the authenticated `/api/*` staff app keeps working.
+ *
  * The confirm endpoint validates status='sent' (409 once it has moved
  * on), stamps confirmed_at, and fires an internal notification email —
  * notification failure is logged but never blocks the customer's
@@ -63,6 +69,45 @@ const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 
 /** Rate limit everything under /public (5 requests/min/IP). */
 app.use('*', rateLimit(5, 60_000));
+
+/** Served when maintenance mode is on and no message is configured. */
+const MAINTENANCE_FALLBACK =
+  'We are briefly offline for maintenance. Please check back shortly.';
+
+/**
+ * Maintenance gate — closes the CUSTOMER surfaces on a staff toggle.
+ *
+ * Reads `company_settings.maintenance_mode` (migration 40) before ANY
+ * public handler runs and, while it is on, answers every route in this
+ * group with `503 { error, maintenance: true, message }`. `maintenance`
+ * is the flag the customer pages branch on to render a maintenance card
+ * instead of their "not found" state; `message` is the staff wording,
+ * or `MAINTENANCE_FALLBACK` when none is configured.
+ *
+ * Deliberately scoped to `/public/*` only: `/api/*` stays open so staff
+ * can keep working — being able to fix things while customers are held
+ * off is the entire point of the switch.
+ *
+ * Registered AFTER the rate limiter so a flood still costs one in-memory
+ * check rather than a database read, and it is the FIRST thing that
+ * touches the DB — no order or appointment row is read, written, or
+ * status-changed while the shop is closed. A failed settings read is
+ * treated as "open": a transient Supabase error must not silently take
+ * the customer-facing site down.
+ */
+app.use('*', async (c, next) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data } = await sb
+    .from('company_settings')
+    .select('maintenance_mode, maintenance_message')
+    .eq('id', 1)
+    .single();
+
+  if (!data?.maintenance_mode) return next();
+
+  const message = (data.maintenance_message as string | null)?.trim() || MAINTENANCE_FALLBACK;
+  return c.json({ error: message, maintenance: true, message }, 503);
+});
 
 /**
  * Best-effort activity-trail entry on an order, always attributed to the

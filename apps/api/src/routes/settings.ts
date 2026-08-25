@@ -64,6 +64,19 @@ const companySchema = z
     etransfer_email: z.string().email().or(z.literal('')),
     /** Free-text instructions rendered under the e-Transfer address. */
     etransfer_instructions: z.string().max(1000),
+    /**
+     * Closes the CUSTOMER surfaces: while true the Worker refuses every
+     * `/public/*` request with 503 (see the gate in `routes/public.ts`).
+     * The authenticated staff app is deliberately unaffected — the point
+     * of the pause is to keep working while customers are held off.
+     */
+    maintenance_mode: z.boolean(),
+    /**
+     * Wording customers read while the pause is on. Empty means the
+     * public gate serves its own neutral fallback line, so switching the
+     * flag on without writing a message is a complete state.
+     */
+    maintenance_message: z.string().max(500),
   })
   .partial()
   .strict();

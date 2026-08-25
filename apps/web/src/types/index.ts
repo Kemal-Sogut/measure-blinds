@@ -357,15 +357,15 @@ export interface LineItem {
   /** Consultant-added extras; each price lands once in `line_total`. */
   addons: LineItemAddon[];
   /**
-   * The CALCULATED unit price frozen when the order was confirmed
+   * The CALCULATED unit price frozen when the estimate was SENT
    * (migration 39), or `null` while the item is live-priced — which is
-   * every item of a draft/sent estimate.
+   * every item of a draft order.
    *
    * While it is set, saving the order re-uses this figure instead of
-   * re-running the pricing formula, so neither a later formula change
-   * nor a catalog price change can move a confirmed invoice. Editing the
-   * item's own pricing inputs releases the lock for that one item; see
-   * `lib/priceLock.ts`.
+   * re-running the pricing formula, so neither a later formula change nor
+   * a catalog price change can move a price the customer has already been
+   * quoted. Editing the item's own pricing inputs releases the lock for
+   * that one item; see `lib/priceLock.ts`.
    */
   locked_base_price: number | null;
   /**
@@ -565,4 +565,17 @@ export interface CompanySettings {
   etransfer_email: string | null;
   /** Optional extra instructions rendered under the e-Transfer address. */
   etransfer_instructions: string | null;
+  /**
+   * Customer-facing maintenance switch (migration 40). While true the
+   * Worker answers every `/public/*` request with 503 and the token'd
+   * customer pages render a maintenance card; the authenticated staff
+   * app is unaffected, which is why the banner in `Layout` exists — it
+   * is the only reminder that customers are being turned away.
+   */
+  maintenance_mode: boolean;
+  /**
+   * Wording customers read while maintenance mode is on. Empty means
+   * the Worker serves its own neutral fallback line.
+   */
+  maintenance_message: string | null;
 }

@@ -556,10 +556,10 @@ export default function LineItemRow({
             />
           )}
           {/*
-            A padlock marks a price frozen at confirmation: it is the
-            figure the save will keep, whatever Settings says today.
-            Editing this item's measurements or options releases it,
-            and the padlock disappears as the price goes live again.
+            A padlock marks a price frozen when the estimate went out:
+            it is the figure the save will keep, whatever Settings says
+            today. Editing this item's measurements or options releases
+            it, and the padlock disappears as the price goes live again.
           */}
           {locked && (
             <svg
@@ -571,9 +571,9 @@ export default function LineItemRow({
               strokeWidth="2.5"
               className="shrink-0 text-text-muted"
               role="img"
-              aria-label="Price locked at confirmation"
+              aria-label="Price locked when the estimate was sent"
             >
-              <title>Price locked when the order was confirmed</title>
+              <title>Price locked when the estimate was sent</title>
               <rect x="4" y="11" width="16" height="10" rx="2" />
               <path d="M8 11V7a4 4 0 0 1 8 0v4" />
             </svg>

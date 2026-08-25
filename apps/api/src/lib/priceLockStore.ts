@@ -3,19 +3,28 @@
 
 /**
  * Persistence side of the per-item price lock (migration 39) — reading
- * stored locks, freezing an order's prices at confirmation, and
- * releasing them when a confirmation is reversed.
+ * stored locks, freezing an order's prices when its estimate goes out,
+ * and releasing them if the order is put back to `draft`.
  *
  * Deliberately separate from `lib/priceLock.ts`: that module is the pure
  * fingerprint rule and the authoritative twin of the web copy, so it
  * must stay free of Supabase. Everything here touches the database and
  * therefore exists on the Worker only.
  *
- * Freeze/release points, all in `routes/orders.ts`:
- *   - `POST /:id/confirm`          → {@link freezeOrderPrices}
- *   - `POST /:id/unconfirm`        → {@link clearOrderPriceLocks}
- *   - `POST /:id/status` reverting below awaiting_payment → clear
- *   - an ACCEPTED cancellation request (order returns to `sent`) → clear
+ * Freeze/release points, all in `routes/orders.ts`. Prices freeze when
+ * the estimate REACHES THE CUSTOMER, not later: quoting a figure is the
+ * commitment, and confirmation only accepts it.
+ *   - `POST /:id/send`, `POST /:id/mark-sent` → {@link freezeOrderPrices}
+ *   - `POST /:id/confirm`, and `POST /:id/status` moving to `sent` or
+ *     beyond → freeze too, so a stage reached without passing through
+ *     `/send` is still locked (the call is a no-op for items already
+ *     frozen)
+ *   - `POST /:id/status` reverting to `draft` → {@link clearOrderPriceLocks}
+ *   - reviving a lapsed estimate to `draft` in `PUT /:id` → clear
+ *
+ * `POST /:id/unconfirm` and an accepted cancellation request do NOT
+ * release: both land the order back on `sent`, where the customer is
+ * still holding the estimate that quoted those prices.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -25,7 +34,7 @@ import { pricingFingerprint, type PriceLock, type PriceLockInput } from './price
  * The catalog snapshot a locked item keeps.
  *
  * A frozen price must not be re-published beside re-fetched rates: if a
- * material went from $25 to $30/m² after confirmation, showing the new
+ * material went from $25 to $30/m² after the estimate went out, showing the new
  * rate next to the old price would make the invoice's own arithmetic
  * unreadable (and would break `optionBreakdown`, which fits the legs to
  * the stored price). So while the lock holds, these columns are written
@@ -128,8 +137,8 @@ function snapshotFromRow(row: Record<string, unknown>): LockedSnapshot {
  * identity across the wholesale delete/insert every save performs.
  *
  * Rows with no `locked_base_price` are skipped: they are live-priced,
- * which is every item on an order that has never been confirmed, and
- * every item on one whose confirmation was reversed.
+ * which is every item of a DRAFT order — one whose estimate has never
+ * gone out, or one put back to draft since.
  */
 export function buildLockMap(rows: Record<string, unknown>[] | null | undefined): Map<string, StoredLock> {
   const map = new Map<string, StoredLock>();
@@ -149,15 +158,27 @@ interface LockColumns {
 }
 
 /**
- * Freezes every line item of an order at the price it currently carries.
+ * Freezes every UNLOCKED line item of an order at the price it currently
+ * carries.
  *
- * Called when an order is confirmed. The frozen figure is the CALCULATED
- * price — `base_unit_price` while an override is in effect, otherwise
- * `unit_price` — because the override is re-applied on every save and
- * freezing the overridden figure would apply it twice.
+ * Called the moment an estimate leaves the building — `POST /:id/send`,
+ * `POST /:id/mark-sent` — and again at every later stage that could be
+ * reached without passing through those (`/confirm` from a draft, a
+ * manual `/status` jump), so a quoted price is frozen from the first
+ * moment a customer has seen it.
+ *
+ * The frozen figure is the CALCULATED price — `base_unit_price` while an
+ * override is in effect, otherwise `unit_price` — because the override is
+ * re-applied on every save and freezing the overridden figure would apply
+ * it twice.
+ *
+ * An item that ALREADY carries a lock is left alone: it was frozen when
+ * the estimate went out, and a later stage change is not a re-quote. Only
+ * editing that item's own pricing inputs re-prices it, and the save that
+ * does so writes the new lock itself.
  *
  * @returns an error message, or null on success. A failure must fail the
- *          confirmation: an order that reached `awaiting_payment` with
+ *          transition it accompanies: an order that reached `sent` with
  *          no locks would keep silently re-pricing itself on save, which
  *          is the exact bug the lock exists to prevent.
  */
@@ -165,7 +186,11 @@ export async function freezeOrderPrices(
   sb: SupabaseClient,
   orderId: string
 ): Promise<string | null> {
-  const { data, error } = await sb.from('line_items').select('*').eq('order_id', orderId);
+  const { data, error } = await sb
+    .from('line_items')
+    .select('*')
+    .eq('order_id', orderId)
+    .is('locked_base_price', null);
   if (error) return error.message;
   const rows = (data ?? []) as Record<string, unknown>[];
 
@@ -184,14 +209,16 @@ export async function freezeOrderPrices(
 /**
  * Releases an order's price locks, returning every item to live pricing.
  *
- * Called whenever a confirmation is reversed. Re-confirming freezes
- * again, at whatever the prices are THEN — which is the point: an order
- * pulled back to `sent` is an estimate again, and an estimate is priced
- * from today's catalog.
+ * Called when an order is put back to `draft` — a manual status change
+ * to draft, or reviving a lapsed estimate by extending its expiry. A
+ * draft is a quote nobody is holding, so it is priced from today's
+ * catalog again and the next `/send` freezes what that send shows. NOT
+ * called when a confirmation is reversed: that lands the order on
+ * `sent`, where the customer still holds the estimate.
  *
  * Best-effort by design: the status change it accompanies has already
- * been persisted, and a stale lock is harmless until the order is
- * confirmed again (which re-writes both columns anyway).
+ * been persisted, and a stale lock only means one save too many keeps a
+ * price — the next `/send` re-freezes whatever is unlocked either way.
  */
 export async function clearOrderPriceLocks(sb: SupabaseClient, orderId: string): Promise<void> {
   const columns: LockColumns = { locked_base_price: null, locked_inputs_fingerprint: null };

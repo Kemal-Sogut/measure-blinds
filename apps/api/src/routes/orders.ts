@@ -325,6 +325,25 @@ function isConfirmed(status: string): boolean {
   return (CONFIRMED as readonly string[]).includes(status);
 }
 
+/**
+ * Statuses whose line-item prices are FROZEN (migration 39).
+ *
+ * Everything from `sent` onward: the moment an estimate reaches the
+ * customer the shop has quoted those figures, so a later pricing-formula
+ * change or catalog edit must not rewrite them on the next save.
+ * Confirmation is not the commitment — it is the customer accepting one
+ * already made.
+ *
+ * `expired` is included because a lapsed estimate is one that WAS sent;
+ * its prices go live again only when it is revived to `draft` (see the
+ * revive branch in `PUT /:id`), which is the single status here that
+ * releases the locks.
+ */
+const PRICE_LOCKED = ['sent', 'expired', ...CONFIRMED] as const;
+function holdsPriceLock(status: string): boolean {
+  return (PRICE_LOCKED as readonly string[]).includes(status);
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -1163,14 +1182,22 @@ app.put('/:id', async (c) => {
     }
   }
 
-  // A confirmed order is an INVOICE: every item keeps the price it was
-  // confirmed at, so neither a later pricing-formula change nor a
-  // catalog edit can move it on save. Only an item whose OWN pricing
-  // inputs were edited is re-priced — and re-locked at the new figure.
-  // See `lib/priceLock.ts` for the fingerprint that decides this.
-  const locks = isConfirmed(existing.status)
-    ? buildLockMap((existing.line_items ?? []) as Record<string, unknown>[])
-    : undefined;
+  // Reviving a lapsed estimate: pushing an `expired` order's validity
+  // date to today-or-later returns it to `draft`. Decided HERE, above the
+  // pricing, because a revived estimate is a fresh quote — it goes back
+  // to live pricing in the same save that revives it.
+  const today = new Date().toISOString().slice(0, 10);
+  const reviveToDraft = existing.status === 'expired' && expiry_date >= today;
+
+  // From `sent` onward every item keeps the price it was QUOTED at, so
+  // neither a later pricing-formula change nor a catalog edit can move
+  // what the customer was shown. Only an item whose OWN pricing inputs
+  // were edited is re-priced — and re-locked at the new figure. See
+  // `lib/priceLock.ts` for the fingerprint that decides this.
+  const locks =
+    holdsPriceLock(existing.status) && !reviveToDraft
+      ? buildLockMap((existing.line_items ?? []) as Record<string, unknown>[])
+      : undefined;
 
   let rows: LineItemRow[];
   try {
@@ -1187,16 +1214,12 @@ app.put('/:id', async (c) => {
     input.discount_value
   );
 
-  // Reviving a lapsed estimate: pushing an `expired` order's validity
-  // date to today-or-later returns it to `draft`. Draft, not `sent`, on
-  // purpose — no fresh estimate has reached the customer yet, so a new
-  // `/send` is the only path back to `sent`. This is the exact inverse
-  // of the `expiry_date < today` rule that expired it in
-  // `applyDefensiveExpiry`; a still-past date leaves the order expired,
-  // and no non-expired status is ever rewritten here.
-  const today = new Date().toISOString().slice(0, 10);
-  const reviveToDraft = existing.status === 'expired' && expiry_date >= today;
-
+  // Draft, not `sent`, on purpose — no fresh estimate has reached the
+  // customer yet, so a new `/send` is the only path back to `sent`. This
+  // is the exact inverse of the `expiry_date < today` rule that expired
+  // it in `applyDefensiveExpiry`; a still-past date leaves the order
+  // expired (and its prices frozen), and no non-expired status is ever
+  // rewritten here.
   const { error: upError } = await sb
     .from('orders')
     .update({
@@ -1472,6 +1495,13 @@ app.post('/:id/send', async (c) => {
     return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
   }
 
+  // The customer now holds a document quoting these figures, so they
+  // stop being a calculation (migration 39). Frozen before the status
+  // write for the same reason as at `/confirm`: an order that reached
+  // `sent` unlocked would re-price itself on the next save.
+  const freezeError = await freezeOrderPrices(sb, id);
+  if (freezeError) return c.json({ error: freezeError }, 500);
+
   const { error } = await sb
     .from('orders')
     .update({
@@ -1484,6 +1514,7 @@ app.post('/:id/send', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
+  await logOrderEvent(sb, id, 'Item prices locked at send.');
 
   const { data: updated } = await readDetail(sb, id);
   if (updated) updated.amount_paid = sumPayments(updated.payments);
@@ -1527,6 +1558,11 @@ app.post('/:id/mark-sent', async (c) => {
     return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
   }
 
+  // Handed over in person is still handed over: the prices freeze here
+  // exactly as they do on a real `/send`.
+  const freezeError = await freezeOrderPrices(sb, id);
+  if (freezeError) return c.json({ error: freezeError }, 500);
+
   const { error } = await sb
     .from('orders')
     .update({ status: 'sent', sent_at: new Date().toISOString() })
@@ -1534,6 +1570,7 @@ app.post('/:id/mark-sent', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await logOrderEvent(sb, id, 'Marked as sent (no email).');
+  await logOrderEvent(sb, id, 'Item prices locked at send.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1667,10 +1704,10 @@ app.post('/:id/confirm', async (c) => {
   if (!EDITABLE.includes(existing.status)) {
     return c.json({ error: `Order is already ${existing.status}.` }, 409);
   }
-  // Freeze BEFORE the status moves. An order that reached
-  // awaiting_payment without its locks written would keep re-pricing
-  // itself on every save — the exact bug migration 39 exists to close —
-  // so a freeze failure fails the confirmation instead.
+  // Normally a no-op: a `sent` order froze its prices when the estimate
+  // went out. It still runs because `/confirm` also accepts a `draft`
+  // order — confirmed over the phone, never formally sent — and that
+  // order must not reach awaiting_payment live-priced.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
 
@@ -1681,7 +1718,6 @@ app.post('/:id/confirm', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await logOrderEvent(sb, id, 'Order confirmed.');
-  await logOrderEvent(sb, id, 'Item prices locked at confirmation.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1755,12 +1791,10 @@ app.post('/:id/unconfirm', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
-  // Back to being an estimate, so back to live pricing: re-confirming
-  // freezes again, at whatever the catalog says then.
-  await clearOrderPriceLocks(sb, id);
-
+  // The frozen prices STAY: this lands the order back on `sent`, and the
+  // customer is still holding the estimate that quoted them. Only a
+  // revert all the way to `draft` releases a lock.
   await logOrderEvent(sb, id, 'Confirmation reversed.');
-  await logOrderEvent(sb, id, 'Item price locks released.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -2148,10 +2182,8 @@ app.post('/:id/cancel-request/resolve', async (c) => {
       .eq('status', 'awaiting_payment');
     if (error) return c.json({ error: error.message }, 500);
 
-    // Reversed confirmation, so the frozen prices go with it — same rule
-    // as `POST /:id/unconfirm`.
-    await clearOrderPriceLocks(sb, id);
-
+    // Prices stay frozen — the order is back on `sent`, quoting the same
+    // figures the customer already has. Same rule as `/unconfirm`.
     await logOrderEvent(sb, id, 'Cancellation request accepted — confirmation reversed.');
     const { data } = await readDetail(sb, id);
     if (data) data.amount_paid = sumPayments(data.payments);
@@ -2400,10 +2432,15 @@ app.post('/:id/revert', async (c) => {
     await sb.from('appointments').delete().eq('order_id', id);
   }
 
-  // Reverting below awaiting_payment un-confirms the order, so its items
-  // go back to live pricing (migration 39). Confirming again re-freezes.
-  if (toIdx < STAGE_ORDER.indexOf('awaiting_payment')) {
+  // Prices follow the same rule this route's stamps do (migration 39):
+  // `draft` is the only stage where an item is live-priced, so a revert
+  // all the way down releases the locks, and any other target freezes
+  // whatever is not frozen yet — a manual jump can skip `/send`
+  // entirely, and no stage from `sent` up may be reached live-priced.
+  if (toIdx < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
+  } else {
+    await freezeOrderPrices(sb, id);
   }
 
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
@@ -2499,6 +2536,17 @@ app.post('/:id/status', async (c) => {
   // installation appointment so no stale visit stays on the calendar.
   if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('ready')) {
     await sb.from('appointments').delete().eq('order_id', id);
+  }
+
+  // Prices follow the stage the same way the stamps above do (migration
+  // 39): `draft` is the only stage where an item is live-priced, so
+  // landing there releases the locks, and any other target freezes
+  // whatever is not frozen yet — this route can jump straight past
+  // `/send`, and no stage from `sent` up may be reached live-priced.
+  if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('sent')) {
+    await clearOrderPriceLocks(sb, id);
+  } else {
+    await freezeOrderPrices(sb, id);
   }
 
   await logOrderEvent(sb, id, `Status manually changed from ${existing.status} to ${to}.`);

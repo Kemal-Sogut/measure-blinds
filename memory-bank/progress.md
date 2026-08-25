@@ -11,7 +11,7 @@
 expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
 is the only path back) inside `PUT /api/orders/:id`, mirroring the `< today` rule that expired
 it; a still-past date leaves it expired, and no non-expired status is ever rewritten there.
-Confirmation is reversible by staff only, and only pre-payment. Confirming also FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a confirmed invoice on save, and only an item whose own pricing inputs are edited is re-priced and re-locked. Any reversal of the confirmation (unconfirm, accepted cancellation, revert below awaiting_payment) releases the locks and the order is live-priced again. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
+Confirmation is reversible by staff only, and only pre-payment. SENDING the estimate (`/send` or `/mark-sent`) FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a price the customer was quoted, and only an item whose own pricing inputs are edited is re-priced and re-locked. Confirming, and any manual stage move to `sent` or beyond, freezes whatever is not frozen yet. `draft` is the only live-priced status — returning an order to draft (manual status change, or reviving a lapsed estimate) is the only thing that releases the locks; unconfirming does not, since the order lands back on `sent`. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
 the first payment, then an Invoice. Production starts automatically only when the ledger
 reaches the 50% deposit (`recordOrderPayment` gates awaiting_payment → in_progress on
 `round2(total/2)`; shared by the staff route and the e-Transfer webhook) — a sub-deposit
@@ -25,6 +25,15 @@ timeline-driven, with `sent_at`/`confirmed_at`/`installed_at` reconciled off the
 index and the installation appointment dropped below `ready`. It never emails and never
 touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
 `/mark-sent`, `/in-progress`) remain for the email, payment, and customer-confirm flows.
+
+**Maintenance mode (migration 40, not yet applied):** `company_settings.maintenance_mode` +
+`maintenance_message` close the CUSTOMER surfaces only — one gate in `routes/public.ts` answers
+every `/public/*` route 503 with the configured wording (or a fallback), reading and writing no
+order or appointment row, while `/api/*` stays fully open. Staff toggle it on Company Info
+(saves immediately, not on the Save button) and an amber `MaintenanceBanner` sits on every
+authenticated page while it is on. The customer pages render a "Back shortly" card only for a
+503 that also carries the explicit `maintenance` flag, so a genuine outage still reads as an
+error.
 
 **Customer-facing:** a permanent public order-summary page (not one-shot) with a 5-step
 tracker (Confirmed → Awaiting Payment → In Production → Ready → Installed), the quoted 50%

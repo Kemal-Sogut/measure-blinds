@@ -10,6 +10,16 @@
  * Storage). Fields are loaded into local state once and saved
  * explicitly via the Save button — an explicit save suits a form this
  * size better than per-field autosave.
+ *
+ * The page also owns MAINTENANCE MODE, the switch that closes the
+ * customer-facing `/public/*` surfaces (migration 40). It lives here
+ * because it is one more field on the same singleton row, but it is the
+ * one control that does NOT wait for the Save button: a kill switch a
+ * user believes they flipped, while the app quietly kept serving
+ * customers, is the worst possible failure for this feature. Toggling
+ * persists immediately, carrying whatever message is currently typed so
+ * the two halves can never drift; the Save button writes the message
+ * too, for edits made while the switch is already in the wanted state.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -32,6 +42,12 @@ interface FormState {
   google_review_url: string;
   etransfer_email: string;
   etransfer_instructions: string;
+  /**
+   * Customer-facing maintenance wording. The FLAG is not held here — it
+   * is read from (and written straight back to) the server row, so the
+   * switch on screen always shows what customers are actually getting.
+   */
+  maintenance_message: string;
 }
 
 const INPUT_CLS =
@@ -57,6 +73,7 @@ export default function CompanyInfo() {
         google_review_url: data.google_review_url ?? '',
         etransfer_email: data.etransfer_email ?? '',
         etransfer_instructions: data.etransfer_instructions ?? '',
+        maintenance_message: data.maintenance_message ?? '',
       });
     }
   }, [data, form]);
@@ -94,9 +111,32 @@ export default function CompanyInfo() {
         google_review_url: reviewUrl,
         etransfer_email: etransferEmail,
         etransfer_instructions: form.etransfer_instructions.trim(),
+        maintenance_message: form.maintenance_message.trim(),
       },
       {
         onSuccess: () => toast.success('Company info saved.'),
+        onError: (e) => toast.error(e.message),
+      }
+    );
+  }
+
+  /**
+   * Opens or closes the customer surfaces immediately, without waiting
+   * for the Save button (see the file header for why). The message
+   * currently in the textarea rides along, so the wording customers see
+   * always matches what the user was looking at when they flipped it.
+   */
+  function handleMaintenanceToggle(next: boolean) {
+    if (!form) return;
+    update.mutate(
+      { maintenance_mode: next, maintenance_message: form.maintenance_message.trim() },
+      {
+        onSuccess: () =>
+          toast.success(
+            next
+              ? 'Maintenance mode ON — customer links are closed.'
+              : 'Maintenance mode off — customer links are live again.'
+          ),
         onError: (e) => toast.error(e.message),
       }
     );
@@ -121,6 +161,11 @@ export default function CompanyInfo() {
       </div>
     );
   }
+
+  // The SERVER's flag, not form state: the switch must show what
+  // customers are actually getting. The update mutation patches the
+  // query cache optimistically, so it still flips instantly.
+  const maintenanceOn = Boolean(data?.maintenance_mode);
 
   return (
     <div className="min-h-screen bg-surface-muted">
@@ -264,6 +309,58 @@ export default function CompanyInfo() {
           >
             {update.isPending ? 'Saving…' : 'Save'}
           </button>
+        </div>
+
+        {/* Maintenance mode — customer surfaces only */}
+        <div
+          className={`mt-6 flex flex-col gap-4 rounded-xl border bg-surface shadow-md p-4 ${
+            maintenanceOn ? 'border-warning' : 'border-border-light'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-text-primary">Maintenance Mode</h2>
+              <p className="mt-1 text-xs text-text-muted">
+                Closes customer estimate and appointment links. Your own app keeps working.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={maintenanceOn}
+              aria-label="Maintenance mode"
+              disabled={update.isPending}
+              onClick={() => handleMaintenanceToggle(!maintenanceOn)}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                maintenanceOn ? 'bg-warning' : 'bg-border-input'
+              }`}
+            >
+              <span
+                className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-[left] ${
+                  maintenanceOn ? 'left-6' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+          {maintenanceOn && (
+            <p className="rounded-md bg-warning-tint px-3 py-2 text-sm text-warning">
+              Customers opening their estimate or appointment link right now see the message
+              below instead of their order.
+            </p>
+          )}
+          <label className="text-sm font-medium text-text-secondary">
+            Message to Customers
+            <textarea
+              rows={3}
+              placeholder="e.g. We're briefly offline for updates and will be back within the hour."
+              className="mt-1 w-full rounded-md border border-border-input bg-surface px-3 py-2 text-base text-text-primary"
+              value={form.maintenance_message}
+              onChange={(e) => set('maintenance_message', e.target.value)}
+            />
+            <span className="mt-1 block text-xs font-normal text-text-muted">
+              Saved with the switch and with Save. Leave blank to use the default wording.
+            </span>
+          </label>
         </div>
       </div>
     </div>

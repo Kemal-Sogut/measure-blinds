@@ -1,5 +1,53 @@
 # Engine Features / Feature History
 
+## 2026-08-25 — Maintenance mode closes the customer surfaces
+Migration 40 (`20260825000040_company_maintenance_mode.sql`) adds two columns to the
+`company_settings` singleton: `maintenance_mode boolean not null default false` and
+`maintenance_message text not null default ''`. Existing installs stay OPEN across the
+migration, and the flag is never NULL, so the Worker always has a boolean to branch on.
+
+**Gate** (`apps/api/src/routes/public.ts`). A single `app.use('*')` registered AFTER the rate
+limiter and BEFORE every handler reads the singleton and, while the flag is on, answers
+`503 { error, maintenance: true, message }` — the staff wording, or `MAINTENANCE_FALLBACK`
+when it is blank. All eight public routes close together (estimate view/ping/confirm/
+cancel-request/cancel-withdraw, appointment view/confirm/request) and no order or appointment
+row is read or written while closed. `/api/*` is deliberately untouched: being able to keep
+working while customers are held off is the whole point. A FAILED settings read is treated as
+"open" — a transient Supabase error must not take the customer site down by itself.
+
+**Settings** (`apps/api/src/routes/settings.ts`). `companySchema` gained `maintenance_mode`
+(boolean) and `maintenance_message` (≤500 chars). Still `.strict()` and still a partial update;
+no money surface is involved.
+
+**Staff UI.** The switch lives on Company Info (`apps/web/src/pages/settings/CompanyInfo.tsx`)
+as its own card, and it is the ONE control there that does not wait for the Save button —
+toggling persists immediately, carrying whatever message is currently typed, because a kill
+switch a user believes they flipped while the app quietly kept serving customers is the worst
+failure this feature has. The switch reads the SERVER's flag (optimistically patched by the
+mutation), never local form state. `MaintenanceBanner` (`apps/web/src/components/`) is mounted
+once in `Layout` and renders an amber strip on every authenticated page while the flag is on —
+without it nothing in the staff app would look any different while customers are turned away.
+
+**Customer UI.** `maintenanceMessage(res, body)` (`apps/web/src/lib/maintenance.ts`) is the one
+rule for "closed vs broken": it requires BOTH a 503 and the explicit `maintenance` flag, so a
+proxy 503 or a cold Worker still falls through to the normal error path. `CustomerView` and
+`AppointmentView` each hold a `maintenance` state, check every response (load AND actions, so a
+switch flipped mid-visit lands correctly), and render a "Back shortly" card that outranks their
+"not found" state — a closed shop must never tell a customer their order does not exist.
+
+### Verified
+api 428/428 with 4 new public-route tests (all eight routes 503 with the flag, configured
+message vs fallback, no order write while closed, everything live when off) and 4 new settings
+tests (both fields accepted, non-boolean rejected, >500-char message rejected, unknown key
+still 400); web 425/425 with 4 new `maintenance.test.ts` cases. `tsc` clean and `oxlint` clean
+both sides. Two pre-existing public tests were retitled: a malformed token now costs ONE
+`company_settings.select` (the gate) before its 404 — the invariant they pin, no `orders`
+access from a junk token, is unchanged and still asserted. NOT verified in a browser: needs the
+migration applied first.
+
+**Deployment order matters**: apply the migration BEFORE deploying the Worker — the settings
+PUT and the public gate both reference the new columns.
+
 ## 2026-08-25 — Calendar under-grid sections show upcoming appointments only
 Web-only, one file (`apps/web/src/pages/calendar/ScheduleSections.tsx`). The two lists under
 the calendar grid ("Estimate appointments" / "Installation appointments") rendered every event
@@ -3708,13 +3756,16 @@ columns never appear in the response bytes), web 336/336, both `tsc --noEmit` cl
 clean. NOT verified in a browser: the customer page needs a live order token and the running
 Worker, neither available in this environment.
 
-## 2026-08-25 - Per-item price lock on confirmed orders
+## 2026-08-25 - Per-item price lock from the moment an estimate is sent
 
-Confirming an order turns it into an invoice, but its prices stayed a COMPUTATION: every
+Sending an estimate quotes a customer a price, but that price stayed a COMPUTATION: every
 `PUT /api/orders/:id` ran `resolveLineItems` over today's catalog and today's formula code, so
-reopening a confirmed invoice and pressing Save was enough to re-price it. A pricing-formula
-change, or a material's price edited in Settings, silently rewrote money a customer had
-already been quoted and was paying against.
+reopening a sent estimate — or a confirmed invoice — and pressing Save was enough to re-price
+it. A pricing-formula change, or a material's price edited in Settings, silently rewrote money
+the customer had already been quoted and, once confirmed, was paying against.
+
+The lock takes effect at SEND, not at confirmation: quoting the figure is the shop's
+commitment, and confirming is only the customer accepting one already made.
 
 Migration 39 (`20260825000039_line_items_price_lock.sql`) adds two columns to `line_items`:
 
@@ -3735,7 +3786,8 @@ pleat multiplier must not read as the consultant having changed the item. Text, 
 unrecognised old fingerprint simply fails to match and re-prices that item once, and a support
 question about why a price moved is answerable by reading the column.
 
-On save of a CONFIRMED order (`PUT /:id` passes `buildLockMap(existing.line_items)` into
+On save of an order at any locked status — `sent`, `expired`, or any confirmed stage, `draft`
+being the only live-priced one (`PUT /:id` passes `buildLockMap(existing.line_items)` into
 `resolveLineItems`):
 
 - fingerprint matches → the frozen price is reused, together with the catalog snapshot columns
@@ -3743,41 +3795,52 @@ On save of a CONFIRMED order (`PUT /:id` passes `buildLockMap(existing.line_item
   for that item, so an option deleted from Settings can neither move the price nor block the
   save.
 - fingerprint differs, or the item is new → priced from today's catalog and re-locked at that
-  figure. This is the deliberate door through which a formula change still reaches a confirmed
+  figure. This is the deliberate door through which a formula change still reaches a quoted
   order: only for the item someone actually edited. (Chosen over "frozen until unlocked" so the
   editor stays live where a consultant is genuinely re-specifying a window.)
 
-**Lifecycle.** `POST /:id/confirm` freezes every item at `base_unit_price ?? unit_price` (the
-CALCULATED figure — freezing the overridden one would apply the override twice on the next
-save) via `freezeOrderPrices`, BEFORE the status moves: a failure fails the confirmation
-rather than leaving an invoice that re-prices itself. `POST /:id/unconfirm`, an accepted
-cancellation request, and `POST /:id/status` reverting below `awaiting_payment` all call
-`clearOrderPriceLocks` — an estimate is priced from today's catalog again, and re-confirming
-freezes at whatever it says then. Both freeze and release write an order-log line. A
-duplicated order is a new draft and inherits no lock, matching its existing "today's catalog"
-rule.
+**Lifecycle.** `freezeOrderPrices` writes `base_unit_price ?? unit_price` (the CALCULATED
+figure — freezing the overridden one would apply the override twice on the next save) onto
+every item not already locked, BEFORE the status moves, so a failure fails the transition
+rather than leaving an order that re-prices itself. Called from `POST /:id/send` (after the
+email succeeds, keeping the email-then-persist ordering), `POST /:id/mark-sent`,
+`POST /:id/confirm` (a no-op for an order that was sent, but a draft confirmed over the phone
+must not arrive live-priced), and `POST /:id/status` / `/revert` whenever the target stage is
+`sent` or beyond. Already-locked items are skipped by an `.is('locked_base_price', null)`
+filter, so a later stage change is never a re-quote. `/send` and `/mark-sent` write an
+"Item prices locked at send." order-log line.
+
+Release happens ONLY when an order returns to `draft`: `/status` and `/revert` targeting draft
+call `clearOrderPriceLocks`, and reviving a lapsed estimate in `PUT /:id` re-inserts its rows
+live-priced (the revive decision moved above the pricing for exactly this). `POST /:id/unconfirm`
+and an accepted cancellation request deliberately do NOT release — both land the order back on
+`sent`, where the customer still holds the estimate that quoted those figures. A duplicated
+order is a new draft and inherits no lock, matching its existing "today's catalog" rule.
 
 **Editor** (`lineItemDrafts.ts`). `PriceAdjustmentDraft` gained `lock: PriceLock | null`, filled
 from the two columns in `toDrafts` and never sent back (the payload schema is `.strict()`).
-`blindDraftPrice` consults the lock BEFORE the catalog — a locked item previews at its
-confirmed price even when its material has since been deleted, the one case the formula path
-refuses to price at all — and `flatDraftPrice` does the same. `isPriceLocked(draft)` drives a
-padlock beside the row's total in `LineItemRow`, which disappears the moment an input is
-edited and the price goes live again. A duplicated draft clears `lock` along with `uid`.
+`blindDraftPrice` consults the lock BEFORE the catalog — a locked item previews at its quoted
+price even when its material has since been deleted, the one case the formula path refuses to
+price at all — and `flatDraftPrice` does the same. `isPriceLocked(draft)` drives a
+padlock beside the row's total in `LineItemRow` ("Price locked when the estimate was sent"),
+which disappears the moment an input is edited and the price goes live again. A duplicated draft clears `lock` along with `uid`.
 
 Persistence helpers (`freezeOrderPrices`, `clearOrderPriceLocks`, `buildLockMap`,
 `lockInputFromRow`) live in `apps/api/src/lib/priceLockStore.ts` so the fingerprint module
 stays pure and twinnable.
 
 ### Verified
-api 416/416 (16 in `priceLock.test.ts`, 9 new route tests: frozen through a doubled material
-price, only the edited item re-priced, quantity/add-ons/override still live on top, a locked
-item saved after its material was deleted, a post-confirmation addition priced then locked, an
-unconfirmed order still live-priced, the confirm-time freeze taking the calculated figure on an
-overridden item, the unconfirm release, and a catalog-priced preset holding at its confirmed
-figure), web 421/421 (16 mirrored fingerprint tests — including a canonical-shape assertion
-pinned to the same literal on both sides — plus 6 preview tests), `tsc` clean both sides,
-`oxlint` clean. NOT verified in a browser: needs the migration applied and a confirmed order.
+api 429/429 (16 in `priceLock.test.ts`, 13 new route tests: frozen through a doubled material
+price, a SENT estimate holding before any confirmation, a draft still live-priced, a revived
+estimate returning to live pricing in the same save, only the edited item re-priced,
+quantity/add-ons/override still live on top, a locked item saved after its material was
+deleted, a later addition priced then locked, the freeze on `/send` and on `/mark-sent`, the
+confirm-time freeze taking the calculated figure on an overridden item, locks KEPT through
+`/unconfirm`, released only by a status move to draft, and a catalog-priced preset holding at
+its quoted figure), web 425/425 (16 mirrored fingerprint tests — including a canonical-shape
+assertion pinned to the same literal on both sides — plus 6 preview tests), `tsc` clean both
+sides, `oxlint` clean. NOT verified in a browser: needs the migration applied and a sent
+order.
 
 **Deployment order matters**: the migration must be applied BEFORE the Worker is deployed —
 the insert writes both columns on every save, so a Worker running against the old schema
