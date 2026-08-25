@@ -12,6 +12,12 @@
  * rather than re-deriving any area formula. `describeMaterialUsage` is the
  * single source of a billed quantity; nothing here recomputes one.
  *
+ * Each material row also carries the WINDOWS that made it up
+ * ({@link MaterialUsageLine}), because "12 m² of Blackout Ivory" does not
+ * say whether that is one oversized opening or six ordinary ones. Those
+ * per-line figures are the same readings the row is summed from, never a
+ * second calculation, so a row and its breakdown cannot disagree.
+ *
  * Everything reported is BILLED quantity: the width and height minimums
  * are applied, because that is what the material leg charged. `measured`
  * travels alongside it so the panel can show how much of the billed area
@@ -46,6 +52,47 @@ export function materialRowKey(materialId: string, unit: MaterialUnit): string {
 }
 
 /**
+ * ONE window's contribution to a material row, in that row's rate unit.
+ *
+ * The material row answers "how much of this fabric does the order
+ * carry"; this answers "which window did it go into", which is the
+ * question asked when a single oversized opening is what pushed a
+ * material's quantity up. Every figure here is the same basis as the row
+ * it sits under — billed quantity, line quantity already multiplied in —
+ * so the lines of a row always sum to that row's own figures.
+ *
+ * `widthCm` and `heightCm` are the MEASURED dimensions the consultant
+ * typed, NOT the minimum-inflated ones the quantity is billed on. They
+ * are there to identify the window, and a row that showed 100cm for a
+ * 60cm blind would not identify it. The gap between measured and billed
+ * is reported once per unit at the bottom of the dialog instead.
+ *
+ * `heightCm` is carried even for `running_m` rows, where Curtains does
+ * not price on it: the dialog omits it there rather than this module
+ * pretending the measurement does not exist.
+ */
+export interface MaterialUsageLine {
+  /** The draft's render key — unique per line, and the React list key. */
+  key: string;
+  /** Room name, or the editor's own `Blind N` fallback when it is blank. */
+  label: string;
+  /** The line's blind type, so a material used by two types still reads. */
+  blindType: string;
+  /** Measured width: the panel widths summed, before any minimum. */
+  widthCm: number;
+  /** Measured height, before the tiered height minimum. */
+  heightCm: number;
+  /** How many identical blinds this one line carries. */
+  itemQuantity: number;
+  /** Billed quantity for the whole line, `itemQuantity` included. */
+  quantity: number;
+  /** The same figure with the minimum rules skipped. Reporting only. */
+  measuredQuantity: number;
+  /** This line's fabric-leg revenue. */
+  amount: number;
+}
+
+/**
  * One material's contribution across an order, in the unit that
  * material's rate is quoted in for the types that used it.
  *
@@ -68,6 +115,13 @@ export interface MaterialUsageRow {
   amount: number;
   /** How many visible lines contributed, for the dialog's own context. */
   lineCount: number;
+  /**
+   * Every contributing window, in the order the editor lists them, so the
+   * per-line breakdown reads in the same sequence as the line items above
+   * it. Always `lineCount` entries long, and its figures always sum to
+   * this row's own.
+   */
+  lines: MaterialUsageLine[];
 }
 
 /** Order-wide billed figures for one rate unit. */
@@ -119,7 +173,7 @@ export function summarizeMaterialUsage(
   const groups = new Map<string, MaterialUsageRow>();
   let excludedCount = 0;
 
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     if (item.hidden) continue;
     if (item.item_type !== 'blind') {
       excludedCount += 1;
@@ -151,14 +205,33 @@ export function summarizeMaterialUsage(
       rate,
       amount: 0,
       lineCount: 0,
+      lines: [],
     };
-    row.lineCount += 1;
-    row.quantity += usage.quantity * qty;
-    row.measuredQuantity += usage.measured * qty;
     // The fabric leg, taken from the type's own breakdown rather than
     // multiplied out here, so a type that prices fabric unusually is
     // reported the way it actually charges.
-    row.amount += blindType.describeUnitCosts(inputs).material * qty;
+    const amount = blindType.describeUnitCosts(inputs).material * qty;
+
+    row.lineCount += 1;
+    row.quantity += usage.quantity * qty;
+    row.measuredQuantity += usage.measured * qty;
+    row.amount += amount;
+    // The same three figures kept per window, so the breakdown cannot
+    // drift from the row it sits under: both are the one usage reading.
+    row.lines.push({
+      key: item.key,
+      // Matches the fallback the line-item list and the presentation
+      // table already use, so one blank-roomed window is called the same
+      // thing everywhere in the editor.
+      label: item.room_name || `Blind ${index + 1}`,
+      blindType: item.blinds_type,
+      widthCm: inputs.panels.reduce((a, b) => a + b, 0),
+      heightCm: inputs.height_cm,
+      itemQuantity: qty,
+      quantity: usage.quantity * qty,
+      measuredQuantity: usage.measured * qty,
+      amount,
+    });
     groups.set(key, row);
   }
 

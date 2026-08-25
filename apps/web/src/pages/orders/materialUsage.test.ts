@@ -225,6 +225,92 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.rows.map((r) => r.materialId)).toEqual(['m2', 'm1']);
   });
 
+  it('breaks a row down into the windows that made it, in editor order', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a', room_name: 'Living Room' }),
+      blind({ key: 'b', room_name: 'Kitchen', panels: ['100'], height_cm: '200' }),
+    ];
+    const [row] = summarizeMaterialUsage(items, catalogs()).rows;
+    expect(row.lines.map((l) => l.label)).toEqual(['Living Room', 'Kitchen']);
+    expect(row.lines.map((l) => l.key)).toEqual(['a', 'b']);
+    expect(row.lines[0].quantity).toBeCloseTo(2.8, 10);
+    expect(row.lines[1].quantity).toBeCloseTo(2, 10);
+    expect(row.lines[0].amount).toBeCloseTo(140, 10);
+  });
+
+  it('sums its lines back to the row they sit under', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a', quantity: '3' }),
+      blind({ key: 'b', panels: ['60'], height_cm: '80' }),
+    ];
+    const [row] = summarizeMaterialUsage(items, catalogs()).rows;
+    expect(row.lines).toHaveLength(row.lineCount);
+    const sum = (pick: (l: (typeof row.lines)[number]) => number) =>
+      row.lines.reduce((a, l) => a + pick(l), 0);
+    expect(sum((l) => l.quantity)).toBeCloseTo(row.quantity, 10);
+    expect(sum((l) => l.measuredQuantity)).toBeCloseTo(row.measuredQuantity, 10);
+    expect(sum((l) => l.amount)).toBeCloseTo(row.amount, 10);
+  });
+
+  it('multiplies a line breakdown by that line quantity', () => {
+    const [row] = summarizeMaterialUsage([blind({ quantity: '4' })], catalogs()).rows;
+    expect(row.lines[0].itemQuantity).toBe(4);
+    expect(row.lines[0].quantity).toBeCloseTo(11.2, 10);
+  });
+
+  it('reports a line breakdown in running metres for Curtains', () => {
+    const items: ItemDraft[] = [
+      blind({
+        key: 'c',
+        room_name: 'Master Bedroom',
+        blinds_type: 'Curtains',
+        panels: ['150', '150'],
+        cassette_id: '',
+        bottom_rail_id: '',
+      }),
+    ];
+    const [row] = summarizeMaterialUsage(items, catalogs()).rows;
+    expect(row.unit).toBe('running_m');
+    // 3.0 m of finished width at fullness 1, plus 0.5 m of hem per panel.
+    expect(row.lines[0].quantity).toBeCloseTo(4, 10);
+    expect(row.lines[0]).toMatchObject({
+      label: 'Master Bedroom',
+      blindType: 'Curtains',
+      widthCm: 300,
+      itemQuantity: 1,
+    });
+  });
+
+  it('carries the MEASURED dimensions, so a window stays findable', () => {
+    const [row] = summarizeMaterialUsage(
+      [blind({ panels: ['60', '20'], height_cm: '80' })],
+      catalogs()
+    ).rows;
+    // Billed on the 100 × 100 minimums, but labelled with what was typed.
+    expect(row.lines[0]).toMatchObject({ widthCm: 80, heightCm: 80 });
+    expect(row.lines[0].quantity).toBeCloseTo(1, 10);
+  });
+
+  it('falls back to the editor line label when a room is blank', () => {
+    const items: ItemDraft[] = [
+      flat({ key: 'f' }),
+      blind({ key: 'a', room_name: '' }),
+    ];
+    const [row] = summarizeMaterialUsage(items, catalogs()).rows;
+    // Numbered by position in the full list, exactly as the item list is.
+    expect(row.lines[0].label).toBe('Blind 2');
+  });
+
+  it('keeps an excluded line out of the breakdown as well as the row', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a' }),
+      blind({ key: 'h', hidden: true }),
+      blind({ key: 'i', height_cm: '' }),
+    ];
+    const [row] = summarizeMaterialUsage(items, catalogs()).rows;
+    expect(row.lines.map((l) => l.key)).toEqual(['a']);
+  });
+
   it('returns an empty summary for an order with no lines', () => {
     const summary = summarizeMaterialUsage([], catalogs());
     expect(summary.rows).toEqual([]);
@@ -265,6 +351,8 @@ describe('rowGiveBack', () => {
     rate: 73,
     amount: 730,
     lineCount: 2,
+    // Give-back math reads the row's own totals, never its breakdown.
+    lines: [],
   };
 
   it('is the rate difference times the billed quantity', () => {

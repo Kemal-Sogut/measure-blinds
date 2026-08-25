@@ -107,7 +107,10 @@ customer, never printed, absent from the PDF, the public customer view,
 `/orders/:id/present`, and `/orders/:id/overview`. Shows billed material quantity, rate, and
 material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
 hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
-priced; a note surfaces billed-vs-measured area when minimums inflated it. Two discounting
+priced; a note surfaces billed-vs-measured area when minimums inflated it. Each material row
+then breaks down into the WINDOWS that made it (2026-08-25): label, blind type, measured size,
+`×N` for a multi-blind line, and that window's own billed quantity in the row's unit — m² for
+the m²-priced types, running metres for Curtains. Two discounting
 instruments, **both of which are pure discount math — neither touches a line item**:
 - **Per material.** Each row's rate box is prefilled with the catalog rate and has a reset
   button inside it. Typing a lower rate and pressing "Discount $X" adds

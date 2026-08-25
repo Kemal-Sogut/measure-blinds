@@ -178,6 +178,13 @@ section as the reference implementation for future collapsible UI.
   own shape). It backs the internal Material usage panel
   (`apps/web/src/pages/orders/MaterialUsageDialog.tsx` + `materialUsage.ts`) — never the PDF,
   the customer view, or `/orders/:id/present`.
+  - **A material row and its per-window breakdown are ONE reading, not two (2026-08-25).**
+    `MaterialUsageRow.lines` is built by pushing the same `describeMaterialUsage` quantity and
+    the same `describeUnitCosts(inputs).material` product the row accumulates, in the same
+    loop pass. Nothing recomputes a per-line figure from the row, and nothing recomputes the
+    row from its lines — which is why the sum identity holds exactly and why adding a figure
+    to one means adding it to the other in that one place. The unit is `row.unit` throughout,
+    so the m²/running-metre split needs no per-type branch in the dialog.
   - **It is held consistent with `materialCost` BY TEST, not by construction.** The tempting
     refactor — deriving `materialCost` from `describeMaterialUsage(item).quantity × rate` —
     was deliberately rejected (design §4.2,

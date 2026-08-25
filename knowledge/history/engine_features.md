@@ -1,5 +1,44 @@
 # Engine Features / Feature History
 
+## 2026-08-25 — Material usage breaks down per window
+Web-only (no API, schema or pricing surface), off `main` at `6f3cff0`. The Material usage
+dialog reported only order-wide and per-material totals, so "12.40 m² of Blackout Ivory" could
+not say whether that was one oversized opening or six ordinary ones — which is exactly the
+check a consultant makes before giving fabric away at a rate.
+
+**`MaterialUsageLine` (`apps/web/src/pages/orders/materialUsage.ts`).** Each
+`MaterialUsageRow` now carries `lines: MaterialUsageLine[]` — one entry per contributing
+window, in the order the editor lists them, always `lineCount` long. Each holds the draft
+`key`, a `label` (`room_name`, falling back to `Blind N` by position in the FULL item list,
+matching `OrderDetail.tsx` and `PresentationTable.tsx`), `blindType`, `widthCm`/`heightCm`,
+`itemQuantity`, and the same three figures the row is summed from: `quantity`,
+`measuredQuantity`, `amount`.
+
+Not a second calculation. The line figures are the SAME `describeMaterialUsage` reading and
+the SAME `describeUnitCosts(inputs).material` product the row accumulates — the loop now
+pushes what it just added rather than deriving it again — so a row and its breakdown cannot
+drift. A test asserts the sum identity across all three figures.
+
+`widthCm`/`heightCm` are the MEASURED dimensions, before any minimum. They identify the
+window; a 60cm blind shown as its billed 100cm would not. The measured-vs-billed gap keeps
+being reported once per unit at the bottom of the dialog, where it already was.
+
+**The dialog** (`MaterialUsageDialog.tsx`) renders the breakdown as a `<ul>` under each
+material's rate line, in that row's own unit — m² for the m²-priced types, running metres for
+Curtains, driven by `row.unit` with no per-type branch. `dimensionsOf` prints `140 × 200 cm`
+for `sqm` and `300 cm wide` for `running_m`, because Curtains price on finished width alone
+and a drop printed beside a metre figure it played no part in reads as related to it. `×N`
+appears only when a line carries more than one blind, and the blind type appears only when
+one material row spans more than one type. The rail trigger is unchanged — still the
+order-wide one-liner.
+
+### Verified
+web 399/399 (9 new in `materialUsage.test.ts`: editor order, the sum identity, line quantity,
+the Curtains running-metre case, measured-not-billed dimensions, the `Blind N` fallback
+numbering past a preset, and exclusion of hidden/incomplete lines from the breakdown),
+`tsc --noEmit` clean, `oxlint` clean. NOT verified in a browser — the dialog still needs a
+live order with catalogs behind it.
+
 ## 2026-08-25 — Bulk edit v3: a mixed or still-typeless selection is editable
 Web-only (no API, schema or pricing surface), off `main` at `262aabe`. Bulk edit stops
 refusing two of its four selection verdicts and resolves them in the popup instead, which is

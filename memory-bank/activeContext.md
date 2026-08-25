@@ -5,21 +5,22 @@
 > and `knowledge/history/bug_fixes.md`.
 
 ## Where things stand (as of 2026-08-25)
-On `main` at `262aabe` (PR #41 merged: the Material usage DIALOG and give-backs that compose
-the fixed discount — that work is now plain history, `knowledge/history/engine_features.md`
-2026-08-22). Uncommitted in the worktree, on `main` with no branch or PR yet: **bulk edit
-v3**, web-only. Bulk edit no longer refuses a selection that lacks ONE shared blind type —
-`BulkEditBlocker` is down to `empty | non_blind`, and `bulkEditSelection` reports
-`{ blindsType, mixed, keys }` instead. With no shared type the popup shows Blind type and
-Colour alone (both unscoped) and reveals the picked type's material/hardware dropdowns the
-moment one is chosen, so "make these three Roller" and "type these blank rows" are each one
-pass. Picking a type is the reset gesture, not a diff: `applyBulkPatch` is UNCHANGED and puts
-every selected item onto that type's saved defaults, clearing its price override, including
-items already on that type. Full detail in `knowledge/history/engine_features.md`,
-2026-08-25. Verified: web `pnpm check` clean, `pnpm lint` 0/0, `pnpm test` 392/392 (23
-files); api untouched by this change. The popup's three states were driven in a browser
-through a throwaway Vite entry (`BulkEditForm`'s import chain is Supabase-free), not inside
-the real order page — that still needs a login. Not deployed. NOTE: `apps/web/.env` and
+On `main` at `6f3cff0` ("bulk-edit updates" — bulk edit v3 is now plain history,
+`knowledge/history/engine_features.md` 2026-08-25; the Material usage DIALOG and the
+composing give-backs landed earlier as PR #41, same file 2026-08-22). Uncommitted in the
+worktree, on `main` with no branch or PR yet: **the Material usage PER-WINDOW breakdown**,
+web-only, no API/schema/pricing surface. `MaterialUsageRow` gained
+`lines: MaterialUsageLine[]` (`materialUsage.ts`) — one entry per contributing window, in
+editor order, carrying that window's label, blind type, MEASURED width/height, line quantity
+and its own billed `quantity`/`measuredQuantity`/`amount`. The figures are the same
+`describeMaterialUsage` and `describeUnitCosts` readings the row is summed from, pushed rather
+than re-derived, so a row and its breakdown cannot drift (asserted by a sum-identity test).
+The dialog renders them as a list under each material's rate line, in that row's own unit —
+m² for the m²-priced types, running metres for Curtains — with `×N` only on multi-blind lines
+and the blind type only when a row spans more than one type. Full detail in
+`knowledge/history/engine_features.md`, 2026-08-25. Verified: web `pnpm check` clean,
+`pnpm lint` 0/0, `pnpm test` 399/399 (23 files); api untouched. NOT seen in a browser — see
+the open item below, which now covers the breakdown too. Not deployed. NOTE: `apps/web/.env` and
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 
@@ -54,7 +55,8 @@ primitive layer.
   throwaway component harness verified the dialog's own layout and behaviour (rates,
   additivity, reset, the mobile sheet, the two-rate-input case), but nobody has seen the
   trigger row in the real totals rail or the mobile totals card, and no save round-trip has
-  run. Needs
+  run. The per-window breakdown added on 2026-08-25 inherits this: its aggregation is under
+  test, its rendering is not. Needs
   `apps/web/.env` (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
   `lgbxxlwsdeuhdgzrjjen`), a valid login, and `apps/api/.dev.vars` with the service-role
   key before this can be driven end to end.

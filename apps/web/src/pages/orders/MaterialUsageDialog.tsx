@@ -7,8 +7,15 @@
  *
  * Answers the question a discount is actually decided on: how many square
  * metres (or running metres, for Curtains) of each material is this order,
- * at what rate, and what does charging less per metre come to. Two
- * instruments sit side by side because they do different jobs:
+ * at what rate, and what does charging less per metre come to.
+ *
+ * Every material row breaks down into the WINDOWS that made it up, each
+ * with its measured size and its own billed quantity in that row's unit —
+ * m² for the m²-priced types, running metres for Curtains. A total alone
+ * cannot say whether it came from one oversized opening or six ordinary
+ * ones, and that is exactly what a consultant checks before giving fabric
+ * away. Two instruments then sit side by side because they do different
+ * jobs:
  *
  * - PER MATERIAL (one editor per row). Type a lower rate for ONE material
  *   and Apply adds `(catalog rate − your rate) × that material's billed
@@ -48,6 +55,7 @@ import {
   materialRowKey,
   rowGiveBack,
   ORDER_WIDE_GIVE_BACK,
+  type MaterialUsageLine,
   type MaterialUsageSummary,
 } from './materialUsage';
 
@@ -72,6 +80,22 @@ function parseRate(value: string): number | null {
 /** Renders `n` with the right plural, so no row reads "1 lines". */
 function lines(n: number): string {
   return `${n} line${n === 1 ? '' : 's'}`;
+}
+
+/**
+ * How one window is identified in a per-line breakdown.
+ *
+ * The MEASURED dimensions, not the billed ones — this is a label for
+ * finding the window in the list above, and a 60cm blind shown as 100cm
+ * would not find it. Height is omitted for `running_m` rows because
+ * Curtains price on finished width alone; printing a drop beside a metre
+ * figure it played no part in is how a reader concludes the two are
+ * related.
+ */
+function dimensionsOf(line: MaterialUsageLine, unit: MaterialUnit): string {
+  return unit === 'running_m'
+    ? `${line.widthCm} cm wide`
+    : `${line.widthCm} × ${line.heightCm} cm`;
 }
 
 /**
@@ -264,6 +288,11 @@ export function MaterialUsageDialog({
           // Nothing to put back when the box still reads the catalog rate
           // and this row has contributed nothing.
           const dirty = draft !== row.rate.toFixed(2) || applied > 0;
+          // One material can be scoped to several m²-priced types, and
+          // then the blind type is what tells two same-sized windows
+          // apart. Named per row rather than per line so an order of one
+          // type does not repeat "Roller" down the whole breakdown.
+          const mixedTypes = new Set(row.lines.map((line) => line.blindType)).size > 1;
 
           return (
             <section
@@ -289,6 +318,30 @@ export function MaterialUsageDialog({
                 ${row.amount.toFixed(2)} fabric at ${row.rate.toFixed(2)} / {UNIT_LABEL[row.unit]} ·{' '}
                 {lines(row.lineCount)}
               </p>
+
+              {/* Which windows the row is made of. Always shown, even for
+                  a single line: the quantity above is the answer to "how
+                  much", and this is the answer to "where", which a
+                  one-line order still needs when its figure looks wrong. */}
+              <ul className="flex flex-col gap-1 border-t border-border-light pt-2 text-[12px]">
+                {row.lines.map((line) => (
+                  <li key={line.key} className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0 wrap-anywhere text-text-secondary">
+                      {line.label}
+                      {mixedTypes && <span className="text-text-muted"> · {line.blindType}</span>}
+                      <span className="text-text-muted"> · {dimensionsOf(line, row.unit)}</span>
+                      {/* Only when it carries more than one blind — an
+                          unconditional "x1" on every row is noise. */}
+                      {line.itemQuantity > 1 && (
+                        <span className="text-text-muted"> · ×{line.itemQuantity}</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 font-mono text-text-primary">
+                      {line.quantity.toFixed(2)} {UNIT_LABEL[row.unit]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
 
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5">
