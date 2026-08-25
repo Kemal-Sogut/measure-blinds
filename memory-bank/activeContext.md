@@ -5,22 +5,31 @@
 > and `knowledge/history/bug_fixes.md`.
 
 ## Where things stand (as of 2026-08-25)
-On `main` at `6f3cff0` ("bulk-edit updates" — bulk edit v3 is now plain history,
-`knowledge/history/engine_features.md` 2026-08-25; the Material usage DIALOG and the
-composing give-backs landed earlier as PR #41, same file 2026-08-22). Uncommitted in the
-worktree, on `main` with no branch or PR yet: **the Material usage PER-WINDOW breakdown**,
-web-only, no API/schema/pricing surface. `MaterialUsageRow` gained
-`lines: MaterialUsageLine[]` (`materialUsage.ts`) — one entry per contributing window, in
-editor order, carrying that window's label, blind type, MEASURED width/height, line quantity
-and its own billed `quantity`/`measuredQuantity`/`amount`. The figures are the same
-`describeMaterialUsage` and `describeUnitCosts` readings the row is summed from, pushed rather
-than re-derived, so a row and its breakdown cannot drift (asserted by a sum-identity test).
-The dialog renders them as a list under each material's rate line, in that row's own unit —
-m² for the m²-priced types, running metres for Curtains — with `×N` only on multi-blind lines
-and the blind type only when a row spans more than one type. Full detail in
-`knowledge/history/engine_features.md`, 2026-08-25. Verified: web `pnpm check` clean,
-`pnpm lint` 0/0, `pnpm test` 399/399 (23 files); api untouched. NOT seen in a browser — see
-the open item below, which now covers the breakdown too. Not deployed. NOTE: `apps/web/.env` and
+On `main` at `2781d31` ("material-usage-updated" — the Material usage PER-WINDOW breakdown is
+now committed and plain history, `knowledge/history/engine_features.md` 2026-08-25; bulk edit
+v3, the Material usage DIALOG and the composing give-backs landed before it, same file
+2026-08-25/2026-08-22).
+
+Uncommitted in the worktree, on `main` with no branch or PR yet: **the calendar's under-grid
+sections are upcoming-only**, web-only, one file
+(`apps/web/src/pages/calendar/ScheduleSections.tsx`), no API/hook/query surface. A local
+`hasPassed(date, time)` drops an appointment from the "Estimate appointments" /
+"Installation appointments" lists once its 1-hour visit window has ended, so those sections
+read as a worklist instead of a growing log. Past appointments are untouched everywhere else:
+their chips stay on the month grid above and "See All" (`/appointments`) remains the archive.
+Expect a fully past month to show empty sections with chips still on the grid — intended.
+Detail in `knowledge/history/engine_features.md`, 2026-08-25. Verified: web `pnpm check`
+clean, `pnpm lint` 0/0, `pnpm test` 399/399; api untouched; NOT seen in a browser, and
+`ScheduleSections` still has no covering tests. Not deployed.
+
+Also uncommitted, independent of the calendar change and touching one file
+(`apps/web/src/pages/orders/MaterialUsageDialog.tsx`): the per-window breakdown committed in
+`2781d31` is now COLLAPSED by default, behind a `Per window` disclosure button in a new
+non-exported `LineBreakdown` component. Its `open` flag is local `useState` — the one
+deliberate exception to the "lift every piece of state" rule in `MaterialUsageDialogProps`,
+because the panel renders once inside the dialog and is meant to be forgotten on dismissal.
+Aggregation is unchanged, so the 399 tests still cover it; the disclosure itself is
+render-only and untested, like the rest of the dialog's UI. NOTE: `apps/web/.env` and
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 

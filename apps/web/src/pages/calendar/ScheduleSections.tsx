@@ -7,6 +7,12 @@
  *   left  — Estimate appointments (customer-only visits).
  *   right — Installation appointments (each tied to an order).
  *
+ * Both lists are UPCOMING-ONLY: an appointment disappears from them
+ * once its 1-hour visit window has ended (`hasPassed`), so the sections
+ * read as a worklist of what still needs doing rather than a growing
+ * log. Past appointments are not lost — their chips stay on the grid
+ * above and the full history lives on "See All" (`/appointments`).
+ *
  * Tapping a row's summary opens that appointment's details page
  * (`/appointments/:id`). Every row also offers "Change" (re-opens the
  * wizard on the same appointment and re-emails the proposal) and
@@ -38,6 +44,19 @@ function whenLabel(dateIso: string, time: string): string {
   const [h, m] = time.split(':').map(Number);
   const end = `${String((h + 1) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   return `${format(new Date(y, mo - 1, d), 'EEE, MMM d')} · ${to12Hour(time)} – ${to12Hour(end)}`;
+}
+
+/**
+ * True once the appointment's 1-hour visit window has ended, using the
+ * same `[time, time+1h)` window the row label prints. Past appointments
+ * are dropped from the under-grid sections so the lists stay a
+ * "what's still coming" worklist; they remain on the calendar grid
+ * above and in the full `/appointments` list, which is the archive.
+ */
+function hasPassed(dateIso: string, time: string): boolean {
+  const [y, mo, d] = dateIso.split('-').map(Number);
+  const [h, m] = time.split(':').map(Number);
+  return new Date(y, mo - 1, d, h + 1, m) < new Date();
 }
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
@@ -82,8 +101,10 @@ export default function ScheduleSections({
   const deleteMut = useDeleteAppointment();
   const confirmMut = useConfirmAppointment();
 
-  const estimates = events.filter((e) => e.kind === 'estimate');
-  const installs = events.filter((e) => e.kind === 'installation');
+  // Only appointments still ahead of us — see `hasPassed`.
+  const upcoming = events.filter((e) => !hasPassed(e.date, e.time));
+  const estimates = upcoming.filter((e) => e.kind === 'estimate');
+  const installs = upcoming.filter((e) => e.kind === 'installation');
 
   /** Staff confirm — the customer agreed through another channel. */
   async function confirm(event: CalendarEvent) {
@@ -189,7 +210,7 @@ export default function ScheduleSections({
           'success',
           'M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11'
         )}
-        {estimates.length === 0 && <p className={emptyCls}>No estimate appointments this month.</p>}
+        {estimates.length === 0 && <p className={emptyCls}>No upcoming estimate appointments this month.</p>}
         <div className="flex flex-col gap-2">
           {estimates.map((ev) => (
             <div key={ev.id} className="rounded-xl border border-border-light bg-surface p-3 shadow-sm">
@@ -214,7 +235,7 @@ export default function ScheduleSections({
           'scheduled',
           'M3 10h18M8 2v4M16 2v4M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z'
         )}
-        {installs.length === 0 && <p className={emptyCls}>No installations this month.</p>}
+        {installs.length === 0 && <p className={emptyCls}>No upcoming installations this month.</p>}
         <div className="flex flex-col gap-2">
           {installs.map((ev) => (
             <div key={ev.id} className="rounded-xl border border-border-light bg-surface p-3 shadow-sm">

@@ -110,7 +110,9 @@ hidden lines dropped and preset/custom/incomplete lines counted as excluded rath
 priced; a note surfaces billed-vs-measured area when minimums inflated it. Each material row
 then breaks down into the WINDOWS that made it (2026-08-25): label, blind type, measured size,
 `×N` for a multi-blind line, and that window's own billed quantity in the row's unit — m² for
-the m²-priced types, running metres for Curtains. Two discounting
+the m²-priced types, running metres for Curtains. That breakdown is a `Per window` disclosure
+that starts COLLAPSED, so the rate boxes and the give-back calculator stay on screen on a
+large order. Two discounting
 instruments, **both of which are pure discount math — neither touches a line item**:
 - **Per material.** Each row's rate box is prefilled with the catalog rate and has a reset
   button inside it. Typing a lower rate and pressing "Discount $X" adds
@@ -141,7 +143,9 @@ company info + logo, Terms & Conditions, e-Transfer details.
 pull-to-refresh in standalone mode (query invalidation, never a hard reload); one responsive
 shell for every width (collapsible rail at `md+`, full-screen overlay below, one
 `.page-container` fluid track); calendar surface over the installation/estimate-visit
-scheduling domain, whose appointment-detail page carries an "Add order" shortcut
+scheduling domain, whose two under-grid sections list UPCOMING appointments only (an entry
+leaves once its 1-hour window has ended; the month grid's chips and the paginated "See All"
+page keep the past ones) and whose appointment-detail page carries an "Add order" shortcut
 (`/orders/new?customer=<id>`, pre-fills the customer via `useCustomer`); Photon address
 autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = true` in
 `AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.

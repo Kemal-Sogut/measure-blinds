@@ -46,7 +46,7 @@
  * formatting.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import type { MaterialUnit } from '../../lib/blindTypes';
@@ -56,6 +56,7 @@ import {
   rowGiveBack,
   ORDER_WIDE_GIVE_BACK,
   type MaterialUsageLine,
+  type MaterialUsageRow,
   type MaterialUsageSummary,
 } from './materialUsage';
 
@@ -114,6 +115,86 @@ function summaryLineOf(summary: MaterialUsageSummary): string {
   return usedUnitsOf(summary)
     .map(({ unit, figures }) => `${figures.quantity.toFixed(2)} ${UNIT_LABEL[unit]}`)
     .join(' · ');
+}
+
+/**
+ * One material row's per-window breakdown, as a disclosure that starts
+ * CLOSED.
+ *
+ * Closed by default because the dialog's job is the rate decision, and an
+ * order of twenty windows across four materials would push the rate boxes
+ * and the give-back calculator off the screen before the consultant got to
+ * them. The breakdown answers the follow-up question — "which window is
+ * that quantity" — so it waits to be asked.
+ *
+ * Its open flag is LOCAL `useState`, which is the one deliberate exception
+ * to the lifting rule in {@link MaterialUsageDialogProps}. That rule exists
+ * because `Modal` unmounts its children on close and because the trigger
+ * renders at two breakpoints; neither applies here. Nothing about which
+ * panel was open is worth surviving a dismissal — reopening the dialog
+ * should show the compact rate view again — and this renders only inside
+ * the dialog, which is mounted exactly once. Do not lift it: it would add
+ * a prop pair to the parent for state that is supposed to be forgotten.
+ */
+function LineBreakdown({ row }: { row: MaterialUsageRow }) {
+  const [open, setOpen] = useState(false);
+  // `::` in the row key is legal in an id but awkward in any selector.
+  const bodyId = `material-usage-lines-${row.materialId}-${row.unit}`;
+
+  // One material can be scoped to several m²-priced types, and then the
+  // blind type is what tells two same-sized windows apart. Decided per
+  // row so an order of one type does not repeat "Roller" down every line.
+  const mixedTypes = new Set(row.lines.map((line) => line.blindType)).size > 1;
+
+  return (
+    <div className="border-t border-border-light pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls={bodyId}
+        // Every row's button reads "Per window", so the accessible name
+        // carries the material and its unit — the same reason the reset
+        // and Discount buttons below are named.
+        aria-label={`${open ? 'Hide' : 'Show'} the per-window breakdown for ${row.materialName} (per ${UNIT_LABEL[row.unit]})`}
+        className="flex min-h-9 w-full items-center gap-1.5 text-left text-[12px] text-text-secondary"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          aria-hidden="true"
+          className={`shrink-0 text-text-muted transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
+        >
+          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+        Per window
+      </button>
+
+      {open && (
+        <ul id={bodyId} className="flex flex-col gap-1 pb-1 pl-[22px] text-[12px]">
+          {row.lines.map((line) => (
+            <li key={line.key} className="flex items-baseline justify-between gap-3">
+              <span className="min-w-0 wrap-anywhere text-text-secondary">
+                {line.label}
+                {mixedTypes && <span className="text-text-muted"> · {line.blindType}</span>}
+                <span className="text-text-muted"> · {dimensionsOf(line, row.unit)}</span>
+                {/* Only when it carries more than one blind — an
+                    unconditional "x1" on every row is noise. */}
+                {line.itemQuantity > 1 && (
+                  <span className="text-text-muted"> · ×{line.itemQuantity}</span>
+                )}
+              </span>
+              <span className="shrink-0 font-mono text-text-primary">
+                {line.quantity.toFixed(2)} {UNIT_LABEL[row.unit]}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -288,11 +369,6 @@ export function MaterialUsageDialog({
           // Nothing to put back when the box still reads the catalog rate
           // and this row has contributed nothing.
           const dirty = draft !== row.rate.toFixed(2) || applied > 0;
-          // One material can be scoped to several m²-priced types, and
-          // then the blind type is what tells two same-sized windows
-          // apart. Named per row rather than per line so an order of one
-          // type does not repeat "Roller" down the whole breakdown.
-          const mixedTypes = new Set(row.lines.map((line) => line.blindType)).size > 1;
 
           return (
             <section
@@ -319,29 +395,7 @@ export function MaterialUsageDialog({
                 {lines(row.lineCount)}
               </p>
 
-              {/* Which windows the row is made of. Always shown, even for
-                  a single line: the quantity above is the answer to "how
-                  much", and this is the answer to "where", which a
-                  one-line order still needs when its figure looks wrong. */}
-              <ul className="flex flex-col gap-1 border-t border-border-light pt-2 text-[12px]">
-                {row.lines.map((line) => (
-                  <li key={line.key} className="flex items-baseline justify-between gap-3">
-                    <span className="min-w-0 wrap-anywhere text-text-secondary">
-                      {line.label}
-                      {mixedTypes && <span className="text-text-muted"> · {line.blindType}</span>}
-                      <span className="text-text-muted"> · {dimensionsOf(line, row.unit)}</span>
-                      {/* Only when it carries more than one blind — an
-                          unconditional "x1" on every row is noise. */}
-                      {line.itemQuantity > 1 && (
-                        <span className="text-text-muted"> · ×{line.itemQuantity}</span>
-                      )}
-                    </span>
-                    <span className="shrink-0 font-mono text-text-primary">
-                      {line.quantity.toFixed(2)} {UNIT_LABEL[row.unit]}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <LineBreakdown row={row} />
 
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5">

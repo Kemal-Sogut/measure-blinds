@@ -1,5 +1,29 @@
 # Engine Features / Feature History
 
+## 2026-08-25 — Calendar under-grid sections show upcoming appointments only
+Web-only, one file (`apps/web/src/pages/calendar/ScheduleSections.tsx`). The two lists under
+the calendar grid ("Estimate appointments" / "Installation appointments") rendered every event
+in the visible month range, so a month filled up with visits that were already done and the
+staff worklist buried what still needed doing.
+
+New local `hasPassed(dateIso, time)` treats an appointment as past once its 1-hour visit
+window has ENDED — `new Date(y, mo-1, d, h+1, m) < new Date()` — the same `[time, time+1h)`
+window `whenLabel` already prints, so a row never disappears while it is still being shown as
+in progress. Both sections now filter from one `upcoming` array; empty copy became
+"No upcoming … this month."
+
+Deliberately NOT hidden anywhere else: past appointments keep their chips on the grid above
+(the month view is still a record of the month) and the paginated "See All" page
+(`/appointments`, date-desc) is unchanged and remains the archive. No API, hook or query
+change — the filter is client-side over data `useCalendarEvents` already returns.
+
+Consequence to expect: paging back to a fully past month leaves both sections empty while the
+grid above still shows chips. That is intended; the archive is one tap away via "See All".
+
+### Verified
+web `tsc --noEmit` clean, `oxlint` clean, vitest 399/399 (no test targets this component —
+⚠️ no covering tests exist for `ScheduleSections`). Not exercised in a browser.
+
 ## 2026-08-25 — Material usage breaks down per window
 Web-only (no API, schema or pricing surface), off `main` at `6f3cff0`. The Material usage
 dialog reported only order-wide and per-material totals, so "12.40 m² of Blackout Ivory" could
@@ -31,6 +55,18 @@ and a drop printed beside a metre figure it played no part in reads as related t
 appears only when a line carries more than one blind, and the blind type appears only when
 one material row spans more than one type. The rail trigger is unchanged — still the
 order-wide one-liner.
+
+**Collapsed by default** (same day, follow-up). The breakdown is a disclosure — a `Per window`
+button (chevron, `aria-expanded`/`aria-controls`) inside a new non-exported `LineBreakdown`
+component — and it starts CLOSED. The dialog's job is the rate decision, and twenty windows
+across four materials would push the rate boxes and the give-back calculator off screen before
+the consultant reached them; the breakdown answers the follow-up question, so it waits to be
+asked. Its `open` flag is LOCAL `useState`, the one deliberate exception to the "every piece
+of state is lifted" rule in `MaterialUsageDialogProps`: that rule exists because `Modal`
+unmounts its children on close and because the trigger renders at two breakpoints, and
+neither applies to a panel that renders once inside the dialog and is SUPPOSED to be forgotten
+on dismissal. Each button carries its own `aria-label` (material name + unit) because the
+visible text is "Per window" on every row.
 
 ### Verified
 web 399/399 (9 new in `materialUsage.test.ts`: editor order, the sum identity, line quantity,
