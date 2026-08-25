@@ -1,5 +1,62 @@
 # Engine Features / Feature History
 
+## 2026-08-25 — Bulk edit v3: a mixed or still-typeless selection is editable
+Web-only (no API, schema or pricing surface), off `main` at `262aabe`. Bulk edit stops
+refusing two of its four selection verdicts and resolves them in the popup instead, which is
+what makes "these three rows should all become Roller" a one-pass operation.
+
+**Two blockers become states.** `BulkEditBlocker` (`lineItemDrafts.ts`) is now
+`'empty' | 'non_blind'` — `no_type` and `mixed_types` are gone. `bulkEditSelection` returns
+`{ ok, blindsType, mixed, keys }`, where `blindsType` is the type every selected blind shares
+and `''` when they do not share one, and `mixed` is true when the selection spans two or more
+distinct type values (a blank type counts as one of them, so Roller + blank is `mixed`). An
+ALL-blank selection is therefore `blindsType: ''` with `mixed: false` — the rows agree, they
+just agree on having no type — and a mixed one is `blindsType: ''` with `mixed: true`. The
+two render the same way; `mixed` only picks the wording.
+
+**The popup has two shapes, keyed on whether a scope exists.** `BulkEditForm` takes the new
+`mixed` prop and gates every option control on `effectiveType = state.blinds_type ||
+blindsType`:
+
+- **Shared type (or blank-and-agreed):** unchanged from v2 — Blind type ("No change"
+  pre-filled), Colour, then Material and whichever hardware dropdowns that type uses.
+- **No effective type yet:** ONLY the two unscoped fields render — Blind type and Colour —
+  plus one line saying why ("The selected items are of different blind types. Pick one
+  above…" / "The selected items have no blind type yet."). Every catalog is scoped per type,
+  so a grid of empty dropdowns would read as "this type has nothing set up" rather than
+  "choose a type first". Picking a type immediately reveals that type's options, still
+  "No change"-pre-filled, in the same popup.
+
+**"No change" stays available on a mixed selection** (maintainer's call): it keeps each row's
+own type and limits the run to colour, which is the only field that is never scoped. So a
+colour-only bulk edit across mixed types — impossible before, because the selection was
+refused outright — now works.
+
+**Applying a type is still the reset gesture, not a diff.** `applyBulkPatch` is UNCHANGED:
+any non-empty `patch.blinds_type` routes the item through `applyTypeDefaults(item, type,
+catalogs)` with no `keepValid`, so options land on that type's saved defaults and
+`pricingChanged` clears `unit_price_override` — even for an item that was ALREADY on the
+picked type. That is deliberate: a mixed selection unified onto Roller must leave every
+selected row identical, and skipping the rows that happened to be Roller already would leave
+their old options behind. Colour-only patches still never clear an override.
+
+**Toolbar.** The Edit button is now disabled only for `empty` / `non_blind`. Its `title` and
+the count line say which state the selection is in rather than which rule it breaks:
+"3 selected · mixed blind types", "2 selected · no blind type yet", "2 selected · Roller".
+The popup heading follows the same three cases ("Editing 3 items of different blind types.").
+
+### Files
+`apps/web/src/pages/orders/lineItemDrafts.ts` (`BulkEditBlocker`, `BulkEditSelection`,
+`bulkEditSelection`), `LineItemEditor.tsx` (`BulkEditForm` + `mixed`), `OrderDetail.tsx`
+(toolbar verdict wording, popup heading, `openBulkEdit` doc). `lineItemBulk.ts` untouched.
+
+### Verified
+web `pnpm check` clean, `pnpm lint` 0/0, `pnpm test` 392/392 (23 files) — up from 389 with
+three new cases: mixed and all-blank selections resolve as `ok` with the right `mixed` flag,
+a still-typeless item takes the picked type's defaults, and re-picking the type an item
+already has still resets it onto those defaults. Not driven in a browser (no `apps/web/.env`
+in this worktree — see `memory-bank/activeContext.md`). Not deployed.
+
 ## 2026-08-22 — Material usage becomes a dialog, with per-material discount rates
 Two changes to the panel added earlier the same day (entry below), driven by the panel
 being unreadable in the ~280px summary rail and by the need to discount ONE fabric

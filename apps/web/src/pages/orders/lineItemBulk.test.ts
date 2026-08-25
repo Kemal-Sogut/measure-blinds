@@ -183,6 +183,27 @@ describe('applyBulkPatch', () => {
     expect(next.note).toBe(item.note);
   });
 
+  it('type set → a still-typeless item is moved onto it with that type’s defaults', () => {
+    // The flow bulk edit exists for on a blank selection: rows that never
+    // got a type ("Select") take the picked one and its saved defaults in
+    // one pass, exactly like a row that had a different type.
+    const item = draft({ blinds_type: '', cassette_id: '', control_id: '', material_id: '' });
+    const next = applyBulkPatch(item, { ...NOTHING, blinds_type: 'Roller' }, catalogs()) as BlindDraft;
+    expect(next.blinds_type).toBe('Roller');
+    expect(next.cassette_id).toBe('c1'); // Roller's saved defaults
+    expect(next.control_id).toBe('k1');
+  });
+
+  it('type set to the type the item ALREADY has → still reset onto its defaults', () => {
+    // Picking a type is the reset gesture; it is not compared against
+    // what each row happens to be. A mixed selection unified onto Roller
+    // must leave every row identical, including the rows already on it.
+    const item = draft({ blinds_type: 'Roller', cassette_id: 'c2', control_id: 'k2' });
+    const next = applyBulkPatch(item, { ...NOTHING, blinds_type: 'Roller' }, catalogs()) as BlindDraft;
+    expect(next.cassette_id).toBe('c1');
+    expect(next.control_id).toBe('k1');
+  });
+
   it('type empty → slot-guarded option patch only (existing behavior)', () => {
     const item = draft(); // Zebra: cassette+control used, bottom_rail unused
     const next = applyBulkPatch(

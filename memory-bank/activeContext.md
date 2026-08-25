@@ -4,23 +4,28 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-08-22)
-Working branch `claude/competent-neumann-16a922`, off `main` at `be8972d` (per-option prices
-on the customer's documents — now committed on `main`, not in-flight; see below). This
-branch adds the internal Material usage DIALOG to the order editor — fabric quantity and
-rate per material, a per-material editable rate, and the order-wide $/m² (and, for Curtains,
-$/m) give-back. BOTH instruments only compose the order's fixed discount; neither touches a
-line item. PR #39 (the original inline panel) is MERGED into `main`; the dialog work sits on
-this branch with no PR yet. Full detail,
-including the `materialCost` vs. `describeMaterialUsage` bit-identity rationale and the
-per-material rate design, is in `knowledge/history/engine_features.md`, 2026-08-22 (two
-entries); the approved design for the original panel is
-`knowledge/specs/2026-08-21-material-usage-discount-design.md`. Verified: web `pnpm check`
-clean, `pnpm test` 389/389 (23 files), `pnpm lint` 0/0; api `pnpm check` clean, `pnpm test`
-391/391 (19 files). The dialog HAS been driven in a browser via a throwaway component
-harness (its import chain is Supabase-free) — the arithmetic, additivity and reset were
-confirmed on screen — but no `apps/web/.env` exists, so nothing has been seen inside the
-real order page (see "Next steps" below). Not deployed.
+## Where things stand (as of 2026-08-25)
+On `main` at `262aabe` (PR #41 merged: the Material usage DIALOG and give-backs that compose
+the fixed discount — that work is now plain history, `knowledge/history/engine_features.md`
+2026-08-22). Uncommitted in the worktree, on `main` with no branch or PR yet: **bulk edit
+v3**, web-only. Bulk edit no longer refuses a selection that lacks ONE shared blind type —
+`BulkEditBlocker` is down to `empty | non_blind`, and `bulkEditSelection` reports
+`{ blindsType, mixed, keys }` instead. With no shared type the popup shows Blind type and
+Colour alone (both unscoped) and reveals the picked type's material/hardware dropdowns the
+moment one is chosen, so "make these three Roller" and "type these blank rows" are each one
+pass. Picking a type is the reset gesture, not a diff: `applyBulkPatch` is UNCHANGED and puts
+every selected item onto that type's saved defaults, clearing its price override, including
+items already on that type. Full detail in `knowledge/history/engine_features.md`,
+2026-08-25. Verified: web `pnpm check` clean, `pnpm lint` 0/0, `pnpm test` 392/392 (23
+files); api untouched by this change. The popup's three states were driven in a browser
+through a throwaway Vite entry (`BulkEditForm`'s import chain is Supabase-free), not inside
+the real order page — that still needs a login. Not deployed. NOTE: `apps/web/.env` and
+`.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
+blocker below is out of date for anyone with a Supabase login.
+
+Note for the next session: `pnpm install` had to be re-run here — `apps/web/node_modules/
+typescript` was an empty directory and `pnpm check` died with `Cannot find module …/typescript/
+bin/tsc` until it was.
 
 `main` itself is clean and carries, most recently: the fully manual order-lifecycle override
 (`POST /api/orders/:id/status`, every Progress-timeline stage a one-click move — merged via

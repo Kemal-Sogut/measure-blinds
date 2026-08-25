@@ -64,8 +64,13 @@ measurement row is two lines (room name + ✕ remove above; Width/Height at
 `grid-cols-[3fr_2fr]` below) — split this way 2026-08-20 because the 44px "+" panel-shorthand
 button reserves ~48px on the width field alone, and an even one-line split left its value
 unreadably truncated on a phone. Bulk edit can change blind type (resetting to that type's
-defaults) and colour, restricted to a single selected blind type per run, and clears a manual
-price override only when something that actually feeds the price changed.
+defaults) and colour, and clears a manual price override only when something that actually
+feeds the price changed. A selection no longer has to share a type: only an empty or
+non-blind selection is refused, and when the selected rows disagree about their type — or
+none has one yet — the popup offers Blind type and Colour ALONE, revealing that type's
+material/hardware dropdowns once one is picked. Picking a type always resets each selected
+item onto that type's saved defaults, including items already on it, so a unified run leaves
+every row identical; leaving it on "No change" over a mixed selection edits colour only.
 
 **Documents & communications:** branded estimate/invoice PDFs (pdf-lib) with a clickable
 "View your order online" link matching the app's brand blue (`#2563eb`) throughout — button,

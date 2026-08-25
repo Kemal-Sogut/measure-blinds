@@ -1013,8 +1013,10 @@ export default function OrderDetail() {
   // ── Bulk edit (material / hardware slots of ONE blind type) ───────
   /**
    * Opens the bulk popup for a selection that has already been checked to
-   * be blinds of a single type. Every field starts empty ("No change") on
-   * each open, so a previous run can never re-apply itself.
+   * be blinds — of one shared type, of several, or of none yet; the form
+   * asks for a type in the latter two cases. Every field starts empty
+   * ("No change") on each open, so a previous run can never re-apply
+   * itself.
    */
   function openBulkEdit() {
     if (!bulkEditSelection(items, selected).ok) return;
@@ -2391,29 +2393,34 @@ export default function OrderDetail() {
               <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
                 {/* Bulk toolbar — only in edit mode */}
                 {!readOnly && items.length > 0 && (() => {
-                  // Bulk edit is per blind TYPE: every catalog is scoped
-                  // to a type, so a mixed selection has no single set of
-                  // options to offer. The button explains which rule the
-                  // current selection breaks rather than just greying out.
+                  // Bulk edit needs blinds, and its OPTION dropdowns need a
+                  // single blind type to scope to — but a selection without
+                  // one is no longer refused: the popup asks for the type
+                  // and unifies the rows onto it. Only a non-blind row
+                  // still blocks. The button says which of the two the
+                  // selection is in rather than just greying out.
                   const bulkSelection = bulkEditSelection(items, selected);
                   const canBulkEdit = bulkSelection.ok;
                   const bulkEditHint = bulkSelection.ok
-                    ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
+                    ? bulkSelection.blindsType
+                      ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
+                      : bulkSelection.mixed
+                        ? 'Move the selected blinds onto one type, or edit their colour'
+                        : 'Set a blind type on the selected blinds and edit its options'
                     : bulkSelection.reason === 'empty'
                       ? 'Select blind items to bulk edit'
-                      : bulkSelection.reason === 'non_blind'
-                        ? 'Bulk edit is only available for blind items'
-                        : bulkSelection.reason === 'no_type'
-                          ? 'Pick a blind type on the selected items first'
-                          : 'Select blinds of the same type — options differ per type';
-                  // The same verdict in a few words, for the count line.
-                  const bulkBlockedNote = bulkSelection.ok
-                    ? ''
-                    : bulkSelection.reason === 'non_blind'
-                      ? 'not all blinds'
-                      : bulkSelection.reason === 'no_type'
-                        ? 'no blind type yet'
-                        : 'mixed blind types';
+                      : 'Bulk edit is only available for blind items';
+                  // The same verdict in a few words, for the count line —
+                  // the shared type when there is one, else what stands in
+                  // its place ("mixed types" is a state to resolve in the
+                  // popup now, not a refusal).
+                  const bulkCountNote = !bulkSelection.ok
+                    ? 'not all blinds'
+                    : bulkSelection.blindsType
+                      ? bulkSelection.blindsType
+                      : bulkSelection.mixed
+                        ? 'mixed blind types'
+                        : 'no blind type yet';
                   const canBulkDelete = selected.size > 0;
                   return (
                     <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
@@ -2436,9 +2443,7 @@ export default function OrderDetail() {
                       <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
                         {selected.size === 0
                           ? `${items.length} item${items.length !== 1 ? 's' : ''}`
-                          : bulkSelection.ok
-                            ? `${selected.size} selected · ${bulkSelection.blindsType}`
-                            : `${selected.size} selected · ${bulkBlockedNote}`}
+                          : `${selected.size} selected · ${bulkCountNote}`}
                       </span>
                       <button
                         type="button"
@@ -3195,12 +3200,15 @@ export default function OrderDetail() {
 
       {/* Bulk edit popup — material and the hardware slots of ONE type */}
       {sheet === 'bulkEdit' && (() => {
-        // The selection is live state; if it stopped being a single-type
-        // blind selection while the sheet was open there is nothing valid
-        // to edit, so the sheet closes itself rather than offering the
-        // options of a type no selected item still has.
+        // The selection is live state; if it stopped being an all-blind
+        // selection while the sheet was open there is nothing to edit, so
+        // the sheet closes itself. A selection that merely lost its shared
+        // TYPE stays open — the form re-renders scope-less and asks for a
+        // type, which is a valid state here.
         const selection = bulkEditSelection(items, selected);
         if (!selection.ok) return null;
+        const count = selection.keys.length;
+        const plural = count !== 1 ? 's' : '';
         return (
           <div
             className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center"
@@ -3212,12 +3220,17 @@ export default function OrderDetail() {
             >
               <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
               <p className="mb-4 text-[13px] text-text-muted">
-                {`Editing ${selection.keys.length} ${selection.blindsType} item${selection.keys.length !== 1 ? 's' : ''}.`}
+                {selection.blindsType
+                  ? `Editing ${count} ${selection.blindsType} item${plural}.`
+                  : selection.mixed
+                    ? `Editing ${count} item${plural} of different blind types.`
+                    : `Editing ${count} item${plural} with no blind type yet.`}
               </p>
               <BulkEditForm
                 state={bulkState}
                 catalogs={catalogs}
                 blindsType={selection.blindsType}
+                mixed={selection.mixed}
                 onChange={setBulkState}
               />
               <div className="mt-4 flex gap-2">

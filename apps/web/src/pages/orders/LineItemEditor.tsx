@@ -146,13 +146,22 @@ export function FlatEditForm({
 /**
  * Bulk-edit form.
  *
- * `blindsType` is the ONE type every selected item currently shares — the
- * caller has already refused a mixed or non-blind selection
- * (`bulkEditSelection`). The form's own Blind type dropdown (ACTIVE types
- * only) lets the consultant additionally MOVE the whole selection onto a
- * different type; while `state.blinds_type` is empty the form renders
- * exactly what it always has for `blindsType`, and once a new type is
- * chosen every option control below re-scopes to it instead:
+ * `blindsType` is the type scope the form opens in: the ONE type every
+ * selected item already shares, or `''` when the selection has no shared
+ * type — either because the rows are of DIFFERENT types (`mixed`) or
+ * because none of them has a type yet. `bulkEditSelection` resolves both;
+ * the caller has only refused an empty or non-blind selection.
+ *
+ * With no scope there is nothing to render option dropdowns from (every
+ * catalog is scoped per blind type), so the form falls back to the two
+ * UNSCOPED fields — Blind type and Colour — plus a line saying why.
+ * Choosing a type there both unifies the selection and reveals that
+ * type's options in the same pass; leaving it on "No change" keeps each
+ * row's own type and limits the run to colour.
+ *
+ * Once there IS an effective type — shared by the selection, or just
+ * picked here to MOVE the whole selection onto it — every option control
+ * below scopes to it:
  *
  * - Materials are the ones LINKED to the effective type (`materialsForType`).
  * - A hardware dropdown appears only when the effective type uses that
@@ -166,25 +175,34 @@ export function FlatEditForm({
  *
  * The intro explains that choosing a blind type resets each touched
  * item's options to that type's saved defaults before anything else here
- * applies, and that applying clears a manual price override on an item
- * ONLY when the change actually feeds its price — a new type, material or
- * hardware slot (`applyBulkPatch`), never a colour-only change — the
- * consultant has to know before choosing, because an override is usually
- * a figure they quoted.
+ * applies — including for an item that was already on the picked type —
+ * and that applying clears a manual price override on an item ONLY when
+ * the change actually feeds its price: a new type, material or hardware
+ * slot (`applyBulkPatch`), never a colour-only change. The consultant has
+ * to know before choosing, because an override is usually a figure they
+ * quoted.
  */
 export function BulkEditForm({
   state,
   catalogs,
   blindsType,
+  mixed,
   onChange,
 }: {
   state: BulkEditState;
   catalogs: Catalogs;
   blindsType: string;
+  /**
+   * True when the selection spans two or more blind types. Wording only —
+   * it separates "these rows disagree about their type" from "none of
+   * them has one yet", which render identically otherwise.
+   */
+  mixed: boolean;
   onChange: (next: BulkEditState) => void;
 }) {
-  // The type option controls scope to: the one just picked in this form,
-  // else the type the whole selection already shares.
+  // The option controls scope to: the type just picked in this form, else
+  // the one the whole selection already shares. Empty means neither — no
+  // catalog scope exists yet, so no option control can be offered.
   const effectiveType = state.blinds_type || blindsType;
   const uses = slotsForType(catalogs, effectiveType);
   const forType = <T extends { active: boolean; blind_type_ids: string[] }>(list: T[]) =>
@@ -227,56 +245,72 @@ export function BulkEditForm({
           />
         </label>
       </div>
-      <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
-        <OptionSelect
-          label="Material"
-          value={state.material_id}
-          onChange={(id) => onChange({ ...state, material_id: id })}
-          options={materials}
-          placeholder="No change"
-        />
-        {uses.has('cassette') && (
-          <OptionSelect
-            label="Cassette"
-            value={state.cassette_id}
-            onChange={(id) => onChange({ ...state, cassette_id: id })}
-            options={forType(catalogs.cassettes)}
-            placeholder="No change"
-          />
-        )}
-        {uses.has('bottom_rail') && (
-          <OptionSelect
-            label="Bottom rail"
-            value={state.bottom_rail_id}
-            onChange={(id) => onChange({ ...state, bottom_rail_id: id })}
-            options={forType(catalogs.bottomRails)}
-            placeholder="No change"
-          />
-        )}
-        {uses.has('control') && (
-          <OptionSelect
-            label="Control"
-            value={state.control_id}
-            onChange={(id) => onChange({ ...state, control_id: id })}
-            options={forType(catalogs.controls)}
-            placeholder="No change"
-          />
-        )}
-        {uses.has('installation') && (
-          <OptionSelect
-            label="Installation"
-            value={state.installation_id}
-            onChange={(id) => onChange({ ...state, installation_id: id })}
-            options={forType(catalogs.installationOptions)}
-            placeholder="No change"
-          />
-        )}
-      </div>
-      {materials.length === 0 && uses.size === 0 && (
+      {/*
+        No effective type ⇒ no scoped catalog ⇒ no option controls at all.
+        The line below stands in for them: a grid of empty dropdowns would
+        read as "this type has nothing set up" rather than "choose a type
+        first", which is the actual state.
+      */}
+      {!effectiveType ? (
         <p className="text-[13px] text-text-muted">
-          No materials or options are set up for {effectiveType || 'this blind type'} — add them
-          under Settings first.
+          {mixed
+            ? 'The selected items are of different blind types. Pick one above to move them all onto it — its default options are applied to every selected item, and its own material and hardware dropdowns appear here. Left on "No change", each item keeps its type and only the colour is edited.'
+            : 'The selected items have no blind type yet. Pick one above to set it on all of them and edit that type’s material and options here.'}
         </p>
+      ) : (
+        <>
+          <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+            <OptionSelect
+              label="Material"
+              value={state.material_id}
+              onChange={(id) => onChange({ ...state, material_id: id })}
+              options={materials}
+              placeholder="No change"
+            />
+            {uses.has('cassette') && (
+              <OptionSelect
+                label="Cassette"
+                value={state.cassette_id}
+                onChange={(id) => onChange({ ...state, cassette_id: id })}
+                options={forType(catalogs.cassettes)}
+                placeholder="No change"
+              />
+            )}
+            {uses.has('bottom_rail') && (
+              <OptionSelect
+                label="Bottom rail"
+                value={state.bottom_rail_id}
+                onChange={(id) => onChange({ ...state, bottom_rail_id: id })}
+                options={forType(catalogs.bottomRails)}
+                placeholder="No change"
+              />
+            )}
+            {uses.has('control') && (
+              <OptionSelect
+                label="Control"
+                value={state.control_id}
+                onChange={(id) => onChange({ ...state, control_id: id })}
+                options={forType(catalogs.controls)}
+                placeholder="No change"
+              />
+            )}
+            {uses.has('installation') && (
+              <OptionSelect
+                label="Installation"
+                value={state.installation_id}
+                onChange={(id) => onChange({ ...state, installation_id: id })}
+                options={forType(catalogs.installationOptions)}
+                placeholder="No change"
+              />
+            )}
+          </div>
+          {materials.length === 0 && uses.size === 0 && (
+            <p className="text-[13px] text-text-muted">
+              No materials or options are set up for {effectiveType} — add them under Settings
+              first.
+            </p>
+          )}
+        </>
       )}
     </div>
   );

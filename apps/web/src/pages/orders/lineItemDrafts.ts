@@ -370,36 +370,54 @@ export function applyTypeDefaults(
  * - `empty` — nothing is ticked.
  * - `non_blind` — a preset or custom row is in the selection; those have
  *   no material or hardware slots at all.
- * - `no_type` — the selected blinds have no blind type chosen yet, so
- *   there is no scope to offer options from.
- * - `mixed_types` — the blinds are of two or more types. Every catalog is
- *   scoped per type, so one dropdown cannot serve them.
+ *
+ * A disagreement about the blind TYPE is deliberately NOT a blocker: the
+ * form resolves it instead by asking for one type up front (see
+ * `BulkEditSelection.mixed`), which is how a mixed selection — or a set
+ * of still-typeless rows — gets unified in a single pass.
  */
-export type BulkEditBlocker = 'empty' | 'non_blind' | 'no_type' | 'mixed_types';
+export type BulkEditBlocker = 'empty' | 'non_blind';
 
 /**
- * The outcome of inspecting a bulk selection: either the ONE blind type
- * every selected item shares, or the reason the selection is unusable.
+ * The outcome of inspecting a bulk selection: the blind type context the
+ * form must open in, or the reason the selection is unusable.
+ *
+ * - `blindsType` — the ONE type every selected blind already shares, and
+ *   therefore the scope the option dropdowns open in. It is `''` when the
+ *   rows do not agree on a type (`mixed`) AND when they agree on having
+ *   none yet (every row still on "Select"); both mean "no scope until a
+ *   type is chosen in the form", so both render the same way.
+ * - `mixed` — the selection spans two or more distinct type values (a
+ *   blank type counts as one of them). Purely a wording/affordance flag:
+ *   the popup tells the consultant the rows differ and that picking a
+ *   type here is what unifies them. `false` for a single shared type and
+ *   for an all-blank selection alike.
+ * - `keys` — the selected blind rows, in item order.
  */
 export type BulkEditSelection =
-  | { ok: true; blindsType: string; keys: string[] }
+  | { ok: true; blindsType: string; mixed: boolean; keys: string[] }
   | { ok: false; reason: BulkEditBlocker };
 
 /**
  * Resolves what a bulk selection may edit.
  *
- * Bulk edit is deliberately restricted to blinds of a SINGLE type. Every
- * catalog — materials and all four hardware slots — is scoped per blind
- * type in Settings (`materialsForType` / `optionsForType`), and which
- * slots exist at all differs per type (`slotsForType`). A mixed selection
- * therefore has no single set of options to render: offering the union
- * would let a consultant pick a cassette meant for Roller and silently
- * have it skipped on the Zebra rows next to it, which is exactly the
- * "did it apply or not?" ambiguity this rule removes.
+ * Every catalog — materials and all four hardware slots — is scoped per
+ * blind type in Settings (`materialsForType` / `optionsForType`), and
+ * which slots exist at all differs per type (`slotsForType`). So there is
+ * exactly one thing a selection needs before options can be offered: a
+ * single blind type. This function reports whether the selection already
+ * carries one.
  *
- * Unknown/legacy free-text type names are NOT rejected here — they are a
- * type like any other for grouping purposes; the form simply finds no
- * options scoped to them and offers nothing.
+ * When it does not — the rows are of different types, or none has a type
+ * yet — the selection is still `ok`: the popup drops back to offering the
+ * Blind type dropdown (and colour, which is never scoped) alone, and
+ * choosing a type there both unifies the rows and unlocks that type's
+ * options. Leaving the type on "No change" in that state keeps each row's
+ * own type and limits the run to colour.
+ *
+ * Unknown/legacy free-text type names are NOT special-cased — they are a
+ * type like any other for grouping; the form simply finds no options
+ * scoped to them and offers nothing.
  *
  * Pure and UI-free so the toolbar's enablement, the popup's heading and
  * the apply step all read the same verdict.
@@ -409,12 +427,16 @@ export function bulkEditSelection(items: ItemDraft[], selected: Set<string>): Bu
   if (picked.length === 0) return { ok: false, reason: 'empty' };
   if (picked.some((it) => it.item_type !== 'blind')) return { ok: false, reason: 'non_blind' };
   const blinds = picked as BlindDraft[];
-  const blindsType = blinds[0].blinds_type;
-  if (blinds.some((it) => it.blinds_type !== blindsType)) {
-    return { ok: false, reason: 'mixed_types' };
-  }
-  if (blindsType === '') return { ok: false, reason: 'no_type' };
-  return { ok: true, blindsType, keys: blinds.map((it) => it.key) };
+  const types = new Set(blinds.map((it) => it.blinds_type));
+  const mixed = types.size > 1;
+  return {
+    ok: true,
+    // A mixed selection has no scope to render options from; an all-blank
+    // one has none either, and both are reported the same way (`''`).
+    blindsType: mixed ? '' : blinds[0].blinds_type,
+    mixed,
+    keys: blinds.map((it) => it.key),
+  };
 }
 
 /**

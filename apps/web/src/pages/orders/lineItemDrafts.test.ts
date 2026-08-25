@@ -428,21 +428,49 @@ describe('bulkEditSelection', () => {
     expect(verdict([roller, custom], 'r1', 'f1')).toEqual({ ok: false, reason: 'non_blind' });
   });
 
-  it('refuses blinds of two different types', () => {
-    // Every catalog is scoped per type, so there is no one set of
-    // options that could serve both rows.
-    expect(verdict([roller, curtain], 'r1', 'c1')).toEqual({ ok: false, reason: 'mixed_types' });
+  it('accepts blinds of two different types, with no scope and mixed set', () => {
+    // Every catalog is scoped per type, so there is no set of options
+    // that could serve both rows YET — the form asks for one type and
+    // moves both onto it. Reported as scope-less (`blindsType: ''`)
+    // rather than refused.
+    expect(verdict([roller, curtain], 'r1', 'c1')).toEqual({
+      ok: true,
+      blindsType: '',
+      mixed: true,
+      keys: ['r1', 'c1'],
+    });
   });
 
-  it('refuses blinds whose type has not been chosen yet', () => {
+  it('counts a blank type as one of the mixed types', () => {
+    // A typeless row next to a typed one is a disagreement like any
+    // other: there is still no single scope to offer options from.
     const blank = draft({ key: 'b1', blinds_type: '' });
-    expect(verdict([blank], 'b1')).toEqual({ ok: false, reason: 'no_type' });
+    expect(verdict([roller, blank], 'r1', 'b1')).toEqual({
+      ok: true,
+      blindsType: '',
+      mixed: true,
+      keys: ['r1', 'b1'],
+    });
+  });
+
+  it('accepts blinds whose type has not been chosen yet, not as mixed', () => {
+    // All-blank rows AGREE — they just agree on having no type. The form
+    // offers the type dropdown so one pass can set it on all of them.
+    const blank = draft({ key: 'b1', blinds_type: '' });
+    const blank2 = draft({ key: 'b2', blinds_type: '' });
+    expect(verdict([blank, blank2], 'b1', 'b2')).toEqual({
+      ok: true,
+      blindsType: '',
+      mixed: false,
+      keys: ['b1', 'b2'],
+    });
   });
 
   it('resolves the shared type and the keys it applies to', () => {
     expect(verdict([roller, roller2, curtain], 'r1', 'r2')).toEqual({
       ok: true,
       blindsType: 'Roller',
+      mixed: false,
       keys: ['r1', 'r2'],
     });
   });
@@ -461,6 +489,7 @@ describe('bulkEditSelection', () => {
     expect(verdict([legacy, legacy2], 'l1', 'l2')).toEqual({
       ok: true,
       blindsType: 'Venetian (legacy)',
+      mixed: false,
       keys: ['l1', 'l2'],
     });
   });
