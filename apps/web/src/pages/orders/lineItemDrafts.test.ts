@@ -13,12 +13,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { getBlindType } from '../../lib/blindTypes';
+import { pricingFingerprint } from '../../lib/priceLock';
 import {
   applyTypeDefaults,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
   flatDraftPrice,
+  isPriceLocked,
   optionsForType,
   parseAddons,
   parseDraftAttributes,
@@ -42,6 +44,7 @@ function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
     unit_price_override: '',
     show_original_price: true,
     addons: [],
+    lock: null,
     key: 'd1',
     uid: null,
     hidden: false,
@@ -293,6 +296,7 @@ function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
     unit_price_override: '',
     show_original_price: true,
     addons: [],
+    lock: null,
     ...overrides,
   };
 }
@@ -757,5 +761,137 @@ describe('pruneSelection', () => {
   it('is a no-op on an already-empty selection', () => {
     const selected = new Set<string>();
     expect(pruneSelection(selected, [draft({ key: 'd1' })])).toBe(selected);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Price lock (migration 39)                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The editor half of the per-item price lock: while a confirmed item's
+ * pricing inputs are untouched, the preview shows the FROZEN price the
+ * Worker will keep — never a fresh calculation from today's catalog.
+ *
+ * The fingerprints here are built with the same `pricingFingerprint` the
+ * Worker stores, so these cases also pin that a draft and the payload it
+ * produces describe one item identically.
+ */
+describe('price lock in the preview', () => {
+  const ROLLER = { id: 'bt-roller', name: 'Roller', active: true, sort_order: 0 };
+
+  /** Minimal catalogs: a 50/m² material and a 20/m cassette on Roller. */
+  function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
+    return {
+      blindTypes: [ROLLER],
+      materials: [
+        {
+          id: 'm1',
+          name: 'Blackout',
+          price_per_sqm: 50,
+          active: true,
+          sort_order: 0,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+        },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      bottomRails: [
+        { id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      controls: [
+        { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      pleatTypes: [],
+      defaults: [],
+      installationOptions: [],
+      ...overrides,
+    };
+  }
+
+  /** The lock a confirmed `draft()` would carry, frozen at `base`. */
+  function lockFor(base: number, overrides: Partial<BlindDraft> = {}) {
+    const d = draft(overrides);
+    return {
+      base,
+      fingerprint: pricingFingerprint({
+        item_type: 'blind',
+        blinds_type: d.blinds_type,
+        panels: d.panels.map(Number),
+        height_cm: Number(d.height_cm),
+        material_id: d.material_id,
+        cassette_id: d.cassette_id,
+        bottom_rail_id: d.bottom_rail_id,
+        control_id: d.control_id,
+        installation_id: d.installation_id || null,
+        attributes: {},
+      }),
+    };
+  }
+
+  // 1.2 m × 2.1 m × 50 = 126, plus a 1.2 m cassette at 20/m = 24.
+  const LIVE_PRICE = 150;
+
+  it('previews the frozen price instead of the formula', () => {
+    expect(blindDraftPrice(draft(), catalogs())!.base).toBe(LIVE_PRICE);
+    const locked = draft({ uid: 'u1', lock: lockFor(999) });
+    expect(blindDraftPrice(locked, catalogs())!.base).toBe(999);
+  });
+
+  it('ignores a catalog price change made since confirmation', () => {
+    const dear = catalogs({
+      materials: [
+        { id: 'm1', name: 'Blackout', price_per_sqm: 500, active: true, sort_order: 0, width_cm: null, blind_type_ids: [ROLLER.id] },
+      ],
+    });
+    const locked = draft({ uid: 'u1', lock: lockFor(999) });
+    expect(blindDraftPrice(locked, dear)!.total).toBe(999);
+  });
+
+  it('still prices a locked item whose material is gone from the catalog', () => {
+    const gone = catalogs({ materials: [] });
+    // Without the lock this draft cannot be priced at all.
+    expect(blindDraftPrice(draft(), gone)).toBeNull();
+    const locked = draft({ uid: 'u1', lock: lockFor(999) });
+    expect(blindDraftPrice(locked, gone)!.base).toBe(999);
+  });
+
+  it('releases the lock as soon as a measurement is edited', () => {
+    const edited = draft({ uid: 'u1', lock: lockFor(999), height_cm: '240' });
+    // 1.2 × 2.4 × 50 = 144, + 24 cassette.
+    expect(blindDraftPrice(edited, catalogs())!.base).toBe(168);
+    expect(isPriceLocked(edited)).toBe(false);
+  });
+
+  it('keeps quantity, add-ons and the override live on top of a frozen base', () => {
+    const locked = draft({
+      uid: 'u1',
+      lock: lockFor(999),
+      quantity: '2',
+      unit_price_override: '800',
+      addons: [{ key: 'a1', label: 'Rush', price: '40' }],
+    });
+    const price = blindDraftPrice(locked, catalogs())!;
+    expect(price.base).toBe(999);
+    expect(price.unit).toBe(800);
+    expect(price.total).toBe(1640);
+    expect(isPriceLocked(locked)).toBe(true);
+  });
+
+  it('freezes a custom item at its confirmed price until the typed one changes', () => {
+    const fingerprint = pricingFingerprint({
+      item_type: 'custom',
+      preset_id: null,
+      unit_price: 100,
+    });
+    const locked = flat({ uid: 'u2', lock: { base: 60, fingerprint } });
+    expect(flatDraftPrice(locked)!.base).toBe(60);
+    // The typed figure IS this item's pricing input, so editing it
+    // releases the lock — the consultant just re-priced the line.
+    const retyped = { ...locked, unit_price: '120' };
+    expect(flatDraftPrice(retyped)!.base).toBe(120);
+    expect(isPriceLocked(retyped)).toBe(false);
   });
 });

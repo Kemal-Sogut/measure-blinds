@@ -308,6 +308,13 @@ function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
       label: a.label,
       price: String(a.price),
     })),
+    // The price this item was confirmed at, carried into the editor so
+    // the preview shows what the save will keep. Both columns move
+    // together — half a lock is no lock.
+    lock:
+      li.locked_base_price !== null && li.locked_inputs_fingerprint
+        ? { base: Number(li.locked_base_price), fingerprint: li.locked_inputs_fingerprint }
+        : null,
   };
 }
 
@@ -830,10 +837,14 @@ export default function OrderDetail() {
       const idx = list.findIndex((it) => it.key === key);
       if (idx === -1) return list;
       const src = list[idx];
+      // `lock: null` for the same reason as `uid: null`: the copy is a
+      // NEW item that no confirmation has ever priced, so it is quoted
+      // from today's catalog rather than inheriting a frozen price it was
+      // never given.
       const copy: ItemDraft =
         src.item_type === 'blind'
-          ? { ...src, key: nextKey(), uid: null, panels: [...src.panels] }
-          : { ...src, key: nextKey(), uid: null };
+          ? { ...src, key: nextKey(), uid: null, lock: null, panels: [...src.panels] }
+          : { ...src, key: nextKey(), uid: null, lock: null };
       const next = list.slice();
       next.splice(idx + 1, 0, copy);
       return next;

@@ -97,6 +97,11 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 import ordersApp from './orders';
+// The lock fixtures below fingerprint their rows with the SAME functions
+// the Worker uses, so a test row and the payload that edits it agree by
+// construction rather than by a hand-copied string.
+import { pricingFingerprint } from '../lib/priceLock';
+import { lockInputFromRow } from '../lib/priceLockStore';
 
 /** Standard env bindings for app.request. */
 const ENV = {
@@ -2126,5 +2131,280 @@ describe('POST /api/orders/:id/duplicate', () => {
     expect(await res.json()).toMatchObject({
       error: 'Selected material no longer exists.',
     });
+  });
+});
+
+describe('per-item price lock (migration 39)', () => {
+  const UID_A = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+  const UID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+
+  /**
+   * The blind of `payload()` as it sits in the database after being
+   * confirmed: priced at 182/unit from a 55/m2 material, frozen there,
+   * and fingerprinted from the inputs that produced it.
+   */
+  function lockedBlindRow(overrides: Record<string, unknown> = {}) {
+    const row = {
+      id: 'li1',
+      uid: UID_A,
+      position: 0,
+      hidden: false,
+      item_type: 'blind',
+      blinds_type: 'Roller',
+      panels: [70, 70],
+      height_cm: 200,
+      material_id: MATERIAL.id,
+      material_name: MATERIAL.name,
+      material_price_per_sqm: 55,
+      cassette_id: CASSETTE.id,
+      cassette_name: CASSETTE.name,
+      cassette_price_per_m: 20,
+      cassette_price_basis: 'per_m',
+      bottom_rail_id: BOTTOM_RAIL.id,
+      bottom_rail_name: BOTTOM_RAIL.name,
+      bottom_rail_price_per_m: 0,
+      bottom_rail_price_basis: 'per_m',
+      control_id: CONTROL.id,
+      control_name: CONTROL.name,
+      control_price_per_item: 0,
+      control_price_basis: 'per_panel',
+      installation_id: null,
+      installation_name: null,
+      installation_price_per_item: null,
+      installation_price_basis: null,
+      attributes: {},
+      quantity: 2,
+      unit_price: 182,
+      base_unit_price: null,
+      addons: [],
+      preset_id: null,
+      ...overrides,
+    };
+    return {
+      ...row,
+      locked_base_price: 182,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+    };
+  }
+
+  /** The preset of `payload()`, frozen at its typed 25. */
+  function lockedPresetRow() {
+    const row = {
+      id: 'li2',
+      uid: UID_B,
+      position: 1,
+      hidden: false,
+      item_type: 'preset',
+      preset_id: null,
+      description: 'Installation',
+      attributes: {},
+      quantity: 1,
+      unit_price: 25,
+      base_unit_price: null,
+      addons: [],
+    };
+    return {
+      ...row,
+      locked_base_price: 25,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+    };
+  }
+
+  /** Seeds the pre-update read of order `o1` at the given status. */
+  function seedExisting(status: string, rows: Record<string, unknown>[]) {
+    db.responses['orders.select'] = [
+      { id: 'o1', status, expiry_date: '2026-07-17', line_items: rows },
+    ];
+  }
+
+  /** `payload()` with each item carrying the uid it came back with. */
+  function editPayload() {
+    const body = payload();
+    (body.line_items[0] as Record<string, unknown>).uid = UID_A;
+    (body.line_items[1] as Record<string, unknown>).uid = UID_B;
+    return body;
+  }
+
+  async function put(body: unknown) {
+    return ordersApp.request('/o1', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+  }
+
+  /** The rows the save inserted, in position order. */
+  function savedRows(): Record<string, number | string | null>[] {
+    return (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, number | string | null>[];
+  }
+
+  it('keeps the confirmed price when the catalog price has since changed', async () => {
+    seedExisting('awaiting_payment', [lockedBlindRow(), lockedPresetRow()]);
+    // The material doubled in Settings after confirmation. A live-priced
+    // save would charge 154 -> 308 on the material leg.
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    expect(blind.unit_price).toBe(182);
+    expect(blind.line_total).toBe(364);
+    // The rate that EXPLAINS the frozen price travels with it.
+    expect(blind.material_price_per_sqm).toBe(55);
+    expect(blind.locked_base_price).toBe(182);
+    // Totals follow the frozen prices: 364 + 25 = 389, less 10%.
+    const orderRow = db.updatePayloads['orders']?.[0] as Record<string, number>;
+    expect(orderRow.subtotal).toBe(389);
+    expect(orderRow.total).toBe(395.61);
+  });
+
+  it('re-prices and re-locks only the item whose inputs were edited', async () => {
+    seedExisting('awaiting_payment', [lockedBlindRow(), lockedPresetRow()]);
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
+    const body = editPayload();
+    // A taller blind: the fingerprint no longer matches, so this item is
+    // priced from today's catalog - 1.4 x 2.2 x 110 = 338.8, + 28 cassette.
+    (body.line_items[0] as Record<string, unknown>).height_cm = 220;
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    const [blind, preset] = savedRows();
+    expect(blind.unit_price).toBe(366.8);
+    expect(blind.material_price_per_sqm).toBe(110);
+    expect(blind.locked_base_price).toBe(366.8);
+    // Its neighbour was not touched, so its price did not move.
+    expect(preset.unit_price).toBe(25);
+    expect(preset.locked_base_price).toBe(25);
+  });
+
+  it('still applies quantity, add-ons and the override on top of a frozen price', async () => {
+    seedExisting('awaiting_payment', [lockedBlindRow(), lockedPresetRow()]);
+    const body = editPayload();
+    (body.line_items[0] as Record<string, unknown>).quantity = 3;
+    (body.line_items[0] as Record<string, unknown>).addons = [{ label: 'Rush', price: 40 }];
+    (body.line_items[0] as Record<string, unknown>).unit_price_override = 150;
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    expect(blind.unit_price).toBe(150);
+    // The struck-through "was" figure is the FROZEN price, not a re-calc.
+    expect(blind.base_unit_price).toBe(182);
+    expect(blind.line_total).toBe(490);
+    expect(blind.locked_base_price).toBe(182);
+  });
+
+  it('saves a locked item whose catalog option has since been deleted', async () => {
+    seedExisting('awaiting_payment', [lockedBlindRow(), lockedPresetRow()]);
+    db.responses['materials.select'] = [];
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].unit_price).toBe(182);
+  });
+
+  it('prices an item added after confirmation from the current catalog, then locks it', async () => {
+    seedExisting('awaiting_payment', [lockedBlindRow(), lockedPresetRow()]);
+    const body = editPayload();
+    body.line_items.push({
+      item_type: 'custom',
+      title: 'Extra',
+      description: 'Trim',
+      quantity: 1,
+      unit_price: 30,
+    } as never);
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    const added = savedRows()[2];
+    expect(added.unit_price).toBe(30);
+    expect(added.locked_base_price).toBe(30);
+    expect(added.locked_inputs_fingerprint).toEqual(expect.any(String));
+  });
+
+  it('leaves an unconfirmed order live-priced', async () => {
+    seedExisting('sent', [lockedBlindRow(), lockedPresetRow()]);
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 110 }];
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    // 1.4 x 2.0 x 110 = 308 + 28 cassette.
+    expect(blind.unit_price).toBe(336);
+    expect(blind.locked_base_price).toBeNull();
+    expect(blind.locked_inputs_fingerprint).toBeNull();
+  });
+
+  it('freezes every item when the order is confirmed', async () => {
+    db.responses['orders.select'] = [{ id: 'o1', status: 'sent' }];
+    db.responses['line_items.select'] = [
+      {
+        id: 'li1',
+        item_type: 'blind',
+        blinds_type: 'Roller',
+        panels: [70, 70],
+        height_cm: 200,
+        material_id: MATERIAL.id,
+        cassette_id: CASSETTE.id,
+        bottom_rail_id: BOTTOM_RAIL.id,
+        control_id: CONTROL.id,
+        installation_id: null,
+        attributes: {},
+        unit_price: 182,
+        base_unit_price: null,
+      },
+      // Overridden: the CALCULATED figure is what freezes, or the
+      // override would be applied twice on the next save.
+      { id: 'li2', item_type: 'custom', preset_id: null, attributes: {}, unit_price: 20, base_unit_price: 25 },
+    ];
+    const res = await ordersApp.request('/o1/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(writes.map((w) => w.locked_base_price)).toEqual([182, 25]);
+    expect(writes.every((w) => typeof w.locked_inputs_fingerprint === 'string')).toBe(true);
+  });
+
+  it('keeps a catalog-priced preset at its confirmed figure', async () => {
+    const PRESET_ID = '99999999-9999-4999-8999-999999999999';
+    const row = {
+      id: 'li3',
+      uid: UID_B,
+      position: 0,
+      hidden: false,
+      item_type: 'preset',
+      preset_id: PRESET_ID,
+      description: 'Installation',
+      attributes: {},
+      quantity: 1,
+      // A preset with provenance is priced from its catalog row, so the
+      // typed figure is NOT one of its inputs — the fingerprint must
+      // ignore it on both sides or the lock would never hold.
+      unit_price: 75,
+      base_unit_price: null,
+      addons: [],
+    };
+    seedExisting('awaiting_payment', [
+      { ...row, locked_base_price: 75, locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)) },
+    ]);
+    // The catalog preset has doubled since the order was confirmed.
+    db.responses['preset_line_items.select'] = [
+      { id: PRESET_ID, name: 'Installation', unit_price: 150 },
+    ];
+    const body = payload() as unknown as { line_items: unknown[] };
+    body.line_items = [
+      {
+        item_type: 'preset',
+        preset_id: PRESET_ID,
+        title: '',
+        description: 'Installation',
+        quantity: 1,
+        uid: UID_B,
+      },
+    ];
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].unit_price).toBe(75);
+  });
+
+  it('releases the locks when a confirmation is reversed', async () => {
+    db.responses['orders.select'] = [{ id: 'o1', status: 'awaiting_payment' }];
+    const res = await ordersApp.request('/o1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(writes).toContainEqual({ locked_base_price: null, locked_inputs_fingerprint: null });
   });
 });

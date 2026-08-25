@@ -69,6 +69,8 @@ function lineItem(overrides: Partial<LineItem> = {}): LineItem {
     base_unit_price: null,
     show_original_price: true,
     addons: [],
+    locked_base_price: null,
+    locked_inputs_fingerprint: null,
     created_at: '',
     updated_at: '',
     ...overrides,

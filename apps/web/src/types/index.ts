@@ -356,6 +356,24 @@ export interface LineItem {
   show_original_price: boolean;
   /** Consultant-added extras; each price lands once in `line_total`. */
   addons: LineItemAddon[];
+  /**
+   * The CALCULATED unit price frozen when the order was confirmed
+   * (migration 39), or `null` while the item is live-priced — which is
+   * every item of a draft/sent estimate.
+   *
+   * While it is set, saving the order re-uses this figure instead of
+   * re-running the pricing formula, so neither a later formula change
+   * nor a catalog price change can move a confirmed invoice. Editing the
+   * item's own pricing inputs releases the lock for that one item; see
+   * `lib/priceLock.ts`.
+   */
+  locked_base_price: number | null;
+  /**
+   * Canonical JSON of the pricing inputs behind `locked_base_price`. The
+   * editor recomputes it as the consultant types and compares: while it
+   * matches, the frozen price is what the preview shows.
+   */
+  locked_inputs_fingerprint: string | null;
   created_at: string;
   updated_at: string;
 }

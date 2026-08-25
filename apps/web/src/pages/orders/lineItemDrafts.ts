@@ -24,6 +24,7 @@
 
 import { calculateBlindUnitPriceForType, type BlindInputs } from '../../lib/pricing';
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
+import { lockApplies, type PriceLock, type PriceLockInput } from '../../lib/priceLock';
 import { getBlindType } from '../../lib/blindTypes';
 import type {
   BlindAttributes,
@@ -70,6 +71,19 @@ export interface PriceAdjustmentDraft {
   unit_price_override: string;
   show_original_price: boolean;
   addons: DraftAddon[];
+  /**
+   * The price this item was FROZEN at when the order was confirmed, and
+   * the fingerprint of the inputs behind it (migration 39). `null` on
+   * every item of a draft/sent estimate and on any item added in this
+   * editing session — nothing is frozen until the Worker says so.
+   *
+   * The preview consults it exactly as the Worker does: while the
+   * fingerprint still matches, this is the price, no formula runs, and
+   * a catalog change made since confirmation is invisible here because
+   * it is invisible in the database too. Never sent back — the payload
+   * schema is `.strict()` and the lock is server-owned.
+   */
+  lock: PriceLock | null;
 }
 
 /**
@@ -87,6 +101,10 @@ export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
   unit_price_override: '',
   show_original_price: true,
   addons: [],
+  // A new item has never been confirmed, so it is live-priced — even when
+  // it is being added to an order that IS confirmed. The Worker prices it
+  // from today's catalog and locks it on that save.
+  lock: null,
 };
 
 /** Editable state of one blind line item (strings for free typing). */
@@ -570,6 +588,68 @@ function catalogResolver(catalogs: Catalogs): CatalogResolver {
 }
 
 /**
+ * Re-derives one draft's pricing inputs in the shape the Worker
+ * fingerprints, or null while the draft is too incomplete to describe.
+ *
+ * MUST match `buildPayload` in `OrderDetail.tsx` field for field — the
+ * same trimming, the same `|| null` on every optional id — because the
+ * Worker fingerprints the payload that function produces. A difference
+ * here would show a frozen price the save then quietly replaced, or the
+ * reverse.
+ */
+function lockInputFromDraft(draft: ItemDraft): PriceLockInput | null {
+  if (draft.item_type !== 'blind') {
+    const presetId = draft.item_type === 'preset' ? draft.preset_id : null;
+    const typed = Number(draft.unit_price);
+    return {
+      item_type: draft.item_type,
+      preset_id: presetId,
+      // A preset with provenance is priced from its catalog row, and its
+      // typed figure never travels — so it is not an input.
+      unit_price: presetId ? null : Number.isFinite(typed) ? typed : null,
+    };
+  }
+  const panels = draft.panels.map(parsePositive);
+  const height = parsePositive(draft.height_cm);
+  const attributes = parseDraftAttributes(draft);
+  if (panels.some((p) => p === null) || panels.length === 0) return null;
+  if (!height || attributes === null) return null;
+  return {
+    item_type: 'blind',
+    blinds_type: draft.blinds_type.trim(),
+    panels: panels as number[],
+    height_cm: height,
+    material_id: draft.material_id || null,
+    cassette_id: draft.cassette_id || null,
+    bottom_rail_id: draft.bottom_rail_id || null,
+    control_id: draft.control_id || null,
+    installation_id: draft.installation_id || null,
+    attributes,
+  };
+}
+
+/**
+ * The frozen price still in force for a draft, or null when the item is
+ * live-priced — because it was never confirmed, or because its pricing
+ * inputs have been edited since.
+ */
+function lockedBase(draft: ItemDraft): number | null {
+  if (!draft.lock) return null;
+  const input = lockInputFromDraft(draft);
+  return input && lockApplies(draft.lock, input) ? draft.lock.base : null;
+}
+
+/**
+ * Whether this draft is currently showing its confirmed, frozen price —
+ * what the editor's lock badge renders from. Turns false the moment a
+ * pricing input is edited, which is also the moment the price on screen
+ * starts moving again.
+ */
+export function isPriceLocked(draft: ItemDraft): boolean {
+  return lockedBase(draft) !== null;
+}
+
+/**
  * The four figures a price readout shows.
  *
  * `base` is what the formula or catalog produced and is displayed even
@@ -702,6 +782,16 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
  * drafts are ready.
  */
 export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPrice | null {
+  // The frozen price wins before any catalog is consulted: a locked item
+  // must preview at its confirmed figure even when the material it names
+  // has since been deleted from Settings, which is exactly the case the
+  // formula path below refuses to price at all.
+  const frozen = lockedBase(draft);
+  if (frozen !== null) {
+    const qty = parsePositive(draft.quantity);
+    return qty ? adjustedDraftPrice(frozen, qty, draft, true) : null;
+  }
+
   const inputs = blindDraftInputs(draft, catalogs);
   if (!inputs) return null;
 
@@ -720,7 +810,8 @@ export function blindDraftPrice(draft: BlindDraft, catalogs: Catalogs): DraftPri
  */
 export function flatDraftPrice(draft: FlatDraft): DraftPrice | null {
   const qty = parsePositive(draft.quantity);
-  const base = Number(draft.unit_price);
+  const frozen = lockedBase(draft);
+  const base = frozen ?? Number(draft.unit_price);
   if (!qty || !Number.isFinite(base) || base < 0) return null;
   return adjustedDraftPrice(base, qty, draft, canOverridePrice(draft));
 }

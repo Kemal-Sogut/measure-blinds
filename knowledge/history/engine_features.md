@@ -3707,3 +3707,78 @@ PostgREST string columns; 4 in `pdf.test.ts` for the rendered lines; 1 in
 columns never appear in the response bytes), web 336/336, both `tsc --noEmit` clean, `oxlint`
 clean. NOT verified in a browser: the customer page needs a live order token and the running
 Worker, neither available in this environment.
+
+## 2026-08-25 - Per-item price lock on confirmed orders
+
+Confirming an order turns it into an invoice, but its prices stayed a COMPUTATION: every
+`PUT /api/orders/:id` ran `resolveLineItems` over today's catalog and today's formula code, so
+reopening a confirmed invoice and pressing Save was enough to re-price it. A pricing-formula
+change, or a material's price edited in Settings, silently rewrote money a customer had
+already been quoted and was paying against.
+
+Migration 39 (`20260825000039_line_items_price_lock.sql`) adds two columns to `line_items`:
+
+- `locked_base_price numeric(10,2)` — the frozen CALCULATED unit price (pre-override,
+  pre-add-on). NULL means live-priced, which is every item of a draft/sent estimate.
+- `locked_inputs_fingerprint text` — canonical JSON of the pricing inputs that produced it.
+
+**The rule** (`apps/api/src/lib/priceLock.ts`, twinned by `apps/web/src/lib/priceLock.ts`).
+`pricingFingerprint(input)` encodes ONLY what feeds the formula: blind type, panels, height,
+the four hardware ids, the material id and the type's own attribute inputs; for a flat item,
+`preset_id` plus the typed figure a legacy preset or custom item carries. Quantity, add-ons,
+the manual override, visibility, room name, colour and notes are excluded on purpose — they
+keep applying live on top of the frozen base. Numbers are canonicalised to 4 dp (so `200` and
+`200.00` agree across a PostgREST round-trip), empty-string ids collapse to null, attribute
+values are TAGGED by type (`n:2` vs `s:2`), attribute keys are sorted, and the Worker's own
+snapshot keys (`pleat_name`, `pleat_multiplier`) are stripped — a catalog edit that moves a
+pleat multiplier must not read as the consultant having changed the item. Text, not a hash: an
+unrecognised old fingerprint simply fails to match and re-prices that item once, and a support
+question about why a price moved is answerable by reading the column.
+
+On save of a CONFIRMED order (`PUT /:id` passes `buildLockMap(existing.line_items)` into
+`resolveLineItems`):
+
+- fingerprint matches → the frozen price is reused, together with the catalog snapshot columns
+  that explain it (rates, bases, resolved attributes). No lookup and no slot-scoping gate runs
+  for that item, so an option deleted from Settings can neither move the price nor block the
+  save.
+- fingerprint differs, or the item is new → priced from today's catalog and re-locked at that
+  figure. This is the deliberate door through which a formula change still reaches a confirmed
+  order: only for the item someone actually edited. (Chosen over "frozen until unlocked" so the
+  editor stays live where a consultant is genuinely re-specifying a window.)
+
+**Lifecycle.** `POST /:id/confirm` freezes every item at `base_unit_price ?? unit_price` (the
+CALCULATED figure — freezing the overridden one would apply the override twice on the next
+save) via `freezeOrderPrices`, BEFORE the status moves: a failure fails the confirmation
+rather than leaving an invoice that re-prices itself. `POST /:id/unconfirm`, an accepted
+cancellation request, and `POST /:id/status` reverting below `awaiting_payment` all call
+`clearOrderPriceLocks` — an estimate is priced from today's catalog again, and re-confirming
+freezes at whatever it says then. Both freeze and release write an order-log line. A
+duplicated order is a new draft and inherits no lock, matching its existing "today's catalog"
+rule.
+
+**Editor** (`lineItemDrafts.ts`). `PriceAdjustmentDraft` gained `lock: PriceLock | null`, filled
+from the two columns in `toDrafts` and never sent back (the payload schema is `.strict()`).
+`blindDraftPrice` consults the lock BEFORE the catalog — a locked item previews at its
+confirmed price even when its material has since been deleted, the one case the formula path
+refuses to price at all — and `flatDraftPrice` does the same. `isPriceLocked(draft)` drives a
+padlock beside the row's total in `LineItemRow`, which disappears the moment an input is
+edited and the price goes live again. A duplicated draft clears `lock` along with `uid`.
+
+Persistence helpers (`freezeOrderPrices`, `clearOrderPriceLocks`, `buildLockMap`,
+`lockInputFromRow`) live in `apps/api/src/lib/priceLockStore.ts` so the fingerprint module
+stays pure and twinnable.
+
+### Verified
+api 416/416 (16 in `priceLock.test.ts`, 9 new route tests: frozen through a doubled material
+price, only the edited item re-priced, quantity/add-ons/override still live on top, a locked
+item saved after its material was deleted, a post-confirmation addition priced then locked, an
+unconfirmed order still live-priced, the confirm-time freeze taking the calculated figure on an
+overridden item, the unconfirm release, and a catalog-priced preset holding at its confirmed
+figure), web 421/421 (16 mirrored fingerprint tests — including a canonical-shape assertion
+pinned to the same literal on both sides — plus 6 preview tests), `tsc` clean both sides,
+`oxlint` clean. NOT verified in a browser: needs the migration applied and a confirmed order.
+
+**Deployment order matters**: the migration must be applied BEFORE the Worker is deployed —
+the insert writes both columns on every save, so a Worker running against the old schema
+would fail every order write.

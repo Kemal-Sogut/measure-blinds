@@ -33,6 +33,20 @@ render-only and untested, like the rest of the dialog's UI. NOTE: `apps/web/.env
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 
+**Also uncommitted, and the one change here that needs a DATABASE migration applied before
+deploy:** the per-item price lock on confirmed orders (migration 39,
+`supabase/migrations/20260825000039_line_items_price_lock.sql`). `line_items` gains
+`locked_base_price` + `locked_inputs_fingerprint`; `POST /:id/confirm` freezes every item at
+its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of that item's
+pricing inputs still matches, and any reversal of the confirmation releases the locks. New
+modules: `apps/api/src/lib/priceLock.ts` (pure fingerprint rule) + its live-preview twin
+`apps/web/src/lib/priceLock.ts`, and `apps/api/src/lib/priceLockStore.ts` (freeze/release/read).
+Editor drafts carry `lock`, the preview prices from it, and `LineItemRow` shows a padlock while
+it holds. Detail in `knowledge/history/engine_features.md`, 2026-08-25. Verified: api 416/416,
+web 421/421, both `tsc` clean, `oxlint` clean; NOT seen in a browser. **Apply the migration
+before deploying the Worker** — every save writes both columns, so the new Worker against the
+old schema would fail every order write.
+
 Note for the next session: `pnpm install` had to be re-run here — `apps/web/node_modules/
 typescript` was an empty directory and `pnpm check` died with `Cannot find module …/typescript/
 bin/tsc` until it was.

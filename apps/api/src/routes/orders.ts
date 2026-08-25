@@ -73,6 +73,13 @@ import type {
 import { loadSlotScoping } from '../lib/optionScoping';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
+import { lockApplies, pricingFingerprint, type PriceLockInput } from '../lib/priceLock';
+import {
+  buildLockMap,
+  clearOrderPriceLocks,
+  freezeOrderPrices,
+  type StoredLock,
+} from '../lib/priceLockStore';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -337,17 +344,111 @@ type LineItemRow = Record<string, unknown> & {
 };
 
 /**
+ * The blind-only columns a preset/custom row must still carry.
+ *
+ * Named once because every flat row — freshly priced or price-locked —
+ * has to present the SAME column set: PostgREST unifies keys across a
+ * bulk insert and NULL-fills the gaps, which violates the not-null
+ * defaults on `description`, `panels` and `attributes`.
+ */
+const FLAT_ITEM_NULLS = {
+  room_name: '',
+  blinds_type: '',
+  panels: [] as number[],
+  height_cm: null,
+  material_id: null,
+  material_name: null,
+  material_price_per_sqm: null,
+  cassette_id: null,
+  cassette_name: null,
+  cassette_price_per_m: null,
+  cassette_price_basis: null,
+  bottom_rail_id: null,
+  bottom_rail_name: null,
+  bottom_rail_price_per_m: null,
+  bottom_rail_price_basis: null,
+  control_id: null,
+  control_name: null,
+  control_price_per_item: null,
+  control_price_basis: null,
+  installation_id: null,
+  installation_name: null,
+  installation_price_per_item: null,
+  installation_price_basis: null,
+  note: '',
+  color: '',
+  // Flat items carry no per-type inputs, but the key MUST be present:
+  // `attributes` is not-null and PostgREST would NULL-fill it.
+  attributes: {},
+} as const;
+
+/**
+ * Re-derives the pricing inputs of one INCOMING item, so the payload can
+ * be fingerprinted against the lock stored for it (`lib/priceLock.ts`).
+ *
+ * The mirror of `lockInputFromRow`, which does the same for a stored
+ * row; the two must describe the same item identically or a confirmed
+ * order would re-price itself on its first save.
+ */
+function lockInputFromPayload(it: z.infer<typeof lineItemSchema>): PriceLockInput {
+  if (it.item_type === 'blind') {
+    return {
+      item_type: 'blind',
+      blinds_type: it.blinds_type,
+      panels: it.panels,
+      height_cm: it.height_cm,
+      material_id: it.material_id,
+      cassette_id: it.cassette_id,
+      bottom_rail_id: it.bottom_rail_id,
+      control_id: it.control_id,
+      installation_id: it.installation_id,
+      attributes: it.attributes,
+    };
+  }
+  return {
+    item_type: it.item_type,
+    preset_id: it.item_type === 'preset' ? it.preset_id : null,
+    unit_price: it.unit_price ?? null,
+  };
+}
+
+/**
  * Resolves validated line-item inputs into insertable rows:
  * fetches catalog prices for blind options, snapshots names + prices,
  * and computes unit_price / line_total server-side.
+ *
+ * `locks` is passed ONLY for a confirmed order (migration 39). Its
+ * presence has two effects:
+ *   - an item whose stored lock still matches the inputs it just sent is
+ *     written back with its FROZEN price and its original catalog
+ *     snapshot, without a single catalog lookup — so neither a formula
+ *     change, a catalog price change, nor a deleted option can move or
+ *     block it;
+ *   - every other item (edited, or added after confirmation) is priced
+ *     normally and then locked at that figure.
+ * Omit `locks` for a draft/sent estimate and every row comes back
+ * live-priced, with both lock columns null.
  *
  * @throws Error with a user-readable message when an option id is
  *         unknown (e.g. a material was deleted mid-edit).
  */
 async function resolveLineItems(
   sb: SupabaseClient,
-  items: z.infer<typeof lineItemSchema>[]
+  items: z.infer<typeof lineItemSchema>[],
+  locks?: Map<string, StoredLock>
 ): Promise<LineItemRow[]> {
+  /**
+   * The lock still in force for each item, by position — null where the
+   * item is priced from scratch. Resolved BEFORE the id collection below
+   * so a frozen item contributes no catalog lookups and passes through
+   * none of the catalog validation: its price no longer depends on the
+   * catalog, and a confirmed invoice must stay savable after an option
+   * it names is deleted from Settings.
+   */
+  const held: (StoredLock | null)[] = items.map((it) => {
+    const lock = it.uid ? locks?.get(it.uid) : undefined;
+    return lockApplies(lock, lockInputFromPayload(it)) ? lock! : null;
+  });
   const ids = {
     materials: new Set<string>(),
     cassette_options: new Set<string>(),
@@ -369,7 +470,8 @@ async function resolveLineItems(
    * a preset is no more client-priced than a material is.
    */
   const presetIds = new Set<string>();
-  for (const it of items) {
+  for (const [index, it] of items.entries()) {
+    if (held[index]) continue;
     if (it.item_type === 'preset') {
       if (it.preset_id) presetIds.add(it.preset_id);
       continue;
@@ -473,14 +575,36 @@ async function resolveLineItems(
   // violates the not-null defaults (e.g. description on blind rows) —
   // caught by the live E2E run.
   return items.map((it, position) => {
+    const lock = held[position];
+    /**
+     * The lock columns this row is written with: the frozen figure it
+     * was priced from when a lock held, a fresh freeze at the calculated
+     * base on a confirmed order, and nulls on an estimate.
+     */
+    const lockColumns = (base: number) =>
+      locks
+        ? {
+            locked_base_price: lock ? lock.base : base,
+            locked_inputs_fingerprint: lock
+              ? lock.fingerprint
+              : pricingFingerprint(lockInputFromPayload(it)),
+          }
+        : { locked_base_price: null, locked_inputs_fingerprint: null };
+
     if (it.item_type !== 'blind') {
       // A preset with provenance is priced by the SERVER from the
       // catalog; any unit_price the client sent is ignored, exactly as a
       // material's price is. Only a legacy preset (saved before
       // preset_id existed) and a custom item fall back to the typed
       // figure.
+      //
+      // A locked item skips all of that: its price was settled when the
+      // order was confirmed, so a preset deleted from the catalog since
+      // must not stop the invoice from saving.
       let base: number;
-      if (it.item_type === 'preset' && it.preset_id) {
+      if (lock) {
+        base = lock.base;
+      } else if (it.item_type === 'preset' && it.preset_id) {
         const preset = presets.get(it.preset_id);
         if (!preset) throw new Error('Selected preset item no longer exists.');
         base = preset.price;
@@ -505,46 +629,78 @@ async function resolveLineItems(
         // first time has no identity yet, and this is where it gets one.
         uid: it.uid ?? crypto.randomUUID(),
         hidden: it.hidden,
-        room_name: '',
-        blinds_type: '',
-        panels: [],
-        height_cm: null,
-        material_id: null,
-        material_name: null,
-        material_price_per_sqm: null,
-        cassette_id: null,
-        cassette_name: null,
-        cassette_price_per_m: null,
-        cassette_price_basis: null,
-        bottom_rail_id: null,
-        bottom_rail_name: null,
-        bottom_rail_price_per_m: null,
-        bottom_rail_price_basis: null,
-        control_id: null,
-        control_name: null,
-        control_price_per_item: null,
-        control_price_basis: null,
-        installation_id: null,
-        installation_name: null,
-        installation_price_per_item: null,
-        installation_price_basis: null,
+        ...FLAT_ITEM_NULLS,
         title: it.title,
         preset_id: it.item_type === 'preset' ? it.preset_id : null,
         description: it.description,
-        note: '',
-        color: '',
-        // Flat items carry no per-type inputs, but the key MUST be present:
-        // PostgREST unifies keys across bulk-inserted rows and NULL-fills
-        // any row missing one, and `attributes` is not-null.
-        attributes: {},
         quantity: it.quantity,
         show_original_price: it.show_original_price,
         unit_price: adjusted.unit_price,
         base_unit_price: adjusted.base_unit_price,
         addons: adjusted.addons,
         line_total: adjusted.line_total,
+        ...lockColumns(base),
       };
     }
+    // A locked blind is written back exactly as it was priced: the frozen
+    // base, plus the catalog rates and resolved attributes that explain
+    // it. Nothing below runs for it — no lookup, no slot-scoping gate —
+    // because its price no longer depends on the catalog, and a confirmed
+    // invoice must stay savable after Settings drops an option it names.
+    // The editable, non-pricing fields (room, note, colour, visibility,
+    // quantity, add-ons, override) still come from the payload.
+    if (lock) {
+      const adjusted = applyPriceAdjustments({
+        base: lock.base,
+        quantity: it.quantity,
+        override: it.unit_price_override,
+        addons: it.addons as Addon[],
+      });
+      const snap = lock.snapshot;
+      return {
+        item_type: 'blind',
+        position,
+        uid: it.uid ?? crypto.randomUUID(),
+        hidden: it.hidden,
+        room_name: it.room_name,
+        blinds_type: it.blinds_type,
+        panels: it.panels,
+        height_cm: it.height_cm,
+        material_id: it.material_id,
+        material_name: snap.material_name,
+        material_price_per_sqm: snap.material_price_per_sqm,
+        cassette_id: it.cassette_id,
+        cassette_name: snap.cassette_name,
+        cassette_price_per_m: snap.cassette_price_per_m,
+        cassette_price_basis: snap.cassette_price_basis,
+        bottom_rail_id: it.bottom_rail_id,
+        bottom_rail_name: snap.bottom_rail_name,
+        bottom_rail_price_per_m: snap.bottom_rail_price_per_m,
+        bottom_rail_price_basis: snap.bottom_rail_price_basis,
+        control_id: it.control_id,
+        control_name: snap.control_name,
+        control_price_per_item: snap.control_price_per_item,
+        control_price_basis: snap.control_price_basis,
+        installation_id: it.installation_id,
+        installation_name: snap.installation_name,
+        installation_price_per_item: snap.installation_price_per_item,
+        installation_price_basis: snap.installation_price_basis,
+        title: '',
+        preset_id: null,
+        description: '',
+        note: it.note,
+        color: it.color,
+        attributes: snap.attributes,
+        quantity: it.quantity,
+        show_original_price: it.show_original_price,
+        unit_price: adjusted.unit_price,
+        base_unit_price: adjusted.base_unit_price,
+        addons: adjusted.addons,
+        line_total: adjusted.line_total,
+        ...lockColumns(lock.base),
+      };
+    }
+
     const blindType = getBlindType(it.blinds_type);
     const label = it.blinds_type || 'this blind type';
     const material = materials.get(it.material_id);
@@ -694,6 +850,7 @@ async function resolveLineItems(
       base_unit_price: adjusted.base_unit_price,
       addons: adjusted.addons,
       line_total: adjusted.line_total,
+      ...lockColumns(base),
     };
   });
 }
@@ -960,7 +1117,10 @@ app.put('/:id', async (c) => {
     // Kept on ONE line: supabase-js parses the select string at the type
     // level, and a concatenated one degrades the row type to
     // `GenericStringError`, taking `status` and `line_items` with it.
-    .select('id, status, expiry_date, line_items(position, uid, hidden, unit_price, base_unit_price, addons)')
+    // `line_items(*)` rather than a column list: a confirmed order's
+    // price locks are re-applied from these rows, and that needs the
+    // catalog snapshot columns as well as the two lock columns.
+    .select('id, status, expiry_date, line_items(*)')
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
@@ -1003,9 +1163,18 @@ app.put('/:id', async (c) => {
     }
   }
 
+  // A confirmed order is an INVOICE: every item keeps the price it was
+  // confirmed at, so neither a later pricing-formula change nor a
+  // catalog edit can move it on save. Only an item whose OWN pricing
+  // inputs were edited is re-priced — and re-locked at the new figure.
+  // See `lib/priceLock.ts` for the fingerprint that decides this.
+  const locks = isConfirmed(existing.status)
+    ? buildLockMap((existing.line_items ?? []) as Record<string, unknown>[])
+    : undefined;
+
   let rows: LineItemRow[];
   try {
-    rows = await resolveLineItems(sb, input.line_items);
+    rows = await resolveLineItems(sb, input.line_items, locks);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
   }
@@ -1498,6 +1667,13 @@ app.post('/:id/confirm', async (c) => {
   if (!EDITABLE.includes(existing.status)) {
     return c.json({ error: `Order is already ${existing.status}.` }, 409);
   }
+  // Freeze BEFORE the status moves. An order that reached
+  // awaiting_payment without its locks written would keep re-pricing
+  // itself on every save — the exact bug migration 39 exists to close —
+  // so a freeze failure fails the confirmation instead.
+  const freezeError = await freezeOrderPrices(sb, id);
+  if (freezeError) return c.json({ error: freezeError }, 500);
+
   const { error } = await sb
     .from('orders')
     .update({ status: 'awaiting_payment', confirmed_at: new Date().toISOString() })
@@ -1505,6 +1681,7 @@ app.post('/:id/confirm', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   await logOrderEvent(sb, id, 'Order confirmed.');
+  await logOrderEvent(sb, id, 'Item prices locked at confirmation.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1578,7 +1755,12 @@ app.post('/:id/unconfirm', async (c) => {
     .eq('id', id);
   if (error) return c.json({ error: error.message }, 500);
 
+  // Back to being an estimate, so back to live pricing: re-confirming
+  // freezes again, at whatever the catalog says then.
+  await clearOrderPriceLocks(sb, id);
+
   await logOrderEvent(sb, id, 'Confirmation reversed.');
+  await logOrderEvent(sb, id, 'Item price locks released.');
 
   const { data } = await readDetail(sb, id);
   if (data) data.amount_paid = sumPayments(data.payments);
@@ -1966,6 +2148,10 @@ app.post('/:id/cancel-request/resolve', async (c) => {
       .eq('status', 'awaiting_payment');
     if (error) return c.json({ error: error.message }, 500);
 
+    // Reversed confirmation, so the frozen prices go with it — same rule
+    // as `POST /:id/unconfirm`.
+    await clearOrderPriceLocks(sb, id);
+
     await logOrderEvent(sb, id, 'Cancellation request accepted — confirmation reversed.');
     const { data } = await readDetail(sb, id);
     if (data) data.amount_paid = sumPayments(data.payments);
@@ -2212,6 +2398,12 @@ app.post('/:id/revert', async (c) => {
   // installation appointment so no stale visit stays on the calendar.
   if (toIdx < STAGE_ORDER.indexOf('ready')) {
     await sb.from('appointments').delete().eq('order_id', id);
+  }
+
+  // Reverting below awaiting_payment un-confirms the order, so its items
+  // go back to live pricing (migration 39). Confirming again re-freezes.
+  if (toIdx < STAGE_ORDER.indexOf('awaiting_payment')) {
+    await clearOrderPriceLocks(sb, id);
   }
 
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);

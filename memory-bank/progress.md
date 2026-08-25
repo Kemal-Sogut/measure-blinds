@@ -11,7 +11,7 @@
 expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
 is the only path back) inside `PUT /api/orders/:id`, mirroring the `< today` rule that expired
 it; a still-past date leaves it expired, and no non-expired status is ever rewritten there.
-Confirmation is reversible by staff only, and only pre-payment. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
+Confirmation is reversible by staff only, and only pre-payment. Confirming also FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a confirmed invoice on save, and only an item whose own pricing inputs are edited is re-priced and re-locked. Any reversal of the confirmation (unconfirm, accepted cancellation, revert below awaiting_payment) releases the locks and the order is live-priced again. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
 the first payment, then an Invoice. Production starts automatically only when the ledger
 reaches the 50% deposit (`recordOrderPayment` gates awaiting_payment → in_progress on
 `round2(total/2)`; shared by the staff route and the e-Transfer webhook) — a sub-deposit

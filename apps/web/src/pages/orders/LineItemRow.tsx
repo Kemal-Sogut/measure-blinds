@@ -32,6 +32,7 @@ import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
   flatDraftPrice,
+  isPriceLocked,
   parseDraftAttributes,
   slotsForType,
   type BlindDraft,
@@ -356,6 +357,9 @@ export default function LineItemRow({
   onMove,
 }: LineItemRowProps): ReactNode {
   const price = item.item_type === 'blind' ? blindDraftPrice(item, catalogs) : flatDraftPrice(item);
+  // Whether the figure beside the padlock is the confirmed one rather
+  // than a live calculation — see `isPriceLocked`.
+  const locked = isPriceLocked(item);
   const name =
     item.item_type === 'blind'
       ? [item.room_name || `Blind ${index + 1}`, item.blinds_type].filter(Boolean).join(' — ')
@@ -550,6 +554,29 @@ export default function LineItemRow({
               aria-label="Price overridden"
               className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
             />
+          )}
+          {/*
+            A padlock marks a price frozen at confirmation: it is the
+            figure the save will keep, whatever Settings says today.
+            Editing this item's measurements or options releases it,
+            and the padlock disappears as the price goes live again.
+          */}
+          {locked && (
+            <svg
+              width="11"
+              height="11"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              className="shrink-0 text-text-muted"
+              role="img"
+              aria-label="Price locked at confirmation"
+            >
+              <title>Price locked when the order was confirmed</title>
+              <rect x="4" y="11" width="16" height="10" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg>
           )}
         </span>
 

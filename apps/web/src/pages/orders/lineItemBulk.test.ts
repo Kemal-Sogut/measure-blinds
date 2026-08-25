@@ -104,6 +104,7 @@ function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
     unit_price_override: '',
     show_original_price: true,
     addons: [],
+    lock: null,
     key: 'd1',
     uid: null,
     hidden: false,
@@ -139,6 +140,7 @@ function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
     unit_price_override: '',
     show_original_price: true,
     addons: [],
+    lock: null,
     ...overrides,
   };
 }
