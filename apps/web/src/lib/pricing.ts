@@ -38,7 +38,7 @@ export function applyWidthMinimum(totalCm: number): number {
   return defaultBlindType.applyWidthMinimum(totalCm);
 }
 
-/** Tiered height minimum: <100→100cm, 100–199→200cm, ≥200→actual. */
+/** Tiered height minimum: <100→150cm, 100–199→200cm, ≥200→actual. */
 export function applyHeightMinimum(heightCm: number): number {
   return defaultBlindType.applyHeightMinimum(heightCm);
 }

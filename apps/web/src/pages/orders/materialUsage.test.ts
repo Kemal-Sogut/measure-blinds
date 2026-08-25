@@ -201,12 +201,12 @@ describe('summarizeMaterialUsage', () => {
   });
 
   it('reports measured below billed for an under-minimum blind', () => {
-    // 60 × 80 cm bills 1.00 m² and measures 0.48 m².
+    // 60 × 80 cm bills 1.50 m² and measures 0.48 m².
     const summary = summarizeMaterialUsage(
       [blind({ panels: ['60'], height_cm: '80' })],
       catalogs()
     );
-    expect(summary.rows[0].quantity).toBeCloseTo(1, 10);
+    expect(summary.rows[0].quantity).toBeCloseTo(1.5, 10);
     expect(summary.rows[0].measuredQuantity).toBeCloseTo(0.48, 10);
   });
 
@@ -286,9 +286,9 @@ describe('summarizeMaterialUsage', () => {
       [blind({ panels: ['60', '20'], height_cm: '80' })],
       catalogs()
     ).rows;
-    // Billed on the 100 × 100 minimums, but labelled with what was typed.
+    // Billed on the 100 × 150 minimums, but labelled with what was typed.
     expect(row.lines[0]).toMatchObject({ widthCm: 80, heightCm: 80 });
-    expect(row.lines[0].quantity).toBeCloseTo(1, 10);
+    expect(row.lines[0].quantity).toBeCloseTo(1.5, 10);
   });
 
   it('falls back to the editor line label when a room is blank', () => {

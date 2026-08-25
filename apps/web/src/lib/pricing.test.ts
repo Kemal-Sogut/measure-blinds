@@ -49,8 +49,8 @@ describe('applyWidthMinimum', () => {
 });
 
 describe('applyHeightMinimum', () => {
-  it('raises heights below 100cm to 100cm', () => {
-    expect(applyHeightMinimum(80)).toBe(100);
+  it('raises heights below 100cm to 150cm', () => {
+    expect(applyHeightMinimum(80)).toBe(150);
   });
 
   it('raises heights between 100cm and 199cm to 200cm', () => {
@@ -415,7 +415,7 @@ describe('hardware price basis', () => {
   });
 
   it('charges the basis legs on the MINIMISED dimensions', () => {
-    // 60cm wide, 80cm drop → charged as 100cm × 100cm, the same figures
+    // 60cm wide, 80cm drop → charged as 100cm × 150cm, the same figures
     // the material leg uses. A hardware leg on the raw measurement would
     // price two lines of one quote off different dimensions.
     const perM = calculateBlindUnitPrice({
@@ -435,7 +435,7 @@ describe('hardware price basis', () => {
       quantity: 1,
     });
     expect(perM).toBe(10); // 1.0 m
-    expect(perSqm).toBe(10); // 1.0 m²
+    expect(perSqm).toBe(15); // 1.5 m²
   });
 
   it('charges nothing for a slot the blind does not carry', () => {
@@ -534,12 +534,12 @@ describe('describeUnitCosts', () => {
 
 describe('describeMaterialUsage', () => {
   it('reports billed square metres with the minimums applied', () => {
-    // 60cm → 100cm, 80cm → 100cm, so 1.00 m² is billed on 0.48 m² measured.
+    // 60cm → 100cm, 80cm → 150cm, so 1.50 m² is billed on 0.48 m² measured.
     const usage = getBlindType('Roller').describeMaterialUsage(
       blind({ panels: [60], height_cm: 80 })
     );
     expect(usage.unit).toBe('sqm');
-    expect(usage.quantity).toBeCloseTo(1, 10);
+    expect(usage.quantity).toBeCloseTo(1.5, 10);
     expect(usage.measured).toBeCloseTo(0.48, 10);
   });
 

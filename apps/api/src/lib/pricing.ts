@@ -35,7 +35,7 @@ export function applyWidthMinimum(totalCm: number): number {
 
 /**
  * Applies the tiered minimum height rule:
- * <100cm → 100cm; 100–199cm → 200cm; ≥200cm → actual.
+ * <100cm → 150cm; 100–199cm → 200cm; ≥200cm → actual.
  */
 export function applyHeightMinimum(heightCm: number): number {
   return defaultBlindType.applyHeightMinimum(heightCm);

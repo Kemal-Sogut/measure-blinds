@@ -27,7 +27,7 @@
  *                per_panel = panelCount × price
  *                per_unit  = price               (flat, once per blind)
  * with the width minimum (raise <100cm to 100cm) and the tiered height
- * minimum (<100→100, 100–199→200, ≥200→actual) applied first — the
+ * minimum (<100→150, 100–199→200, ≥200→actual) applied first — the
  * hardware legs are charged on those same minimised figures.
  *
  * Until migration 36 the basis was hardcoded per slot (a cassette was
@@ -344,9 +344,9 @@ export class BaseBlindType {
     return totalCm < 100 ? 100 : totalCm;
   }
 
-  /** Tiered height minimum: <100→100, 100–199→200, ≥200→actual. */
+  /** Tiered height minimum: <100→150, 100–199→200, ≥200→actual. */
   applyHeightMinimum(heightCm: number): number {
-    if (heightCm < 100) return 100;
+    if (heightCm < 100) return 150;
     if (heightCm < 200) return 200;
     return heightCm;
   }
