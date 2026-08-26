@@ -7,7 +7,10 @@
  * / In Progress / Ready / Installed / Expired) and debounced search
  * feed either stacked cards (<lg) or the table (lg+). Rows/cards open
  * the editor; the primary "+ New Order" action is a sticky bar on
- * mobile and lives in the header on desktop.
+ * mobile and lives in the header on desktop. Every row carries two icon
+ * actions overlaying its right edge — Duplicate and Delete — so neither
+ * requires opening the order first; Delete confirms by order number and
+ * calls the same guarded endpoint the order page does.
  *
  * Every tab shows at most `PAGE_SIZE` orders at a time, with the pager
  * anchored bottom-right under the list. Paging is client-side over the
@@ -37,10 +40,19 @@ import { PAGE_CONTAINER } from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody, StatTile } from '../../components/ui';
-import { useOrderList, useDuplicateOrder, type OrderTab } from '../../hooks/useOrders';
+import {
+  useOrderList,
+  useDuplicateOrder,
+  useDeleteOrder,
+  type OrderTab,
+} from '../../hooks/useOrders';
 import { displayName } from '../../lib/customerName';
 import type { Order, OrderStatus } from '../../types';
 import type { CardAccent } from '../../components/ui';
+
+/** Geometry-free shape shared by the two per-row icon actions. */
+const ROW_ACTION_CLASS =
+  'flex items-center justify-center rounded-sm transition-colors disabled:opacity-40';
 
 /**
  * The per-row "duplicate this order" action.
@@ -71,13 +83,94 @@ function DuplicateButton({ order, className }: { order: Order; className: string
       }}
       title={`Duplicate ${order.order_number} into a new draft`}
       aria-label={`Duplicate ${order.order_number}`}
-      className={`flex items-center justify-center rounded-sm text-text-muted transition-colors hover:bg-surface-sunken hover:text-brand-600 disabled:opacity-40 ${className}`}
+      className={`${ROW_ACTION_CLASS} text-text-muted hover:bg-surface-sunken hover:text-brand-600 ${className}`}
     >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     </button>
+  );
+}
+
+/**
+ * The per-row "delete this order" action.
+ *
+ * Deletion cascades to the order's line items and payments and cannot
+ * be undone, so it is confirmed BY ORDER NUMBER — this icon sits right
+ * beside Duplicate, whose worst case is a stray draft, and the row it
+ * overlays is one click from opening the order. The wording matches the
+ * Delete action on the order page, and both go through the same
+ * `DELETE /api/orders/:id`: this is not a looser list-only path.
+ *
+ * Own mutation and own pending state, for the same reason Duplicate has
+ * them — one mutation lifted to the list would disable every row's icon
+ * while a single order is deleted. Nothing navigates on success: the
+ * hook invalidates the list and the row simply leaves it.
+ */
+function DeleteButton({ order, className }: { order: Order; className: string }) {
+  const deleteMut = useDeleteOrder();
+  return (
+    <button
+      type="button"
+      disabled={deleteMut.isPending}
+      onClick={async () => {
+        const ok = window.confirm(
+          `Delete ${order.order_number} permanently? Its line items and payments are removed.`,
+        );
+        if (!ok) return;
+        try {
+          await deleteMut.mutateAsync(order.id);
+          toast.success(`${order.order_number} deleted.`);
+        } catch (e) {
+          toast.error(e instanceof Error ? e.message : 'Delete failed.');
+        }
+      }}
+      title={`Delete ${order.order_number} permanently`}
+      aria-label={`Delete ${order.order_number}`}
+      className={`${ROW_ACTION_CLASS} text-text-muted hover:bg-surface-sunken hover:text-danger ${className}`}
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M10 11v6M14 11v6" />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * Duplicate + Delete as ONE absolutely-positioned sibling overlaying
+ * the row. Both breakpoints render this same strip and differ only in
+ * geometry, so the two actions cannot drift apart on one layout while
+ * staying aligned on the other. Whatever renders it must reserve room
+ * for it in its own right padding (`pr-24` on both the card and the
+ * table row) — the strip overlays content, it does not push it.
+ */
+function RowActions({
+  order,
+  wrapperClass,
+  buttonClass,
+}: {
+  order: Order;
+  wrapperClass: string;
+  buttonClass: string;
+}) {
+  return (
+    <div className={`absolute flex items-center gap-0.5 ${wrapperClass}`}>
+      <DuplicateButton order={order} className={buttonClass} />
+      <DeleteButton order={order} className={buttonClass} />
+    </div>
   );
 }
 
@@ -290,13 +383,13 @@ export default function OrderList() {
         {orders && orders.length > 0 && (
           <ul className="flex flex-col gap-2.5 lg:hidden">
             {pageOrders.map((order) => (
-              // `relative` so the duplicate action can sit as a SIBLING
+              // `relative` so the row actions can sit as a SIBLING
               // overlaying the card. The card itself is one big button,
               // and a button cannot legally contain another.
               <li key={order.id} className="relative">
                 <button
                   onClick={() => navigate(`/orders/${order.id}`)}
-                  className="w-full rounded-xl border border-border-light bg-surface p-3.5 pr-14 text-left shadow-sm transition-shadow hover:shadow-md"
+                  className="w-full rounded-xl border border-border-light bg-surface p-3.5 pr-24 text-left shadow-sm transition-shadow hover:shadow-md"
                 >
                   <span className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate text-[15px] font-bold text-text-primary">
@@ -314,9 +407,10 @@ export default function OrderList() {
                     </span>
                   </span>
                 </button>
-                <DuplicateButton
+                <RowActions
                   order={order}
-                  className="absolute right-2.5 top-2.5 h-11 w-11"
+                  wrapperClass="right-1.5 top-2.5"
+                  buttonClass="h-11 w-11"
                 />
               </li>
             ))}
@@ -337,12 +431,12 @@ export default function OrderList() {
                 </div>
                 {pageOrders.map((order, i) => (
                   // Same sibling-overlay arrangement as the mobile card:
-                  // the row is one button, so the duplicate action cannot
-                  // be nested inside it.
+                  // the row is one button, so the actions cannot be
+                  // nested inside it.
                   <div key={order.id} className="relative">
                   <button
                     onClick={() => navigate(`/orders/${order.id}`)}
-                    className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 pr-14 text-left transition-colors hover:bg-surface-sunken ${
+                    className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 pr-24 text-left transition-colors hover:bg-surface-sunken ${
                       i > 0 ? 'border-t border-border-light' : ''
                     }`}
                   >
@@ -362,9 +456,10 @@ export default function OrderList() {
                       ${Number(order.total).toFixed(2)}
                     </span>
                   </button>
-                    <DuplicateButton
+                    <RowActions
                       order={order}
-                      className="absolute right-2 top-1/2 h-9 w-9 -translate-y-1/2"
+                      wrapperClass="right-2 top-1/2 -translate-y-1/2"
+                      buttonClass="h-9 w-9"
                     />
                   </div>
                 ))}

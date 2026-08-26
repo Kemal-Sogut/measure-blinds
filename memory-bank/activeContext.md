@@ -33,6 +33,14 @@ render-only and untested, like the rest of the dialog's UI. NOTE: `apps/web/.env
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 
+Also uncommitted, web-only, same one file (`apps/web/src/pages/orders/OrderList.tsx`): **every
+orders-list row now carries Delete beside Duplicate**, in a shared `RowActions` strip
+(identical at both breakpoints, only the geometry differs; row padding widened `pr-14` →
+`pr-24` to clear it). Delete confirms by order number and reuses the existing `useDeleteOrder`
+hook and `DELETE /api/orders/:id` — no API, hook or schema change, and no looser rule than the
+order page's own Delete. Own pending state per row; nothing navigates on success, the row just
+leaves the invalidated list. Detail in `knowledge/history/engine_features.md`, 2026-08-25.
+
 Also uncommitted, web-only, one file (`apps/web/src/pages/orders/OrderList.tsx`): **the orders
 list is paginated at 15 per tab**, pager bottom-right under the list (range label, Previous,
 "Page N of M", Next), hidden when the tab fits on one page. Paging is client-side over the

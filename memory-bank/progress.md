@@ -96,7 +96,9 @@ Production labels (browser `window.print()`, one 3x1.5in label per unit of quant
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).
 
-**Orders list (`/`):** status tabs + debounced server-side search, summary tiles on the
+**Orders list (`/`):** status tabs + debounced server-side search, per-row Duplicate and
+Delete icons (Delete confirms by order number and goes through the same
+`DELETE /api/orders/:id` the order page uses), summary tiles on the
 unfiltered `all` view only, and 15 orders per page on every tab with a bottom-right pager
 (range label, Previous, "Page N of M", Next) that hides itself on a single page. Paging is
 client-side over the tab result already fetched, so it costs no request; the rendered page is

@@ -3874,3 +3874,33 @@ refetch, a status change moving a row off the tab, a search narrowing) can never
 staring at an empty page that no longer exists. Changing tab (`selectTab`) or typing in
 search resets to page 1. Both layouts consume the same `pageOrders` slice: the `<lg` card
 stack and the `lg+` table.
+
+## 2026-08-25 — Delete action on every orders-list row
+
+`apps/web/src/pages/orders/OrderList.tsx` (one file; no API, hook or schema change — the
+`useDeleteOrder` hook and `DELETE /api/orders/:id` both already existed and are reused
+untouched).
+
+Duplicate and Delete now sit side by side on every row, in a single absolutely-positioned
+`RowActions` strip overlaying the row's right edge. Both breakpoints render the SAME strip
+and differ only in geometry (`h-11 w-11` icons at `right-1.5 top-2.5` on the card stack,
+`h-9 w-9` centred at `right-2` on the desktop table), so the pair cannot drift apart on one
+layout while staying aligned on the other. Row right padding went `pr-14` → `pr-24` on both
+the card and the table row to clear the wider strip — the strip overlays content, it never
+pushes it.
+
+Delete confirms BY ORDER NUMBER (`Delete BN-1042 permanently? Its line items and payments are
+removed.`) because it sits one icon away from a harmless Duplicate and overlays a row that is
+itself one click from opening the order. Deletion cascades to line items and payments
+(`ON DELETE CASCADE`) and is not undoable. The wording mirrors `OrderDetail`'s Delete and both
+call the same endpoint — the list is not a looser path to deletion than the order page.
+
+`DeleteButton` owns its own mutation and pending state, exactly as `DuplicateButton` does: one
+mutation lifted to the list would grey out every row's icons while a single order was being
+deleted. Nothing navigates on success — `useDeleteOrder` drops the detail cache entry and
+invalidates the list, so the row simply leaves. Both buttons are rendered as SIBLINGS of the
+row, not children: the row is itself one big `<button>` and cannot legally contain another.
+
+### Verified
+`tsc` clean, `oxlint` clean, web 425/425 (unchanged — `OrderList` still has no covering
+tests). NOT seen in a browser: the dev server stops at the Supabase login wall.
