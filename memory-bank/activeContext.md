@@ -4,7 +4,35 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-08-25)
+## Where things stand (as of 2026-08-26)
+
+**Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
+**customer edit requests** (migration 41,
+`supabase/migrations/20260826000041_order_edit_requests.sql`). A new `order_edit_requests`
+table (`order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`;
+`authenticated_full_access` RLS, anon nothing) backs a **Request Edit** button placed to the
+LEFT of Confirm on the public estimate page. It opens a dialog
+(`apps/web/src/pages/customer-view/EditRequestDialog.tsx`, built on `ui/Modal`), POSTs to
+`/public/estimate/:token/edit-request`, and the message surfaces as an amber card
+(`apps/web/src/pages/orders/EditRequestsCard.tsx`) on the staff order page with a
+**Mark resolved** button per row. Staff routes: `GET /api/orders/:id/edit-requests` and
+`POST /api/orders/:id/edit-requests/:requestId/resolve`.
+
+Design decisions worth not re-litigating: a TABLE not order columns (unlike migration 27's
+`cancel_requested_at`, this is a collection); requests accepted ONLY while the order is `sent`;
+message truncated to 1000 chars rather than rejected; **5 open requests per order** (benign
+read-then-insert race, documented); **no email to the shop** — the order page and the activity
+trail carry it; Confirm is NOT blocked by an open request and Request Edit is NOT gated on the
+terms tick. Amber, not red — red stays reserved for the cancellation banner. Full write-up in
+`knowledge/history/engine_features.md`, 2026-08-26; spec in
+`knowledge/specs/2026-08-26-edit-requests-design.md`. Verified: `tsc` clean both workspaces,
+`oxlint` clean, api 447/447, web 425/425. NOT seen in a browser and NOT deployed; the routes
+500 until migration 41 is applied to project `lgbxxlwsdeuhdgzrjjen`.
+
+NOTE: everything below this point was written on 2026-08-25 and several of the items it calls
+"uncommitted" have since landed on `main` (order-list pagination, the row Delete button,
+price-lock on confirmed orders). Trust `git log` over the wording below.
+
 On `main` at `2781d31` ("material-usage-updated" — the Material usage PER-WINDOW breakdown is
 now committed and plain history, `knowledge/history/engine_features.md` 2026-08-25; bulk edit
 v3, the Material usage DIALOG and the composing give-backs landed before it, same file

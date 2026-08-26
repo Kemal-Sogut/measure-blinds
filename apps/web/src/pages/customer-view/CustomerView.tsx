@@ -12,7 +12,8 @@
  *
  *   not found / draft → generic error card
  *   expired           → "contact us for a new quote" card
- *   sent              → summary + terms tick + Confirm button (estimate)
+ *   sent              → summary + terms tick + Request Edit / Confirm
+ *                       buttons (estimate)
  *   confirmed         → e-Transfer details FIRST (quoting the 50% deposit
  *                       while the order awaits its first payment, and the
  *                       remaining balance once it is installed and still
@@ -49,18 +50,28 @@
  * NEVER be undone from this page — the most a customer can do is REQUEST
  * cancellation, which raises a flag for staff and changes no status.
  *
- * This module owns fetching, state and the summary markup. The two new
- * concerns are delegated: `OrderProgress` (tracker) and
- * `CancellationRequest` (request/withdraw), both pure and stateless
- * apart from their own local form drafts.
+ * Before confirming, the customer can also ASK FOR A CHANGE: "Request
+ * Edit" sits to the left of Confirm and opens a dialog for a free-text
+ * message, which is filed against the order and shown to staff on the
+ * order page. Like the cancellation request it mutates nothing — no
+ * status, no line item, no figure — and it deliberately does NOT block
+ * Confirm, since a customer may well accept the quote as it stands while
+ * a question is outstanding. Requests the customer has sent are listed
+ * back to them so a message never appears to vanish on send.
+ *
+ * This module owns fetching, state and the summary markup. The other
+ * concerns are delegated: `OrderProgress` (tracker), `CancellationRequest`
+ * (request/withdraw) and `EditRequestDialog` (change requests), all pure
+ * and stateless apart from their own local form drafts.
  *
  * STAFF PREVIEW (`?preview=1`) — the URL the order page's "Customer
  * View" button opens. The page is otherwise identical to the customer's,
  * which is the point, but four things change:
  *   - a draft renders instead of the "link isn't ready yet" card, since
  *     previewing BEFORE sending is the whole reason the button exists;
- *   - Confirm and the cancellation controls are inert, so a staff member
- *     cannot confirm an order on the customer's behalf just by looking;
+ *   - Confirm, the cancellation controls and the change-request send are
+ *     inert, so a staff member cannot confirm an order on the customer's
+ *     behalf, or file a request as them, just by looking;
  *   - the "customer opened their page" ping never fires, so an office
  *     visit is never mistaken for the customer reading their estimate;
  *   - a banner says so, because none of the above is visible otherwise.
@@ -73,6 +84,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
+import EditRequestDialog from './EditRequestDialog';
 import { displayName } from '../../lib/customerName';
 import { maintenanceMessage } from '../../lib/maintenance';
 
@@ -80,6 +92,21 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
 /** Statuses in which the customer's confirmation already exists. */
 const CONFIRMED_STATUSES = ['awaiting_payment', 'in_progress', 'ready', 'installed'];
+
+/**
+ * One change request the customer sent from this page.
+ *
+ * Read back purely so the page can prove the message landed: without it
+ * a customer who taps Send has no evidence of anything, and the natural
+ * response is to send it again. `resolved_at` turns "we have this" into
+ * "we've dealt with this".
+ */
+interface PublicEditRequest {
+  id: string;
+  message: string;
+  created_at: string;
+  resolved_at: string | null;
+}
 
 /** Public line item shape returned by the Worker. */
 interface PublicLineItem {
@@ -167,6 +194,15 @@ interface PublicEstimate {
   terms: string;
   /** Set while the customer has an open cancellation request. */
   cancel_requested_at: string | null;
+  /**
+   * The customer's own change requests, oldest-first, each with the
+   * moment staff closed it out (`resolved_at`, null while open).
+   *
+   * Optional because a Worker predating the feature serves a payload
+   * without it; this page treats its absence as "none sent", which is
+   * also the correct reading for every order nobody has written to.
+   */
+  edit_requests?: PublicEditRequest[];
   customer: {
     first_name: string;
     last_name: string;
@@ -470,6 +506,11 @@ export default function CustomerView() {
   const [termsOpen, setTermsOpen] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
+  // Change-request dialog: whether it is showing, and whether its POST
+  // is in flight. Held here rather than in the dialog because the send
+  // itself is this module's job (as with every other call on the page).
+  const [editOpen, setEditOpen] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   /**
@@ -585,6 +626,50 @@ export default function CustomerView() {
     }
   }
 
+  /**
+   * Files a change request, then re-reads the payload so the customer's
+   * own list shows what they just sent.
+   *
+   * REJECTS on failure. That is the contract `EditRequestDialog` relies
+   * on: a rejected promise leaves the dialog open with the typed message
+   * intact, while a resolved one closes it. The error text is surfaced
+   * here, in the same `actionError` slot every other action on this page
+   * uses, so the dialog never has to render an error of its own.
+   */
+  async function handleEditRequest(message: string): Promise<void> {
+    setEditBusy(true);
+    setActionError(null);
+    try {
+      const res = await fetch(`${API_URL}/public/estimate/${token}/edit-request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const closed = maintenanceMessage(res, body);
+      if (closed) {
+        setMaintenance(closed);
+        // Resolved, not rejected: the dialog should close, because the
+        // maintenance card is about to replace the whole page.
+        return;
+      }
+      if (!res.ok) {
+        setActionError(body?.error ?? 'We could not send your request. Please try again.');
+        throw new Error('edit-request failed');
+      }
+      await load();
+    } catch (e) {
+      // Distinguish the rethrow above (already reported) from a genuine
+      // network fault, which has reported nothing yet.
+      if (!(e instanceof Error && e.message === 'edit-request failed')) {
+        setActionError('Network problem — please try again.');
+      }
+      throw e;
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
   // Outranks every other state: while the shop is closed the page must
   // say so rather than show a stale order or a misleading "not found".
   if (maintenance) return <Message icon="🛠️" title="Back shortly" body={maintenance} />;
@@ -631,6 +716,13 @@ export default function CustomerView() {
   // end up with an un-confirmable estimate.
   const requiresTerms = Boolean(estimate.terms);
   const canConfirm = !preview && !confirming && (!requiresTerms || termsAccepted);
+  // Asking a question is not assent, so the change-request button is
+  // deliberately NOT gated on the terms tick — only on the preview,
+  // where nothing may write to a real order.
+  const canRequestEdit = !preview && !editBusy;
+  // Defaulted for the same reason as `payments`: a web app shipped ahead
+  // of the Worker must degrade to "none sent", not crash a customer page.
+  const editRequests = estimate.edit_requests ?? [];
   // Defaulted, not assumed: if the web app ships ahead of the Worker
   // this field is absent, and a public page must degrade to "no receipt
   // history" rather than crash for the customer.
@@ -859,6 +951,34 @@ export default function CustomerView() {
           />
         )}
 
+        {/*
+          Receipt for the customer's own change requests.
+
+          Its only job is evidence: a message that vanishes on send reads
+          as a message that was never sent, and the customer's next move
+          is to send it again. Shown at every stage, including after
+          confirmation, so a request filed just before confirming does
+          not disappear the moment they accept the quote.
+        */}
+        {editRequests.length > 0 && (
+          <section className="mb-4 rounded-2xl border border-border bg-surface-elevated p-4">
+            <h2 className="mb-3 text-sm font-semibold text-text-primary">Your change requests</h2>
+            <ul className="flex flex-col gap-3">
+              {editRequests.map((req) => (
+                <li key={req.id} className="border-l-2 border-border pl-3">
+                  <p className="mb-1 text-xs text-text-muted">
+                    {new Date(req.created_at).toLocaleDateString()} ·{' '}
+                    {req.resolved_at ? 'Handled' : "Received — we'll be in touch"}
+                  </p>
+                  <p className="text-sm break-words whitespace-pre-wrap text-text-secondary">
+                    {req.message}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
         {/* Cancellation — pending notice, or the request form */}
@@ -913,20 +1033,56 @@ export default function CustomerView() {
                 </span>
               </label>
             )}
-            <button
-              onClick={handleConfirm}
-              disabled={!canConfirm}
-              className="flex h-14 w-full items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
-            >
-              {/*
-                The label never says "Confirming…" in preview: nothing is
-                in flight, the button is simply inert.
-              */}
-              {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
-            </button>
+            {/*
+              Two actions, one row. Request Edit sits on the LEFT at a
+              third of the width and in a quiet outlined treatment, so
+              the row still reads as one primary decision with an escape
+              hatch beside it rather than as a choice between equals —
+              most customers confirm, and the button that ends the
+              transaction must stay the obvious one.
+
+              The width split is `flex-1` / `flex-[2]`; `min-w-0` on the
+              left button lets its label ellipsize rather than push the
+              row wider than a small phone.
+            */}
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                disabled={!canRequestEdit}
+                className="flex h-14 min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-2 text-[15px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+              >
+                <span className="truncate">Request Edit</span>
+              </button>
+              <button
+                onClick={handleConfirm}
+                disabled={!canConfirm}
+                className="flex h-14 flex-[2] items-center justify-center rounded-xl bg-brand-600 text-lg font-semibold text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {/*
+                  The label never says "Confirming…" in preview: nothing is
+                  in flight, the button is simply inert.
+                */}
+                {!preview && confirming ? 'Confirming…' : 'Confirm Estimate'}
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/*
+        Mounted outside the fixed bar: the dialog is a page-level overlay
+        and must not inherit the bar's stacking context or its padding.
+        `ui/Modal` renders nothing while closed, so this costs nothing on
+        the common path.
+      */}
+      <EditRequestDialog
+        open={editOpen}
+        onClose={() => setEditOpen(false)}
+        onSubmit={handleEditRequest}
+        busy={editBusy}
+        disabled={preview}
+      />
     </div>
   );
 }

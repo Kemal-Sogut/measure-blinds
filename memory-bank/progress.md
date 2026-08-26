@@ -26,6 +26,16 @@ index and the installation appointment dropped below `ready`. It never emails an
 touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
 `/mark-sent`, `/in-progress`) remain for the email, payment, and customer-confirm flows.
 
+**Customer edit requests (migration 41, not yet applied):** a **Request Edit** button sits to
+the LEFT of Confirm on the public estimate page. It opens a dialog, POSTs free text to
+`POST /public/estimate/:token/edit-request`, and files a row in the new `order_edit_requests`
+table; staff see the open ones as an amber card on the order page and close each with
+`POST /api/orders/:id/edit-requests/:requestId/resolve`. Accepted only while the order is
+`sent`, capped at 5 OPEN per order, message truncated to 1000 chars. It changes NO status, no
+line item and no money, does not block Confirm, and sends the shop no email — the order page
+and the activity trail are the notification. `resolved_at` is the whole lifecycle and is never
+cleared, so the rows are also the history.
+
 **Maintenance mode (migration 40, not yet applied):** `company_settings.maintenance_mode` +
 `maintenance_message` close the CUSTOMER surfaces only — one gate in `routes/public.ts` answers
 every `/public/*` route 503 with the configured wording (or a fallback), reading and writing no

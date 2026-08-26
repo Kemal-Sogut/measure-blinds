@@ -99,6 +99,8 @@ import {
   useUnmatchedEtransfers,
   useDismissEtransfer,
   useOrderLogs,
+  useOrderEditRequests,
+  useResolveEditRequest,
   useOrderPublicToken,
   downloadOrderPdf,
   downloadWarrantyPdf,
@@ -148,6 +150,7 @@ import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog
 import { applyGiveBackPart, summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
+import EditRequestsCard from './EditRequestsCard';
 import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
@@ -496,6 +499,7 @@ export default function OrderDetail() {
   const [searchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
   const { data: logs } = useOrderLogs(id);
+  const { data: editRequests } = useOrderEditRequests(id);
 
   // New-order customer pre-fill. An "Add order" link (e.g. from an
   // appointment's detail page) opens `/orders/new?customer=<id>`; the
@@ -528,6 +532,7 @@ export default function OrderDetail() {
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
   const resolveCancelMut = useResolveCancelRequest();
+  const resolveEditMut = useResolveEditRequest();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
   const setStatusMut = useSetOrderStatus();
@@ -1555,6 +1560,24 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Marks one customer change request handled.
+   *
+   * No confirmation prompt: this is a to-do tick, not a state change to
+   * the order, and the row survives in the activity trail either way. A
+   * 409 ("already resolved") reaches the toast verbatim, which is the
+   * right message when a colleague closed it out in another tab.
+   */
+  async function handleResolveEditRequest(requestId: string) {
+    if (!id) return;
+    try {
+      await resolveEditMut.mutateAsync({ id, requestId });
+      toast.success('Change request resolved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not resolve the request.');
+    }
+  }
+
   /** Opens the deny sheet, where the optional explanation is written. */
   function openCancelDeny() {
     setCancelDenyMessage('');
@@ -2369,6 +2392,18 @@ export default function OrderDetail() {
         <div className="flex w-full min-w-0 flex-col gap-4">
           {/* Open cancellation request — needs an answer before anything else */}
           {cancelRequestBanner}
+
+          {/*
+            Customer change requests. Below the cancellation banner
+            (which outranks everything) and above the timeline, so the
+            instructions are read before the order is edited. Outside the
+            read-only fieldset: resolving one is not an edit to the order.
+          */}
+          <EditRequestsCard
+            requests={editRequests ?? []}
+            onResolve={(requestId) => void handleResolveEditRequest(requestId)}
+            resolvingId={resolveEditMut.isPending ? resolveEditMut.variables.requestId : null}
+          />
 
           {/* Progress timeline (revert lives here — outside the disabled fieldset) */}
           {timelineCard}

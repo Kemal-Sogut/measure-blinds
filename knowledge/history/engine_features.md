@@ -3904,3 +3904,73 @@ row, not children: the row is itself one big `<button>` and cannot legally conta
 ### Verified
 `tsc` clean, `oxlint` clean, web 425/425 (unchanged — `OrderList` still has no covering
 tests). NOT seen in a browser: the dev server stops at the Supabase login wall.
+
+## 2026-08-26 — Customer edit requests ("Request Edit" beside Confirm)
+
+The public estimate page previously offered a customer exactly one forward action — Confirm —
+and one backward action that only exists AFTER confirming (request cancellation). A customer
+who wanted a change had to leave the page, and the ask never reached the order record. There
+is now a **Request Edit** button to the LEFT of Confirm that opens a dialog, files a free-text
+message against the order, and surfaces it on the staff order page.
+
+**Migration 41** (`20260826000041_order_edit_requests.sql`) adds `order_edit_requests`
+(`id`, `order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`), an index
+on `(order_id, created_at desc)`, a partial index on `order_id where resolved_at is null`
+backing the open-count cap, and the standard `authenticated_full_access` RLS policy (anon gets
+nothing).
+
+A TABLE, not columns on `orders` — deliberately the opposite call from migration 27's
+`cancel_requested_at`. That one is a single optional side-conversation per order; an edit
+request is a COLLECTION, several of which can be open and each resolved independently.
+`resolved_at` is the whole lifecycle (null = open, set = handled, never cleared), so the rows
+double as the history. No `resolved_by`: the app has no per-user attribution anywhere else on
+an order, and `order_logs` already records that the resolution happened.
+
+**Public route** `POST /public/estimate/:token/edit-request` (`apps/api/src/routes/public.ts`).
+Accepted ONLY while the order is `sent` — the pre-confirmation window in which the customer's
+action bar exists at all — with `effectiveStatus` applied first so a lapsed estimate reads as
+expired here exactly as it does on the page. The message is trimmed and TRUNCATED to 1000
+chars rather than rejected (a customer should not be bounced for a limit they were never
+shown); empty-after-trim is 400. A per-order cap of **5 OPEN requests** is counted immediately
+before the insert; the read-then-insert race is benign and documented as such — the cap exists
+to stop a wall of messages, not as an invariant worth a trigger. The trail entry is
+`'Customer requested changes.'` with the message deliberately NOT interpolated, matching how
+the cancellation note is handled. **No email is sent** — a deliberate choice: the order page
+and the activity trail carry it. `GET /public/estimate/:token` gained `edit_requests`, read
+back to the customer so a sent message never appears to vanish. `loadByToken`'s select had to
+become ONE string literal — supabase-js parses the select at the TYPE level and a concatenated
+string widens to `string`, collapsing the whole row type to a parse error.
+
+**Staff routes** (`apps/api/src/routes/orders.ts`): `GET /:id/edit-requests` (newest first,
+resolved included, limit 200) and `POST /:id/edit-requests/:requestId/resolve`. The resolve
+UPDATE is guarded on `resolved_at is null` AND `order_id`, so a stale tab cannot re-stamp a
+request a colleague closed and a request id from another order cannot be resolved through this
+order's URL. When nothing matches, a follow-up read distinguishes 404 (not this order's) from
+409 (already resolved) rather than collapsing both into "not found". It returns the REFRESHED
+list, so the card re-renders in one round-trip instead of flickering through an empty state.
+
+**Web — customer**: new `pages/customer-view/EditRequestDialog.tsx`, presentational over the
+shared `ui/Modal` (so the unauthenticated page inherits the tested Escape/backdrop/scroll-lock/
+focus handling rather than reimplementing it), with the body markup in the customer page's own
+idiom. `onSubmit` REJECTS on failure — that contract is what keeps a failed send from clearing
+the typed message, while a resolved promise closes the dialog. The draft resets on OPEN, not on
+close, so a filed message is never re-presented as unsent. `CustomerView.tsx` splits the fixed
+bar into `flex-1` / `flex-[2]`: Request Edit outlined on the left, Confirm unchanged on the
+right — one primary decision with an escape hatch, not a choice between equals. Request Edit is
+NOT gated on the terms tick (asking a question is not assent) and does NOT block Confirm. Both
+inert under `?preview=1`. A "Your change requests" list renders what the customer sent.
+
+**Web — staff**: new `pages/orders/EditRequestsCard.tsx`, amber, showing only UNRESOLVED
+requests and disappearing when the last is closed — a to-do list, not an archive. Amber not
+red: red is spoken for on that page by the cancellation banner, the one thing that must be
+answered before anything else. Mounted in `OrderDetail.tsx` below that banner, above the
+timeline, OUTSIDE the read-only fieldset (resolving is not an edit to the order). `resolvingId`
+is tracked per row so resolving the third request does not blank the other two's buttons.
+`useOrderEditRequests` / `useResolveEditRequest` in `hooks/useOrders.ts`; the resolve response
+is written straight into the cache and only the LOGS query is invalidated — the order itself
+did not change.
+
+### Verified
+`tsc` clean both workspaces, `oxlint` clean, api 447/447 (429 → +13 public, +5 orders), web 425/425
+(unchanged — the new components have no covering tests, matching the rest of the page). The
+migration is written but NOT applied to the live Supabase project; the routes 500 until it is.

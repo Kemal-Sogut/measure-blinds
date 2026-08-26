@@ -22,6 +22,10 @@
  *   PUT    /:id           replace fields + line items, full recalc;
  *                         editable at ANY lifecycle stage
  *   GET    /:id/logs      activity trail (newest first)
+ *   GET    /:id/edit-requests
+ *                         customer change requests (newest first)
+ *   POST   /:id/edit-requests/:requestId/resolve
+ *                         mark one change request handled
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
  *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
@@ -1286,6 +1290,94 @@ app.get('/:id/logs', async (c) => {
     .order('created_at', { ascending: false })
     .limit(200);
   if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: data ?? [] });
+});
+
+/**
+ * Columns of one change request as the staff card renders it. The row is
+ * customer input plus a resolution stamp; there is nothing to withhold.
+ */
+const EDIT_REQUEST_COLUMNS = 'id, order_id, message, created_at, resolved_at';
+
+/**
+ * Reads an order's change requests newest-first.
+ *
+ * Newest-first because the card shows the OPEN ones and the most recent
+ * ask is the one staff are most likely acting on. Resolved rows are
+ * returned too — the caller decides what to show, and the same list
+ * backs any future "show handled" affordance without a second endpoint.
+ *
+ * Capped at 200 like the activity trail; the public route caps OPEN
+ * requests per order at 5, so this ceiling is only ever reached by a
+ * long-lived order with many answered ones.
+ */
+app.get('/:id/edit-requests', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('order_edit_requests')
+    .select(EDIT_REQUEST_COLUMNS)
+    .eq('order_id', c.req.param('id'))
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ data: data ?? [] });
+});
+
+/**
+ * Marks one change request handled (staff amended the order, or decided
+ * no change was needed and said so off-system).
+ *
+ * Stamping `resolved_at` is the ONLY mutation this table ever receives
+ * after insert — nothing is edited or deleted, so the row stays a
+ * faithful record of what the customer asked for. The UPDATE is guarded
+ * on `resolved_at is null` so a stale tab cannot re-stamp a request that
+ * a colleague already closed, and on `order_id` so a request id from
+ * another order cannot be resolved through this order's URL.
+ *
+ * Returns the refreshed list rather than the single row: the card that
+ * calls this re-renders from the list, and one round-trip keeps it from
+ * flickering through an empty state.
+ *
+ * 404 unknown order/request · 409 already resolved.
+ */
+app.post('/:id/edit-requests/:requestId/resolve', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+  const requestId = c.req.param('requestId');
+
+  const { data: updated, error } = await sb
+    .from('order_edit_requests')
+    .update({ resolved_at: new Date().toISOString() })
+    .eq('id', requestId)
+    .eq('order_id', id)
+    .is('resolved_at', null)
+    .select('id')
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+
+  if (!updated) {
+    // Nothing matched: either the request does not belong to this order
+    // (or does not exist), or it was already closed. Distinguish the two
+    // so staff see "already handled" instead of a bare "not found".
+    const { data: existing } = await sb
+      .from('order_edit_requests')
+      .select('id, resolved_at')
+      .eq('id', requestId)
+      .eq('order_id', id)
+      .maybeSingle();
+    if (!existing) return c.json({ error: 'Change request not found' }, 404);
+    return c.json({ error: 'That change request has already been resolved.' }, 409);
+  }
+
+  await logOrderEvent(sb, id, 'Change request marked resolved.');
+
+  const { data, error: readError } = await sb
+    .from('order_edit_requests')
+    .select(EDIT_REQUEST_COLUMNS)
+    .eq('order_id', id)
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (readError) return c.json({ error: readError.message }, 500);
   return c.json({ data: data ?? [] });
 });
 
