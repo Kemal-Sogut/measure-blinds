@@ -3845,3 +3845,32 @@ order.
 **Deployment order matters**: the migration must be applied BEFORE the Worker is deployed —
 the insert writes both columns on every save, so a Worker running against the old schema
 would fail every order write.
+
+## 2026-08-25 — Orders list paginated at 15 per tab
+
+`apps/web/src/pages/orders/OrderList.tsx` (one file; no API, hook or query-key change).
+
+Every status tab (All / Active / Awaiting Payment / In Progress / Ready / Installed /
+Expired) now renders at most `PAGE_SIZE = 15` orders, with a pager anchored bottom-right
+under the list — a range label ("1–15 of 42"), Previous, "Page N of M", Next — inside a
+`<nav aria-label="Orders pagination">`. It is hidden entirely when the tab fits on one page,
+so a dead "Page 1 of 1" control never appears.
+
+Paging is CLIENT-side over the tab result already in the TanStack cache: `GET /api/orders`
+returns the tab's rows in one capped response (`.limit(100)` in
+`apps/api/src/routes/orders.ts`), so a page change costs no request, no spinner and no
+`keepPreviousData` flicker. Two consequences worth keeping in mind:
+
+- The desktop summary tiles still count the WHOLE `orders` array, not the visible page, so
+  they keep describing the tab rather than the slice — the same honesty rule the module
+  header already stated for the `all`-tab-only restriction.
+- The pager can only page through what the server sent. Past 100 orders on a tab the list is
+  already truncated upstream; making the pager reach further is a server-paging change
+  (`limit`/`range` + a total count on the envelope), not a UI one.
+
+`page` is state; the RENDERED page is derived and clamped —
+`currentPage = Math.min(page, totalPages)` — so a result set that shrinks under the user (a
+refetch, a status change moving a row off the tab, a search narrowing) can never leave them
+staring at an empty page that no longer exists. Changing tab (`selectTab`) or typing in
+search resets to page 1. Both layouts consume the same `pageOrders` slice: the `<lg` card
+stack and the `lg+` table.

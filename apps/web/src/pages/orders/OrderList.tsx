@@ -9,6 +9,16 @@
  * the editor; the primary "+ New Order" action is a sticky bar on
  * mobile and lives in the header on desktop.
  *
+ * Every tab shows at most `PAGE_SIZE` orders at a time, with the pager
+ * anchored bottom-right under the list. Paging is client-side over the
+ * already-fetched tab result (`GET /api/orders` returns the tab's rows
+ * in one capped response), so switching pages costs no request and the
+ * summary tiles keep counting the WHOLE tab rather than the page.
+ * Changing tab or search resets to page 1, and the rendered page is
+ * clamped to the current page count so a shrinking result set (a
+ * refetch, a status change) can never leave the list blank on a page
+ * that no longer exists.
+ *
  * The desktop summary tiles render ONLY on the unfiltered default view
  * (`all` tab, empty search). `useOrderList` filters server-side, so on
  * any other tab `orders` holds just that status and a count drawn from
@@ -115,6 +125,13 @@ const SUMMARY: { status: OrderStatus; label: string; accent: CardAccent; d: stri
   },
 ];
 
+/**
+ * Orders rendered per page, on every tab. Fifteen fills a desktop
+ * viewport without scrolling the pager out of reach and keeps a phone's
+ * card stack to a few flicks.
+ */
+const PAGE_SIZE = 15;
+
 /** "Jul 1" style short date from an ISO date string. */
 function shortDate(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
@@ -133,8 +150,24 @@ function customerName(order: Order): string {
 export default function OrderList() {
   const [tab, setTab] = useState<OrderTab>('all');
   const [term, setTerm] = useState('');
+  const [page, setPage] = useState(1);
   const { data: orders, isLoading, error } = useOrderList(tab, term);
   const navigate = useNavigate();
+
+  // Derived, never stored: the query can return fewer orders than the
+  // page the user is standing on (a refetch, a status change that moves
+  // a row off this tab), and a stale `page` would then render nothing.
+  const totalPages = Math.max(1, Math.ceil((orders?.length ?? 0) / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageOrders = orders
+    ? orders.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+    : [];
+
+  /** Switch tab and return to the first page of the new result. */
+  function selectTab(next: OrderTab) {
+    setTab(next);
+    setPage(1);
+  }
 
   return (
     <div className="min-h-screen bg-surface-muted pb-24 sm:pb-8">
@@ -201,7 +234,7 @@ export default function OrderList() {
           {TABS.map((t) => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => selectTab(t.key)}
               className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-3 py-2 text-[13px] transition-colors ${
                 tab === t.key
                   ? 'bg-surface font-bold text-text-primary shadow-sm'
@@ -230,7 +263,10 @@ export default function OrderList() {
             type="search"
             placeholder="Search order # or customer…"
             value={term}
-            onChange={(e) => setTerm(e.target.value)}
+            onChange={(e) => {
+              setTerm(e.target.value);
+              setPage(1);
+            }}
             className="h-11 w-full rounded-md border border-border-input bg-surface pl-9 pr-3 text-[15px] text-text-primary placeholder:text-text-muted"
           />
         </div>
@@ -253,7 +289,7 @@ export default function OrderList() {
         {/* Mobile cards */}
         {orders && orders.length > 0 && (
           <ul className="flex flex-col gap-2.5 lg:hidden">
-            {orders.map((order) => (
+            {pageOrders.map((order) => (
               // `relative` so the duplicate action can sit as a SIBLING
               // overlaying the card. The card itself is one big button,
               // and a button cannot legally contain another.
@@ -299,7 +335,7 @@ export default function OrderList() {
                   <span>Status</span>
                   <span className="text-right">Total</span>
                 </div>
-                {orders.map((order, i) => (
+                {pageOrders.map((order, i) => (
                   // Same sibling-overlay arrangement as the mobile card:
                   // the row is one button, so the duplicate action cannot
                   // be nested inside it.
@@ -335,6 +371,44 @@ export default function OrderList() {
               </CardBody>
             </Card>
           </div>
+        )}
+
+        {/* Pager — bottom right of the list, both layouts. Hidden on a
+            single page: a "Page 1 of 1" control is noise that also
+            invites a click that can do nothing. The range label counts
+            the whole tab, so it says how much the tab holds, not how
+            much this page shows. */}
+        {orders && totalPages > 1 && (
+          <nav
+            aria-label="Orders pagination"
+            className="mt-4 flex items-center justify-end gap-2"
+          >
+            <span className="mr-1 text-[13px] text-text-secondary">
+              {(currentPage - 1) * PAGE_SIZE + 1}–
+              {Math.min(currentPage * PAGE_SIZE, orders.length)} of {orders.length}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage <= 1}
+              aria-label="Previous page"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+            >
+              ‹ Previous
+            </button>
+            <span className="text-[13px] text-text-secondary" aria-current="page">
+              Page {currentPage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage >= totalPages}
+              aria-label="Next page"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+            >
+              Next ›
+            </button>
+          </nav>
         )}
       </div>
 

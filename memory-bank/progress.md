@@ -96,6 +96,13 @@ Production labels (browser `window.print()`, one 3x1.5in label per unit of quant
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).
 
+**Orders list (`/`):** status tabs + debounced server-side search, summary tiles on the
+unfiltered `all` view only, and 15 orders per page on every tab with a bottom-right pager
+(range label, Previous, "Page N of M", Next) that hides itself on a single page. Paging is
+client-side over the tab result already fetched, so it costs no request; the rendered page is
+clamped to the live page count, and tab/search changes reset to page 1. The pager reaches
+only as far as the server sends — `GET /api/orders` caps at 100 rows per tab.
+
 **Order Presentation (`/orders/:id/present`):** the customer-facing view a consultant turns
 toward the customer in person, reached from a "Present to Customer" action directly below
 Confirm on the UNCONFIRMED stages only (draft, sent, expired); it saves before navigating,

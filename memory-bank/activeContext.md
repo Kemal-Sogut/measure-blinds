@@ -33,6 +33,18 @@ render-only and untested, like the rest of the dialog's UI. NOTE: `apps/web/.env
 `.env.local` DO exist in this worktree now, so the long-standing "the app can't boot at all"
 blocker below is out of date for anyone with a Supabase login.
 
+Also uncommitted, web-only, one file (`apps/web/src/pages/orders/OrderList.tsx`): **the orders
+list is paginated at 15 per tab**, pager bottom-right under the list (range label, Previous,
+"Page N of M", Next), hidden when the tab fits on one page. Paging is client-side over the
+tab result already fetched, so no API/hook/query-key change and no request per page; the
+summary tiles still count the whole tab, not the page. `page` is state but the rendered page
+is derived and clamped to `totalPages`, so a shrinking result can't strand the user on an
+empty page; tab switch and search both reset to page 1. KNOWN CEILING: `GET /api/orders`
+caps at `.limit(100)`, so the pager cannot reach past the first 100 orders of a tab —
+going further is a server-paging change, not a UI one. Detail in
+`knowledge/history/engine_features.md`, 2026-08-25. Verified: `tsc` clean; NOT seen in a
+browser (the dev server stops at the login wall) and `OrderList` has no covering tests.
+
 **Also uncommitted, and needing its own DATABASE migration applied before deploy:**
 customer-facing **maintenance mode** (migration 40,
 `supabase/migrations/20260825000040_company_maintenance_mode.sql`). `company_settings` gains
