@@ -3974,3 +3974,87 @@ did not change.
 `tsc` clean both workspaces, `oxlint` clean, api 447/447 (429 → +13 public, +5 orders), web 425/425
 (unchanged — the new components have no covering tests, matching the rest of the page). The
 migration is written but NOT applied to the live Supabase project; the routes 500 until it is.
+
+## 2026-08-28 — One order view: Present absorbs Overview, behind a price-breakdown toggle
+
+`/orders/:id/overview` and `OrderOverview.tsx` are GONE. `/orders/:id/present` is the app's
+only read-only order view and now carries everything Overview did. The split was backwards:
+the internal-only page showed unit prices and override markers but no per-option money, while
+the customer-facing page showed per-option money but dropped notes, add-ons and the balance —
+so a consultant wanting the full picture opened both, in two tabs.
+
+**Absorbed into the blinds table** (`PresentationTable.tsx`): a **Note** column, a **Unit**
+column carrying the `show_original_price` strikethrough, and **add-on sub-lines** under the
+room name. Column order is now `Room | Blind type | Size (cm) | options… | Qty | Unit |
+Adjustment | Line total | Note`. The footer gained blank cells under Unit and Note — a column
+of unit prices summed together is not a number that means anything. Blinds stay in ONE
+filterable table; Overview's per-blind-type tables were deliberately not carried over, because
+the `Blind type` column already says it and the filter bar narrows the whole order in one place.
+Size stays `(120 + 80) × 210` rather than splitting back into Width/Height.
+
+**Other items** was promoted from an inline `<ul>` to a real table
+(`PresentationOtherItems.tsx`, `Type | Description | Qty | Unit | Total`), absorbing Overview's
+`FlatItemsTable` wholesale — description sub-line and add-on lines included. It keeps its
+existing behaviour of dropping out once an option filter is active.
+
+**Totals strip** gained **Paid** and **Balance due** (server row, only when `amount_paid > 0`,
+green once settled).
+
+**The toggle** (`BreakdownToggle.tsx`, on the title row). ON is the SELLING state — it reveals
+what each individual CHOICE cost, which is what justifies a price to a customer looking at the
+screen. It governs per-choice money ONLY: option cells' `+$` amounts, their footer totals,
+add-on prices, and the Adjustment column. Option names, add-on labels, Qty, Unit, Note, every
+row's Line total, the footer overall and the whole order strip are on screen in BOTH states, so
+the page can never disagree with the estimate the customer was sent. `useState(false)`, not
+persisted — a consultant reveals it deliberately rather than finding the last session's state
+on a screen already facing a customer. `print:hidden` on the control alone: whatever is on
+screen is what prints.
+
+Adjustment hides WITH the breakdown rather than persisting. It holds the money no option column
+explains (add-ons, plus the gap an override opened), so alone it reads as an unexplained charge
+or discount. Off means off — with the toggle down, add-on and override money exists only inside
+the line total.
+
+**The price override.** `show_original_price` alone decides whether the struck-through original
+prints, independent of the toggle in BOTH directions: it is a real privacy control (the public
+endpoint omits the figure entirely when false), not a display preference. Overview's amber
+"price overridden" dot is DROPPED — it meant "someone typed this price", fair on an
+internal-only screen, but an unexplained internal marker on a page that can face a customer.
+
+**Entry point.** `ICONS.overview` and the `overview` `StageAction` are removed from
+`OrderDetail.tsx`; every stage's `secondary` set now offers the existing **Present to Customer**
+action, which saves then navigates in the SAME tab (a `window.open` after an `await` is treated
+as a popup and blocked — the reason it was in-tab to begin with).
+
+**New modules.** `presentationCells.tsx` (`Th`/`Td`/`Tf`, `AddonLines`, `UnitPrice` — the last
+two rescued from Overview), `presentationMoney.ts`, `BreakdownToggle.tsx`,
+`PresentationOtherItems.tsx`. `money` lives in its own plain-TS module rather than beside the
+components: a React Fast Refresh boundary only holds when a module exports components alone,
+and `oxlint`'s `react(only-export-components)` enforces it — worth knowing before adding another
+helper to a `.tsx`. `optionBreakdown.ts` and `presentationFilters.ts` were NOT touched.
+
+Incidental: Overview rendered `Tax ({Number(order.tax_rate)}%)` → "Tax (0.13%)". Present's
+`HST ({Math.round(rate * 100)}%)` → "HST (13%)" is correct, so the bug died with the page.
+
+Spec: `knowledge/specs/2026-08-28-unified-order-view-design.md`.
+Plan: `knowledge/plans/2026-08-28-unified-order-view.md`.
+
+### Verified
+`tsc` clean, `oxlint` clean, web 433/433 (425 → +8: `presentationMoney.test.ts`, the one piece
+of genuinely new pure logic — the negative-safe U+2212 formatter feeding the Adjustment column
+and the Balance row).
+
+The rendering was verified in the browser against a throwaway Vite harness rendering the real
+components with fixtures (five blinds spanning note/add-on/override-shown/override-hidden/
+multi-qty, plus preset and custom lines), because `apps/web/.env` does not exist in this
+worktree and the full app renders blank without Supabase config. Confirmed in both toggle
+states: line totals, qty total, unit prices and the footer overall are BYTE-IDENTICAL; every
+row reconciles (`Σ cells + adjustment === line_total`) and the footer columns sum to the
+overall (466 + 110.40 + 73.60 + 200 + 240 − 5 = 1085); header/footer/body cell counts match
+exactly (14 with the toggle on, 13 with it off); the page body never scrolls sideways at 768px
+while the blinds table scrolls inside its own container; `.print\:hidden` resolves to
+`@media print { display: none }`.
+
+NOT browser-verified (no Supabase env): the totals strip's Paid/Balance rows and the
+`OrderDetail` stage-action wiring. Both are type-checked, and the action change is a
+substitution of an existing action into five `secondary` arrays.

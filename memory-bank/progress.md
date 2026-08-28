@@ -115,24 +115,34 @@ client-side over the tab result already fetched, so it costs no request; the ren
 clamped to the live page count, and tab/search changes reset to page 1. The pager reaches
 only as far as the server sends — `GET /api/orders` caps at 100 rows per tab.
 
-**Order Presentation (`/orders/:id/present`):** the customer-facing view a consultant turns
-toward the customer in person, reached from a "Present to Customer" action directly below
-Confirm on the UNCONFIRMED stages only (draft, sent, expired); it saves before navigating,
-same tab. One row per blind, one column per option type carrying that option's money, plus
-`<tfoot>` totals per column that track a stackable filter bar (AND across option types, OR
-within one; every value harvested from the order's own line items with a blind count). Unused
-option columns and the Adjustment column drop out; hidden items are excluded; an option that
-adds nothing prints its bare name. Per-option money comes from the new public
-`BaseBlindType.describeUnitCosts()` — `calculateUnitPrice` is now the SUM of that breakdown,
-so a price basis is still interpreted in exactly one place. Cells are fitted to the stored
-price so `Σ cells + adjustment === line_total` exactly on every row. The filter-tracking
-overall total and the server-authoritative order strip (subtotal/discount/HST/total, never
-recomputed) are deliberately separate numbers.
+**Order view (`/orders/:id/present`):** the app's ONE read-only order view since 2026-08-28,
+when it absorbed the separate Order Overview page (`/orders/:id/overview` is gone). Reached
+from a "Present to Customer" action at EVERY stage; it saves before navigating, same tab.
+
+One row per blind, one column per option type carrying that option's money, plus `<tfoot>`
+totals per column that track a stackable filter bar (AND across option types, OR within one;
+every value harvested from the order's own line items with a blind count). It also carries what
+Overview did: a Note column, a Unit column with the `show_original_price` strikethrough, add-on
+sub-lines, an Other-items table, and Paid / Balance due. All blinds stay in one filterable
+table — Overview's per-blind-type tables were not carried over.
+
+A **Price breakdown** switch on the title row governs PER-CHOICE money only: option `+$`
+amounts, their footer totals, add-on prices, and the Adjustment column. Option names, add-on
+labels, Qty, Unit, Note, every line total, the footer overall and the order strip show in BOTH
+states, so the page can never disagree with the estimate the customer was sent. Off on load,
+not persisted; ON is the selling state. Unused option columns drop out independently of it;
+hidden items are excluded; an option that adds nothing prints its bare name.
+
+Per-option money comes from the public `BaseBlindType.describeUnitCosts()` — `calculateUnitPrice`
+is the SUM of that breakdown, so a price basis is interpreted in exactly one place. Cells are
+fitted to the stored price so `Σ cells + adjustment === line_total` exactly on every row. The
+filter-tracking overall total and the server-authoritative order strip
+(subtotal/discount/HST/total/paid/balance, never recomputed) are deliberately separate numbers.
 
 **Material usage dialog (trigger row above the discount control at both breakpoints;
 `MaterialUsageDialog.tsx`, rendered once for the page):** internal-only — never shown to a
-customer, never printed, absent from the PDF, the public customer view,
-`/orders/:id/present`, and `/orders/:id/overview`. Shows billed material quantity, rate, and
+customer, never printed, absent from the PDF, the public customer view, and
+`/orders/:id/present`. Shows billed material quantity, rate, and
 material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
 hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
 priced; a note surfaces billed-vs-measured area when minimums inflated it. Each material row
@@ -194,12 +204,14 @@ autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = tru
   driven end to end.
 - **No real device has ever driven the app itself.** Every staff route sits behind
   `ProtectedRoute`, so verification to date is types + tests + production builds, occasionally
-  a signed-in desktop-Chrome session, or (twice, 2026-08-20) a throwaway component-level Vite
-  harness — for the bulk-add row, and for the Order Presentation table and filter bar — never
-  the live app on a real phone/tablet. This is the standing gap behind nearly every "verify
-  before field use" note below. The Presentation page's own shell (data fetch, order-total
-  strip, other-items section, print layout) has therefore never been rendered at all; only its
-  two child components have.
+  a signed-in desktop-Chrome session, or (three times: twice 2026-08-20, again 2026-08-28) a
+  throwaway component-level Vite harness — for the bulk-add row, for the Order Presentation
+  table and filter bar, and for the merged order view's blinds table, other-items table and
+  breakdown toggle — never the live app on a real phone/tablet. `apps/web/.env` does not exist
+  in this worktree, so the full app renders blank locally and a harness is the only way to get
+  these components on screen. This is the standing gap behind nearly every "verify before field
+  use" note below. The order view's own SHELL (data fetch, order-total strip with Paid/Balance,
+  print layout) has still never been rendered at all; only its child components have.
 - Bulk-add's newest UI still has real gaps beyond the row-width fix above: the live
   panel-shorthand split has not been tried on an actual iOS decimal keypad, and the card/row
   contrast pass and wider popups have never been rendered and looked at by a human or an

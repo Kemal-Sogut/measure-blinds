@@ -4,7 +4,39 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-08-26)
+## Where things stand (as of 2026-08-28)
+
+**Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
+`/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
+only read-only order view and absorbed everything Overview carried — Note column, Unit price
+with the `show_original_price` strikethrough, add-on sub-lines, an Other-items TABLE, and
+Paid / Balance due. A **Price breakdown** switch on the title row governs per-choice money only
+(option `+$` amounts, their footer totals, add-on prices, the Adjustment column); line totals,
+the footer overall and the order strip are on screen in BOTH states. Off on load, not persisted.
+Every stage's action set now offers the one **Present to Customer** action (same tab, saves
+first); `ICONS.overview` and the `overview` StageAction are gone.
+
+Decisions worth not re-litigating: all blinds stay in ONE filterable table (Overview's
+per-blind-type tables were deliberately dropped — the `Blind type` column already says it);
+Size stays `(120 + 80) × 210`; Adjustment hides WITH the breakdown, because alone it reads as
+an unexplained charge; `show_original_price` alone governs the strikethrough, independent of
+the toggle in both directions; Overview's amber "price overridden" dot is dropped, since the
+page can now face a customer. New modules: `presentationCells.tsx`, `presentationMoney.ts`,
+`BreakdownToggle.tsx`, `PresentationOtherItems.tsx`. `optionBreakdown.ts` and
+`presentationFilters.ts` untouched.
+
+Gotcha worth remembering: `money` had to move OUT of `presentationCells.tsx` into its own
+plain-TS module — `oxlint`'s `react(only-export-components)` fails a `.tsx` that exports both
+components and a function, because it costs the file its Fast Refresh boundary.
+
+Verified `tsc`/`oxlint` clean, web 433/433 (+8, `presentationMoney.test.ts`), and the rendering
+checked in a throwaway Vite harness in both toggle states — line totals byte-identical, every
+row reconciling, cell counts matching. NOT verified against live data: the totals strip's
+Paid/Balance rows and the stage-action wiring (no `apps/web/.env` in this worktree).
+Full write-up in `knowledge/history/engine_features.md`, 2026-08-28; spec in
+`knowledge/specs/2026-08-28-unified-order-view-design.md`.
+
+## Previously (as of 2026-08-26)
 
 **Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
 **customer edit requests** (migration 41,
