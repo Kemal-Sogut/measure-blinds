@@ -2,23 +2,36 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * The Order Presentation option table — one row per blind, one column per
- * option type, and a `<tfoot>` carrying a total for every money column.
+ * The order view's blinds table — one row per blind, one column per option
+ * type, and a `<tfoot>` carrying a total for every money column.
  *
  * Purely presentational: it renders exactly the rows it is handed, so the
  * page owns filtering and this component's totals are automatically "the
- * totals for what is on screen". All money comes from
+ * totals for what is on screen". All option money comes from
  * `describeLineBreakdown`, which guarantees each row's cells plus its
  * adjustment equal the stored line total — so the footer sums are real
  * money, not indicative figures.
  *
+ * `showBreakdown` governs PER-CHOICE money only: the option cells' `+$`
+ * amounts, their footer totals, the add-on prices, and the Adjustment
+ * column. Option NAMES, add-on LABELS, Qty, Unit, Note, every row's Line
+ * total and the footer's overall total are on screen in both states — the
+ * toggle hides what each individual choice cost, never what a line cost.
+ *
+ * Adjustment hides with the rest rather than persisting: it holds the money
+ * no option column explains (add-ons, plus the gap a price override
+ * opened), so with the breakdown off it would be the last visible fragment
+ * of an otherwise-hidden decomposition, reading as an unexplained charge.
+ *
  * Columns for option types no visible blind carries are dropped entirely
- * rather than rendered full of dashes: an order of plain rollers should
- * not present a customer with four empty columns. The table scrolls inside
- * its own container so the page body never scrolls sideways on a tablet.
+ * rather than rendered full of dashes: an order of plain rollers should not
+ * present a customer with four empty columns. That is independent of the
+ * toggle — a column survives on whether any row NAMES an option, not on
+ * whether its price is showing. The table scrolls inside its own container
+ * so the page body never scrolls sideways on a tablet.
  */
 
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import {
   OPTION_COLUMNS,
   OPTION_COLUMN_LABELS,
@@ -26,22 +39,9 @@ import {
   type OptionCell,
   type OptionColumn,
 } from '../../lib/optionBreakdown';
+import { AddonLines, Td, Tf, Th, UnitPrice } from './presentationCells';
+import { money } from './presentationMoney';
 import type { LineItem } from '../../types';
-
-/**
- * Formats a number as dollars, e.g. `$1234.50`.
- *
- * Unlike the Order Overview's helper this one has to survive NEGATIVES —
- * the adjustment column goes below zero whenever a consultant discounts a
- * line — so the sign leads and the dollar sign hugs the digits. Naive
- * interpolation yields `$-21.20`, which reads as a typo on a screen the
- * customer is looking at. The U+2212 minus matches the discount row on
- * the page's order-total strip.
- */
-function money(value: number | null | undefined): string {
-  const amount = Number(value) || 0;
-  return `${amount < 0 ? '−' : ''}$${Math.abs(amount).toFixed(2)}`;
-}
 
 /**
  * A blind's size for a customer: `120 × 210`, or `(120 + 80) × 210` when
@@ -55,60 +55,20 @@ function size(item: LineItem): string {
   return `${width} × ${item.height_cm}`;
 }
 
-/** Header cell. */
-function Th({ children, right = false }: { children: ReactNode; right?: boolean }) {
-  return (
-    <th
-      className={`whitespace-nowrap px-3 py-2 text-xs font-semibold uppercase tracking-wide text-text-muted ${right ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-/** Body cell. `mono` marks money and size figures. */
-function Td({
-  children,
-  right = false,
-  mono = false,
-}: {
-  children: ReactNode;
-  right?: boolean;
-  mono?: boolean;
-}) {
-  return (
-    <td
-      className={`px-3 py-2 text-[13px] text-text-secondary ${right ? 'text-right' : 'text-left'} ${mono ? 'whitespace-nowrap font-mono' : ''}`}
-    >
-      {children}
-    </td>
-  );
-}
-
-/** Footer cell — heavier than a body cell, since it carries the totals. */
-function Tf({ children, right = false }: { children: ReactNode; right?: boolean }) {
-  return (
-    <td
-      className={`whitespace-nowrap px-3 py-2 font-mono text-sm font-semibold text-text-primary ${right ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}
-
 /**
  * One option cell: the chosen option's name, with what it added to this
- * line beneath it.
+ * line beneath it while the breakdown is showing.
  *
- * An option that adds nothing prints its name alone — a customer reading a
- * column of "$0.00" learns nothing and starts wondering what it means.
+ * An option that adds nothing prints its name alone even with the
+ * breakdown on — a customer reading a column of "$0.00" learns nothing and
+ * starts wondering what it means.
  */
-function OptionValue({ cell }: { cell: OptionCell }) {
+function OptionValue({ cell, showBreakdown }: { cell: OptionCell; showBreakdown: boolean }) {
   if (cell.name === null) return <>—</>;
   return (
     <>
       <span className="block">{cell.name}</span>
-      {cell.amount !== null && cell.amount !== 0 && (
+      {showBreakdown && cell.amount !== null && cell.amount !== 0 && (
         <span className="mt-0.5 block font-mono text-xs text-text-muted">
           +{money(cell.amount)}
         </span>
@@ -117,13 +77,24 @@ function OptionValue({ cell }: { cell: OptionCell }) {
   );
 }
 
-export default function PresentationTable({ items }: { items: LineItem[] }) {
+export default function PresentationTable({
+  items,
+  showBreakdown,
+}: {
+  items: LineItem[];
+  showBreakdown: boolean;
+}) {
   /**
    * Rows, their surviving column set, and every footer figure — recomputed
-   * only when the visible items change. A column survives when at least
-   * one visible row fills it, so the table narrows as the filters narrow.
+   * only when the visible items change. A column survives when at least one
+   * visible row fills it, so the table narrows as the filters narrow.
+   *
+   * `showBreakdown` is NOT a dependency here: every figure below is
+   * computed either way and the toggle decides what is rendered. Folding it
+   * in would recompute the whole table on a switch flip for no change in
+   * result, and would make `hasAdjustment` mean two things at once.
    */
-  const { rows, columns, totals, adjustmentTotal, overall, quantityTotal, showAdjustment } =
+  const { rows, columns, totals, adjustmentTotal, overall, quantityTotal, hasAdjustment } =
     useMemo(() => {
       const rows = items.map((item) => ({ item, breakdown: describeLineBreakdown(item) }));
       const columns = OPTION_COLUMNS.filter((column) =>
@@ -146,13 +117,17 @@ export default function PresentationTable({ items }: { items: LineItem[] }) {
           Math.round(rows.reduce((sum, row) => sum + row.breakdown.adjustment, 0) * 100) / 100,
         overall: Math.round(rows.reduce((sum, row) => sum + row.breakdown.lineTotal, 0) * 100) / 100,
         quantityTotal: rows.reduce((sum, row) => sum + (Number(row.item.quantity) || 0), 0),
-        showAdjustment: rows.some((row) => row.breakdown.adjustment !== 0),
+        hasAdjustment: rows.some((row) => row.breakdown.adjustment !== 0),
       };
     }, [items]);
 
+  // The column earns its width only when there is adjustment money AND the
+  // breakdown is on to explain it.
+  const showAdjustment = showBreakdown && hasAdjustment;
+
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-      <table className="w-full min-w-[900px] border-collapse">
+      <table className="w-full min-w-[1100px] border-collapse">
         <thead>
           <tr className="border-b border-border bg-surface-muted">
             <Th>Room</Th>
@@ -162,25 +137,33 @@ export default function PresentationTable({ items }: { items: LineItem[] }) {
               <Th key={column}>{OPTION_COLUMN_LABELS[column]}</Th>
             ))}
             <Th right>Qty</Th>
+            <Th right>Unit</Th>
             {showAdjustment && <Th right>Adjustment</Th>}
             <Th right>Line total</Th>
+            <Th>Note</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border-light">
           {rows.map(({ item, breakdown }, i) => (
             <tr key={item.id}>
-              <Td>{item.room_name || `Blind ${i + 1}`}</Td>
+              <Td>
+                <span className="block">{item.room_name || `Blind ${i + 1}`}</span>
+                <AddonLines item={item} showBreakdown={showBreakdown} />
+              </Td>
               <Td>{item.blinds_type || '—'}</Td>
               <Td right mono>
                 {size(item)}
               </Td>
               {columns.map((column) => (
                 <Td key={column}>
-                  <OptionValue cell={breakdown.cells[column]} />
+                  <OptionValue cell={breakdown.cells[column]} showBreakdown={showBreakdown} />
                 </Td>
               ))}
               <Td right mono>
                 {item.quantity}
+              </Td>
+              <Td right mono>
+                <UnitPrice item={item} />
               </Td>
               {showAdjustment && (
                 <Td right mono>
@@ -190,6 +173,7 @@ export default function PresentationTable({ items }: { items: LineItem[] }) {
               <Td right mono>
                 {money(breakdown.lineTotal)}
               </Td>
+              <Td>{item.note || '—'}</Td>
             </tr>
           ))}
         </tbody>
@@ -203,12 +187,16 @@ export default function PresentationTable({ items }: { items: LineItem[] }) {
             <Tf>{''}</Tf>
             {columns.map((column) => (
               <Tf key={column} right>
-                {totals.get(column) ? money(totals.get(column)) : ''}
+                {showBreakdown && totals.get(column) ? money(totals.get(column)) : ''}
               </Tf>
             ))}
             <Tf right>{quantityTotal}</Tf>
+            {/* Unit prices summed across rows is not a number that means
+                anything to anyone; the column exists per-row only. */}
+            <Tf>{''}</Tf>
             {showAdjustment && <Tf right>{adjustmentTotal ? money(adjustmentTotal) : ''}</Tf>}
             <Tf right>{money(overall)}</Tf>
+            <Tf>{''}</Tf>
           </tr>
         </tfoot>
       </table>
