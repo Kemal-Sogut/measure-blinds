@@ -9,20 +9,24 @@
 **Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
 `/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
 only read-only order view and absorbed everything Overview carried — Note column, Unit price
-with the `show_original_price` strikethrough, add-on sub-lines, an Other-items TABLE, and
+with the `show_original_price` strikethrough, an Add-ons column, an Other-items TABLE, and
 Paid / Balance due. A **Price breakdown** switch on the title row governs per-choice money only
-(option `+$` amounts, their footer totals, add-on prices, the Adjustment column); line totals,
+(option `+$` amounts, their footer totals, add-on prices, the Add-ons column); line totals,
 the footer overall and the order strip are on screen in BOTH states. Off on load, not persisted.
 Every stage's action set now offers the one **Present to Customer** action (same tab, saves
 first); `ICONS.overview` and the `overview` StageAction are gone.
 
 Decisions worth not re-litigating: all blinds stay in ONE filterable table (Overview's
 per-blind-type tables were deliberately dropped — the `Blind type` column already says it);
-Size stays `(120 + 80) × 210`; Adjustment hides WITH the breakdown, because alone it reads as
-an unexplained charge; `show_original_price` alone governs the strikethrough, independent of
-the toggle in both directions; Overview's amber "price overridden" dot is dropped, since the
-page can now face a customer. New modules: `presentationCells.tsx`, `presentationMoney.ts`,
-`BreakdownToggle.tsx`, `PresentationOtherItems.tsx`. `optionBreakdown.ts` and
+Size stays `(120 + 80) × 210`; the Add-ons column hides WITH the breakdown and appears only
+when a visible line has one. There is NO Adjustment column any more: `describeLineBreakdown`
+fits the material cell against `unit_price` (charged) rather than `base_unit_price`, so a price
+override is absorbed into the material cell and what is left over is the add-ons total by
+construction. `show_original_price` is therefore the ONE control over whether an override is
+disclosed anywhere — through the struck-through unit price alone, independent of the toggle in
+both directions, matching what `public.ts` and the PDF assembly already did. Overview's amber
+"price overridden" dot is dropped for the same reason. New modules: `presentationCells.tsx`,
+`presentationMoney.ts`, `BreakdownToggle.tsx`, `PresentationOtherItems.tsx`.
 `presentationFilters.ts` untouched.
 
 Gotcha worth remembering: `money` had to move OUT of `presentationCells.tsx` into its own
@@ -231,9 +235,12 @@ primitive layer.
 - Option cells on the Presentation page are FITTED to `round2(calcUnit × qty)` with the
   material cell absorbing the correction, never summed independently. `line_total` is
   `round2(unit_price × qty) + addonsTotal`, so independently-rounded legs miss it by up to two
-  or three cents and would show a phantom adjustment on an ordinary line. Because of the
-  fitting, the Adjustment column means only "override and/or add-ons", which is what lets the
-  page promise a row that adds up in front of a customer.
+  or three cents and would show phantom money on an ordinary line. The fit is against
+  `unit_price`, so the leftover figure IS the add-ons total by construction and the invariant
+  is `Σ cells + add-ons === line_total`. Consequence to know before touching it: a line
+  discounted below its own hardware fits the material cell NEGATIVE, and it is left that way
+  deliberately — the row has to add up and there is no adjustment column to park a remainder
+  in. `OptionValue` renders the sign rather than prefixing `+`.
 - `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
   `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
 - `blindDraftInputs(draft, catalogs)` (`lineItemDrafts.ts`) is the priced-inputs assembly

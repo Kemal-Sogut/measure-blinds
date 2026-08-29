@@ -9,19 +9,29 @@
  * page owns filtering and this component's totals are automatically "the
  * totals for what is on screen". All option money comes from
  * `describeLineBreakdown`, which guarantees each row's cells plus its
- * adjustment equal the stored line total — so the footer sums are real
- * money, not indicative figures.
+ * add-ons equal the stored line total — so the footer sums are real money,
+ * not indicative figures.
  *
  * `showBreakdown` governs PER-CHOICE money only: the option cells' `+$`
- * amounts, their footer totals, the add-on prices, and the Adjustment
- * column. Option NAMES, add-on LABELS, Qty, Unit, Note, every row's Line
- * total and the footer's overall total are on screen in both states — the
- * toggle hides what each individual choice cost, never what a line cost.
+ * amounts, their footer totals, the add-on prices, and the Add-ons column.
+ * Option NAMES, add-on LABELS, Qty, Unit, Note, every row's Line total and
+ * the footer's overall total are on screen in both states — the toggle
+ * hides what each individual choice cost, never what a line cost.
  *
- * Adjustment hides with the rest rather than persisting: it holds the money
- * no option column explains (add-ons, plus the gap a price override
- * opened), so with the breakdown off it would be the last visible fragment
- * of an otherwise-hidden decomposition, reading as an unexplained charge.
+ * Add-ons get a column because they ARE a per-choice charge, the one kind
+ * an option column cannot hold: any line can carry any number of them and
+ * they are named per line, not chosen from a catalog slot. The column
+ * replaced an `Adjustment` column that held add-ons AND the gap a price
+ * override opened — money of two unrelated kinds under a label that
+ * explained neither. The override half now sits inside the material cell
+ * (see `describeLineBreakdown`), which leaves this column meaning exactly
+ * what its heading says.
+ *
+ * The column is also why the room name carries no add-on sub-lines here,
+ * unlike the other-items table below it: printing `+ Rush fee $40.00` under
+ * the room AND `$40.00` in the column is the same money twice on the common
+ * single-add-on line. The sub-lines stay in `PresentationOtherItems`, which
+ * has no Add-ons column of its own.
  *
  * Columns for option types no visible blind carries are dropped entirely
  * rather than rendered full of dashes: an order of plain rollers should not
@@ -39,7 +49,7 @@ import {
   type OptionCell,
   type OptionColumn,
 } from '../../lib/optionBreakdown';
-import { AddonLines, Td, Tf, Th, UnitPrice } from './presentationCells';
+import { Td, Tf, Th, UnitPrice } from './presentationCells';
 import { money } from './presentationMoney';
 import type { LineItem } from '../../types';
 
@@ -70,7 +80,10 @@ function OptionValue({ cell, showBreakdown }: { cell: OptionCell; showBreakdown:
       <span className="block">{cell.name}</span>
       {showBreakdown && cell.amount !== null && cell.amount !== 0 && (
         <span className="mt-0.5 block font-mono text-xs text-text-muted">
-          +{money(cell.amount)}
+          {/* `+` only when there is something to add. The material cell
+              absorbs a price override and can fit negative on a line sold
+              below its own hardware, where `+−$50.00` would be nonsense. */}
+          {cell.amount < 0 ? money(cell.amount) : `+${money(cell.amount)}`}
         </span>
       )}
     </>
@@ -92,9 +105,9 @@ export default function PresentationTable({
    * `showBreakdown` is NOT a dependency here: every figure below is
    * computed either way and the toggle decides what is rendered. Folding it
    * in would recompute the whole table on a switch flip for no change in
-   * result, and would make `hasAdjustment` mean two things at once.
+   * result, and would make `hasAddons` mean two things at once.
    */
-  const { rows, columns, totals, adjustmentTotal, overall, quantityTotal, hasAdjustment } =
+  const { rows, columns, totals, addonsTotal, overall, quantityTotal, hasAddons } =
     useMemo(() => {
       const rows = items.map((item) => ({ item, breakdown: describeLineBreakdown(item) }));
       const columns = OPTION_COLUMNS.filter((column) =>
@@ -113,17 +126,18 @@ export default function PresentationTable({
         rows,
         columns,
         totals,
-        adjustmentTotal:
-          Math.round(rows.reduce((sum, row) => sum + row.breakdown.adjustment, 0) * 100) / 100,
+        addonsTotal:
+          Math.round(rows.reduce((sum, row) => sum + row.breakdown.addons, 0) * 100) / 100,
         overall: Math.round(rows.reduce((sum, row) => sum + row.breakdown.lineTotal, 0) * 100) / 100,
         quantityTotal: rows.reduce((sum, row) => sum + (Number(row.item.quantity) || 0), 0),
-        hasAdjustment: rows.some((row) => row.breakdown.adjustment !== 0),
+        hasAddons: rows.some((row) => row.breakdown.addons !== 0),
       };
     }, [items]);
 
-  // The column earns its width only when there is adjustment money AND the
-  // breakdown is on to explain it.
-  const showAdjustment = showBreakdown && hasAdjustment;
+  // The column earns its width only when some visible line actually has an
+  // add-on AND the breakdown is on to price it. An order of plain blinds
+  // never sees it, exactly like an option column nobody filled.
+  const showAddons = showBreakdown && hasAddons;
 
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -138,7 +152,7 @@ export default function PresentationTable({
             ))}
             <Th right>Qty</Th>
             <Th right>Unit</Th>
-            {showAdjustment && <Th right>Adjustment</Th>}
+            {showAddons && <Th right>Add-ons</Th>}
             <Th right>Line total</Th>
             <Th>Note</Th>
           </tr>
@@ -146,10 +160,7 @@ export default function PresentationTable({
         <tbody className="divide-y divide-border-light">
           {rows.map(({ item, breakdown }, i) => (
             <tr key={item.id}>
-              <Td>
-                <span className="block">{item.room_name || `Blind ${i + 1}`}</span>
-                <AddonLines item={item} showBreakdown={showBreakdown} />
-              </Td>
+              <Td>{item.room_name || `Blind ${i + 1}`}</Td>
               <Td>{item.blinds_type || '—'}</Td>
               <Td right mono>
                 {size(item)}
@@ -165,9 +176,9 @@ export default function PresentationTable({
               <Td right mono>
                 <UnitPrice item={item} />
               </Td>
-              {showAdjustment && (
+              {showAddons && (
                 <Td right mono>
-                  {breakdown.adjustment === 0 ? '' : money(breakdown.adjustment)}
+                  {breakdown.addons === 0 ? '' : money(breakdown.addons)}
                 </Td>
               )}
               <Td right mono>
@@ -185,8 +196,10 @@ export default function PresentationTable({
             {/* Blind type and Size have nothing to sum. */}
             <Tf>{''}</Tf>
             <Tf>{''}</Tf>
+            {/* Left, under left-aligned option names — not right like the
+                figure columns, so a total sits under the choices it sums. */}
             {columns.map((column) => (
-              <Tf key={column} right>
+              <Tf key={column}>
                 {showBreakdown && totals.get(column) ? money(totals.get(column)) : ''}
               </Tf>
             ))}
@@ -194,7 +207,7 @@ export default function PresentationTable({
             {/* Unit prices summed across rows is not a number that means
                 anything to anyone; the column exists per-row only. */}
             <Tf>{''}</Tf>
-            {showAdjustment && <Tf right>{adjustmentTotal ? money(adjustmentTotal) : ''}</Tf>}
+            {showAddons && <Tf right>{addonsTotal ? money(addonsTotal) : ''}</Tf>}
             <Tf right>{money(overall)}</Tf>
             <Tf>{''}</Tf>
           </tr>

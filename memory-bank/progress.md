@@ -122,12 +122,12 @@ from a "Present to Customer" action at EVERY stage; it saves before navigating, 
 One row per blind, one column per option type carrying that option's money, plus `<tfoot>`
 totals per column that track a stackable filter bar (AND across option types, OR within one;
 every value harvested from the order's own line items with a blind count). It also carries what
-Overview did: a Note column, a Unit column with the `show_original_price` strikethrough, add-on
-sub-lines, an Other-items table, and Paid / Balance due. All blinds stay in one filterable
+Overview did: a Note column, a Unit column with the `show_original_price` strikethrough, an
+Add-ons column, an Other-items table, and Paid / Balance due. All blinds stay in one filterable
 table — Overview's per-blind-type tables were not carried over.
 
 A **Price breakdown** switch on the title row governs PER-CHOICE money only: option `+$`
-amounts, their footer totals, add-on prices, and the Adjustment column. Option names, add-on
+amounts, their footer totals, add-on prices, and the Add-ons column. Option names, add-on
 labels, Qty, Unit, Note, every line total, the footer overall and the order strip show in BOTH
 states, so the page can never disagree with the estimate the customer was sent. Off on load,
 not persisted; ON is the selling state. Unused option columns drop out independently of it;
@@ -135,7 +135,10 @@ hidden items are excluded; an option that adds nothing prints its bare name.
 
 Per-option money comes from the public `BaseBlindType.describeUnitCosts()` — `calculateUnitPrice`
 is the SUM of that breakdown, so a price basis is interpreted in exactly one place. Cells are
-fitted to the stored price so `Σ cells + adjustment === line_total` exactly on every row. The
+fitted to the CHARGED price (`unit_price`, not `base_unit_price`) so a price override is
+absorbed into the material cell and `Σ cells + add-ons === line_total` exactly on every row —
+which is why the view has an Add-ons column and no Adjustment column, and why no breakdown
+column discloses an override the consultant left undisclosed. The
 filter-tracking overall total and the server-authoritative order strip
 (subtotal/discount/HST/total/paid/balance, never recomputed) are deliberately separate numbers.
 

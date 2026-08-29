@@ -1,7 +1,8 @@
 # Unified order view — Present absorbs Overview
 
 **Date:** 2026-08-28
-**Status:** Approved — ready for implementation
+**Status:** Implemented on `feat/unified-order-view`, with one revision after
+review — see *Revision: add-ons replace the adjustment column* at the end.
 
 ## Problem
 
@@ -93,7 +94,7 @@ order view, shown both across a table to a customer and alone by a consultant.
 | Footer per-column totals | **blank** | shown |
 | Add-on label (`+ Blackout`) | shown | shown |
 | Add-on price | **hidden** | shown |
-| Adjustment column | **hidden** | shown |
+| Add-ons column | **hidden** | shown |
 | Room, Blind type, Size, Note, Qty | shown | shown |
 | Unit price | shown | shown |
 | Struck-through original price | governed by the line's `show_original_price` alone | governed by the line's `show_original_price` alone |
@@ -218,3 +219,55 @@ recorded — checked with the toggle both ways, plus a print preview of each.
   `/orders/:id/overview` explicitly and must lose it. `systemPatterns.md`,
   `techContext.md` and `productContext.md` carry no Overview reference and are
   left alone.
+
+---
+
+## Revision: add-ons replace the adjustment column
+
+Adopted after review, superseding the *Adjustment column* rows above and the
+`optionBreakdown.ts` non-goal.
+
+**There is no Adjustment column.** It held two unrelated kinds of money under a
+label that explained neither: add-ons, plus the gap a price override opened. It
+is replaced by an **Add-ons** column, which appears — with the breakdown on —
+only when some visible line actually has an add-on, exactly like an option
+column nobody filled.
+
+**The override moves into the material cell.** `describeLineBreakdown` now fits
+the material cell against `unit_price`, what was actually CHARGED, instead of
+`base_unit_price`. The breakdown therefore decomposes the price the customer is
+paying, and the figure left over is the add-ons total by construction — the
+stored `line_total` is built as `round2(unit_price × qty) + addonsTotal(addons)`.
+The invariant becomes `Σ cells + add-ons === line_total`, still exact, still
+directly tested.
+
+**Why it matters beyond tidiness.** Every other customer-facing surface already
+withholds an override the consultant chose not to disclose: `public.ts` sends
+`original_line_total: null` and `orders.ts` strips `base_unit_price` from every
+document, because a PDF's text layer is extractable whether or not the figure
+was drawn. The order view was the last surface that leaked one — as an
+unexplained −$40 in a column of its own, on a line whose "Show original price to
+customer" box was deliberately unticked. `show_original_price` is now the only
+control over that disclosure anywhere, and it discloses through the
+struck-through unit price alone.
+
+**Known cost.** A line discounted below its own hardware fits the material cell
+negative. It is left negative rather than clamped — the row has to add up and
+there is no longer a column to park a remainder in — and `OptionValue` renders
+the sign instead of prefixing `+`, so it reads `−$15.00`. Covered by a test.
+
+`LineBreakdown.adjustment` is renamed `LineBreakdown.addons`;
+`optionBreakdown.test.ts` gains four cases. `presentationFilters.ts` remains
+untouched.
+
+**Also revised:** the footer totals under the option columns are left-aligned,
+matching the left-aligned option names above them. Qty, Add-ons and Line total
+stay right-aligned — those are figures that should line up on the decimal.
+
+**Also revised:** the blinds table's **add-on sub-lines under the room name are
+dropped**, superseding that bullet under *What Present absorbs*. The Add-ons
+column already carries the money, and on the common single-add-on line the
+sub-line printed the same figure a few columns to the left. `AddonLines` stays
+in `PresentationOtherItems`, which has no Add-ons column. The accepted cost is
+that the blinds table no longer names an add-on: with the breakdown off it shows
+no sign of one, and the money reaches the customer inside the line total.
