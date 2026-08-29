@@ -3984,9 +3984,14 @@ the customer-facing page showed per-option money but dropped notes, add-ons and 
 so a consultant wanting the full picture opened both, in two tabs.
 
 **Absorbed into the blinds table** (`PresentationTable.tsx`): a **Note** column, a **Unit**
-column carrying the `show_original_price` strikethrough, and **add-on sub-lines** under the
-room name. Column order is now `Room | Blind type | Size (cm) | options… | Qty | Unit |
-Adjustment | Line total | Note`. The footer gained blank cells under Unit and Note — a column
+column carrying the `show_original_price` strikethrough, and an **Add-ons** column. Column
+order is now `Room | Blind type | Size (cm) | options… | Qty | Unit | Add-ons | Line total |
+Note`. Add-on sub-lines under the ROOM NAME were tried and dropped: with an Add-ons column
+present, `+ Rush fee $40.00` under the room and `$40.00` in the column is the same money twice
+on the common single-add-on line. `AddonLines` survives for `PresentationOtherItems`, which has
+no Add-ons column of its own. Consequence to accept: the blinds table no longer NAMES an
+add-on — with the breakdown off it shows no sign of one at all, and the money reaches the
+customer inside the line total. The footer gained blank cells under Unit and Note — a column
 of unit prices summed together is not a number that means anything. Blinds stay in ONE
 filterable table; Overview's per-blind-type tables were deliberately not carried over, because
 the `Blind type` column already says it and the filter bar narrows the whole order in one place.
@@ -4003,23 +4008,41 @@ green once settled).
 **The toggle** (`BreakdownToggle.tsx`, on the title row). ON is the SELLING state — it reveals
 what each individual CHOICE cost, which is what justifies a price to a customer looking at the
 screen. It governs per-choice money ONLY: option cells' `+$` amounts, their footer totals,
-add-on prices, and the Adjustment column. Option names, add-on labels, Qty, Unit, Note, every
+add-on prices, and the Add-ons column. Option names, add-on labels, Qty, Unit, Note, every
 row's Line total, the footer overall and the whole order strip are on screen in BOTH states, so
 the page can never disagree with the estimate the customer was sent. `useState(false)`, not
 persisted — a consultant reveals it deliberately rather than finding the last session's state
 on a screen already facing a customer. `print:hidden` on the control alone: whatever is on
 screen is what prints.
 
-Adjustment hides WITH the breakdown rather than persisting. It holds the money no option column
-explains (add-ons, plus the gap an override opened), so alone it reads as an unexplained charge
-or discount. Off means off — with the toggle down, add-on and override money exists only inside
-the line total.
+The Add-ons column hides with the breakdown rather than persisting, and appears at all only
+when a visible line actually has an add-on — exactly like an option column nobody filled. Off
+means off: with the toggle down, add-on money exists only inside the line total.
 
-**The price override.** `show_original_price` alone decides whether the struck-through original
-prints, independent of the toggle in BOTH directions: it is a real privacy control (the public
-endpoint omits the figure entirely when false), not a display preference. Overview's amber
-"price overridden" dot is DROPPED — it meant "someone typed this price", fair on an
-internal-only screen, but an unexplained internal marker on a page that can face a customer.
+**The price override no longer has a column of its own** (`optionBreakdown.ts`). The old
+`Adjustment` column held two unrelated kinds of money under a label that explained neither:
+add-ons, plus the gap a price override opened. `describeLineBreakdown` now fits the material
+cell against `unit_price` — what was actually CHARGED — instead of `base_unit_price`, so an
+override is absorbed into the material cell and the leftover figure is the add-ons total by
+construction. Hence `Adjustment` → `Add-ons`, and the invariant is now
+`Σ cells + add-ons === line_total`.
+
+This closes a real leak. Every other customer-facing surface already nulls `base_unit_price`
+when `show_original_price` is false (`public.ts` sends `original_line_total: null`;
+`orders.ts:1464` strips it from every document, because a PDF's text layer is extractable
+whether or not the figure was drawn). The order view was the one surface that still disclosed
+an override the consultant had chosen not to disclose — as an unexplained −$40 in a column of
+its own. `show_original_price` is now the ONLY control over that disclosure on every surface,
+and it discloses through the struck-through unit price alone, independent of the toggle in BOTH
+directions. Overview's amber "price overridden" dot is DROPPED for the same reason — it meant
+"someone typed this price", fair on an internal-only screen, an unexplained internal marker on
+a page that can face a customer.
+
+**Known cost of the fit:** a line discounted below its own hardware fits the material cell
+NEGATIVE (hardware legs are computed directly; material closes the gap). It is left negative
+rather than clamped — the row has to add up and there is no longer a column to park a remainder
+in. `OptionValue` renders the sign instead of prefixing `+`, so it reads `−$15.00`, not
+`+−$15.00`. Directly tested.
 
 **Entry point.** `ICONS.overview` and the `overview` `StageAction` are removed from
 `OrderDetail.tsx`; every stage's `secondary` set now offers the existing **Present to Customer**
@@ -4031,7 +4054,9 @@ two rescued from Overview), `presentationMoney.ts`, `BreakdownToggle.tsx`,
 `PresentationOtherItems.tsx`. `money` lives in its own plain-TS module rather than beside the
 components: a React Fast Refresh boundary only holds when a module exports components alone,
 and `oxlint`'s `react(only-export-components)` enforces it — worth knowing before adding another
-helper to a `.tsx`. `optionBreakdown.ts` and `presentationFilters.ts` were NOT touched.
+helper to a `.tsx`. `presentationFilters.ts` was NOT touched. `optionBreakdown.ts` was —
+`LineBreakdown.adjustment` is now `LineBreakdown.addons`, and the material fit moved from
+`base_unit_price` to `unit_price` (see the price-override note above).
 
 Incidental: Overview rendered `Tax ({Number(order.tax_rate)}%)` → "Tax (0.13%)". Present's
 `HST ({Math.round(rate * 100)}%)` → "HST (13%)" is correct, so the bug died with the page.
@@ -4040,18 +4065,19 @@ Spec: `knowledge/specs/2026-08-28-unified-order-view-design.md`.
 Plan: `knowledge/plans/2026-08-28-unified-order-view.md`.
 
 ### Verified
-`tsc` clean, `oxlint` clean, web 433/433 (425 → +8: `presentationMoney.test.ts`, the one piece
-of genuinely new pure logic — the negative-safe U+2212 formatter feeding the Adjustment column
-and the Balance row).
+`tsc` clean, `oxlint` clean, web 437/437 (425 → +8 `presentationMoney.test.ts`, the negative-safe
+U+2212 formatter feeding the Add-ons column and the Balance row; → +4 in
+`optionBreakdown.test.ts` covering the override absorption, its independence from
+`show_original_price`, the negative material fit, and add-ons summed per line). `apps/api`
+447/447, untouched.
 
 The rendering was verified in the browser against a throwaway Vite harness rendering the real
 components with fixtures (five blinds spanning note/add-on/override-shown/override-hidden/
 multi-qty, plus preset and custom lines), because `apps/web/.env` does not exist in this
 worktree and the full app renders blank without Supabase config. Confirmed in both toggle
 states: line totals, qty total, unit prices and the footer overall are BYTE-IDENTICAL; every
-row reconciles (`Σ cells + adjustment === line_total`) and the footer columns sum to the
-overall (466 + 110.40 + 73.60 + 200 + 240 − 5 = 1085); header/footer/body cell counts match
-exactly (14 with the toggle on, 13 with it off); the page body never scrolls sideways at 768px
+row reconciles and the footer columns sum to the overall; header/footer/body cell counts match
+exactly in both states; the page body never scrolls sideways at 768px
 while the blinds table scrolls inside its own container; `.print\:hidden` resolves to
 `@media print { display: none }`.
 
