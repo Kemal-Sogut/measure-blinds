@@ -191,7 +191,7 @@ export default function PresentationTable({
         <tfoot>
           <tr className="border-t-2 border-border bg-surface-muted">
             <Tf>
-              {rows.length} blind{rows.length !== 1 ? 's' : ''}
+              {rows.length} item{rows.length !== 1 ? 's' : ''}
             </Tf>
             {/* Blind type and Size have nothing to sum. */}
             <Tf>{''}</Tf>
