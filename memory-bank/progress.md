@@ -91,7 +91,7 @@ colour and blind-type attributes carry no figure. The amounts come from
 `describeUnitCosts`, × quantity, rounded — and reach the unauthenticated page as
 `option_prices` on the public payload, never as rates or price bases. Warranty certificates issue automatically on paid-in-full
 (10y products / 2y motorised parts, parts-only — no workmanship cover), resendable, staff-
-downloadable. Payment receipt emails per payment. 13 responsive HTML email templates.
+downloadable. Payment receipt emails per payment. 13 responsive HTML email templates. The Send estimate/invoice sheet also shows the customer-facing URL (`/customer/<public_token>`, no `?preview=1`) in a read-only field with a Copy button (`components/CopyLinkField.tsx`), so the page can be handed over WhatsApp/SMS instead of the app's own email; the token is minted through the existing `useOrderPublicToken` mutation after the sheet opens, and a mint failure degrades only that field.
 Production labels (browser `window.print()`, one 3x1.5in label per unit of quantity, shop-code
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).

@@ -3904,3 +3904,41 @@ row, not children: the row is itself one big `<button>` and cannot legally conta
 ### Verified
 `tsc` clean, `oxlint` clean, web 425/425 (unchanged — `OrderList` still has no covering
 tests). NOT seen in a browser: the dev server stops at the Supabase login wall.
+
+---
+
+## 2026-09-01 — Copy-the-link area on the Send sheet
+
+`apps/web/src/components/CopyLinkField.tsx` (new) + `apps/web/src/pages/orders/OrderDetail.tsx`
+(state, `openSend`, send-sheet markup). No API, hook or schema change — the existing
+`useOrderPublicToken` mutation and `POST /api/orders/:id/public-token` are reused untouched.
+
+The Send estimate/invoice sheet now shows the customer-facing URL
+(`${window.location.origin}/customer/<public_token>`) in a read-only input with a Copy button,
+under the optional-message box. This gives the consultant a channel-agnostic path: hand the
+same page to the customer over WhatsApp/SMS/phone instead of being forced through the email
+that the Send button triggers. The link deliberately OMITS `?preview=1` — that flag is for the
+staff-side preview (draft render, mutating controls disabled, no "customer opened this" ping),
+and a customer must get the live page.
+
+Sequencing: the sheet opens FIRST, then the token is minted. `openSend` became `async` (the
+top-bar button calls it as `() => void openSend()`), so the message box never waits on a
+network round trip. A mint failure sets `sendLinkError` and degrades only the copy field —
+the email path still works and still carries the link, so it is surfaced inline in the field
+rather than as a toast. An unsaved draft has no `id` and therefore no token; the whole area is
+simply not rendered. Minting is idempotent and the same call the Customer View button already
+makes, so opening the sheet cannot mint a second token.
+
+`CopyLinkField` is a separate component rather than more markup in `OrderDetail` (already a
+standing ~3,200-line Rule 6 violation) and copies in three degrading steps:
+`navigator.clipboard.writeText` → `document.execCommand('copy')` over the selected input →
+an on-screen "the link is selected, press Ctrl/Cmd+C" instruction. The Clipboard API is gated
+on a secure context and refused by some in-app browsers, so the button must never silently do
+nothing. The value is a real read-only `<input>`, not text: a long capability URL then scrolls
+inside its own box, stays selectable, and is keyboard-reachable. The "Copied" confirmation
+self-clears after 2s and resets whenever the value changes, so a stale confirmation can never
+describe a different URL.
+
+### Verified
+`tsc` clean, `oxlint` clean, web 425/425 (unchanged — no covering tests for `OrderDetail`).
+NOT seen in a browser: the dev server stops at the Supabase login wall.

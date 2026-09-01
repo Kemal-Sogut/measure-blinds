@@ -74,6 +74,7 @@ import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import CopyLinkField from '../../components/CopyLinkField';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
 import { expiryFromPreset, presetFromDates, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
@@ -644,6 +645,14 @@ export default function OrderDetail() {
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
+
+  // The customer-facing URL shown (with a Copy button) inside the send
+  // sheet, so the consultant can pass the page along over WhatsApp/SMS
+  // instead of emailing it. `null` while the capability token is still
+  // being minted; the error string replaces the field if minting fails,
+  // which must NOT block the email itself.
+  const [sendLink, setSendLink] = useState<string | null>(null);
+  const [sendLinkError, setSendLinkError] = useState<string | null>(null);
 
   // Send-receipt sheet state: the payment row being receipted and the
   // optional personal message included in the receipt email.
@@ -1218,11 +1227,31 @@ export default function OrderDetail() {
     if (await save()) toast.success('Order saved.');
   }
 
-  /** Opens the send sheet (message box) for the current mode. */
-  function openSend() {
+  /**
+   * Opens the send sheet (message box) for the current mode, and — for
+   * an already-saved order — resolves the customer-facing link shown
+   * beside the Copy button.
+   *
+   * The sheet opens FIRST and the token is minted afterwards: the mint
+   * is a network round trip, and the message box must not wait on it.
+   * A failure only degrades the copy field (the same email the button
+   * sends still carries the link), so it is surfaced inline rather than
+   * as a toast. An unsaved draft has no id and therefore no token yet;
+   * it simply shows no link area.
+   */
+  async function openSend() {
     if (!customer?.email) return toast.error('This customer has no email address.');
     setSendMessage('');
+    setSendLink(null);
+    setSendLinkError(null);
     setSheet('send');
+    if (!id) return;
+    try {
+      const { public_token } = await publicTokenMut.mutateAsync(id);
+      setSendLink(`${window.location.origin}/customer/${public_token}`);
+    } catch (e) {
+      setSendLinkError(e instanceof Error ? e.message : 'Could not prepare the link.');
+    }
   }
 
   /** Submits the send sheet — estimate or invoice depending on mode. */
@@ -2236,7 +2265,7 @@ export default function OrderDetail() {
         <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save'}</span>
       </button>
       <button
-        onClick={openSend}
+        onClick={() => void openSend()}
         disabled={sendDisabled}
         title={isInvoice ? 'Send Invoice' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
         aria-label={isInvoice ? 'Send Invoice' : 'Send Estimate'}
@@ -3032,6 +3061,19 @@ export default function OrderDetail() {
                   className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
                 />
               </label>
+              {/*
+                Copy-only path: the same customer page the email links
+                to, for consultants who send over WhatsApp/SMS instead.
+                Hidden on an unsaved draft, which has no token yet.
+              */}
+              {id && (
+                <CopyLinkField
+                  label={`${docLabel} link for the customer`}
+                  value={sendLink}
+                  error={sendLinkError}
+                  hint="Opens the same page the email links to — anyone with this link can view it."
+                />
+              )}
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}

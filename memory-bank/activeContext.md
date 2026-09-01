@@ -4,7 +4,28 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-08-25)
+## Where things stand (as of 2026-09-01)
+On `main` at `6b4d1d1` ("delete button or orders page"). Everything described further down as
+"uncommitted" through 2026-08-25 — the orders-list Delete action, orders-list pagination,
+migrations 39/40 and the confirmed-order price lock — has since been COMMITTED and is plain
+history now; read those paragraphs as descriptions of shipped behaviour, not of pending work.
+
+Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
+sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
+(read-only URL input + Copy button, with `navigator.clipboard` → `document.execCommand` →
+"press Ctrl/Cmd+C" degradation) is rendered under the optional-message box in
+`OrderDetail`'s send sheet, showing `${window.location.origin}/customer/<public_token>` — the
+LIVE customer page, deliberately without the staff-only `?preview=1` flag. `openSend` became
+`async`: it opens the sheet first, then mints the token through the existing
+`useOrderPublicToken` mutation, so the message box never waits on the network and a mint
+failure degrades only the copy field (`sendLinkError`), never the email path. An unsaved draft
+has no id, so the area is not rendered at all. Purpose: hand the customer page over
+WhatsApp/SMS without being forced through the app's own email. Detail in
+`knowledge/history/engine_features.md`, 2026-09-01. Verified: web `pnpm check` clean,
+`pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
+login wall).
+
+### Earlier state, kept for context
 On `main` at `2781d31` ("material-usage-updated" — the Material usage PER-WINDOW breakdown is
 now committed and plain history, `knowledge/history/engine_features.md` 2026-08-25; bulk edit
 v3, the Material usage DIALOG and the composing give-backs landed before it, same file
