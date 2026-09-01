@@ -208,6 +208,28 @@ export interface OrderLog {
 }
 
 /**
+ * One customer change request (`GET /api/orders/:id/edit-requests`).
+ *
+ * Raised from the public estimate page BEFORE the customer confirms, as
+ * free text — a request never mutates the order, so there is nothing
+ * structured to carry. Staff amend the order themselves and then close
+ * the request out.
+ *
+ * `resolved_at` is the whole lifecycle: `null` while it still needs an
+ * answer (the amber card on the order page shows exactly these), set
+ * once handled. It is never cleared, so the row remains a record of
+ * what was asked and when it was dealt with.
+ */
+export interface OrderEditRequest {
+  id: string;
+  order_id: string;
+  /** The customer's verbatim text, capped at 1000 chars by the Worker. */
+  message: string;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+/**
  * Lightweight event returned by `GET /api/appointments/calendar` for
  * the Calendar tab — one row per appointment, covering BOTH estimate
  * visits (`kind: 'estimate'`, no order) and installations

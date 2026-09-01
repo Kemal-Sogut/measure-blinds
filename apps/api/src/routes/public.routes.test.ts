@@ -11,6 +11,9 @@
  *   - the in-memory rate limiter returns 429 after the budget is spent
  *   - internal notification emails are attempted, against a stubbed
  *     Resend (see `sentEmails` below — the suite performs NO network I/O)
+ *   - edit requests: filed only on a live `sent` estimate, capped at five
+ *     OPEN per order, message trimmed/truncated rather than rejected, and
+ *     deliberately silent (no email — staff see them on the order page)
  */
 
 import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
@@ -28,6 +31,13 @@ interface FakeDb {
    * row before any route runs) can be flipped without a second fake.
    */
   company: Record<string, unknown>;
+  /**
+   * `order_edit_requests` rows for the seeded order. Real array, not a
+   * single row: the edit-request route COUNTS the open ones to enforce
+   * its per-order cap, so a fake that returned one row could not
+   * exercise the cap at all.
+   */
+  editRequests: Array<Record<string, unknown>>;
 }
 
 /** Default company_settings row: shop open, brand fields populated. */
@@ -53,6 +63,7 @@ const db: FakeDb = {
   calls: [],
   lastUpdate: null,
   company: openCompany(),
+  editRequests: [],
 };
 
 /**
@@ -71,13 +82,21 @@ function makeBuilder(table: string) {
     op: 'select',
     payload: null as Record<string, unknown> | null,
     guards: [] as Array<(row: Record<string, unknown>) => boolean>,
+    counting: false,
   };
   const builder: Record<string, unknown> = {};
   const chain = (name: string) =>
     ((...args: unknown[]) => {
       if (['insert', 'update', 'delete'].includes(name)) {
         state.op = name;
-        if (name === 'update') state.payload = args[0] as Record<string, unknown>;
+        if (name === 'update' || name === 'insert') {
+          state.payload = args[0] as Record<string, unknown>;
+        }
+      }
+      // `.select('id', { count: 'exact', head: true })` — the cap check
+      // reads the COUNT, never the rows, so the fake has to carry it.
+      if (name === 'select' && (args[1] as { count?: string } | undefined)?.count) {
+        state.counting = true;
       }
       if (name === 'eq') {
         const [col, val] = args as [string, unknown];
@@ -102,6 +121,23 @@ function makeBuilder(table: string) {
       return { data: db.company };
     }
     if (state.table === 'appointments') return { data: db.appointment };
+    if (state.table === 'order_edit_requests') {
+      if (state.op === 'insert') {
+        const row = {
+          id: `req-${db.editRequests.length + 1}`,
+          created_at: '2026-08-26T10:00:00.000Z',
+          resolved_at: null,
+          ...(state.payload ?? {}),
+        };
+        db.editRequests.push(row);
+        return { data: row };
+      }
+      // Guards are the route's own filters (order_id, resolved_at is
+      // null); applying them is what makes the cap count the OPEN rows
+      // rather than every row ever filed.
+      const rows = db.editRequests.filter((r) => state.guards.every((g) => g(r)));
+      return state.counting ? { data: null, count: rows.length } : { data: rows };
+    }
     if (state.table !== 'orders') return { data: null };
     if (state.op === 'update') {
       if (!db.order) return { data: null };
@@ -249,6 +285,7 @@ beforeEach(() => {
   db.calls = [];
   db.lastUpdate = null;
   db.company = openCompany();
+  db.editRequests = [];
   sentEmails.length = 0;
 });
 
@@ -448,6 +485,30 @@ describe('POST /public/estimate/:token/confirm', () => {
   });
 });
 
+describe('GET /public/estimate/:token — edit requests', () => {
+  it('reads the customer their own requests, oldest first', async () => {
+    db.order = {
+      ...sentOrder(),
+      order_edit_requests: [
+        { id: 'r2', message: 'second', created_at: '2026-08-02T10:00:00.000Z', resolved_at: null },
+        { id: 'r1', message: 'first', created_at: '2026-08-01T10:00:00.000Z', resolved_at: '2026-08-03T10:00:00.000Z' },
+      ],
+    };
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as {
+      data: { edit_requests: Array<{ id: string; resolved_at: string | null }> };
+    };
+    expect(body.data.edit_requests.map((r) => r.id)).toEqual(['r1', 'r2']);
+    expect(body.data.edit_requests[0].resolved_at).toBe('2026-08-03T10:00:00.000Z');
+  });
+
+  it('serves an empty list when the order has none', async () => {
+    const res = await req(`/estimate/${TOKEN}`);
+    const body = (await res.json()) as { data: { edit_requests: unknown[] } };
+    expect(body.data.edit_requests).toEqual([]);
+  });
+});
+
 describe('GET /public/estimate/:token — order summary payload', () => {
   it('computes amount_paid and balance server-side from the ledger', async () => {
     db.order = awaitingOrder({
@@ -601,6 +662,95 @@ describe('POST /public/estimate/:token/cancel-withdraw', () => {
     db.order = awaitingOrder();
     const res = await postJson(`/estimate/${TOKEN}/cancel-withdraw`, {});
     expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /public/estimate/:token/edit-request', () => {
+  it('files the message and logs the event', async () => {
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, {
+      message: 'Can the kitchen blind be cordless?',
+    });
+    expect(res.status).toBe(200);
+    expect(db.editRequests).toHaveLength(1);
+    expect(db.editRequests[0]).toMatchObject({
+      order_id: 'e1',
+      message: 'Can the kitchen blind be cordless?',
+    });
+    expect(db.calls).toContain('order_logs.insert');
+  });
+
+  it('returns the created request so the page can render it', async () => {
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'Drop the bay window' });
+    const body = (await res.json()) as {
+      data: { id: string; message: string; resolved_at: string | null };
+    };
+    expect(body.data.message).toBe('Drop the bay window');
+    expect(body.data.resolved_at).toBeNull();
+  });
+
+  it('trims the message and rejects a whitespace-only one', async () => {
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: '   \n  ' });
+    expect(res.status).toBe(400);
+    expect(db.editRequests).toHaveLength(0);
+  });
+
+  it('rejects a missing message', async () => {
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, {});
+    expect(res.status).toBe(400);
+    expect(db.editRequests).toHaveLength(0);
+  });
+
+  it('truncates an over-long message rather than rejecting it', async () => {
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'x'.repeat(1500) });
+    expect(res.status).toBe(200);
+    expect((db.editRequests[0].message as string).length).toBe(1000);
+  });
+
+  it('refuses once the order has been confirmed', async () => {
+    db.order = { ...sentOrder(), status: 'awaiting_payment' };
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'too late' });
+    expect(res.status).toBe(409);
+    expect(db.editRequests).toHaveLength(0);
+  });
+
+  it('refuses on an expired estimate', async () => {
+    db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'anyone there?' });
+    expect(res.status).toBe(409);
+    expect(db.editRequests).toHaveLength(0);
+  });
+
+  it('caps open requests per order at five', async () => {
+    for (let i = 0; i < 5; i++) {
+      const ok = await postJson(`/estimate/${TOKEN}/edit-request`, { message: `change ${i}` });
+      expect(ok.status).toBe(200);
+    }
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'one too many' });
+    expect(res.status).toBe(409);
+    expect(db.editRequests).toHaveLength(5);
+  });
+
+  it('counts only OPEN requests against the cap', async () => {
+    db.editRequests = Array.from({ length: 5 }, (_, i) => ({
+      id: `old-${i}`,
+      order_id: 'e1',
+      message: `handled ${i}`,
+      created_at: '2026-08-01T10:00:00.000Z',
+      resolved_at: '2026-08-02T10:00:00.000Z',
+    }));
+    const res = await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'a new one' });
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a malformed token before touching the DB', async () => {
+    const res = await postJson('/estimate/not-a-uuid/edit-request', { message: 'hello' });
+    expect(res.status).toBe(404);
+    expect(db.calls).not.toContain('order_edit_requests.insert');
+  });
+
+  it('sends no email — the order page is where staff see the request', async () => {
+    await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'no email please' });
+    expect(sentEmails).toHaveLength(0);
   });
 });
 

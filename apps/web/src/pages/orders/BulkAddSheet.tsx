@@ -99,7 +99,7 @@ interface BulkAddSheetProps {
  *
  * Confirming calls `validateBulkSections` first — its message is shown
  * inline (matching how other pages on this screen surface a blocking
- * problem, e.g. `OrderOverview`'s `{error && <p className="text-danger">}`)
+ * problem, e.g. `OrderPresentation`'s `{error && <p className="text-danger">}`)
  * and the sheet stays open; only a `null` result calls `expandBulkSections`
  * and hands the drafts to `onAdd`. Every section/row mutation goes through
  * the shared `mutate` helper specifically so the stale error banner cannot

@@ -18,6 +18,9 @@
  *     turns the recorded payment into a failed request
  *   - /warranty (manual resend) guards: 409 while money is owed, 400 no
  *     email, 502 on provider rejection, resend allowed once stamped
+ *   - customer change requests: the list includes resolved rows, and
+ *     resolving one stamps resolved_at, logs it, and distinguishes
+ *     "already resolved" (409) from "not this order's" (404)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -2547,5 +2550,78 @@ describe('per-item price lock (migration 39)', () => {
       locked_base_price: null,
       locked_inputs_fingerprint: null,
     });
+  });
+});
+
+describe('order edit requests (staff side)', () => {
+  const OPEN = {
+    id: 'req-1',
+    order_id: 'o1',
+    message: 'Can the kitchen blind be cordless?',
+    created_at: '2026-08-26T10:00:00.000Z',
+    resolved_at: null,
+  };
+  const HANDLED = {
+    id: 'req-0',
+    order_id: 'o1',
+    message: 'Earlier ask',
+    created_at: '2026-08-20T10:00:00.000Z',
+    resolved_at: '2026-08-21T10:00:00.000Z',
+  };
+
+  const post = (path: string) => ordersApp.request(path, { method: 'POST' }, ENV);
+
+  it('lists an order\'s requests, resolved ones included', async () => {
+    db.responses['order_edit_requests.select'] = [OPEN, HANDLED];
+    const res = await ordersApp.request('/o1/edit-requests', {}, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((r) => r.id)).toEqual(['req-1', 'req-0']);
+  });
+
+  it('returns an empty list rather than 404 for an order with none', async () => {
+    db.responses['order_edit_requests.select'] = [];
+    const res = await ordersApp.request('/o1/edit-requests', {}, ENV);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { data: unknown[] }).toEqual({ data: [] });
+  });
+
+  it('stamps resolved_at, logs the event, and returns the refreshed list', async () => {
+    db.responses['order_edit_requests.update'] = [{ id: 'req-1' }];
+    db.responses['order_edit_requests.select'] = [{ ...OPEN, resolved_at: '2026-08-26T12:00:00.000Z' }];
+
+    const res = await post('/o1/edit-requests/req-1/resolve');
+    expect(res.status).toBe(200);
+
+    const payload = (db.updatePayloads['order_edit_requests'] ?? [])[0] as { resolved_at: string };
+    expect(payload.resolved_at).toEqual(expect.any(String));
+
+    // Resolving is a staff action, so the trail entry is attributed as one.
+    expect(db.insertPayloads['order_logs']).toHaveLength(1);
+    expect((db.insertPayloads['order_logs'][0] as { message: string; source?: string }).message)
+      .toBe('Change request marked resolved.');
+
+    const body = (await res.json()) as { data: Array<{ resolved_at: string | null }> };
+    expect(body.data[0].resolved_at).toBe('2026-08-26T12:00:00.000Z');
+  });
+
+  it('404s when the request does not belong to this order', async () => {
+    // Guarded UPDATE matches nothing, and neither does the follow-up read.
+    db.responses['order_edit_requests.update'] = [];
+    db.responses['order_edit_requests.select'] = [];
+    const res = await post('/o1/edit-requests/req-9/resolve');
+    expect(res.status).toBe(404);
+    expect(db.insertPayloads['order_logs']).toBeUndefined();
+  });
+
+  it('409s when the request was already resolved', async () => {
+    db.responses['order_edit_requests.update'] = [];
+    db.responses['order_edit_requests.select'] = [HANDLED];
+    const res = await post('/o1/edit-requests/req-0/resolve');
+    expect(res.status).toBe(409);
+    expect((await res.json()) as { error: string }).toEqual({
+      error: 'That change request has already been resolved.',
+    });
+    expect(db.insertPayloads['order_logs']).toBeUndefined();
   });
 });

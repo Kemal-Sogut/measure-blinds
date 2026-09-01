@@ -4,6 +4,7 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
+<<<<<<< HEAD
 ## Where things stand (as of 2026-09-01)
 On `main` at `6b4d1d1` ("delete button or orders page"). Everything described further down as
 "uncommitted" through 2026-08-25 — the orders-list Delete action, orders-list pagination,
@@ -26,6 +27,73 @@ WhatsApp/SMS without being forced through the app's own email. Detail in
 login wall).
 
 ### Earlier state, kept for context
+=======
+## Where things stand (as of 2026-08-28)
+
+**Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
+`/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
+only read-only order view and absorbed everything Overview carried — Note column, Unit price
+with the `show_original_price` strikethrough, an Add-ons column, an Other-items TABLE, and
+Paid / Balance due. A **Price breakdown** switch on the title row governs per-choice money only
+(option `+$` amounts, their footer totals, add-on prices, the Add-ons column); line totals,
+the footer overall and the order strip are on screen in BOTH states. Off on load, not persisted.
+Every stage's action set now offers the one **Present to Customer** action (same tab, saves
+first); `ICONS.overview` and the `overview` StageAction are gone.
+
+Decisions worth not re-litigating: all blinds stay in ONE filterable table (Overview's
+per-blind-type tables were deliberately dropped — the `Blind type` column already says it);
+Size stays `(120 + 80) × 210`; the Add-ons column hides WITH the breakdown and appears only
+when a visible line has one. There is NO Adjustment column any more: `describeLineBreakdown`
+fits the material cell against `unit_price` (charged) rather than `base_unit_price`, so a price
+override is absorbed into the material cell and what is left over is the add-ons total by
+construction. `show_original_price` is therefore the ONE control over whether an override is
+disclosed anywhere — through the struck-through unit price alone, independent of the toggle in
+both directions, matching what `public.ts` and the PDF assembly already did. Overview's amber
+"price overridden" dot is dropped for the same reason. New modules: `presentationCells.tsx`,
+`presentationMoney.ts`, `BreakdownToggle.tsx`, `PresentationOtherItems.tsx`.
+`presentationFilters.ts` untouched.
+
+Gotcha worth remembering: `money` had to move OUT of `presentationCells.tsx` into its own
+plain-TS module — `oxlint`'s `react(only-export-components)` fails a `.tsx` that exports both
+components and a function, because it costs the file its Fast Refresh boundary.
+
+Verified `tsc`/`oxlint` clean, web 433/433 (+8, `presentationMoney.test.ts`), and the rendering
+checked in a throwaway Vite harness in both toggle states — line totals byte-identical, every
+row reconciling, cell counts matching. NOT verified against live data: the totals strip's
+Paid/Balance rows and the stage-action wiring (no `apps/web/.env` in this worktree).
+Full write-up in `knowledge/history/engine_features.md`, 2026-08-28; spec in
+`knowledge/specs/2026-08-28-unified-order-view-design.md`.
+
+## Previously (as of 2026-08-26)
+
+**Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
+**customer edit requests** (migration 41,
+`supabase/migrations/20260826000041_order_edit_requests.sql`). A new `order_edit_requests`
+table (`order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`;
+`authenticated_full_access` RLS, anon nothing) backs a **Request Edit** button placed to the
+LEFT of Confirm on the public estimate page. It opens a dialog
+(`apps/web/src/pages/customer-view/EditRequestDialog.tsx`, built on `ui/Modal`), POSTs to
+`/public/estimate/:token/edit-request`, and the message surfaces as an amber card
+(`apps/web/src/pages/orders/EditRequestsCard.tsx`) on the staff order page with a
+**Mark resolved** button per row. Staff routes: `GET /api/orders/:id/edit-requests` and
+`POST /api/orders/:id/edit-requests/:requestId/resolve`.
+
+Design decisions worth not re-litigating: a TABLE not order columns (unlike migration 27's
+`cancel_requested_at`, this is a collection); requests accepted ONLY while the order is `sent`;
+message truncated to 1000 chars rather than rejected; **5 open requests per order** (benign
+read-then-insert race, documented); **no email to the shop** — the order page and the activity
+trail carry it; Confirm is NOT blocked by an open request and Request Edit is NOT gated on the
+terms tick. Amber, not red — red stays reserved for the cancellation banner. Full write-up in
+`knowledge/history/engine_features.md`, 2026-08-26; spec in
+`knowledge/specs/2026-08-26-edit-requests-design.md`. Verified: `tsc` clean both workspaces,
+`oxlint` clean, api 447/447, web 425/425. NOT seen in a browser and NOT deployed; the routes
+500 until migration 41 is applied to project `lgbxxlwsdeuhdgzrjjen`.
+
+NOTE: everything below this point was written on 2026-08-25 and several of the items it calls
+"uncommitted" have since landed on `main` (order-list pagination, the row Delete button,
+price-lock on confirmed orders). Trust `git log` over the wording below.
+
+>>>>>>> f6ecbd3bf874923ccaf738c1583fa625cf48cb23
 On `main` at `2781d31` ("material-usage-updated" — the Material usage PER-WINDOW breakdown is
 now committed and plain history, `knowledge/history/engine_features.md` 2026-08-25; bulk edit
 v3, the Material usage DIALOG and the composing give-backs landed before it, same file
@@ -192,9 +260,12 @@ primitive layer.
 - Option cells on the Presentation page are FITTED to `round2(calcUnit × qty)` with the
   material cell absorbing the correction, never summed independently. `line_total` is
   `round2(unit_price × qty) + addonsTotal`, so independently-rounded legs miss it by up to two
-  or three cents and would show a phantom adjustment on an ordinary line. Because of the
-  fitting, the Adjustment column means only "override and/or add-ons", which is what lets the
-  page promise a row that adds up in front of a customer.
+  or three cents and would show phantom money on an ordinary line. The fit is against
+  `unit_price`, so the leftover figure IS the add-ons total by construction and the invariant
+  is `Σ cells + add-ons === line_total`. Consequence to know before touching it: a line
+  discounted below its own hardware fits the material cell NEGATIVE, and it is left that way
+  deliberately — the row has to add up and there is no adjustment column to park a remainder
+  in. `OptionValue` renders the sign rather than prefixing `+`.
 - `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
   `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
 - `blindDraftInputs(draft, catalogs)` (`lineItemDrafts.ts`) is the priced-inputs assembly

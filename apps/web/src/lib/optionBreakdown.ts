@@ -70,12 +70,19 @@ export interface OptionCell {
 export interface LineBreakdown {
   cells: Record<OptionColumn, OptionCell>;
   /**
-   * Money on this line that no option column explains: add-ons, and the
-   * gap a consultant's price override opened. Zero on an ordinary line —
-   * never rounding noise, because the cells were fitted to the stored
-   * price rather than summed independently of it.
+   * This line's add-ons, as one figure — the only money on a blind that no
+   * option column explains.
+   *
+   * Derived as the gap between the stored `line_total` and the charged
+   * unit price times quantity, NOT summed from `item.addons`: that gap is
+   * the add-ons total by construction (`applyPriceAdjustments` builds
+   * `line_total` as `round2(unit_price × qty) + addonsTotal(addons)`), and
+   * taking it from the stored total is what keeps the row adding up.
+   *
+   * Zero on a line with no add-ons — never rounding noise, and never a
+   * price override, which is folded into the material cell instead.
    */
-  adjustment: number;
+  addons: number;
   /** The stored `line_total`, echoed so callers total one field. */
   lineTotal: number;
 }
@@ -152,33 +159,48 @@ function emptyCells(): Record<OptionColumn, OptionCell> {
  * The reconciliation is the whole point. `line_total` is built as
  * `round2(unit_price × qty) + addonsTotal(addons)`, so `Σ round2(leg ×
  * qty)` is not the same number — with five legs the two can differ by two
- * or three cents. Left alone that surfaces as a phantom adjustment on an
- * ordinary line, which is exactly the "why doesn't this add up?" moment
- * the column exists to prevent. So the hardware cells are computed
+ * or three cents. Left alone that surfaces as phantom money on an ordinary
+ * line, which is exactly the "why doesn't this add up?" moment the
+ * reconciliation exists to prevent. So the hardware cells are computed
  * directly and the MATERIAL cell is fitted to close the gap: it is always
  * present and always the largest leg, so a two-cent correction cannot push
  * it negative or be noticed.
  *
- * `base_unit_price` is read in preference to `unit_price` because on an
- * overridden line it is the price the options actually produced, leaving
- * the override itself to show up as the adjustment. This matches how
- * `originalLineTotal` already defines the "was" price.
+ * The fit is against `unit_price` — what was actually CHARGED — not
+ * `base_unit_price`. On an overridden line the difference lands in the
+ * material cell, so the breakdown decomposes the price the customer is
+ * paying and the override leaves no separate trace. That is deliberate on
+ * a page that faces a customer: `show_original_price` is the one control
+ * over whether an override is disclosed, and it discloses it as the
+ * struck-through "was" price beside the charged one. A line whose
+ * consultant left that box unticked must not have the same discount
+ * reappear as an unexplained figure in a column of its own — which is
+ * exactly what fitting against `base_unit_price` used to do.
+ *
+ * The cost of charging the material cell with the override is that a line
+ * discounted below its own hardware can fit NEGATIVE. It is left negative
+ * rather than clamped: the row has to add up, there is no longer a column
+ * to park a remainder in, and a material line reading −$50 on a blind sold
+ * for less than its cassette and control is the truth. `OptionValue`
+ * renders the sign rather than prefixing a `+`.
  *
  * Preset and custom items have no options; they come back with every cell
- * empty and their whole `line_total` as the adjustment, which is why the
- * page lists them separately rather than in the option table.
+ * empty, which is why the page lists them in their own table reading
+ * `line_total` directly. Their `addons` figure is still reported, but
+ * nothing reconciles — there is no cell holding the rest of their price.
  */
 export function describeLineBreakdown(item: LineItem): LineBreakdown {
   const cells = emptyCells();
   const lineTotal = round2(Number(item.line_total) || 0);
+  const quantity = Number(item.quantity) || 0;
+  // What the options have to account for, and what is left over after
+  // them. One subtraction serves both item types.
+  const optionsLine = round2((Number(item.unit_price) || 0) * quantity);
+  const addons = round2(lineTotal - optionsLine);
 
   if (item.item_type !== 'blind') {
-    return { cells, adjustment: lineTotal, lineTotal };
+    return { cells, addons, lineTotal };
   }
-
-  const quantity = Number(item.quantity) || 0;
-  const calcUnit = Number(item.base_unit_price ?? item.unit_price) || 0;
-  const optionsLine = round2(calcUnit * quantity);
 
   const legs = getBlindType(item.blinds_type).describeUnitCosts({
     panels: item.panels,
@@ -203,5 +225,5 @@ export function describeLineBreakdown(item: LineItem): LineBreakdown {
   };
   cells.color = { name: item.color || null, amount: null };
 
-  return { cells, adjustment: round2(lineTotal - optionsLine), lineTotal };
+  return { cells, addons, lineTotal };
 }

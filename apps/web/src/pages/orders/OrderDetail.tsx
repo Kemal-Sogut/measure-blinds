@@ -24,14 +24,14 @@
  *   in_progress      → Mark Ready, Cut Sheet
  *   ready            → Propose Installation (opens the Installation
  *                      section's sheet), Mark Installed
- *   installed        → (none beyond the Overview)
- * Every post-draft stage additionally offers an Order Overview action
- * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
- * itemised listing of the line items (sizes, options, notes, totals).
- * Every UNCONFIRMED stage (draft, sent, expired) offers a Present to
- * Customer action directly below Confirm, which saves and then navigates
- * to `/orders/:id/present` — the filterable, per-option view shown to the
- * customer in person.
+ *   installed        → (none beyond Present to Customer)
+ * EVERY stage offers a Present to Customer action, which saves and then
+ * navigates in the same tab to `/orders/:id/present` — the app's one
+ * read-only order view. It is filterable and per-option for the customer
+ * conversation, and carries notes, unit prices, add-ons and the balance
+ * for the consultant's own read; a switch on its title row reveals or
+ * hides what each individual choice cost. It replaced a separate Order
+ * Overview page in 2026-08.
  * Save (green), Send (blue), Download (gray) and Delete (icon-only,
  * red, saved orders) live in the TOP BAR
  * (PageHeader right slot, icon-only on phones) at every stage; the
@@ -100,6 +100,8 @@ import {
   useUnmatchedEtransfers,
   useDismissEtransfer,
   useOrderLogs,
+  useOrderEditRequests,
+  useResolveEditRequest,
   useOrderPublicToken,
   downloadOrderPdf,
   downloadWarrantyPdf,
@@ -149,6 +151,7 @@ import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog
 import { applyGiveBackPart, summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
+import EditRequestsCard from './EditRequestsCard';
 import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
@@ -435,12 +438,6 @@ const ICONS = {
       <path d="M17 18h1M12 18h1M7 18h1" />
     </ActionIcon>
   ),
-  overview: (
-    <ActionIcon>
-      <path d="M8 6h13M8 12h13M8 18h13" />
-      <path d="M3 6h.01M3 12h.01M3 18h.01" />
-    </ActionIcon>
-  ),
   present: (
     <ActionIcon>
       <rect x="2" y="3" width="20" height="14" rx="2" />
@@ -497,6 +494,7 @@ export default function OrderDetail() {
   const [searchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
   const { data: logs } = useOrderLogs(id);
+  const { data: editRequests } = useOrderEditRequests(id);
 
   // New-order customer pre-fill. An "Add order" link (e.g. from an
   // appointment's detail page) opens `/orders/new?customer=<id>`; the
@@ -529,6 +527,7 @@ export default function OrderDetail() {
   const confirmMut = useConfirmOrder();
   const unconfirmMut = useUnconfirmOrder();
   const resolveCancelMut = useResolveCancelRequest();
+  const resolveEditMut = useResolveEditRequest();
   const readyMut = useMarkReady();
   const installedMut = useMarkInstalled();
   const setStatusMut = useSetOrderStatus();
@@ -1584,6 +1583,24 @@ export default function OrderDetail() {
     }
   }
 
+  /**
+   * Marks one customer change request handled.
+   *
+   * No confirmation prompt: this is a to-do tick, not a state change to
+   * the order, and the row survives in the activity trail either way. A
+   * 409 ("already resolved") reaches the toast verbatim, which is the
+   * right message when a colleague closed it out in another tab.
+   */
+  async function handleResolveEditRequest(requestId: string) {
+    if (!id) return;
+    try {
+      await resolveEditMut.mutateAsync({ id, requestId });
+      toast.success('Change request resolved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not resolve the request.');
+    }
+  }
+
   /** Opens the deny sheet, where the optional explanation is written. */
   function openCancelDeny() {
     setCancelDenyMessage('');
@@ -2036,20 +2053,14 @@ export default function OrderDetail() {
    * actions. Save, Send and Download are NOT part of this set — they
    * live permanently in the top bar (see `headerActions`), and Record
    * Payment lives in the Payments panel body (see `paymentsPanel`).
-   * The Order Overview action is included at every post-draft stage and
-   * opens `/orders/:id/overview` in a new tab.
+   * The Present to Customer action is included at EVERY stage: it opens
+   * the app's one read-only order view, which serves both the customer
+   * conversation and the consultant's itemised read.
    */
   const stageActions = (): {
     primary: StageAction | null;
     secondary: StageAction[];
   } => {
-    const overview: StageAction = {
-      key: 'overview',
-      icon: ICONS.overview,
-      label: 'Order Overview',
-      short: 'Overview',
-      onClick: () => window.open(`/orders/${id}/overview`, '_blank', 'noopener'),
-    };
     const confirm: StageAction = {
       key: 'confirm',
       icon: ICONS.confirm,
@@ -2076,7 +2087,7 @@ export default function OrderDetail() {
 
     // Sent — confirm the order.
     if (status === 'sent') {
-      return { primary: confirm, secondary: [present, overview] };
+      return { primary: confirm, secondary: [present] };
     }
 
     // Awaiting payment — the payment itself is recorded from the
@@ -2090,7 +2101,7 @@ export default function OrderDetail() {
         onClick: handleReverse,
         disabled: unconfirmMut.isPending,
       };
-      return { primary: null, secondary: [reverse, overview] };
+      return { primary: null, secondary: [reverse, present] };
     }
 
     // In progress — mark the order ready; open the workshop cut sheet.
@@ -2117,7 +2128,7 @@ export default function OrderDetail() {
         short: 'Labels',
         onClick: () => window.open(`/orders/${id}/labels`, '_blank', 'noopener'),
       };
-      return { primary: markReady, secondary: [manufacturer, labels, overview] };
+      return { primary: markReady, secondary: [manufacturer, labels, present] };
     }
 
     // Ready — propose the installation (emails the customer).
@@ -2138,19 +2149,19 @@ export default function OrderDetail() {
         disabled: installedMut.isPending,
         tone: 'text-success',
       };
-      return { primary: propose, secondary: [markInstalled, overview] };
+      return { primary: propose, secondary: [markInstalled, present] };
     }
 
     // Installed — nothing left to advance; payments (still allowed) are
     // recorded from the Payments panel.
     if (status === 'installed') {
-      return { primary: null, secondary: [overview] };
+      return { primary: null, secondary: [present] };
     }
 
     // Expired — the estimate lapsed but was never confirmed, so the
     // presentation view still applies here (Save/Send/Download are in the
     // top bar; send after updating the expiry date).
-    return { primary: null, secondary: [present, overview] };
+    return { primary: null, secondary: [present] };
   };
 
   /**
@@ -2398,6 +2409,18 @@ export default function OrderDetail() {
         <div className="flex w-full min-w-0 flex-col gap-4">
           {/* Open cancellation request — needs an answer before anything else */}
           {cancelRequestBanner}
+
+          {/*
+            Customer change requests. Below the cancellation banner
+            (which outranks everything) and above the timeline, so the
+            instructions are read before the order is edited. Outside the
+            read-only fieldset: resolving one is not an edit to the order.
+          */}
+          <EditRequestsCard
+            requests={editRequests ?? []}
+            onResolve={(requestId) => void handleResolveEditRequest(requestId)}
+            resolvingId={resolveEditMut.isPending ? resolveEditMut.variables.requestId : null}
+          />
 
           {/* Progress timeline (revert lives here — outside the disabled fieldset) */}
           {timelineCard}

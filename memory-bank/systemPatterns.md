@@ -104,6 +104,28 @@ convention (not added to the `hooks/index.ts` barrel). Calendar is a 5th item in
   `GET /:id/logs` returns newest-first; the web `useOrderLogs` hook is invalidated by
   the same `useCacheOrder` callback every lifecycle mutation already uses.
 
+## Customer-raised side conversations (2026-07-21, widened 2026-08-26)
+Two shapes now exist for "the customer asks staff for something from the token'd public
+page", and the choice between them is a modelling decision, not a style one:
+- **One optional side-conversation per order → COLUMNS on `orders`.** The cancellation
+  request (migration 27) is `cancel_requested_at` + `cancel_request_note`; there is only ever
+  one, either answer clears it back to NULL, and `order_logs` keeps the history.
+- **A collection → its own TABLE.** Edit requests (migration 41) are
+  `order_edit_requests` rows, several of which can be open at once and each resolved
+  independently via a `resolved_at` stamp that is set once and never cleared.
+
+Both share the invariants that make them safe on an unauthenticated surface: the customer
+writes ONLY free text, never a status/line item/money field; the request is accepted only in
+the window where it makes sense (cancellation: `awaiting_payment` with an empty ledger; edit:
+`sent`), re-read server-side rather than trusted from the page; the customer's note is never
+interpolated into the activity trail; and staff answer from `/api/*`, never the public group.
+They differ on notification by design — a cancellation emails the shop, an edit request does
+not, because an edit request is not time-critical and the order page already shows it.
+
+The STAFF-side colour is load-bearing: the cancellation banner is red because it must be
+answered before anything else proceeds, and the edit-request card is amber precisely so that
+distinction survives. Two red cards would flatten it.
+
 ## Expandable/collapsible sections (2026-07-07)
 No accordion component existed anywhere in `apps/web/src` before the customer-view
 Terms & Conditions section — the pattern is a local `useState<boolean>` toggled by a

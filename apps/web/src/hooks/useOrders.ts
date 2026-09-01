@@ -24,7 +24,7 @@ import {
 } from '@tanstack/react-query';
 import { apiFetch, apiDownload } from '../lib/api';
 import { useDebouncedValue } from './useDebouncedValue';
-import type { Order, OrderLog, OrderStatus, DiscountType } from '../types';
+import type { Order, OrderLog, OrderEditRequest, OrderStatus, DiscountType } from '../types';
 
 /** API envelope: every orders endpoint returns `{ data: T }`. */
 interface Envelope<T> {
@@ -194,6 +194,55 @@ export function useOrderLogs(id: string | undefined): UseQueryResult<OrderLog[]>
     queryKey: ['orders', 'logs', id],
     queryFn: async () => (await apiFetch<Envelope<OrderLog[]>>(`/api/orders/${id}/logs`)).data,
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * The customer's change requests for one order, newest first (disabled
+ * until id). Includes resolved rows — the card filters to the open ones,
+ * and keeping both in a single cache means resolving never refetches.
+ */
+export function useOrderEditRequests(
+  id: string | undefined
+): UseQueryResult<OrderEditRequest[]> {
+  return useQuery({
+    queryKey: ['orders', 'edit-requests', id],
+    queryFn: async () =>
+      (await apiFetch<Envelope<OrderEditRequest[]>>(`/api/orders/${id}/edit-requests`)).data,
+    enabled: Boolean(id),
+  });
+}
+
+/**
+ * Marks one change request handled.
+ *
+ * The Worker answers with the order's REFRESHED list, which is written
+ * straight into the query cache — the card re-renders from server truth
+ * in one round-trip instead of refetching and flickering through a
+ * loading state. The activity trail is invalidated too, since resolving
+ * appends an entry to it.
+ *
+ * Nothing about the order itself changes, so the order detail cache is
+ * deliberately left alone.
+ */
+export function useResolveEditRequest(): UseMutationResult<
+  OrderEditRequest[],
+  Error,
+  { id: string; requestId: string }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, requestId }) =>
+      (
+        await apiFetch<Envelope<OrderEditRequest[]>>(
+          `/api/orders/${id}/edit-requests/${requestId}/resolve`,
+          { method: 'POST' }
+        )
+      ).data,
+    onSuccess: (list, { id }) => {
+      qc.setQueryData(['orders', 'edit-requests', id], list);
+      void qc.invalidateQueries({ queryKey: ['orders', 'logs', id] });
+    },
   });
 }
 

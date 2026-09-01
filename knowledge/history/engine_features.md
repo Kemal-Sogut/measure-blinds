@@ -3905,6 +3905,186 @@ row, not children: the row is itself one big `<button>` and cannot legally conta
 `tsc` clean, `oxlint` clean, web 425/425 (unchanged — `OrderList` still has no covering
 tests). NOT seen in a browser: the dev server stops at the Supabase login wall.
 
+## 2026-08-26 — Customer edit requests ("Request Edit" beside Confirm)
+
+The public estimate page previously offered a customer exactly one forward action — Confirm —
+and one backward action that only exists AFTER confirming (request cancellation). A customer
+who wanted a change had to leave the page, and the ask never reached the order record. There
+is now a **Request Edit** button to the LEFT of Confirm that opens a dialog, files a free-text
+message against the order, and surfaces it on the staff order page.
+
+**Migration 41** (`20260826000041_order_edit_requests.sql`) adds `order_edit_requests`
+(`id`, `order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`), an index
+on `(order_id, created_at desc)`, a partial index on `order_id where resolved_at is null`
+backing the open-count cap, and the standard `authenticated_full_access` RLS policy (anon gets
+nothing).
+
+A TABLE, not columns on `orders` — deliberately the opposite call from migration 27's
+`cancel_requested_at`. That one is a single optional side-conversation per order; an edit
+request is a COLLECTION, several of which can be open and each resolved independently.
+`resolved_at` is the whole lifecycle (null = open, set = handled, never cleared), so the rows
+double as the history. No `resolved_by`: the app has no per-user attribution anywhere else on
+an order, and `order_logs` already records that the resolution happened.
+
+**Public route** `POST /public/estimate/:token/edit-request` (`apps/api/src/routes/public.ts`).
+Accepted ONLY while the order is `sent` — the pre-confirmation window in which the customer's
+action bar exists at all — with `effectiveStatus` applied first so a lapsed estimate reads as
+expired here exactly as it does on the page. The message is trimmed and TRUNCATED to 1000
+chars rather than rejected (a customer should not be bounced for a limit they were never
+shown); empty-after-trim is 400. A per-order cap of **5 OPEN requests** is counted immediately
+before the insert; the read-then-insert race is benign and documented as such — the cap exists
+to stop a wall of messages, not as an invariant worth a trigger. The trail entry is
+`'Customer requested changes.'` with the message deliberately NOT interpolated, matching how
+the cancellation note is handled. **No email is sent** — a deliberate choice: the order page
+and the activity trail carry it. `GET /public/estimate/:token` gained `edit_requests`, read
+back to the customer so a sent message never appears to vanish. `loadByToken`'s select had to
+become ONE string literal — supabase-js parses the select at the TYPE level and a concatenated
+string widens to `string`, collapsing the whole row type to a parse error.
+
+**Staff routes** (`apps/api/src/routes/orders.ts`): `GET /:id/edit-requests` (newest first,
+resolved included, limit 200) and `POST /:id/edit-requests/:requestId/resolve`. The resolve
+UPDATE is guarded on `resolved_at is null` AND `order_id`, so a stale tab cannot re-stamp a
+request a colleague closed and a request id from another order cannot be resolved through this
+order's URL. When nothing matches, a follow-up read distinguishes 404 (not this order's) from
+409 (already resolved) rather than collapsing both into "not found". It returns the REFRESHED
+list, so the card re-renders in one round-trip instead of flickering through an empty state.
+
+**Web — customer**: new `pages/customer-view/EditRequestDialog.tsx`, presentational over the
+shared `ui/Modal` (so the unauthenticated page inherits the tested Escape/backdrop/scroll-lock/
+focus handling rather than reimplementing it), with the body markup in the customer page's own
+idiom. `onSubmit` REJECTS on failure — that contract is what keeps a failed send from clearing
+the typed message, while a resolved promise closes the dialog. The draft resets on OPEN, not on
+close, so a filed message is never re-presented as unsent. `CustomerView.tsx` splits the fixed
+bar into `flex-1` / `flex-[2]`: Request Edit outlined on the left, Confirm unchanged on the
+right — one primary decision with an escape hatch, not a choice between equals. Request Edit is
+NOT gated on the terms tick (asking a question is not assent) and does NOT block Confirm. Both
+inert under `?preview=1`. A "Your change requests" list renders what the customer sent.
+
+**Web — staff**: new `pages/orders/EditRequestsCard.tsx`, amber, showing only UNRESOLVED
+requests and disappearing when the last is closed — a to-do list, not an archive. Amber not
+red: red is spoken for on that page by the cancellation banner, the one thing that must be
+answered before anything else. Mounted in `OrderDetail.tsx` below that banner, above the
+timeline, OUTSIDE the read-only fieldset (resolving is not an edit to the order). `resolvingId`
+is tracked per row so resolving the third request does not blank the other two's buttons.
+`useOrderEditRequests` / `useResolveEditRequest` in `hooks/useOrders.ts`; the resolve response
+is written straight into the cache and only the LOGS query is invalidated — the order itself
+did not change.
+
+### Verified
+`tsc` clean both workspaces, `oxlint` clean, api 447/447 (429 → +13 public, +5 orders), web 425/425
+(unchanged — the new components have no covering tests, matching the rest of the page). The
+migration is written but NOT applied to the live Supabase project; the routes 500 until it is.
+
+## 2026-08-28 — One order view: Present absorbs Overview, behind a price-breakdown toggle
+
+`/orders/:id/overview` and `OrderOverview.tsx` are GONE. `/orders/:id/present` is the app's
+only read-only order view and now carries everything Overview did. The split was backwards:
+the internal-only page showed unit prices and override markers but no per-option money, while
+the customer-facing page showed per-option money but dropped notes, add-ons and the balance —
+so a consultant wanting the full picture opened both, in two tabs.
+
+**Absorbed into the blinds table** (`PresentationTable.tsx`): a **Note** column, a **Unit**
+column carrying the `show_original_price` strikethrough, and an **Add-ons** column. Column
+order is now `Room | Blind type | Size (cm) | options… | Qty | Unit | Add-ons | Line total |
+Note`. Add-on sub-lines under the ROOM NAME were tried and dropped: with an Add-ons column
+present, `+ Rush fee $40.00` under the room and `$40.00` in the column is the same money twice
+on the common single-add-on line. `AddonLines` survives for `PresentationOtherItems`, which has
+no Add-ons column of its own. Consequence to accept: the blinds table no longer NAMES an
+add-on — with the breakdown off it shows no sign of one at all, and the money reaches the
+customer inside the line total. The footer gained blank cells under Unit and Note — a column
+of unit prices summed together is not a number that means anything. Blinds stay in ONE
+filterable table; Overview's per-blind-type tables were deliberately not carried over, because
+the `Blind type` column already says it and the filter bar narrows the whole order in one place.
+Size stays `(120 + 80) × 210` rather than splitting back into Width/Height.
+
+**Other items** was promoted from an inline `<ul>` to a real table
+(`PresentationOtherItems.tsx`, `Type | Description | Qty | Unit | Total`), absorbing Overview's
+`FlatItemsTable` wholesale — description sub-line and add-on lines included. It keeps its
+existing behaviour of dropping out once an option filter is active.
+
+**Totals strip** gained **Paid** and **Balance due** (server row, only when `amount_paid > 0`,
+green once settled).
+
+**The toggle** (`BreakdownToggle.tsx`, on the title row). ON is the SELLING state — it reveals
+what each individual CHOICE cost, which is what justifies a price to a customer looking at the
+screen. It governs per-choice money ONLY: option cells' `+$` amounts, their footer totals,
+add-on prices, and the Add-ons column. Option names, add-on labels, Qty, Unit, Note, every
+row's Line total, the footer overall and the whole order strip are on screen in BOTH states, so
+the page can never disagree with the estimate the customer was sent. `useState(false)`, not
+persisted — a consultant reveals it deliberately rather than finding the last session's state
+on a screen already facing a customer. `print:hidden` on the control alone: whatever is on
+screen is what prints.
+
+The Add-ons column hides with the breakdown rather than persisting, and appears at all only
+when a visible line actually has an add-on — exactly like an option column nobody filled. Off
+means off: with the toggle down, add-on money exists only inside the line total.
+
+**The price override no longer has a column of its own** (`optionBreakdown.ts`). The old
+`Adjustment` column held two unrelated kinds of money under a label that explained neither:
+add-ons, plus the gap a price override opened. `describeLineBreakdown` now fits the material
+cell against `unit_price` — what was actually CHARGED — instead of `base_unit_price`, so an
+override is absorbed into the material cell and the leftover figure is the add-ons total by
+construction. Hence `Adjustment` → `Add-ons`, and the invariant is now
+`Σ cells + add-ons === line_total`.
+
+This closes a real leak. Every other customer-facing surface already nulls `base_unit_price`
+when `show_original_price` is false (`public.ts` sends `original_line_total: null`;
+`orders.ts:1464` strips it from every document, because a PDF's text layer is extractable
+whether or not the figure was drawn). The order view was the one surface that still disclosed
+an override the consultant had chosen not to disclose — as an unexplained −$40 in a column of
+its own. `show_original_price` is now the ONLY control over that disclosure on every surface,
+and it discloses through the struck-through unit price alone, independent of the toggle in BOTH
+directions. Overview's amber "price overridden" dot is DROPPED for the same reason — it meant
+"someone typed this price", fair on an internal-only screen, an unexplained internal marker on
+a page that can face a customer.
+
+**Known cost of the fit:** a line discounted below its own hardware fits the material cell
+NEGATIVE (hardware legs are computed directly; material closes the gap). It is left negative
+rather than clamped — the row has to add up and there is no longer a column to park a remainder
+in. `OptionValue` renders the sign instead of prefixing `+`, so it reads `−$15.00`, not
+`+−$15.00`. Directly tested.
+
+**Entry point.** `ICONS.overview` and the `overview` `StageAction` are removed from
+`OrderDetail.tsx`; every stage's `secondary` set now offers the existing **Present to Customer**
+action, which saves then navigates in the SAME tab (a `window.open` after an `await` is treated
+as a popup and blocked — the reason it was in-tab to begin with).
+
+**New modules.** `presentationCells.tsx` (`Th`/`Td`/`Tf`, `AddonLines`, `UnitPrice` — the last
+two rescued from Overview), `presentationMoney.ts`, `BreakdownToggle.tsx`,
+`PresentationOtherItems.tsx`. `money` lives in its own plain-TS module rather than beside the
+components: a React Fast Refresh boundary only holds when a module exports components alone,
+and `oxlint`'s `react(only-export-components)` enforces it — worth knowing before adding another
+helper to a `.tsx`. `presentationFilters.ts` was NOT touched. `optionBreakdown.ts` was —
+`LineBreakdown.adjustment` is now `LineBreakdown.addons`, and the material fit moved from
+`base_unit_price` to `unit_price` (see the price-override note above).
+
+Incidental: Overview rendered `Tax ({Number(order.tax_rate)}%)` → "Tax (0.13%)". Present's
+`HST ({Math.round(rate * 100)}%)` → "HST (13%)" is correct, so the bug died with the page.
+
+Spec: `knowledge/specs/2026-08-28-unified-order-view-design.md`.
+Plan: `knowledge/plans/2026-08-28-unified-order-view.md`.
+
+### Verified
+`tsc` clean, `oxlint` clean, web 437/437 (425 → +8 `presentationMoney.test.ts`, the negative-safe
+U+2212 formatter feeding the Add-ons column and the Balance row; → +4 in
+`optionBreakdown.test.ts` covering the override absorption, its independence from
+`show_original_price`, the negative material fit, and add-ons summed per line). `apps/api`
+447/447, untouched.
+
+The rendering was verified in the browser against a throwaway Vite harness rendering the real
+components with fixtures (five blinds spanning note/add-on/override-shown/override-hidden/
+multi-qty, plus preset and custom lines), because `apps/web/.env` does not exist in this
+worktree and the full app renders blank without Supabase config. Confirmed in both toggle
+states: line totals, qty total, unit prices and the footer overall are BYTE-IDENTICAL; every
+row reconciles and the footer columns sum to the overall; header/footer/body cell counts match
+exactly in both states; the page body never scrolls sideways at 768px
+while the blinds table scrolls inside its own container; `.print\:hidden` resolves to
+`@media print { display: none }`.
+
+NOT browser-verified (no Supabase env): the totals strip's Paid/Balance rows and the
+`OrderDetail` stage-action wiring. Both are type-checked, and the action change is a
+substitution of an existing action into five `secondary` arrays.
+
 ---
 
 ## 2026-09-01 — Copy-the-link area on the Send sheet

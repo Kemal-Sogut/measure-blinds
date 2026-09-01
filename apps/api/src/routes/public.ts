@@ -20,6 +20,7 @@
  *   POST /estimate/:token/confirm  one-shot confirm (rate-limited)
  *   POST /estimate/:token/cancel-request   ask to cancel the confirmation
  *   POST /estimate/:token/cancel-withdraw  take that request back
+ *   POST /estimate/:token/edit-request     ask for a change before confirming
  *   GET  /appointment/:token       visit proposal (estimate or install)
  *   POST /appointment/:token/confirm  confirm the proposed window
  *   POST /appointment/:token/request  ask for a different time (+note)
@@ -43,6 +44,14 @@
  * customer can do is REQUEST cancellation here; the request is a flag
  * on the order (`cancel_requested_at`) and changes no status by itself.
  * Staff answer it on `/api/orders/:id/cancel-request/resolve`.
+ *
+ * NOTE (task: customer edit requests): the same one-way shape applies
+ * BEFORE a confirmation exists. `POST /estimate/:token/edit-request`
+ * appends a free-text message to `order_edit_requests` and changes no
+ * status, no line item and no money — a customer never mutates the
+ * order itself (AI_GUIDELINES rule 1). Staff read the requests on the
+ * order page and close them on
+ * `/api/orders/:id/edit-requests/:requestId/resolve`.
  */
 
 import { Hono } from 'hono';
@@ -139,11 +148,20 @@ async function logOrderEvent(
  * customer's own receipt history. Only those two columns are selected:
  * the row `id`, the internal `note`, and `receipt_sent_at` are staff
  * data and never reach the public payload (see the sanitizer below).
+ *
+ * The `order_edit_requests` embed is the customer's OWN messages read
+ * back to them, so every column of it is already theirs — the row is
+ * whole-cloth customer input plus the staff resolution stamp. It rides
+ * on this query rather than a second round-trip because every caller
+ * that needs it already loads the order.
  */
 async function loadByToken(sb: SupabaseClient, token: string) {
   const { data } = await sb
     .from('orders')
-    .select('*, line_items(*), customer:customers(*), payments(amount, paid_on)')
+    // One literal, deliberately long: supabase-js parses the select at
+    // the TYPE level, and a concatenated string widens to `string`,
+    // which collapses the whole row type to a parse error.
+    .select('*, line_items(*), customer:customers(*), payments(amount, paid_on), order_edit_requests(id, message, created_at, resolved_at)')
     .eq('public_token', token)
     .order('position', { referencedTable: 'line_items' })
     .maybeSingle();
@@ -194,6 +212,62 @@ function publicPayments(
 
 /** Statuses in which a confirmation still exists to be cancelled. */
 const CANCELLABLE_STATUS = 'awaiting_payment';
+
+/**
+ * The only status in which an edit request is accepted.
+ *
+ * Edit requests belong to the pre-confirmation conversation: the button
+ * that raises one lives in the customer's fixed action bar, which the
+ * page renders only while the estimate is unconfirmed. Once the order
+ * moves on, the cancellation flow is the remaining lever and this route
+ * answers 409 rather than filing a message nobody expects.
+ */
+const EDIT_REQUEST_STATUS = 'sent';
+
+/**
+ * Hard cap on UNRESOLVED edit requests per order.
+ *
+ * The group's 5-req/min/IP limiter stops a flood; this stops a slow
+ * drip from burying the staff order page under a wall of open messages.
+ * Counted rather than enforced by a constraint because "open" is a
+ * partial predicate that changes as staff work through the list — a
+ * customer who is answered can always ask again.
+ */
+const MAX_OPEN_EDIT_REQUESTS = 5;
+
+/** Longest customer message stored; anything beyond is truncated, not rejected. */
+const EDIT_REQUEST_MAX_CHARS = 1000;
+
+/** One change request as the customer's own page renders it. */
+interface PublicEditRequest {
+  id: string;
+  message: string;
+  created_at: string;
+  /** Set once staff amended the order and closed the request out. */
+  resolved_at: string | null;
+}
+
+/**
+ * Normalises the `order_edit_requests` embed for the public payload.
+ *
+ * Sorted oldest-first so the list reads as a conversation in the order
+ * it happened; Supabase does not guarantee embed ordering, so the sort
+ * belongs here rather than being assumed from insertion order. Nothing
+ * is stripped — every column is either the customer's own text or the
+ * resolution stamp they are entitled to see.
+ */
+function publicEditRequests(
+  rows: Array<Record<string, unknown>> | null | undefined
+): PublicEditRequest[] {
+  return (rows ?? [])
+    .map((r) => ({
+      id: String(r.id),
+      message: String(r.message ?? ''),
+      created_at: String(r.created_at),
+      resolved_at: (r.resolved_at as string | null) ?? null,
+    }))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
 
 /**
  * Internal notice when a customer opens or withdraws a cancellation
@@ -293,6 +367,9 @@ app.get('/estimate/:token', async (c) => {
       terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,
       cancel_requested_at: order.cancel_requested_at ?? null,
+      // The customer's own change requests, read back so the page can
+      // show that a message landed and whether staff have closed it.
+      edit_requests: publicEditRequests(order.order_edit_requests),
       customer: {
         first_name: order.customer?.first_name ?? '',
         last_name: order.customer?.last_name ?? '',
@@ -592,6 +669,87 @@ app.post('/estimate/:token/cancel-withdraw', async (c) => {
 
   await notifyCancellationRequest(c.env, order, true);
   return c.json({ data: { cancel_requested: false } });
+});
+
+/* ------------------------------------------------------------------ */
+/* Edit requests (customer asks for a change before confirming)        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Customer asks for a change to their estimate.
+ *
+ * Appends one free-text message to `order_edit_requests` and does
+ * NOTHING else: no status moves, no line item or money field is touched,
+ * and Confirm stays available — the customer may still accept the
+ * estimate as quoted while a question is outstanding. Staff read the
+ * open requests on the order page and close each one there.
+ *
+ * Accepted only on a `sent` order, which is the window in which the
+ * customer's action bar (and therefore the button) exists at all. The
+ * status is re-read here rather than trusted from the page, so a stale
+ * tab left open across a confirmation cannot file a request against an
+ * order that has moved on.
+ *
+ * The open-request cap is counted immediately before the insert. Two
+ * simultaneous submits could each see four and both write, landing six
+ * open rows; that race is benign by design — the cap exists to stop a
+ * wall of messages, not to be an invariant worth a trigger or a lock.
+ *
+ * 400 empty message · 404 unknown token · 409 wrong status or cap
+ * reached.
+ */
+app.post('/estimate/:token/edit-request', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as { message?: unknown };
+  // Truncated, not rejected: a customer who pastes a long note should
+  // have it filed, not bounced for a limit they were never shown.
+  const message =
+    typeof body.message === 'string' ? body.message.trim().slice(0, EDIT_REQUEST_MAX_CHARS) : '';
+  if (!message) return c.json({ error: 'Please tell us what you would like changed.' }, 400);
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+
+  // Defensive expiry first: a lapsed estimate must read as expired here
+  // exactly as it does on the page, rather than quietly accepting a
+  // request against something the customer can no longer confirm.
+  const status = await effectiveStatus(sb, order);
+  if (status !== EDIT_REQUEST_STATUS) {
+    return c.json(
+      { error: 'This estimate can no longer be changed online. Please contact us directly.' },
+      409
+    );
+  }
+
+  const { count, error: countError } = await sb
+    .from('order_edit_requests')
+    .select('id', { count: 'exact', head: true })
+    .eq('order_id', order.id)
+    .is('resolved_at', null);
+  if (countError) return c.json({ error: countError.message }, 500);
+  if ((count ?? 0) >= MAX_OPEN_EDIT_REQUESTS) {
+    return c.json(
+      { error: 'We already have your change requests. Please contact us directly.' },
+      409
+    );
+  }
+
+  const { data: inserted, error } = await sb
+    .from('order_edit_requests')
+    .insert({ order_id: order.id, message })
+    .select('id, message, created_at, resolved_at')
+    .single();
+  if (error) return c.json({ error: error.message }, 500);
+
+  // The message itself is deliberately NOT interpolated into the trail:
+  // staff read it in full on the order page, and the trail stays a
+  // scannable list of what happened (same rule as the cancellation note).
+  await logOrderEvent(sb, order.id, 'Customer requested changes.');
+
+  return c.json({ data: publicEditRequests([inserted])[0] });
 });
 
 /* ------------------------------------------------------------------ */
