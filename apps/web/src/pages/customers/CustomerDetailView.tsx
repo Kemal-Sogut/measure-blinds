@@ -35,7 +35,11 @@ const SECTION_CLS =
  * not shift between a complete record and a sparse one.
  *
  * `href` turns the value into a link (`mailto:`/`tel:`); it is ignored
- * when there is no value to link to.
+ * when there is no value to link to. A linked value is 44px tall — the
+ * base layer gives every anchor the tap-target minimum — so it is laid
+ * out as a centred inline-flex: left as inline text it sits at the top
+ * of that box and dumps all 21px of slack underneath, which reads as a
+ * spacing bug rather than as a comfortable target.
  */
 function DetailRow({ label, value, href }: { label: string; value: string; href?: string }) {
   const text = (value ?? '').trim();
@@ -46,7 +50,7 @@ function DetailRow({ label, value, href }: { label: string; value: string; href?
         href ? (
           <a
             href={href}
-            className="break-words text-[15px] text-brand-600 underline-offset-2 hover:underline"
+            className="inline-flex items-center break-words text-[15px] text-brand-600 underline-offset-2 hover:underline"
           >
             {text}
           </a>
