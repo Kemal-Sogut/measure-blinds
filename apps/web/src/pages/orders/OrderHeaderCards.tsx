@@ -10,9 +10,11 @@
  * a disclosure that expands the customer record inline as PLAIN TEXT
  * laid out like an address label: name / phone / email, then the
  * shipping block, with billing beside it only when the two differ. Not
- * form fields — this is something to read, and boxes around unchangeable
- * values invite edits that cannot happen. Editing a customer stays in
- * the Customers module; nothing here writes back to the customer row.
+ * form fields — this is something to read, and boxes around editable
+ * values inside an order card would blur which record is being changed.
+ * The pen beside the picker opens `CustomerEditModal` for that: the
+ * card itself still writes nothing, and editing a customer still never
+ * touches the order.
  *
  * `OrderDatesCard` owns the order/expiry date pair and the expiry term
  * shortcuts from `lib/expiryTerms` ("On receipt", 1/3/7/15 days, 1
@@ -86,15 +88,19 @@ function AddressBlock({ label, lines }: { label: string; lines: string[] }) {
  *
  * @param customer  Currently selected customer, or `null` while unset.
  * @param onPick    Opens the customer search sheet owned by `OrderDetail`.
- * @param readOnly  Suppresses the picker click (the card still expands).
+ * @param onEdit    Opens the customer edit dialog owned by `OrderDetail`.
+ * @param readOnly  Suppresses the picker click and hides the pen (the
+ *                  card still expands, because reading is always safe).
  */
 export function CustomerCard({
   customer,
   onPick,
+  onEdit,
   readOnly,
 }: {
   customer: Customer | null;
   onPick: () => void;
+  onEdit: () => void;
   readOnly: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -147,6 +153,28 @@ export function CustomerCard({
               <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted" />
             </svg>
           </button>
+          {/* Correct the customer record without leaving the order. Hidden
+              when nothing is selected (nothing to edit) and when the order
+              is read-only, matching the picker beside it. */}
+          {canExpand && !readOnly && (
+            <button
+              type="button"
+              onClick={onEdit}
+              aria-label="Edit customer"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border-input bg-surface text-text-muted hover:bg-surface-muted"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4Z"
+                  stroke="currentColor"
+                  strokeWidth="1.9"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path d="m13.5 6.5 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+              </svg>
+            </button>
+          )}
           {canExpand && (
             <button
               type="button"

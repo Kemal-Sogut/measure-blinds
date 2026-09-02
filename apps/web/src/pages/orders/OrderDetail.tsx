@@ -74,6 +74,7 @@ import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import CustomerEditModal from '../../components/CustomerEditModal';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
 import { expiryFromPreset, presetFromDates, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
@@ -589,6 +590,10 @@ export default function OrderDetail() {
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
   const [addingCustomer, setAddingCustomer] = useState(false);
+  // Inline customer-record editor, opened by the pen on the customer card.
+  // Separate from `addingCustomer` because the two dialogs edit different
+  // things and may not both be open.
+  const [editingCustomer, setEditingCustomer] = useState(false);
 
   // ── Mobile action bar geometry ──────────────────────────────────
   // The bar is `position: fixed`, which on iOS is positioned against the
@@ -2413,6 +2418,7 @@ export default function OrderDetail() {
             <CustomerCard
               customer={customer}
               onPick={() => setSheet('customer')}
+              onEdit={() => setEditingCustomer(true)}
               readOnly={readOnly}
             />
 
@@ -2836,6 +2842,25 @@ export default function OrderDetail() {
             setCustomer(created);
             setAddingCustomer(false);
             setSheet('none');
+          }}
+        />
+      )}
+
+      {/*
+        Inline customer-record editor. Mounted here, at the page tail,
+        rather than beside the card — the card sits inside the
+        `fieldset disabled={readOnly}` wrapper, and a dialog rendered in
+        that subtree would inherit the disabled state and present a form
+        nobody can type into. Writes the customer row only; the order is
+        neither saved nor dirtied.
+      */}
+      {editingCustomer && customer && (
+        <CustomerEditModal
+          customer={customer}
+          onClose={() => setEditingCustomer(false)}
+          onSaved={(saved) => {
+            setCustomer(saved);
+            setEditingCustomer(false);
           }}
         />
       )}
