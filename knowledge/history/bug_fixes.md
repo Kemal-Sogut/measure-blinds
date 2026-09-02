@@ -944,3 +944,29 @@ stylesheet at the popup's 420px width and measured. No horizontal overflow
 Calculated-price cell; price input + remove button span 217→402, exactly matching the
 Override input; typing into the description updates state (the remove button's aria-label
 follows it).
+
+## 2026-09-02 - An address dropdown opened over every freshly loaded address
+
+**Symptom.** Open a saved customer and, ~300ms after the form rendered, a list of address
+suggestions dropped over the fields — suggestions for the street the customer already had.
+Vivid in the new `CustomerEditModal`, where the dialog is short and the list covered most of
+it, but the customers page had always done it too.
+
+**Cause.** `AddressAutocomplete` guards its lookup with a `selectionLocked` ref, documented as
+"address already picked and untouched since". It was initialised to `false`, and the debounce
+effect runs on MOUNT as well as on change. So a field mounted with a value ≥3 chars — which is
+exactly what loading a saved record does — passed the guard and searched for its own contents.
+Nothing about it was specific to the new dialog; the old page hit it via the `''` → record
+transition its populate-effect produced.
+
+**Fix.** `useRef(value.trim().length > 0)`. A seeded value IS the state the lock already
+describes: an address chosen and untouched since, just chosen on an earlier visit and read back
+off the record. One line, and it fixes both surfaces. `handleChange` still clears the lock, so
+typing searches exactly as before.
+
+**Verified in a browser**, three paths, not just by tsc: a field seeded with "12 Bay St" waits
+2s and opens no dropdown; a field typed into from empty ("100 Queen St") returns 5 suggestions;
+editing the seeded field ("55 King St") releases the lock and returns 5 suggestions.
+
+Surfaced by the customer edit mode work — see `knowledge/history/engine_features.md`
+(2026-09-02).
