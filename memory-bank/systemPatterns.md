@@ -288,7 +288,9 @@ section as the reference implementation for future collapsible UI.
 6. **Ready:** Order detail → Mark Ready → status=ready
 7. **Installation scheduling:** Order detail → Propose Installation (date + time) → email to customer → customer confirms/requests on public page → shows on the order; the panel also offers Change time (re-propose) / Delete time (`/install/cancel`)
 8. **Installed:** Order detail → Mark Installed → status=installed (terminal)
-9. **Revert / delete:** the order-detail Progress timeline shows all stages with an undo icon on earlier ones (`/:id/revert { to }`, backward-only, resets stage metadata but keeps payments); a Delete Order button removes the order (`DELETE /:id`, cascades line items + payments)
+9. **Revert / delete:** the order-detail Progress timeline shows all stages with an undo icon on earlier ones (`/:id/revert { to }`, backward-only, resets stage metadata but keeps payments); a Delete Order button removes the order (`DELETE /:id` → `lib/orderDelete.ts`: cascades line
+   items, logs, payments, change requests and the installation appointment, releases any applied
+   e-Transfer back to the pending inbox, and keeps the customer + their estimate visits)
 
 ## Semantic colour (added 2026-07-31)
 Hue encodes STATE, never decoration. blue=info/sent, violet=scheduled/in progress,

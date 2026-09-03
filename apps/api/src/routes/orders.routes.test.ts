@@ -21,6 +21,9 @@
  *   - customer change requests: the list includes resolved rows, and
  *     resolving one stamps resolved_at, logs it, and distinguishes
  *     "already resolved" (409) from "not this order's" (404)
+ *   - DELETE /:id releases the order's applied e-Transfers back to the
+ *     pending inbox BEFORE the row goes (the FK would null the link
+ *     away), and re-applies them if the delete itself fails
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -36,9 +39,23 @@ interface FakeDb {
   insertPayloads: Record<string, unknown[]>;
   /** Captured update payloads keyed by table name */
   updatePayloads: Record<string, unknown[]>;
+  /**
+   * Errors to return for a `table.op` pair instead of rows — the only
+   * way to script a failing DELETE/UPDATE (insert failures have their
+   * own queue). Lets a test drive the compensation path a route takes
+   * when the database rejects a write.
+   */
+  opErrors: Record<string, { message: string }>;
 }
 
-const db: FakeDb = { responses: {}, orderInsertResults: [], calls: [], insertPayloads: {}, updatePayloads: {} };
+const db: FakeDb = {
+  responses: {},
+  orderInsertResults: [],
+  calls: [],
+  insertPayloads: {},
+  updatePayloads: {},
+  opErrors: {},
+};
 
 /**
  * Minimal thenable query builder that mimics the supabase-js chain.
@@ -69,6 +86,8 @@ function makeBuilder(table: string) {
       return { data: next.data ?? null, error: next.error ?? null, count: null };
     }
     const key = `${state.table}.${state.op}`;
+    const failure = db.opErrors[key];
+    if (failure) return { data: null, error: failure, count: null };
     const rows = db.responses[key] ?? [];
     return { data: rows, error: null, count: rows.length };
   };
@@ -186,6 +205,7 @@ beforeEach(() => {
   db.orderInsertResults = [];
   db.insertPayloads = {};
   db.updatePayloads = {};
+  db.opErrors = {};
   db.responses = {
     'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
@@ -2623,5 +2643,68 @@ describe('order edit requests (staff side)', () => {
       error: 'That change request has already been resolved.',
     });
     expect(db.insertPayloads['order_logs']).toBeUndefined();
+  });
+});
+
+describe('DELETE /api/orders/:id', () => {
+  /** An e-Transfer that was applied to the order being deleted. */
+  const APPLIED = { id: 'et-1', payment_id: 'pay-1' };
+
+  const del = (path: string) => ordersApp.request(path, { method: 'DELETE' }, ENV);
+
+  it('404s for an order that does not exist, touching nothing', async () => {
+    db.responses['orders.select'] = [];
+    const res = await del('/o1');
+    expect(res.status).toBe(404);
+    expect(db.calls).not.toContain('orders.delete');
+    expect(db.updatePayloads['etransfers']).toBeUndefined();
+  });
+
+  it('releases applied e-Transfers to the pending inbox before deleting', async () => {
+    db.responses['orders.select'] = [{ id: 'o1' }];
+    db.responses['etransfers.select'] = [APPLIED];
+
+    const res = await del('/o1');
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { data: { id: string } }).toEqual({ data: { id: 'o1' } });
+
+    // Unlinked AND back to pending: an 'applied' row with no order and no
+    // payment is invisible to /payments/pending and to every order page.
+    expect(db.updatePayloads['etransfers']).toEqual([
+      { status: 'pending', order_id: null, payment_id: null },
+    ]);
+    // The release has to happen while the link still exists — the FK is
+    // ON DELETE SET NULL, so after the delete there is nothing to find.
+    expect(db.calls.indexOf('etransfers.update')).toBeLessThan(db.calls.indexOf('orders.delete'));
+  });
+
+  it('deletes an order with no e-Transfers without writing to the inbox', async () => {
+    db.responses['orders.select'] = [{ id: 'o1' }];
+    db.responses['etransfers.select'] = [];
+
+    const res = await del('/o1');
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('orders.delete');
+    expect(db.updatePayloads['etransfers']).toBeUndefined();
+  });
+
+  it('re-applies the released e-Transfers when the delete fails', async () => {
+    db.responses['orders.select'] = [{ id: 'o1' }];
+    db.responses['etransfers.select'] = [APPLIED];
+    db.opErrors['orders.delete'] = { message: 'update or delete violates foreign key' };
+
+    const res = await del('/o1');
+    expect(res.status).toBe(500);
+    expect((await res.json()) as { error: string }).toEqual({
+      error: 'update or delete violates foreign key',
+    });
+
+    // The order survived, so the transfer must go back to it — otherwise
+    // it sits in the pending inbox inviting the same money to be recorded
+    // twice against an order that is still there.
+    expect(db.updatePayloads['etransfers']).toEqual([
+      { status: 'pending', order_id: null, payment_id: null },
+      { status: 'applied', order_id: 'o1', payment_id: 'pay-1' },
+    ]);
   });
 });

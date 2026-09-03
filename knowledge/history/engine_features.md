@@ -1,5 +1,32 @@
 # Engine Features / Feature History
 
+## 2026-09-03 — Order deletion has one owner and a written contract
+`DELETE /api/orders/:id` no longer inlines its own `delete from orders`. The whole contract
+lives in `apps/api/src/lib/orderDelete.ts` (`deleteOrderCascade`), which the route calls and
+maps to 404 / 500 / 200.
+
+**What a deleted order takes with it** — all by `ON DELETE CASCADE` on the FK to `orders`, so
+the database does it in one statement instead of the Worker firing a delete per table and
+half-succeeding: `line_items`, `order_logs` (the entire activity trail), `payments`,
+`order_edit_requests`, and the INSTALLATION `appointments` row (an installation can never
+exist without its order — migration 20's `installation_requires_order` check). Every stage
+stamp — `cut_done_at`, `installed_at`, `warranty_sent_at`, `customer_viewed_at`,
+`cancel_requested_at`, the public token — is a column ON the order row and leaves with it.
+
+**What stays:** the `customers` row (its FK is `ON DELETE RESTRICT` — deleting an order never
+deletes the person) together with every ESTIMATE appointment, which hangs off the customer and
+never referenced the order; and the `etransfers` inbox rows, which record money that really
+arrived and are the Apps Script's idempotency key. Those transfers are RELEASED rather than
+kept applied — see the 2026-09-03 entry in `bug_fixes.md` for why an untouched `applied` row
+was money stranded where no screen could reach it.
+
+**Staff-facing.** Both confirmations (`OrderDetail`'s Delete and `OrderList`'s per-row icon,
+still the same endpoint) now name what goes — "line items, activity log, payments, change
+requests and installation visit are removed. The customer is kept." — instead of the older
+"line items and payments". `useDeleteOrder` invalidates two caches it previously ignored:
+`['appointments']` (the calendar has lost the installation visit) and `['payments','pending']`
+(a released transfer has just entered the inbox).
+
 ## 2026-08-25 — Maintenance mode closes the customer surfaces
 Migration 40 (`20260825000040_company_maintenance_mode.sql`) adds two columns to the
 `company_settings` singleton: `maintenance_mode boolean not null default false` and

@@ -19,8 +19,12 @@ payment is recorded but does not advance, and staff may still advance an under-d
 order by hand. Deleting the LAST payment reverts in_progress → awaiting_payment; dropping
 below 50% while some payment remains does not (manual/threshold advances are not auto-undone).
 Order duplication re-prices from the current catalog and leaves payments/logs/appointment/
-warranty/public-token behind. Delete stays guarded (draft/expired only), but the STAGE itself
-no longer is: `POST /api/orders/:id/status` sets any of the six stages from any status,
+warranty/public-token behind. DELETING an order takes everything that belongs to it — line
+items, activity log, payments, change requests, the installation appointment and every stage
+stamp — and leaves the customer, their estimate visits, and the `etransfers` inbox standing;
+transfers applied to the order are released back to the pending inbox rather than left marked
+`applied` on nothing (`apps/api/src/lib/orderDelete.ts`; the button itself is offered at every
+stage). The STAGE is no longer guarded either: `POST /api/orders/:id/status` sets any of the six stages from any status,
 timeline-driven, with `sent_at`/`confirmed_at`/`installed_at` reconciled off the target stage
 index and the installation appointment dropped below `ready`. It never emails and never
 touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
