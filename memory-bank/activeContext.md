@@ -4,12 +4,37 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-<<<<<<< HEAD
-## Where things stand (as of 2026-09-01)
-On `main` at `6b4d1d1` ("delete button or orders page"). Everything described further down as
-"uncommitted" through 2026-08-25 — the orders-list Delete action, orders-list pagination,
-migrations 39/40 and the confirmed-order price lock — has since been COMMITTED and is plain
-history now; read those paragraphs as descriptions of shipped behaviour, not of pending work.
+## Where things stand (as of 2026-09-03)
+
+**Current branch: `feat/customer-edit-mode`** (not merged, not deployed). `/customers/:id` now
+opens READ-ONLY and a pen button enters edit mode; the order editor's customer card got the
+same pen, opening `components/CustomerEditModal` so a wrong number or street can be corrected
+without leaving the order. The editable form was extracted to `lib/customerForm.ts` (pure
+state, `toCustomerInput`, `validateCustomerForm`, `isCustomerFormDirty` — the only new tests,
+21 of them) and `components/CustomerFields.tsx`, shared by both surfaces;
+`components/CustomerCreateModal.tsx` was deliberately left on its own compact layout. NO api,
+schema, hook or route changes. Spec `knowledge/specs/2026-09-02-customer-edit-mode-design.md`,
+plan `knowledge/plans/2026-09-02-customer-edit-mode.md`, write-up in
+`knowledge/history/engine_features.md` 2026-09-02.
+
+Two constraints from that work worth not rediscovering. **`CustomerEditModal` must stay mounted
+at `OrderDetail`'s page tail, OUTSIDE the `fieldset disabled={readOnly}` wrapper** — inside it,
+the dialog inherits the disabled fieldset and nobody can type. And **the base layer gives every
+anchor a 44px min-height**, so a linked value in a label/value row needs `inline-flex
+items-center` or it sits at the top of a 44px box with all the slack below it.
+
+That work also surfaced a long-standing bug, now fixed: `AddressAutocomplete` opened a
+suggestion dropdown over any freshly LOADED address, because `selectionLocked` started `false`
+and the debounce effect runs on mount. It now starts locked when the field mounts with a value.
+See `knowledge/history/bug_fixes.md` 2026-09-02.
+
+**Still outstanding from the 2026-08-26 edit-requests work (now committed on `main` at
+`925d7b1`): migration 41 has NOT been applied** to project `lgbxxlwsdeuhdgzrjjen`
+(`supabase/migrations/20260826000041_order_edit_requests.sql`). The customer edit-request
+routes 500 until it is. Details in `knowledge/history/engine_features.md`, 2026-08-26.
+
+**Also on `main` now — the send sheet carries a copy-the-link area** (committed as
+`a179243`; the paragraph below was written while it was still uncommitted):
 
 Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
 sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
@@ -26,9 +51,8 @@ WhatsApp/SMS without being forced through the app's own email. Detail in
 `pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
 login wall).
 
-### Earlier state, kept for context
-=======
-## Where things stand (as of 2026-08-28)
+**Also on `main` now — ONE order view** (merged via PR #44; the paragraph below was
+written while `feat/unified-order-view` was still a separate branch):
 
 **Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
 `/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
@@ -66,34 +90,10 @@ Full write-up in `knowledge/history/engine_features.md`, 2026-08-28; spec in
 
 ## Previously (as of 2026-08-26)
 
-**Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
-**customer edit requests** (migration 41,
-`supabase/migrations/20260826000041_order_edit_requests.sql`). A new `order_edit_requests`
-table (`order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`;
-`authenticated_full_access` RLS, anon nothing) backs a **Request Edit** button placed to the
-LEFT of Confirm on the public estimate page. It opens a dialog
-(`apps/web/src/pages/customer-view/EditRequestDialog.tsx`, built on `ui/Modal`), POSTs to
-`/public/estimate/:token/edit-request`, and the message surfaces as an amber card
-(`apps/web/src/pages/orders/EditRequestsCard.tsx`) on the staff order page with a
-**Mark resolved** button per row. Staff routes: `GET /api/orders/:id/edit-requests` and
-`POST /api/orders/:id/edit-requests/:requestId/resolve`.
-
-Design decisions worth not re-litigating: a TABLE not order columns (unlike migration 27's
-`cancel_requested_at`, this is a collection); requests accepted ONLY while the order is `sent`;
-message truncated to 1000 chars rather than rejected; **5 open requests per order** (benign
-read-then-insert race, documented); **no email to the shop** — the order page and the activity
-trail carry it; Confirm is NOT blocked by an open request and Request Edit is NOT gated on the
-terms tick. Amber, not red — red stays reserved for the cancellation banner. Full write-up in
-`knowledge/history/engine_features.md`, 2026-08-26; spec in
-`knowledge/specs/2026-08-26-edit-requests-design.md`. Verified: `tsc` clean both workspaces,
-`oxlint` clean, api 447/447, web 425/425. NOT seen in a browser and NOT deployed; the routes
-500 until migration 41 is applied to project `lgbxxlwsdeuhdgzrjjen`.
-
 NOTE: everything below this point was written on 2026-08-25 and several of the items it calls
 "uncommitted" have since landed on `main` (order-list pagination, the row Delete button,
 price-lock on confirmed orders). Trust `git log` over the wording below.
 
->>>>>>> f6ecbd3bf874923ccaf738c1583fa625cf48cb23
 On `main` at `2781d31` ("material-usage-updated" — the Material usage PER-WINDOW breakdown is
 now committed and plain history, `knowledge/history/engine_features.md` 2026-08-25; bulk edit
 v3, the Material usage DIALOG and the composing give-backs landed before it, same file

@@ -4122,3 +4122,75 @@ describe a different URL.
 ### Verified
 `tsc` clean, `oxlint` clean, web 425/425 (unchanged — no covering tests for `OrderDetail`).
 NOT seen in a browser: the dev server stops at the Supabase login wall.
+
+## 2026-09-02 — Customer edit mode (read-only by default, pen to edit)
+
+**Why.** `/customers/:id` opened straight into a live form. Looking a customer up — a phone
+number before calling, an address before driving — is the common visit, and every one of them
+was a chance to change the record by accident. There was also no way to correct a customer
+from the order editor: a wrong number noticed while writing up an order meant abandoning the
+editor for the customers module and navigating back.
+
+**Web — customers page** (`pages/customers/CustomerForm.tsx`). The route now opens READ-ONLY,
+rendering the new `pages/customers/CustomerDetailView.tsx`: the same three sections as the
+form, as label/value rows with an em dash for blanks, email as `mailto:` and phone as `tel:`
+(this app is used on a phone, in the field). Label/value rather than disabled inputs — a
+greyed-out box reads as broken, not as read-only. A pen button in the `PageHeader` right slot
+enters edit mode, and the header shows the customer's `displayName` under a `CUSTOMER` eyebrow
+instead of "Edit Customer". Entering edit SEEDS the form from the freshly loaded record, which
+replaced the old `loaded` flag and its effect — the form can no longer show a stale copy of a
+customer saved a moment ago. Saving an existing customer returns to the VIEW with the refreshed
+record rather than bouncing to the list (creating still goes to the list). Cancel prompts only
+when `isCustomerFormDirty`. Delete moved inside edit mode: the default state of the screen is
+something to read, and a destructive control does not belong there. `/customers/new` is
+unchanged.
+
+Linked values (`mailto:`/`tel:`) are laid out as a CENTRED inline-flex. The base layer gives
+every anchor the 44px tap-target minimum, so left as inline text they sat at the top of a 44px
+box and dumped 21px of slack underneath, which read as a spacing bug next to the 23px text rows.
+
+**Web — order editor.** `CustomerCard` (`pages/orders/OrderHeaderCards.tsx`) gained a pen
+between the picker and the disclosure chevron, shown only with a customer selected and
+`!readOnly` — the chevron stays in both cases, because reading is always safe. It opens the new
+`components/CustomerEditModal.tsx` — `Modal` + the shared field set + `useUpdateCustomer` —
+which writes the `customers` row and NOTHING else: the order is neither saved nor dirtied, so
+pricing and totals are untouched (rule 1 is not in play). The saved row comes back through
+`onSaved` into `setCustomer`, and `useUpdateCustomer`'s existing `onSuccess` refreshes the
+detail and list caches, so the customers module reflects the change with no extra plumbing.
+
+**LOCKED — where the dialog is mounted.** `CustomerEditModal` is mounted at `OrderDetail`'s
+page tail beside `CustomerCreateModal`, deliberately OUTSIDE the `fieldset disabled={readOnly}`
+wrapper. A dialog rendered inside that subtree inherits the disabled fieldset and presents a
+form nobody can type into. `readOnly` is currently a vestigial `const readOnly = false`, so the
+bug would not bite today and would be baffling the day that constant becomes real.
+
+**Sharing, not duplicating.** The order-side dialog needs the same fields the page has, so the
+form was extracted rather than copied a third time: `lib/customerForm.ts` (the pure
+`CustomerFormState`, `EMPTY_CUSTOMER_FORM`, `toCustomerFormState`, `toCustomerInput`,
+`validateCustomerForm`, `isCustomerFormDirty`) and `components/CustomerFields.tsx` (the Contact
+/ Shipping / Billing inputs, `variant` selecting bordered cards on a page or flush sections in
+a dialog). `validateCustomerForm` mirrors the server's create refinement in
+`apps/api/src/routes/customers.ts`, and now lives in ONE place instead of the two it had drifted
+into. `isCustomerFormDirty` skips the billing fields while "same as shipping" is ticked — those
+inputs are hidden and their values deliberately retained, so treating them as unsaved changes
+would prompt the user to discard nothing.
+
+**Deliberately untouched.** `components/CustomerCreateModal.tsx` keeps its own compact,
+billing-less layout — a deliberate difference for a quick add inside a picker, not drift.
+And there are NO api, schema, hook or route changes: `PUT /api/customers/:id` and
+`useUpdateCustomer` already did everything needed.
+
+See `knowledge/history/bug_fixes.md` (2026-09-02) for the address-autocomplete dropdown fix
+this work surfaced.
+
+### Verified
+`tsc` clean, `oxlint` clean, web 446/446 on the branch alone (425 → +21 in
+`lib/customerForm.test.ts`). No api changes, so the api suite is untouched. The view/edit
+toggle, all three Cancel paths, the pen's three visibility states and the modal were exercised
+in a browser against a seeded query cache.
+
+Re-verified after merging `main` (2026-09-03, the unified order view): web 458/458, api
+447/447, `tsc` and `oxlint` clean on the merged tree. The only code conflict was two imports
+added on the same line of `OrderDetail.tsx`; the merge was then checked for the SEMANTIC
+hazard, since `main` rewrote 94 lines of that file — `CustomerEditModal` still mounts at line
+~2874, well outside the `fieldset disabled={readOnly}` that closes at ~2613.

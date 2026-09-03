@@ -2,133 +2,74 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Customer create/edit form.
+ * Customer create / view / edit page.
  *
- * One component serves both /customers/new and /customers/:id — the
- * presence of a route id switches it into edit mode (loads the record,
- * shows Delete). The "Billing same as shipping" checkbox toggles the
- * billing address block's visibility and is persisted as
- * `billing_same_as_shipping`; hidden billing fields keep their values
- * so unchecking restores what was previously entered.
+ * One component serves both routes. At `/customers/new` there is no
+ * record yet, so the page opens straight into the editable field set.
+ * At `/customers/:id` it opens READ-ONLY: looking a customer up (a
+ * phone number before calling, an address before driving) is the common
+ * visit, and a live form makes every one of those visits a chance to
+ * change the record by accident. The pen button in the header enters
+ * edit mode; Cancel and Save return to the view.
+ *
+ * Entering edit seeds the form from the freshly loaded record rather
+ * than from a value cached on first render, so the form can never show
+ * a stale copy of a customer that was saved a moment ago.
+ *
+ * Delete lives inside edit mode. The default state of this screen is
+ * something to read, and a destructive control does not belong there.
+ *
+ * The field set itself and the form's state rules are not here — see
+ * `components/CustomerFields` and `lib/customerForm`, which the order
+ * editor's `CustomerEditModal` shares.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
-import AddressAutocomplete from '../../components/AddressAutocomplete';
-import { inputClass } from '../../components/ui';
-import type { AddressSuggestion } from '../../lib/addressSearch';
-import type { Customer } from '../../types';
+import CustomerFields from '../../components/CustomerFields';
+import CustomerDetailView from './CustomerDetailView';
+import { displayName } from '../../lib/customerName';
+import {
+  EMPTY_CUSTOMER_FORM,
+  isCustomerFormDirty,
+  toCustomerFormState,
+  toCustomerInput,
+  validateCustomerForm,
+  type CustomerFormState,
+} from '../../lib/customerForm';
 import {
   useCustomer,
   useCreateCustomer,
   useUpdateCustomer,
   useDeleteCustomer,
-  type CustomerInput,
 } from '../../hooks/useCustomers';
 
-/** Editable form fields, all held as strings for direct input binding. */
-interface FormState {
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone: string;
-  shipping_address_line1: string;
-  shipping_address_line2: string;
-  shipping_city: string;
-  shipping_province: string;
-  shipping_postal_code: string;
-  billing_same_as_shipping: boolean;
-  billing_address_line1: string;
-  billing_address_line2: string;
-  billing_city: string;
-  billing_province: string;
-  billing_postal_code: string;
-}
-
-const EMPTY: FormState = {
-  first_name: '',
-  last_name: '',
-  email: '',
-  phone: '',
-  shipping_address_line1: '',
-  shipping_address_line2: '',
-  shipping_city: '',
-  shipping_province: 'ON',
-  shipping_postal_code: '',
-  billing_same_as_shipping: true,
-  billing_address_line1: '',
-  billing_address_line2: '',
-  billing_city: '',
-  billing_province: '',
-  billing_postal_code: '',
-};
-
 /**
- * Copies just the editable fields off a server row. The row also carries
- * `id` and the timestamp columns, and the update schema is strict, so
- * spreading it wholesale into form state would make every save 400.
- * Nullable text columns fall back to '' to keep inputs controlled.
+ * Pen glyph for the "edit this record" control. Inline because this
+ * codebase carries no icon dependency; `currentColor` lets the button
+ * own the colour.
  */
-function toFormState(row: Customer): FormState {
-  return {
-    first_name: row.first_name ?? '',
-    last_name: row.last_name ?? '',
-    email: row.email ?? '',
-    phone: row.phone ?? '',
-    shipping_address_line1: row.shipping_address_line1 ?? '',
-    shipping_address_line2: row.shipping_address_line2 ?? '',
-    shipping_city: row.shipping_city ?? '',
-    shipping_province: row.shipping_province ?? EMPTY.shipping_province,
-    shipping_postal_code: row.shipping_postal_code ?? '',
-    billing_same_as_shipping: row.billing_same_as_shipping ?? true,
-    billing_address_line1: row.billing_address_line1 ?? '',
-    billing_address_line2: row.billing_address_line2 ?? '',
-    billing_city: row.billing_city ?? '',
-    billing_province: row.billing_province ?? '',
-    billing_postal_code: row.billing_postal_code ?? '',
-  };
-}
-
-/**
- * This form's control treatment. Composed from the shared `inputClass`
- * so it cannot drift from every other input in the app, plus the fixed
- * height this form's grid relies on.
- */
-const INPUT_CLS = `h-11 ${inputClass}`;
-
-/** Labeled text input bound to one FormState key. */
-function Field({
-  label,
-  value,
-  onChange,
-  type = 'text',
-  inputMode,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-  inputMode?: 'email' | 'tel' | 'text';
-}) {
+function PencilIcon() {
   return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-text-secondary">{label}</span>
-      <input
-        type={type}
-        inputMode={inputMode}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={INPUT_CLS}
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4Z"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
-    </label>
+      <path d="m13.5 6.5 4 4" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
   );
 }
 
 export default function CustomerForm() {
   const { id } = useParams<{ id: string }>();
-  const isEdit = Boolean(id);
+  /** True on `/customers/:id` — the route addresses a saved record. */
+  const isExisting = Boolean(id);
   const navigate = useNavigate();
 
   const { data: existing, isLoading, error } = useCustomer(id);
@@ -136,85 +77,68 @@ export default function CustomerForm() {
   const update = useUpdateCustomer();
   const remove = useDeleteCustomer();
 
-  const [form, setForm] = useState<FormState>(EMPTY);
-  const [loaded, setLoaded] = useState(false);
+  /**
+   * Whether the field set is showing. A new customer has nothing to
+   * read, so it starts open; a saved one starts closed.
+   */
+  const [editing, setEditing] = useState(!isExisting);
+  const [form, setForm] = useState<CustomerFormState>(EMPTY_CUSTOMER_FORM);
 
-  // Populate once when editing an existing customer.
-  useEffect(() => {
-    if (isEdit && existing && !loaded) {
-      setForm(toFormState(existing));
-      setLoaded(true);
-    }
-  }, [isEdit, existing, loaded]);
-
-  /** Field updater preserving the rest of the form. */
-  function set<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((f) => ({ ...f, [key]: value }));
+  /** Seeds the form from the loaded record and opens the field set. */
+  function startEditing() {
+    if (!existing) return;
+    setForm(toCustomerFormState(existing));
+    setEditing(true);
   }
 
   /**
-   * Fills a whole address block (shipping or billing) from a chosen
-   * autocomplete suggestion in one update. Line 2 is intentionally left
-   * untouched — unit/suite numbers rarely come back from the geocoder
-   * and the consultant may have already typed one. Literal keys (not a
-   * computed `${prefix}_…`) keep the update strictly typed against
-   * FormState, whose `billing_same_as_shipping` boolean would otherwise
-   * clash with an inferred string index signature.
+   * Leaves edit mode, confirming first when there is typed work to
+   * lose. A new customer has no view to fall back to, so Cancel there
+   * returns to the list instead.
    */
-  function applyAddress(prefix: 'shipping' | 'billing', s: AddressSuggestion) {
-    setForm((f) =>
-      prefix === 'shipping'
-        ? {
-            ...f,
-            shipping_address_line1: s.line1,
-            shipping_city: s.city || f.shipping_city,
-            shipping_province: s.province || f.shipping_province,
-            shipping_postal_code: s.postal_code || f.shipping_postal_code,
-          }
-        : {
-            ...f,
-            billing_address_line1: s.line1,
-            billing_city: s.city || f.billing_city,
-            billing_province: s.province || f.billing_province,
-            billing_postal_code: s.postal_code || f.billing_postal_code,
-          }
-    );
+  function cancelEditing() {
+    if (!isExisting) return navigate('/customers');
+    if (existing && isCustomerFormDirty(form, existing)) {
+      if (!window.confirm('Discard changes?')) return;
+    }
+    setEditing(false);
   }
 
-  /** Validates and saves; navigates back to the list on success. */
+  /**
+   * Validates and saves.
+   *
+   * On an existing customer this returns to the read-only view with the
+   * refreshed record — the screen the user came from — rather than
+   * bouncing to the list. Creating still goes to the list, because a
+   * brand-new record's next step is usually the next record.
+   *
+   * A failure keeps the field set open with the typed values intact.
+   */
   function handleSave() {
-    // Names are optional (a customer met on site is often nothing but a
-    // phone number), but a wholly anonymous record would be unsearchable
-    // and un-emailable, so at least one identifying field is required.
-    // Mirrors the server's create refinement in `routes/customers.ts`.
-    if (
-      !form.first_name.trim() &&
-      !form.last_name.trim() &&
-      !form.email.trim() &&
-      !form.phone.trim()
-    ) {
-      return toast.error('Enter a name, email or phone number.');
-    }
-    if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) {
-      return toast.error('Enter a valid email or leave it empty.');
-    }
+    const message = validateCustomerForm(form);
+    if (message) return toast.error(message);
 
-    const payload: CustomerInput = {
-      ...form,
-      first_name: form.first_name.trim(),
-      last_name: form.last_name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim(),
-    };
-    const opts = {
-      onSuccess: () => {
-        toast.success(isEdit ? 'Customer updated.' : 'Customer created.');
-        navigate('/customers');
-      },
-      onError: (e: Error) => toast.error(e.message),
-    };
-    if (isEdit && id) update.mutate({ id, patch: payload }, opts);
-    else create.mutate(payload, opts);
+    const payload = toCustomerInput(form);
+    if (isExisting && id) {
+      update.mutate(
+        { id, patch: payload },
+        {
+          onSuccess: () => {
+            toast.success('Customer updated.');
+            setEditing(false);
+          },
+          onError: (e) => toast.error(e.message),
+        }
+      );
+    } else {
+      create.mutate(payload, {
+        onSuccess: () => {
+          toast.success('Customer created.');
+          navigate('/customers');
+        },
+        onError: (e) => toast.error(e.message),
+      });
+    }
   }
 
   /** Confirms then soft-deletes the customer. */
@@ -230,18 +154,18 @@ export default function CustomerForm() {
     });
   }
 
-  if (isEdit && (isLoading || (!existing && !error))) {
+  if (isExisting && (isLoading || (!existing && !error))) {
     return (
       <div className="min-h-screen bg-surface-muted">
-        <PageHeader title="Edit Customer" backTo="/customers" />
+        <PageHeader title="Customer" backTo="/customers" />
         <p className="p-4 text-text-muted">Loading…</p>
       </div>
     );
   }
-  if (isEdit && error) {
+  if (isExisting && error) {
     return (
       <div className="min-h-screen bg-surface-muted">
-        <PageHeader title="Edit Customer" backTo="/customers" />
+        <PageHeader title="Customer" backTo="/customers" />
         <p className="p-4 text-danger">{error.message}</p>
       </div>
     );
@@ -249,68 +173,40 @@ export default function CustomerForm() {
 
   const pending = create.isPending || update.isPending;
 
+  // Read-only view. Reachable only with a loaded record, since the
+  // guards above cover every other state of an existing customer.
+  if (!editing && existing) {
+    return (
+      <div className="min-h-screen bg-surface-muted pb-8">
+        <PageHeader
+          title={displayName(existing)}
+          eyebrow="Customer"
+          backTo="/customers"
+          right={
+            <button
+              type="button"
+              onClick={startEditing}
+              aria-label="Edit customer"
+              className="flex h-11 w-11 items-center justify-center rounded-md border border-border-input bg-surface text-text-secondary hover:bg-surface-sunken"
+            >
+              <PencilIcon />
+            </button>
+          }
+        />
+        <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
+          <CustomerDetailView customer={existing} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-surface-muted pb-28">
-      <PageHeader title={isEdit ? 'Edit Customer' : 'New Customer'} backTo="/customers" />
+      <PageHeader title={isExisting ? 'Edit Customer' : 'New Customer'} backTo="/customers" />
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
-        {/* Contact */}
-        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-          <h2 className="text-[15px] font-bold text-text-primary">Contact</h2>
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="First Name" value={form.first_name} onChange={(v) => set('first_name', v)} />
-            <Field label="Last Name" value={form.last_name} onChange={(v) => set('last_name', v)} />
-          </div>
-          <Field label="Email" type="email" inputMode="email" value={form.email} onChange={(v) => set('email', v)} />
-          <Field label="Phone" type="tel" inputMode="tel" value={form.phone} onChange={(v) => set('phone', v)} />
-        </section>
+        <CustomerFields value={form} onChange={setForm} variant="page" />
 
-        {/* Shipping address */}
-        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-          <h2 className="text-[15px] font-bold text-text-primary">Shipping Address</h2>
-          <AddressAutocomplete
-            label="Address Line 1"
-            value={form.shipping_address_line1}
-            onChange={(v) => set('shipping_address_line1', v)}
-            onSelect={(s) => applyAddress('shipping', s)}
-          />
-          <Field label="Address Line 2" value={form.shipping_address_line2} onChange={(v) => set('shipping_address_line2', v)} />
-          <div className="grid grid-cols-2 gap-3.5">
-            <Field label="City" value={form.shipping_city} onChange={(v) => set('shipping_city', v)} />
-            <Field label="Province" value={form.shipping_province} onChange={(v) => set('shipping_province', v)} />
-          </div>
-          <Field label="Postal Code" value={form.shipping_postal_code} onChange={(v) => set('shipping_postal_code', v)} />
-        </section>
-
-        {/* Billing address */}
-        <section className="flex flex-col gap-3.5 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-          <label className="flex min-h-11 items-center gap-3">
-            <input
-              type="checkbox"
-              checked={form.billing_same_as_shipping}
-              onChange={(e) => set('billing_same_as_shipping', e.target.checked)}
-              className="h-5 w-5 rounded-sm accent-brand-600"
-            />
-            <span className="text-sm font-medium text-text-primary">Billing same as shipping</span>
-          </label>
-          {!form.billing_same_as_shipping && (
-            <>
-              <AddressAutocomplete
-                label="Address Line 1"
-                value={form.billing_address_line1}
-                onChange={(v) => set('billing_address_line1', v)}
-                onSelect={(s) => applyAddress('billing', s)}
-              />
-              <Field label="Address Line 2" value={form.billing_address_line2} onChange={(v) => set('billing_address_line2', v)} />
-              <div className="grid grid-cols-2 gap-3.5">
-                <Field label="City" value={form.billing_city} onChange={(v) => set('billing_city', v)} />
-                <Field label="Province" value={form.billing_province} onChange={(v) => set('billing_province', v)} />
-              </div>
-              <Field label="Postal Code" value={form.billing_postal_code} onChange={(v) => set('billing_postal_code', v)} />
-            </>
-          )}
-        </section>
-
-        {isEdit && (
+        {isExisting && (
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
@@ -321,15 +217,24 @@ export default function CustomerForm() {
         )}
       </div>
 
-      {/* Sticky save bar */}
+      {/* Sticky action bar */}
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface p-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
-        <button
-          onClick={handleSave}
-          disabled={pending}
-          className="mx-auto flex h-12 w-full max-w-lg items-center justify-center rounded-md shadow-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
-        >
-          {pending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Customer'}
-        </button>
+        <div className="mx-auto flex w-full max-w-lg gap-2.5">
+          <button
+            onClick={cancelEditing}
+            disabled={pending}
+            className="flex h-12 flex-1 items-center justify-center rounded-md border border-border-input bg-surface text-sm font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={pending}
+            className="flex h-12 flex-[2] items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:opacity-40"
+          >
+            {pending ? 'Saving…' : isExisting ? 'Save Changes' : 'Create Customer'}
+          </button>
+        </div>
       </div>
     </div>
   );

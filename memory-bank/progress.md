@@ -26,6 +26,16 @@ index and the installation appointment dropped below `ready`. It never emails an
 touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
 `/mark-sent`, `/in-progress`) remain for the email, payment, and customer-confirm flows.
 
+**Customer records (view/edit, branch `feat/customer-edit-mode`):** `/customers/:id` opens
+READ-ONLY — label/value rows, `mailto:`/`tel:` on the two contact fields, billing collapsed to
+one line when it mirrors shipping — and a pen button in the header enters the editable form.
+Cancel prompts only when the form actually differs from the record; saving returns to the view
+rather than the list; Delete lives inside edit mode. The same pen sits on the order editor's
+customer card and opens `CustomerEditModal`, which writes the `customers` row WITHOUT saving or
+dirtying the order. `/customers/new` is unchanged. The form is defined once in
+`lib/customerForm.ts` + `components/CustomerFields.tsx` and shared by both surfaces;
+`CustomerCreateModal` deliberately keeps its own compact layout.
+
 **Customer edit requests (migration 41, not yet applied):** a **Request Edit** button sits to
 the LEFT of Confirm on the public estimate page. It opens a dialog, POSTs free text to
 `POST /public/estimate/:token/edit-request`, and files a row in the new `order_edit_requests`
