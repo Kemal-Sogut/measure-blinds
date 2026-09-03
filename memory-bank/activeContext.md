@@ -4,7 +4,7 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-09-02)
+## Where things stand (as of 2026-09-03)
 
 **Current branch: `feat/customer-edit-mode`** (not merged, not deployed). `/customers/:id` now
 opens READ-ONLY and a pen button enters edit mode; the order editor's customer card got the
@@ -32,6 +32,63 @@ See `knowledge/history/bug_fixes.md` 2026-09-02.
 `925d7b1`): migration 41 has NOT been applied** to project `lgbxxlwsdeuhdgzrjjen`
 (`supabase/migrations/20260826000041_order_edit_requests.sql`). The customer edit-request
 routes 500 until it is. Details in `knowledge/history/engine_features.md`, 2026-08-26.
+
+**Also on `main` now — the send sheet carries a copy-the-link area** (committed as
+`a179243`; the paragraph below was written while it was still uncommitted):
+
+Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
+sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
+(read-only URL input + Copy button, with `navigator.clipboard` → `document.execCommand` →
+"press Ctrl/Cmd+C" degradation) is rendered under the optional-message box in
+`OrderDetail`'s send sheet, showing `${window.location.origin}/customer/<public_token>` — the
+LIVE customer page, deliberately without the staff-only `?preview=1` flag. `openSend` became
+`async`: it opens the sheet first, then mints the token through the existing
+`useOrderPublicToken` mutation, so the message box never waits on the network and a mint
+failure degrades only the copy field (`sendLinkError`), never the email path. An unsaved draft
+has no id, so the area is not rendered at all. Purpose: hand the customer page over
+WhatsApp/SMS without being forced through the app's own email. Detail in
+`knowledge/history/engine_features.md`, 2026-09-01. Verified: web `pnpm check` clean,
+`pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
+login wall).
+
+**Also on `main` now — ONE order view** (merged via PR #44; the paragraph below was
+written while `feat/unified-order-view` was still a separate branch):
+
+**Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
+`/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
+only read-only order view and absorbed everything Overview carried — Note column, Unit price
+with the `show_original_price` strikethrough, an Add-ons column, an Other-items TABLE, and
+Paid / Balance due. A **Price breakdown** switch on the title row governs per-choice money only
+(option `+$` amounts, their footer totals, add-on prices, the Add-ons column); line totals,
+the footer overall and the order strip are on screen in BOTH states. Off on load, not persisted.
+Every stage's action set now offers the one **Present to Customer** action (same tab, saves
+first); `ICONS.overview` and the `overview` StageAction are gone.
+
+Decisions worth not re-litigating: all blinds stay in ONE filterable table (Overview's
+per-blind-type tables were deliberately dropped — the `Blind type` column already says it);
+Size stays `(120 + 80) × 210`; the Add-ons column hides WITH the breakdown and appears only
+when a visible line has one. There is NO Adjustment column any more: `describeLineBreakdown`
+fits the material cell against `unit_price` (charged) rather than `base_unit_price`, so a price
+override is absorbed into the material cell and what is left over is the add-ons total by
+construction. `show_original_price` is therefore the ONE control over whether an override is
+disclosed anywhere — through the struck-through unit price alone, independent of the toggle in
+both directions, matching what `public.ts` and the PDF assembly already did. Overview's amber
+"price overridden" dot is dropped for the same reason. New modules: `presentationCells.tsx`,
+`presentationMoney.ts`, `BreakdownToggle.tsx`, `PresentationOtherItems.tsx`.
+`presentationFilters.ts` untouched.
+
+Gotcha worth remembering: `money` had to move OUT of `presentationCells.tsx` into its own
+plain-TS module — `oxlint`'s `react(only-export-components)` fails a `.tsx` that exports both
+components and a function, because it costs the file its Fast Refresh boundary.
+
+Verified `tsc`/`oxlint` clean, web 433/433 (+8, `presentationMoney.test.ts`), and the rendering
+checked in a throwaway Vite harness in both toggle states — line totals byte-identical, every
+row reconciling, cell counts matching. NOT verified against live data: the totals strip's
+Paid/Balance rows and the stage-action wiring (no `apps/web/.env` in this worktree).
+Full write-up in `knowledge/history/engine_features.md`, 2026-08-28; spec in
+`knowledge/specs/2026-08-28-unified-order-view-design.md`.
+
+## Previously (as of 2026-08-26)
 
 NOTE: everything below this point was written on 2026-08-25 and several of the items it calls
 "uncommitted" have since landed on `main` (order-list pagination, the row Delete button,
@@ -203,9 +260,12 @@ primitive layer.
 - Option cells on the Presentation page are FITTED to `round2(calcUnit × qty)` with the
   material cell absorbing the correction, never summed independently. `line_total` is
   `round2(unit_price × qty) + addonsTotal`, so independently-rounded legs miss it by up to two
-  or three cents and would show a phantom adjustment on an ordinary line. Because of the
-  fitting, the Adjustment column means only "override and/or add-ons", which is what lets the
-  page promise a row that adds up in front of a customer.
+  or three cents and would show phantom money on an ordinary line. The fit is against
+  `unit_price`, so the leftover figure IS the add-ons total by construction and the invariant
+  is `Σ cells + add-ons === line_total`. Consequence to know before touching it: a line
+  discounted below its own hardware fits the material cell NEGATIVE, and it is left that way
+  deliberately — the row has to add up and there is no adjustment column to park a remainder
+  in. `OptionValue` renders the sign rather than prefixing `+`.
 - `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
   `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
 - `blindDraftInputs(draft, catalogs)` (`lineItemDrafts.ts`) is the priced-inputs assembly
