@@ -6,7 +6,22 @@
 
 ## Where things stand (as of 2026-09-03)
 
-**Current branch: `feat/customer-edit-mode`** (not merged, not deployed). `/customers/:id` now
+**Current branch: `claude/order-deletion-cascade-hiotl7`** (not merged, not deployed). Order
+deletion now has one owner, `apps/api/src/lib/orderDelete.ts`, called by `DELETE
+/api/orders/:id`. A deleted order takes line items, activity log, payments, change requests,
+the installation appointment and every stage stamp with it (all by FK cascade) and leaves the
+customer, their estimate visits, and the `etransfers` inbox standing. The fix it exists for:
+`etransfers.order_id` is `ON DELETE SET NULL`, so a deleted order used to leave its transfers
+`status = 'applied'` pointing at nothing — invisible to `/api/payments/pending` and to every
+order page. They are now released back to the pending inbox BEFORE the order row goes (and
+re-applied if the delete fails). **Migration 42
+(`20260903000042_release_stranded_etransfers.sql`) is NOT yet applied** to project
+`lgbxxlwsdeuhdgzrjjen`; it is data-only and frees the one row earlier deletions already
+stranded. Web side: both delete confirmations name what goes, and `useDeleteOrder` now also
+invalidates `['appointments']` and `['payments','pending']`. Write-ups in
+`knowledge/history/engine_features.md` and `bug_fixes.md`, both 2026-09-03.
+
+**Merged to `main` (PR #45): `feat/customer-edit-mode`** (not deployed). `/customers/:id` now
 opens READ-ONLY and a pen button enters edit mode; the order editor's customer card got the
 same pen, opening `components/CustomerEditModal` so a wrong number or street can be corrected
 without leaving the order. The editable form was extracted to `lib/customerForm.ts` (pure
