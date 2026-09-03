@@ -1,5 +1,37 @@
 # Bug Fixes History
 
+## 2026-09-03 — Deleting an order stranded its e-Transfers: money marked "applied" to nothing
+- **Issue:** found while auditing what `DELETE /api/orders/:id` actually leaves behind. Every
+  child of an order is cleaned up by an `ON DELETE CASCADE` FK (line items, activity log,
+  payments, change requests, the installation appointment) — except the `etransfers` inbox,
+  whose FK is `ON DELETE SET NULL` by design. The live database held one such casualty:
+  `status = 'applied'`, `order_id` NULL, `payment_id` NULL.
+- **Cause:** the route was a bare `delete from orders`. Deleting the order nulled
+  `etransfers.order_id`, and the cascade that removed the `payments` row nulled
+  `etransfers.payment_id` behind it — but nothing touched `status`. An `applied` row is
+  excluded from `GET /api/payments/pending` (which lists `pending` only) and, with no
+  `order_id`, is reachable from no order page either: received money recorded on a row no
+  screen in the app can show. The rows are deliberately NOT deleted with the order — the Gmail
+  Apps Script dedupes on `gmail_message_id`, so erasing one would let a re-delivered email
+  record the same payment a second time.
+- **Fix:** new `apps/api/src/lib/orderDelete.ts` — `deleteOrderCascade()` releases the order's
+  transfers back to the pending inbox (`status = 'pending'`, both links cleared) BEFORE
+  deleting the order, because the `SET NULL` cascade erases the only way to find them
+  afterwards. If the delete then fails, the released rows are re-applied: a transfer sitting in
+  the pending inbox while the order it paid still exists is an invitation to record the same
+  money twice. Only `applied` rows ever carry an `order_id`, so filtering on the order cannot
+  resurrect something staff dismissed. Migration 42
+  (`20260903000042_release_stranded_etransfers.sql`) frees the rows earlier deletions already
+  stranded — matching on `order_id IS NULL AND payment_id IS NULL` together, so rows left by a
+  single deleted PAYMENT (which keeps `order_id`) are not swept up with them.
+- **Verified:** four route tests in `orders.routes.test.ts` pin the release, its ordering
+  before `orders.delete`, the no-transfers case, and the restore-on-failure path (the fake
+  Supabase client gained `db.opErrors` to script a failing DELETE). `pnpm check` + `pnpm test`
+  clean in both workspaces (api 451, web 458); `pnpm lint` clean on web.
+- **Lesson:** `ON DELETE SET NULL` only unlinks a row — it never revisits the STATUS that the
+  link gave meaning to. Any table where a status word means "attached to something" needs that
+  word maintained by the deleting code, because the FK will happily leave it lying.
+
 ## 2026-08-20 — Bulk-add width field was unreadable: the 44px "+" button ate a 30% grid track
 - **Issue:** reported by the maintainer against the one-line measurement row shipped the day
   before (`grid-cols-[4fr_3fr_3fr]`, Room/Width/Height at 40/30/30 in `BulkAddSectionCard.tsx`).

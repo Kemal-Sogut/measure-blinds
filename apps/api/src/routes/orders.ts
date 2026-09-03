@@ -49,10 +49,14 @@
  *   POST   /:id/installed terminal state (ready → installed)
  *   POST   /:id/revert    move an order back to an earlier stage
  *
+ *   DELETE /:id           delete an order and everything attached to
+ *                         it (line items, logs, payments, change
+ *                         requests, the installation visit); the
+ *                         customer and the e-Transfer inbox stay
+ *
  * Scheduling (estimate visits + installations) lives in the standalone
  * `appointments` table and is served by routes/appointments.ts — this
  * module no longer carries any calendar or visit-proposal endpoints.
- *   DELETE /:id           delete an order (+ line items + payments)
  *
  * AUTHORITATIVE PRICING: clients send measurements and option IDs only.
  * The Worker fetches material/cassette/bottom-rail/control prices from
@@ -92,6 +96,7 @@ import { greetingName } from '../lib/customerName';
 import { formatDateLong } from '../lib/timeText';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
 import { toDuplicateInput } from '../lib/orderDuplicate';
+import { deleteOrderCascade } from '../lib/orderDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
 import {
@@ -2648,18 +2653,21 @@ app.post('/:id/status', async (c) => {
   return c.json({ data });
 });
 
-/** Deletes an order and its line items + payments (ON DELETE CASCADE). */
+/**
+ * Deletes an order and everything that belongs to it — line items,
+ * activity log, recorded payments, customer change requests, the
+ * installation appointment and every stage stamp — while leaving the
+ * customer (and their estimate visits) and the e-Transfer inbox
+ * standing. `lib/orderDelete.ts` owns the full contract, including
+ * releasing applied e-Transfers back to the pending inbox so the money
+ * they represent is not stranded on a record nothing points at.
+ */
 app.delete('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const id = c.req.param('id');
-  const { data: existing } = await sb
-    .from('orders')
-    .select('id')
-    .eq('id', id)
-    .maybeSingle();
-  if (!existing) return c.json({ error: 'Order not found' }, 404);
-  const { error } = await sb.from('orders').delete().eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
+  const result = await deleteOrderCascade(sb, id);
+  if (result.status === 'not_found') return c.json({ error: 'Order not found' }, 404);
+  if (result.status === 'failed') return c.json({ error: result.message }, 500);
   return c.json({ data: { id } });
 });
 

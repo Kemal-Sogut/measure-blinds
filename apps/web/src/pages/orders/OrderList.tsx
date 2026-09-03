@@ -96,7 +96,8 @@ function DuplicateButton({ order, className }: { order: Order; className: string
 /**
  * The per-row "delete this order" action.
  *
- * Deletion cascades to the order's line items and payments and cannot
+ * Deletion cascades to everything the order owns — line items, activity
+ * log, payments, change requests, the installation visit — and cannot
  * be undone, so it is confirmed BY ORDER NUMBER — this icon sits right
  * beside Duplicate, whose worst case is a stray draft, and the row it
  * overlays is one click from opening the order. The wording matches the
@@ -116,7 +117,8 @@ function DeleteButton({ order, className }: { order: Order; className: string })
       disabled={deleteMut.isPending}
       onClick={async () => {
         const ok = window.confirm(
-          `Delete ${order.order_number} permanently? Its line items and payments are removed.`,
+          `Delete ${order.order_number} permanently? Its line items, activity log, payments, ` +
+            'change requests and installation visit are removed. The customer is kept.',
         );
         if (!ok) return;
         try {

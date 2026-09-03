@@ -1412,7 +1412,13 @@ export default function OrderDetail() {
 
   async function handleDeleteOrder() {
     if (!id) return;
-    if (!window.confirm('Delete this order permanently? Its line items and payments are removed.')) return;
+    if (
+      !window.confirm(
+        'Delete this order permanently? Its line items, activity log, payments, ' +
+          'change requests and installation visit are removed. The customer is kept.',
+      )
+    )
+      return;
     try {
       await deleteMut.mutateAsync(id);
       toast.success('Order deleted.');
