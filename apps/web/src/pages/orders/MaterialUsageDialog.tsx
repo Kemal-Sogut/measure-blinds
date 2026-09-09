@@ -5,82 +5,69 @@
  * Internal Material usage dialog for the order editor — never shown to a
  * customer, never printed, and absent from the PDF and the public view.
  *
- * Answers the question a discount is actually decided on: how many square
- * metres (or running metres, for Curtains) of each material is this order,
- * at what rate, and what does charging less per metre come to.
+ * Answers one question: how much of each material does this order
+ * consume, and which windows made that figure up. Each material reads as
+ * a total — square metres, or running metres for Curtains — followed by
+ * every window that contributed, with its own quantity in the same unit.
+ * A total alone cannot say whether it came from one oversized opening or
+ * six ordinary ones, and that is exactly what a consultant checks before
+ * ordering fabric.
  *
- * Every material row breaks down into the WINDOWS that made it up, each
- * with its measured size and its own billed quantity in that row's unit —
- * m² for the m²-priced types, running metres for Curtains. A total alone
- * cannot say whether it came from one oversized opening or six ordinary
- * ones, and that is exactly what a consultant checks before giving fabric
- * away. Two instruments then sit side by side because they do different
- * jobs:
+ * The checkboxes are an INFORMATION tool and nothing else. Ticking a
+ * window adds its quantity to the running total at the bottom of the
+ * dialog and does NOTHING else: no line is hidden, repriced, selected in
+ * the editor, flagged, or saved, and closing the dialog is the end of it.
+ * They exist for the sub-total questions a single figure cannot answer —
+ * what the upstairs rooms come to, what the three openings the customer
+ * is still deciding on come to. Anyone extending this must keep that
+ * promise; a checkbox that quietly acted on an order would be the most
+ * surprising control on the page.
  *
- * - PER MATERIAL (one editor per row). Type a lower rate for ONE material
- *   and Apply adds `(catalog rate − your rate) × that material's billed
- *   quantity` to the order's discount. The precise instrument.
- * - ACROSS THE ORDER (the give-back row at the bottom). One $/metre figure
- *   over EVERY material at once. The blunt instrument, and the original
- *   behaviour of this panel — "take $5/m² off the whole job" is still how
- *   most quotes get closed.
- *
- * BOTH ARE PURE DISCOUNT MATH. Neither touches a line item: no unit price
- * is overridden, no line is repriced, and nothing a consultant typed into
- * a line is at risk from using this. Every Apply composes into the order's
- * single FIXED discount through `applyGiveBackPart`, which is additive — a
- * second Apply sits on top of the first rather than replacing it,
- * re-applying one row swaps that row's own figure, and Reset takes exactly
- * that row's figure back out. Applying a per-material rate AND an
- * order-wide rate that covers the same fabric does discount it twice, so
- * the dialog says so on screen.
+ * This panel used to also carry per-m² rate boxes that composed a
+ * give-back into the order's discount. They were removed. The rates were
+ * session-only state, so a reload left a dollar discount the dialog could
+ * neither explain nor take back, and the figures on screen stopped
+ * matching the order they described. Discounting belongs to the order's
+ * own discount field, which persists with the order; this panel reports
+ * and never writes.
  *
  * It is a dialog rather than an inline panel because the summary rail is
- * roughly 280px wide: a table with a per-row editor and two buttons in it
- * was unreadable there. The rail keeps only {@link MaterialUsageTrigger},
- * a one-line summary that opens this.
+ * roughly 280px wide, and a per-window list with a checkbox column was
+ * unreadable there. The rail keeps only {@link MaterialUsageTrigger}, a
+ * one-line summary that opens this.
  *
- * Every quantity, rate and dollar figure comes from `materialUsage.ts`;
- * no area, quantity or price basis is re-derived here. The component
- * renders pre-computed scalars and owns no arithmetic of its own beyond
- * formatting.
+ * Every quantity comes from `materialUsage.ts`; no area, quantity or unit
+ * basis is re-derived here. The component renders pre-computed scalars
+ * and owns no arithmetic of its own beyond formatting.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
 import type { MaterialUnit } from '../../lib/blindTypes';
 import {
-  giveBackAmount,
+  allUsageLineKeys,
   materialRowKey,
-  rowGiveBack,
-  ORDER_WIDE_GIVE_BACK,
+  selectedUsageTotals,
   type MaterialUsageLine,
   type MaterialUsageRow,
   type MaterialUsageSummary,
 } from './materialUsage';
 
-/** Short label for a rate unit, used in headers, totals and inputs. */
+/** Short label for a rate unit, used in headers, totals and line rows. */
 const UNIT_LABEL: Record<MaterialUnit, string> = {
   sqm: 'm²',
   running_m: 'm',
 };
 
-/**
- * Parses a rate input, which is held as a raw string like every other
- * numeric field in the editor so a half-typed "5." does not fight the
- * keyboard. Anything unusable reads as "no rate", never as zero-with-intent.
- */
-function parseRate(value: string): number | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const n = Number(trimmed);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
 /** Renders `n` with the right plural, so no row reads "1 lines". */
 function lines(n: number): string {
   return `${n} line${n === 1 ? '' : 's'}`;
+}
+
+/** Renders `n` with the right plural, for the selection total. */
+function windows(n: number): string {
+  return `${n} window${n === 1 ? '' : 's'}`;
 }
 
 /**
@@ -100,101 +87,20 @@ function dimensionsOf(line: MaterialUsageLine, unit: MaterialUnit): string {
 }
 
 /**
- * The units this order actually uses, paired with their figures, so no
- * caller has to assert a `Partial<Record>` lookup is present.
+ * A per-unit quantity map rendered as one line, e.g. `12.40 m² · 3.50 m`.
+ *
+ * Units are never added together — a running metre and a square metre
+ * describe different things — so a mixed order reads as two figures
+ * joined, never as one sum. Returns `null` when the map is empty, which
+ * is what lets a caller decide between hiding the row and printing its
+ * own empty-state wording.
  */
-function usedUnitsOf(summary: MaterialUsageSummary) {
-  return (['sqm', 'running_m'] as MaterialUnit[]).flatMap((unit) => {
-    const figures = summary.totals[unit];
-    return figures ? [{ unit, figures }] : [];
+function quantityLine(totals: Partial<Record<MaterialUnit, number>>): string | null {
+  const parts = (['sqm', 'running_m'] as MaterialUnit[]).flatMap((unit) => {
+    const quantity = totals[unit];
+    return quantity === undefined ? [] : [`${quantity.toFixed(2)} ${UNIT_LABEL[unit]}`];
   });
-}
-
-/** The one-line summary of every rate unit the order uses. */
-function summaryLineOf(summary: MaterialUsageSummary): string {
-  return usedUnitsOf(summary)
-    .map(({ unit, figures }) => `${figures.quantity.toFixed(2)} ${UNIT_LABEL[unit]}`)
-    .join(' · ');
-}
-
-/**
- * One material row's per-window breakdown, as a disclosure that starts
- * CLOSED.
- *
- * Closed by default because the dialog's job is the rate decision, and an
- * order of twenty windows across four materials would push the rate boxes
- * and the give-back calculator off the screen before the consultant got to
- * them. The breakdown answers the follow-up question — "which window is
- * that quantity" — so it waits to be asked.
- *
- * Its open flag is LOCAL `useState`, which is the one deliberate exception
- * to the lifting rule in {@link MaterialUsageDialogProps}. That rule exists
- * because `Modal` unmounts its children on close and because the trigger
- * renders at two breakpoints; neither applies here. Nothing about which
- * panel was open is worth surviving a dismissal — reopening the dialog
- * should show the compact rate view again — and this renders only inside
- * the dialog, which is mounted exactly once. Do not lift it: it would add
- * a prop pair to the parent for state that is supposed to be forgotten.
- */
-function LineBreakdown({ row }: { row: MaterialUsageRow }) {
-  const [open, setOpen] = useState(false);
-  // `::` in the row key is legal in an id but awkward in any selector.
-  const bodyId = `material-usage-lines-${row.materialId}-${row.unit}`;
-
-  // One material can be scoped to several m²-priced types, and then the
-  // blind type is what tells two same-sized windows apart. Decided per
-  // row so an order of one type does not repeat "Roller" down every line.
-  const mixedTypes = new Set(row.lines.map((line) => line.blindType)).size > 1;
-
-  return (
-    <div className="border-t border-border-light pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-controls={bodyId}
-        // Every row's button reads "Per window", so the accessible name
-        // carries the material and its unit — the same reason the reset
-        // and Discount buttons below are named.
-        aria-label={`${open ? 'Hide' : 'Show'} the per-window breakdown for ${row.materialName} (per ${UNIT_LABEL[row.unit]})`}
-        className="flex min-h-9 w-full items-center gap-1.5 text-left text-[12px] text-text-secondary"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          aria-hidden="true"
-          className={`shrink-0 text-text-muted transition-transform duration-150 ${open ? 'rotate-90' : ''}`}
-        >
-          <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-        Per window
-      </button>
-
-      {open && (
-        <ul id={bodyId} className="flex flex-col gap-1 pb-1 pl-[22px] text-[12px]">
-          {row.lines.map((line) => (
-            <li key={line.key} className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 wrap-anywhere text-text-secondary">
-                {line.label}
-                {mixedTypes && <span className="text-text-muted"> · {line.blindType}</span>}
-                <span className="text-text-muted"> · {dimensionsOf(line, row.unit)}</span>
-                {/* Only when it carries more than one blind — an
-                    unconditional "x1" on every row is noise. */}
-                {line.itemQuantity > 1 && (
-                  <span className="text-text-muted"> · ×{line.itemQuantity}</span>
-                )}
-              </span>
-              <span className="shrink-0 font-mono text-text-primary">
-                {line.quantity.toFixed(2)} {UNIT_LABEL[row.unit]}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+  return parts.length > 0 ? parts.join(' · ') : null;
 }
 
 /**
@@ -206,9 +112,9 @@ function LineBreakdown({ row }: { row: MaterialUsageRow }) {
  *
  * Safe to render at more than one breakpoint (`OrderDetail.tsx` renders
  * it in both the mobile totals card and the desktop rail) because it
- * holds NO state — the open flag and every rate live in the parent. The
- * dialog itself must be rendered exactly ONCE, or an open dialog would
- * appear twice, stacked.
+ * holds NO state — the open flag and the tick selection live in the
+ * parent. The dialog itself must be rendered exactly ONCE, or an open
+ * dialog would appear twice, stacked.
  */
 export function MaterialUsageTrigger({
   summary,
@@ -227,7 +133,7 @@ export function MaterialUsageTrigger({
     >
       <span>Material usage</span>
       <span className="flex items-center gap-1 font-mono text-text-primary">
-        {summaryLineOf(summary)}
+        {quantityLine(summary.totals)}
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M9 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
@@ -239,93 +145,157 @@ export function MaterialUsageTrigger({
 /**
  * Props for {@link MaterialUsageDialog}.
  *
- * Every piece of state is LIFTED into the parent (`OrderDetail`, beside
- * `discountValue`) rather than held here, for two independent reasons.
- * `Modal` unmounts its children when closed, so local state would be
- * silently wiped every time the dialog was dismissed — including the
- * record of what each row has already contributed to the discount. And
- * the trigger renders at two breakpoints that CSS merely hides, so
- * anything shared between them has to live above both. Do not push these
- * back down into `useState`.
+ * The selection is LIFTED into the parent (`OrderDetail`) rather than
+ * held here, for two independent reasons. `Modal` unmounts its children
+ * when closed, so local state would be wiped every time the dialog was
+ * dismissed — a consultant who closed the dialog to check a window in the
+ * list would come back to an empty tally. And the trigger renders at two
+ * breakpoints that CSS merely hides, so anything shared between them has
+ * to live above both. Do not push this back down into `useState`.
+ *
+ * Being lifted does NOT make it order state: it is never saved, never
+ * sent, and never read by anything but this dialog.
  */
 export interface MaterialUsageDialogProps {
   open: boolean;
   onClose: () => void;
   /**
    * Pre-aggregated usage, computed once by the parent for both surfaces.
-   * Its rates are TODAY'S catalog rates, not a stored snapshot from when
-   * the order's lines were priced — a material's rate can have moved.
+   * Recomputed from the drafts on every keystroke, so an edited window's
+   * quantity here is always the current one.
    */
   summary: MaterialUsageSummary;
   /**
-   * Per-material rate inputs keyed by {@link materialRowKey}, as raw
-   * strings. A key that is ABSENT means "untouched", which is what lets
-   * each box fall back to the catalog rate without the parent having to
-   * seed anything.
+   * Ticked line keys ({@link MaterialUsageLine.key}). Keys that no longer
+   * appear in `summary` — an edited line that stopped pricing, a deleted
+   * one — are ignored by the total rather than lingering in it.
    */
-  rateDrafts: Record<string, string>;
-  onRateDraftChange: (key: string, value: string) => void;
-  /**
-   * What each row has already added to the discount, keyed the same way
-   * (plus {@link ORDER_WIDE_GIVE_BACK}). Read-only here — the parent owns
-   * the composition, this only reports and offers to change it.
-   */
-  appliedParts: Record<string, number>;
-  /**
-   * Composes `amount` into the order's fixed discount under `key`,
-   * replacing whatever that key contributed before. `0` removes the
-   * contribution — that is what the reset button sends.
-   */
-  onApplyGiveBack: (key: string, amount: number) => void;
-  /**
-   * Order-wide give-back rate for `sqm`-priced materials, held as a raw
-   * string for the same reason the per-material ones are.
-   */
-  sqmRate: string;
-  onSqmRateChange: (value: string) => void;
-  /** Order-wide give-back rate for `running_m` materials (Curtains). */
-  runningRate: string;
-  onRunningRateChange: (value: string) => void;
-  /**
-   * True when the order's discount is currently a PERCENTAGE. Applying
-   * anything here switches it to a fixed dollar figure, which discards
-   * the percentage — worth saying out loud before it happens.
-   */
-  discountIsPercent: boolean;
+  selected: ReadonlySet<string>;
+  /** Replaces the whole selection; this dialog never mutates the set. */
+  onSelectedChange: (next: Set<string>) => void;
 }
 
 /**
- * The material breakdown, its per-material rate editors, and the
- * order-wide give-back calculator.
+ * One material's total and the windows that made it up, each tickable.
+ *
+ * The list is always open. The breakdown is the point of the panel now
+ * rather than a follow-up question, and a disclosure would hide the very
+ * checkboxes the dialog exists to offer.
+ */
+function MaterialSection({
+  row,
+  qualified,
+  selected,
+  onToggleLine,
+  onToggleRow,
+}: {
+  row: MaterialUsageRow;
+  /** True when another row shares this material's name — see below. */
+  qualified: boolean;
+  selected: ReadonlySet<string>;
+  onToggleLine: (key: string, checked: boolean) => void;
+  onToggleRow: (row: MaterialUsageRow, checked: boolean) => void;
+}) {
+  const selectedCount = row.lines.reduce(
+    (count, line) => count + (selected.has(line.key) ? 1 : 0),
+    0
+  );
+  const allSelected = selectedCount === row.lines.length && row.lines.length > 0;
+
+  // One material can be scoped to several m²-priced types, and then the
+  // blind type is what tells two same-sized windows apart. Decided per
+  // row so an order of one type does not repeat "Roller" down every line.
+  const mixedTypes = new Set(row.lines.map((line) => line.blindType)).size > 1;
+
+  const unit = UNIT_LABEL[row.unit];
+
+  return (
+    <section className="flex flex-col gap-2 rounded-md border border-border-light bg-surface-sunken p-3">
+      <div className="flex items-center justify-between gap-3">
+        <label className="flex min-w-0 items-center gap-2">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            // Partly-ticked rows show the mixed state rather than an
+            // empty box, which would read as "nothing here is counted".
+            ref={(el) => {
+              if (el) el.indeterminate = selectedCount > 0 && !allSelected;
+            }}
+            onChange={(e) => onToggleRow(row, e.target.checked)}
+            // Several rows can carry the same visible name, and a screen
+            // reader gets no help from the layout that disambiguates them.
+            aria-label={`Select every window using ${row.materialName} (per ${unit})`}
+            className="size-4 shrink-0 accent-accent"
+          />
+          <span className="min-w-0">
+            <span className="block wrap-anywhere text-sm font-semibold text-text-primary">
+              {row.materialName}
+              {qualified && (
+                <span className="font-normal text-text-secondary">
+                  {' '}
+                  · {row.unit === 'sqm' ? 'square metres' : 'running metres'}
+                </span>
+              )}
+            </span>
+            <span className="block text-[12px] text-text-secondary">{lines(row.lineCount)}</span>
+          </span>
+        </label>
+        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+          {row.quantity.toFixed(2)} {unit}
+        </span>
+      </div>
+
+      <ul className="flex flex-col gap-1 border-t border-border-light pt-1 text-[12px]">
+        {row.lines.map((line) => (
+          <li key={line.key}>
+            <label className="flex min-h-9 items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={selected.has(line.key)}
+                  onChange={(e) => onToggleLine(line.key, e.target.checked)}
+                  // Two windows in one room legitimately share a label,
+                  // so the size and the material go into the name too.
+                  aria-label={`Count ${line.label}, ${dimensionsOf(line, row.unit)}, toward the selected ${row.materialName} total`}
+                  className="size-4 shrink-0 accent-accent"
+                />
+                <span className="min-w-0 wrap-anywhere text-text-secondary">
+                  {line.label}
+                  {mixedTypes && <span className="text-text-muted"> · {line.blindType}</span>}
+                  <span className="text-text-muted"> · {dimensionsOf(line, row.unit)}</span>
+                  {/* Only when it carries more than one blind — an
+                      unconditional "x1" on every row is noise. */}
+                  {line.itemQuantity > 1 && (
+                    <span className="text-text-muted"> · ×{line.itemQuantity}</span>
+                  )}
+                </span>
+              </span>
+              <span className="shrink-0 font-mono text-text-primary">
+                {line.quantity.toFixed(2)} {unit}
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * The material breakdown: one section per material, every window
+ * tickable, and the ticked quantity totalled at the bottom.
  */
 export function MaterialUsageDialog({
   open,
   onClose,
   summary,
-  rateDrafts,
-  onRateDraftChange,
-  appliedParts,
-  onApplyGiveBack,
-  sqmRate,
-  onSqmRateChange,
-  runningRate,
-  onRunningRateChange,
-  discountIsPercent,
+  selected,
+  onSelectedChange,
 }: MaterialUsageDialogProps) {
-  const rates = useMemo(
-    () => ({
-      sqm: parseRate(sqmRate) ?? undefined,
-      running_m: parseRate(runningRate) ?? undefined,
-    }),
-    [sqmRate, runningRate]
-  );
-
-  const orderWideGiveBack = useMemo(() => giveBackAmount(summary, rates), [summary, rates]);
-
   // A material scoped to both Curtains and a m²-priced type is TWO rows
   // under one name. Left unqualified they read as a duplicate row rather
-  // than as two rate bases, so those names — and only those — carry the
-  // unit in the heading.
+  // than as two units, so those names — and only those — carry the unit
+  // in the heading.
   const ambiguousNames = useMemo(() => {
     const seen = new Set<string>();
     const twice = new Set<string>();
@@ -336,14 +306,35 @@ export function MaterialUsageDialog({
     return twice;
   }, [summary.rows]);
 
-  const usedUnits = usedUnitsOf(summary);
-  const hasSqm = usedUnits.some((u) => u.unit === 'sqm');
-  const hasRunning = usedUnits.some((u) => u.unit === 'running_m');
-  const totalAmount = usedUnits.reduce((sum, u) => sum + u.figures.amount, 0);
-  const anyMaterialApplied = summary.rows.some(
-    (row) => (appliedParts[materialRowKey(row.materialId, row.unit)] ?? 0) > 0
+  const selectedTotals = useMemo(
+    () => selectedUsageTotals(summary, selected),
+    [summary, selected]
   );
-  const orderWideApplied = appliedParts[ORDER_WIDE_GIVE_BACK] ?? 0;
+  // Counted off the summary rather than off the set's size, so a tick
+  // left behind by a since-deleted line is not reported as a window.
+  const selectedCount = useMemo(
+    () => allUsageLineKeys(summary).filter((key) => selected.has(key)).length,
+    [summary, selected]
+  );
+  const allCount = useMemo(() => allUsageLineKeys(summary).length, [summary]);
+
+  const toggleLine = (key: string, checked: boolean) => {
+    const next = new Set(selected);
+    if (checked) next.add(key);
+    else next.delete(key);
+    onSelectedChange(next);
+  };
+
+  const toggleRow = (row: MaterialUsageRow, checked: boolean) => {
+    const next = new Set(selected);
+    for (const line of row.lines) {
+      if (checked) next.add(line.key);
+      else next.delete(line.key);
+    }
+    onSelectedChange(next);
+  };
+
+  const selectedLine = quantityLine(selectedTotals);
 
   return (
     <Modal
@@ -359,134 +350,26 @@ export function MaterialUsageDialog({
       }
     >
       <div className="flex flex-col gap-3">
-        {summary.rows.map((row) => {
-          const key = materialRowKey(row.materialId, row.unit);
-          const draft = rateDrafts[key] ?? row.rate.toFixed(2);
-          const typed = parseRate(draft);
-          const applied = appliedParts[key] ?? 0;
-          const pending = typed === null ? 0 : rowGiveBack(row, typed);
-          const above = typed !== null && typed > row.rate;
-          // Nothing to put back when the box still reads the catalog rate
-          // and this row has contributed nothing.
-          const dirty = draft !== row.rate.toFixed(2) || applied > 0;
+        <p className="px-1 text-[12px] text-text-secondary">
+          Total material this order uses, per material and per window. Ticking a window only adds
+          it to the selected total below — it changes nothing on the order.
+        </p>
 
-          return (
-            <section
-              key={key}
-              className="flex flex-col gap-2 rounded-md border border-border-light bg-surface-sunken p-3"
-            >
-              <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 wrap-anywhere text-sm font-semibold text-text-primary">
-                  {row.materialName}
-                  {ambiguousNames.has(row.materialName) && (
-                    <span className="font-normal text-text-secondary">
-                      {' '}
-                      · {row.unit === 'sqm' ? 'square metres' : 'running metres'}
-                    </span>
-                  )}
-                </span>
-                <span className="shrink-0 font-mono text-[13px] text-text-primary">
-                  {row.quantity.toFixed(2)} {UNIT_LABEL[row.unit]}
-                </span>
-              </div>
-
-              <p className="text-[12px] text-text-secondary">
-                ${row.amount.toFixed(2)} fabric at ${row.rate.toFixed(2)} / {UNIT_LABEL[row.unit]} ·{' '}
-                {lines(row.lineCount)}
-              </p>
-
-              <LineBreakdown row={row} />
-
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5">
-                  <span className="text-[12px] text-text-secondary">$ / {UNIT_LABEL[row.unit]}</span>
-                  <span className="relative inline-flex items-center">
-                    <input
-                      inputMode="decimal"
-                      value={draft}
-                      onChange={(e) => onRateDraftChange(key, e.target.value)}
-                      aria-label={`${row.materialName} rate per ${UNIT_LABEL[row.unit]}`}
-                      className="h-9 w-28 rounded-sm border border-border-input bg-surface py-0 pl-2 pr-8 text-right font-mono text-[13px]"
-                    />
-                    {/* Sits INSIDE the box, so "put it back" is where the
-                        value being changed is rather than in the button
-                        row where it would read as another Apply. */}
-                    <button
-                      type="button"
-                      disabled={!dirty}
-                      title={`Reset to the catalog rate of $${row.rate.toFixed(2)}`}
-                      // Carries the unit unconditionally: a dual-scoped
-                      // material is two rows, and two buttons with one
-                      // accessible name are indistinguishable to a screen
-                      // reader even when the visible heading disambiguates.
-                      aria-label={`Reset ${row.materialName} (per ${UNIT_LABEL[row.unit]}) to the catalog rate`}
-                      onClick={() => {
-                        onRateDraftChange(key, row.rate.toFixed(2));
-                        onApplyGiveBack(key, 0);
-                      }}
-                      className="absolute right-1 flex h-7 w-7 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken disabled:opacity-30"
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <path
-                          d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    </button>
-                  </span>
-                </label>
-
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={pending <= 0}
-                  // Named for the same reason the reset button is: several
-                  // rows can legitimately offer the same dollar figure.
-                  aria-label={`Discount ${row.materialName} per ${UNIT_LABEL[row.unit]} by $${pending.toFixed(2)}`}
-                  onClick={() => onApplyGiveBack(key, pending)}
-                >
-                  Discount ${pending.toFixed(2)}
-                </Button>
-              </div>
-
-              {above && (
-                <p className="text-[12px] text-text-secondary">
-                  Above the catalog rate — this dialog only discounts, so there is nothing to
-                  apply.
-                </p>
-              )}
-              {applied > 0 && (
-                <p className="text-[12px] text-success">
-                  Adding ${applied.toFixed(2)} to the discount.
-                </p>
-              )}
-            </section>
-          );
-        })}
+        {summary.rows.map((row) => (
+          <MaterialSection
+            key={materialRowKey(row.materialId, row.unit)}
+            row={row}
+            qualified={ambiguousNames.has(row.materialName)}
+            selected={selected}
+            onToggleLine={toggleLine}
+            onToggleRow={toggleRow}
+          />
+        ))}
 
         <div className="flex items-baseline justify-between gap-3 px-1 text-[13px]">
           <span className="text-text-secondary">Total</span>
-          <span className="font-mono text-text-primary">
-            {summaryLineOf(summary)} · ${totalAmount.toFixed(2)}
-          </span>
+          <span className="font-mono text-text-primary">{quantityLine(summary.totals)}</span>
         </div>
-
-        {/* How much of the billed quantity is minimum inflation rather
-            than fabric the customer had. Shown only when it is non-zero,
-            because on an order of full-size blinds it is just noise. */}
-        {usedUnits.map(({ unit, figures }) => {
-          const added = figures.quantity - figures.measured;
-          if (added < 0.005) return null;
-          return (
-            <p key={unit} className="px-1 text-[12px] text-text-secondary">
-              measured {figures.measured.toFixed(2)} {UNIT_LABEL[unit]} · minimums added{' '}
-              {added.toFixed(2)} {UNIT_LABEL[unit]}
-            </p>
-          );
-        })}
 
         {summary.excludedCount > 0 && (
           <p className="px-1 text-[12px] text-text-secondary">
@@ -495,73 +378,32 @@ export function MaterialUsageDialog({
           </p>
         )}
 
-        <section className="flex flex-col gap-2 rounded-md border border-border-light p-3">
-          <h3 className="text-sm font-semibold text-text-primary">Give back across the order</h3>
-          <p className="text-[12px] text-text-secondary">
-            One rate over every material at once, added to the same discount.
-          </p>
-
-          <div className="flex flex-wrap items-end gap-2">
-            {hasSqm && (
-              <label className="flex flex-col gap-1">
-                <span className="text-[12px] text-text-secondary">Give back $ / m²</span>
-                <input
-                  inputMode="decimal"
-                  value={sqmRate}
-                  onChange={(e) => onSqmRateChange(e.target.value)}
-                  placeholder="0.00"
-                  className="h-9 w-24 rounded-sm border border-border-input bg-surface px-2 text-right font-mono text-[13px]"
-                />
-              </label>
-            )}
-            {hasRunning && (
-              <label className="flex flex-col gap-1">
-                <span className="text-[12px] text-text-secondary">Give back $ / m</span>
-                <input
-                  inputMode="decimal"
-                  value={runningRate}
-                  onChange={(e) => onRunningRateChange(e.target.value)}
-                  placeholder="0.00"
-                  className="h-9 w-24 rounded-sm border border-border-input bg-surface px-2 text-right font-mono text-[13px]"
-                />
-              </label>
-            )}
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={orderWideGiveBack <= 0}
-              onClick={() => onApplyGiveBack(ORDER_WIDE_GIVE_BACK, orderWideGiveBack)}
-            >
-              Discount ${orderWideGiveBack.toFixed(2)}
-            </Button>
-            {orderWideApplied > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onApplyGiveBack(ORDER_WIDE_GIVE_BACK, 0)}
-              >
-                Remove ${orderWideApplied.toFixed(2)}
+        {/* The selected tally, pinned to the bottom of the scroll area so
+            it stays readable while the windows being ticked are further
+            up a long list. */}
+        <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border border-border-light bg-surface px-3 py-2">
+          <span className="text-[13px] text-text-secondary">
+            Selected · {windows(selectedCount)}
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="font-mono text-[13px] text-text-primary">{selectedLine ?? '—'}</span>
+            {selectedCount > 0 ? (
+              <Button size="sm" variant="ghost" onClick={() => onSelectedChange(new Set())}>
+                Clear
               </Button>
+            ) : (
+              allCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onSelectedChange(new Set(allUsageLineKeys(summary)))}
+                >
+                  Select all
+                </Button>
+              )
             )}
-          </div>
-
-          {/* The two instruments discount the same fabric by different
-              routes, so using both double-counts whatever they overlap on. */}
-          {anyMaterialApplied && orderWideGiveBack > 0 && (
-            <p className="text-[12px] text-danger">
-              A per-material discount is already in force. This rate covers those materials too, so
-              applying it would give the same fabric away twice.
-            </p>
-          )}
-        </section>
-
-        <p className="px-1 text-[12px] text-text-secondary">
-          Nothing here changes a line item's price — every figure is added to the order's fixed
-          discount, on top of whatever is already there.
-          {discountIsPercent && ' Applying will replace the current percentage discount.'} The rates
-          themselves are not saved, so after a reload the discount is just a dollar figure and Reset
-          can no longer take these back out.
-        </p>
+          </span>
+        </div>
       </div>
     </Modal>
   );

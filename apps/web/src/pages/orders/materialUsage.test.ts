@@ -4,21 +4,21 @@
 /**
  * Aggregation tests for the internal Material usage report.
  *
- * The report exists so a consultant can decide a discount from fabric
- * quantity rather than by guessing a percentage, which makes two
- * properties load-bearing: it must count exactly the lines the order
- * total counts, and its money column must be the FABRIC leg rather than
- * the charged price. Both are asserted below.
+ * The report is a reading of how much fabric an order consumes, so two
+ * properties are load-bearing. It must count exactly the lines the order
+ * itself counts — a hidden or unpriceable window is not fabric anyone
+ * buys — and every figure it prints must be the BILLED quantity the
+ * blind-type module reports, never a second calculation. Both are
+ * asserted below, along with the tick-selection total, which must sum the
+ * same per-window readings the rows are built from.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
   summarizeMaterialUsage,
-  giveBackAmount,
+  selectedUsageTotals,
+  allUsageLineKeys,
   materialRowKey,
-  rowGiveBack,
-  applyGiveBackPart,
-  ORDER_WIDE_GIVE_BACK,
 } from './materialUsage';
 import type { BlindDraft, Catalogs, FlatDraft, ItemDraft } from './lineItemDrafts';
 
@@ -101,17 +101,25 @@ function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
 }
 
 describe('summarizeMaterialUsage', () => {
-  it('reports one row per material with the billed quantity and the fabric leg', () => {
+  it('reports one row per material, carrying the billed quantity', () => {
     const summary = summarizeMaterialUsage([blind()], catalogs());
     expect(summary.rows).toHaveLength(1);
     expect(summary.rows[0]).toMatchObject({
       materialId: 'm1',
       materialName: 'Blackout Ivory',
       unit: 'sqm',
-      rate: 50,
+      lineCount: 1,
     });
     expect(summary.rows[0].quantity).toBeCloseTo(2.8, 10);
-    expect(summary.rows[0].amount).toBeCloseTo(140, 10);
+  });
+
+  it('reports quantity only — no rate and no money', () => {
+    // The report is a fabric reading, not a pricing surface. Money lives
+    // in the order's own totals, which are server-authoritative.
+    const [row] = summarizeMaterialUsage([blind()], catalogs()).rows;
+    expect(row).not.toHaveProperty('rate');
+    expect(row).not.toHaveProperty('amount');
+    expect(row.lines[0]).not.toHaveProperty('amount');
   });
 
   it('collapses two blinds of the same material into one row', () => {
@@ -122,18 +130,17 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.rows).toHaveLength(1);
     // 2.80 + 2.00 m²
     expect(summary.rows[0].quantity).toBeCloseTo(4.8, 10);
-    expect(summary.rows[0].amount).toBeCloseTo(240, 10);
+    expect(summary.rows[0].lineCount).toBe(2);
   });
 
-  it('multiplies billed quantity and fabric revenue by the line quantity', () => {
+  it('multiplies the billed quantity by the line quantity', () => {
     const summary = summarizeMaterialUsage([blind({ quantity: '3' })], catalogs());
     expect(summary.rows[0].quantity).toBeCloseTo(8.4, 10);
-    expect(summary.rows[0].amount).toBeCloseTo(420, 10);
   });
 
   it('excludes a hidden line entirely, matching the order total', () => {
-    // A hidden line is excluded from the total and every document, so
-    // giving back fabric money against it would discount thin air.
+    // A hidden line is excluded from the order total and every document,
+    // so counting its fabric would be counting material nobody buys.
     const summary = summarizeMaterialUsage(
       [blind({ key: 'a' }), blind({ key: 'b', hidden: true })],
       catalogs()
@@ -167,18 +174,11 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.excludedCount).toBe(0);
   });
 
-  it('ignores a manual price override — an override is not a fabric-rate change', () => {
+  it('ignores a manual price override — a price is not a quantity', () => {
+    // What a window was charged has no bearing on how much fabric it
+    // consumes, and the panel must keep reporting the real figure.
     const summary = summarizeMaterialUsage([blind({ unit_price_override: '25' })], catalogs());
     expect(summary.rows[0].quantity).toBeCloseTo(2.8, 10);
-    expect(summary.rows[0].amount).toBeCloseTo(140, 10);
-  });
-
-  it('ignores add-ons, which are not fabric', () => {
-    const summary = summarizeMaterialUsage(
-      [blind({ addons: [{ key: 'a1', label: 'Rush', price: '75' }] })],
-      catalogs()
-    );
-    expect(summary.rows[0].amount).toBeCloseTo(140, 10);
   });
 
   it('keeps square metres and running metres in separate rows and totals', () => {
@@ -192,8 +192,8 @@ describe('summarizeMaterialUsage', () => {
     // Curtains with no pleat attribute: fullness 1 → 3.0 m + 0.5 m hem.
     const curtainRow = summary.rows.find((r) => r.unit === 'running_m');
     expect(curtainRow?.quantity).toBeCloseTo(3.5, 10);
-    expect(summary.totals.sqm?.quantity).toBeCloseTo(2.8, 10);
-    expect(summary.totals.running_m?.quantity).toBeCloseTo(3.5, 10);
+    expect(summary.totals.sqm).toBeCloseTo(2.8, 10);
+    expect(summary.totals.running_m).toBeCloseTo(3.5, 10);
   });
 
   it('omits a unit from the totals when no line uses it', () => {
@@ -202,29 +202,35 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.totals.running_m).toBeUndefined();
   });
 
-  it('reports measured below billed for an under-minimum blind', () => {
-    // 60 × 80 cm bills 1.50 m² and measures 0.48 m².
+  it('reports the BILLED quantity for an under-minimum blind', () => {
+    // 60 × 80 cm measures 0.48 m² but bills — and therefore consumes —
+    // 1.50 m² once the width and height minimums apply.
     const summary = summarizeMaterialUsage(
       [blind({ panels: ['60'], height_cm: '80' })],
       catalogs()
     );
     expect(summary.rows[0].quantity).toBeCloseTo(1.5, 10);
-    expect(summary.rows[0].measuredQuantity).toBeCloseTo(0.48, 10);
   });
 
-  it('reports measured equal to billed once the minimums are cleared', () => {
-    const summary = summarizeMaterialUsage([blind()], catalogs());
-    expect(summary.rows[0].measuredQuantity).toBeCloseTo(2.8, 10);
-  });
-
-  it('orders rows by descending fabric spend', () => {
-    // m2 is cheaper per m² but far larger, so it must lead.
+  it('orders rows by descending quantity, biggest consumer first', () => {
     const items: ItemDraft[] = [
       blind({ key: 'a', material_id: 'm1' }),
       blind({ key: 'b', material_id: 'm2', panels: ['300'], height_cm: '300' }),
     ];
     const summary = summarizeMaterialUsage(items, catalogs());
     expect(summary.rows.map((r) => r.materialId)).toEqual(['m2', 'm1']);
+  });
+
+  it('breaks a quantity tie alphabetically rather than arbitrarily', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a', material_id: 'm2' }),
+      blind({ key: 'b', material_id: 'm1' }),
+    ];
+    const summary = summarizeMaterialUsage(items, catalogs());
+    expect(summary.rows.map((r) => r.materialName)).toEqual([
+      'Blackout Ivory',
+      'Sunscreen Charcoal',
+    ]);
   });
 
   it('breaks a row down into the windows that made it, in editor order', () => {
@@ -237,7 +243,6 @@ describe('summarizeMaterialUsage', () => {
     expect(row.lines.map((l) => l.key)).toEqual(['a', 'b']);
     expect(row.lines[0].quantity).toBeCloseTo(2.8, 10);
     expect(row.lines[1].quantity).toBeCloseTo(2, 10);
-    expect(row.lines[0].amount).toBeCloseTo(140, 10);
   });
 
   it('sums its lines back to the row they sit under', () => {
@@ -247,11 +252,8 @@ describe('summarizeMaterialUsage', () => {
     ];
     const [row] = summarizeMaterialUsage(items, catalogs()).rows;
     expect(row.lines).toHaveLength(row.lineCount);
-    const sum = (pick: (l: (typeof row.lines)[number]) => number) =>
-      row.lines.reduce((a, l) => a + pick(l), 0);
-    expect(sum((l) => l.quantity)).toBeCloseTo(row.quantity, 10);
-    expect(sum((l) => l.measuredQuantity)).toBeCloseTo(row.measuredQuantity, 10);
-    expect(sum((l) => l.amount)).toBeCloseTo(row.amount, 10);
+    const sum = row.lines.reduce((a, l) => a + l.quantity, 0);
+    expect(sum).toBeCloseTo(row.quantity, 10);
   });
 
   it('multiplies a line breakdown by that line quantity', () => {
@@ -321,111 +323,104 @@ describe('summarizeMaterialUsage', () => {
   });
 });
 
-describe('giveBackAmount', () => {
-  it('multiplies each unit total by its own rate', () => {
-    const summary = summarizeMaterialUsage(
-      [blind(), blind({ key: 'c', blinds_type: 'Curtains', panels: ['300'], cassette_id: '', bottom_rail_id: '' })],
-      catalogs()
-    );
-    // 2.80 m² × $5 = 14.00, 3.50 m × $2 = 7.00
-    expect(giveBackAmount(summary, { sqm: 5, running_m: 2 })).toBe(21);
+describe('selectedUsageTotals', () => {
+  /** Two Rollers on one material, plus one Curtain on another unit. */
+  function mixedOrder(): ItemDraft[] {
+    return [
+      blind({ key: 'a', room_name: 'Living Room' }),
+      blind({ key: 'b', room_name: 'Kitchen', panels: ['100'], height_cm: '200' }),
+      blind({
+        key: 'c',
+        room_name: 'Master Bedroom',
+        blinds_type: 'Curtains',
+        panels: ['300'],
+        cassette_id: '',
+        bottom_rail_id: '',
+      }),
+    ];
+  }
+
+  it('is empty when nothing is ticked, rather than a zero for every unit', () => {
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    expect(selectedUsageTotals(summary, new Set())).toEqual({});
   });
 
-  it('treats a missing rate as zero rather than discounting on a blank field', () => {
-    const summary = summarizeMaterialUsage([blind()], catalogs());
-    expect(giveBackAmount(summary, {})).toBe(0);
+  it('sums the ticked windows and nothing else', () => {
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    // Living Room 2.80 m² only — Kitchen's 2.00 m² is not ticked.
+    expect(selectedUsageTotals(summary, new Set(['a'])).sqm).toBeCloseTo(2.8, 10);
   });
 
-  it('rounds to whole cents', () => {
-    const summary = summarizeMaterialUsage([blind()], catalogs());
-    // 2.80 m² × $3.333 = 9.3324 → 9.33
-    expect(giveBackAmount(summary, { sqm: 3.333 })).toBe(9.33);
+  it('adds two ticked windows of the same unit together', () => {
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    expect(selectedUsageTotals(summary, new Set(['a', 'b'])).sqm).toBeCloseTo(4.8, 10);
+  });
+
+  it('keeps square metres and running metres apart in the selection too', () => {
+    // Adding a running metre to a square metre would produce a figure
+    // that describes nothing, so each unit is reported on its own.
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    const totals = selectedUsageTotals(summary, new Set(['a', 'c']));
+    expect(totals.sqm).toBeCloseTo(2.8, 10);
+    expect(totals.running_m).toBeCloseTo(3.5, 10);
+  });
+
+  it('reports only the units the ticked windows actually use', () => {
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    expect(selectedUsageTotals(summary, new Set(['c'])).sqm).toBeUndefined();
+  });
+
+  it('ignores a key no line carries, so a stale tick cannot linger', () => {
+    // The dialog stays open while the order is edited: a window can be
+    // deleted, or edited into an unpriceable state, after being ticked.
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    const totals = selectedUsageTotals(summary, new Set(['a', 'deleted-line']));
+    expect(totals.sqm).toBeCloseTo(2.8, 10);
+  });
+
+  it('totals every window back to the order total when all are ticked', () => {
+    const summary = summarizeMaterialUsage(mixedOrder(), catalogs());
+    const totals = selectedUsageTotals(summary, new Set(allUsageLineKeys(summary)));
+    expect(totals.sqm).toBeCloseTo(summary.totals.sqm ?? 0, 10);
+    expect(totals.running_m).toBeCloseTo(summary.totals.running_m ?? 0, 10);
+  });
+
+  it('counts a ticked line at its full line quantity', () => {
+    const summary = summarizeMaterialUsage([blind({ quantity: '3' })], catalogs());
+    expect(selectedUsageTotals(summary, new Set(['d1'])).sqm).toBeCloseTo(8.4, 10);
   });
 });
 
-describe('rowGiveBack', () => {
-  const row = {
-    materialId: 'm1',
-    materialName: 'Blackout Ivory',
-    unit: 'sqm' as const,
-    quantity: 10,
-    measuredQuantity: 10,
-    rate: 73,
-    amount: 730,
-    lineCount: 2,
-    // Give-back math reads the row's own totals, never its breakdown.
-    lines: [],
-  };
-
-  it('is the rate difference times the billed quantity', () => {
-    // $73 → $70 over 10 m².
-    expect(rowGiveBack(row, 70)).toBe(30);
+describe('allUsageLineKeys', () => {
+  it('lists every reported window, in row-then-editor order', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a', material_id: 'm2', panels: ['300'], height_cm: '300' }),
+      blind({ key: 'b', material_id: 'm1', room_name: 'Kitchen' }),
+      blind({ key: 'c', material_id: 'm1', room_name: 'Study', panels: ['100'] }),
+    ];
+    const summary = summarizeMaterialUsage(items, catalogs());
+    // m2 leads on quantity; m1's two windows follow in editor order.
+    expect(allUsageLineKeys(summary)).toEqual(['a', 'b', 'c']);
   });
 
-  it('is zero at the catalog rate', () => {
-    expect(rowGiveBack(row, 73)).toBe(0);
+  it('omits the lines the report itself excluded', () => {
+    const items: ItemDraft[] = [
+      blind({ key: 'a' }),
+      blind({ key: 'h', hidden: true }),
+      flat({ key: 'f' }),
+    ];
+    expect(allUsageLineKeys(summarizeMaterialUsage(items, catalogs()))).toEqual(['a']);
   });
 
-  it('clamps a rate above the catalog rate rather than inventing a surcharge', () => {
-    expect(rowGiveBack(row, 90)).toBe(0);
-  });
-
-  it('rejects unusable rates', () => {
-    expect(rowGiveBack(row, Number.NaN)).toBe(0);
-    expect(rowGiveBack(row, -5)).toBe(0);
-  });
-
-  it('rounds to whole cents, because it lands in the discount field', () => {
-    expect(rowGiveBack({ ...row, quantity: 3.333, rate: 10 }, 9.99)).toBe(0.03);
+  it('is empty for an order with no material lines', () => {
+    expect(allUsageLineKeys(summarizeMaterialUsage([flat()], catalogs()))).toEqual([]);
   });
 });
 
-describe('applyGiveBackPart', () => {
-  const key = materialRowKey('m1', 'sqm');
-
-  it('adds on top of a discount that is already there', () => {
-    const result = applyGiveBackPart({}, 25, key, 30);
-    expect(result.discount).toBe(55);
-    expect(result.parts).toEqual({ [key]: 30 });
-  });
-
-  it('stacks two different contributions', () => {
-    const first = applyGiveBackPart({}, 0, key, 30);
-    const second = applyGiveBackPart(first.parts, first.discount, ORDER_WIDE_GIVE_BACK, 20);
-    expect(second.discount).toBe(50);
-    expect(second.parts).toEqual({ [key]: 30, [ORDER_WIDE_GIVE_BACK]: 20 });
-  });
-
-  it('SWAPS a key rather than stacking it, so re-applying a row is idempotent', () => {
-    const first = applyGiveBackPart({}, 0, key, 30);
-    const again = applyGiveBackPart(first.parts, first.discount, key, 45);
-    expect(again.discount).toBe(45);
-    expect(again.parts).toEqual({ [key]: 45 });
-  });
-
-  it('takes a contribution back out on zero, leaving the manual base', () => {
-    const typed = applyGiveBackPart({}, 12, key, 30);
-    expect(typed.discount).toBe(42);
-    const reset = applyGiveBackPart(typed.parts, typed.discount, key, 0);
-    expect(reset.discount).toBe(12);
-    expect(reset.parts).toEqual({});
-  });
-
-  it('removes only the key it is given', () => {
-    const a = applyGiveBackPart({}, 0, key, 30);
-    const b = applyGiveBackPart(a.parts, a.discount, ORDER_WIDE_GIVE_BACK, 20);
-    const c = applyGiveBackPart(b.parts, b.discount, key, 0);
-    expect(c.discount).toBe(20);
-    expect(c.parts).toEqual({ [ORDER_WIDE_GIVE_BACK]: 20 });
-  });
-
-  it('never produces a negative discount', () => {
-    // The consultant lowered the discount field by hand after applying.
-    const result = applyGiveBackPart({ [key]: 30 }, 5, key, 0);
-    expect(result.discount).toBe(0);
-  });
-
-  it('treats a missing or unusable current discount as zero', () => {
-    expect(applyGiveBackPart({}, Number.NaN, key, 30).discount).toBe(30);
+describe('materialRowKey', () => {
+  it('separates the same material quoted in two different units', () => {
+    // A material scoped to both Curtains and a m²-priced type is two
+    // rows; one key would pool running metres into square metres.
+    expect(materialRowKey('m1', 'sqm')).not.toBe(materialRowKey('m1', 'running_m'));
   });
 });

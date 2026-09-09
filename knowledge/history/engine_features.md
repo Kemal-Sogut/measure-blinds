@@ -3974,3 +3974,57 @@ did not change.
 `tsc` clean both workspaces, `oxlint` clean, api 447/447 (429 → +13 public, +5 orders), web 425/425
 (unchanged — the new components have no covering tests, matching the rest of the page). The
 migration is written but NOT applied to the live Supabase project; the routes 500 until it is.
+
+## 2026-09-09 — Material usage is a read-only fabric report with tickable windows
+The Material usage dialog stopped being a discounting instrument. Everything per-m²
+give-back — the per-material rate boxes, the order-wide `$/m²` and `$/m` calculator, the
+"Discount $X" / "Remove $X" buttons, the double-count warning, the percentage-discount
+warning — is **deleted**, along with `giveBackAmount`, `rowGiveBack`, `applyGiveBackPart`,
+`ORDER_WIDE_GIVE_BACK` and `GiveBackComposition` in `materialUsage.ts`.
+
+**Why.** Every rate typed into the panel was session state, but the money it produced was
+written into the order's fixed discount and saved. After a reload the discount was a bare
+dollar figure the dialog could neither explain nor take back: the rate boxes had reset to the
+catalog rates, the applied-parts map was empty, and Reset silently did nothing to a
+contribution an earlier session had made. The panel therefore showed figures that contradicted
+the order it was describing. Discounting now happens only in the order's own discount field,
+which persists with the order.
+
+**What it shows now** (`MaterialUsageDialog.tsx`). One section per material row (still grouped
+by material AND rate unit, so a material scoped to Curtains and to a m²-priced type is two
+rows, each qualified by unit in its heading): the material's total billed quantity, its line
+count, and then EVERY contributing window listed inline — label, blind type when the row mixes
+types, measured size, `×N` for a multi-blind line, and that window's own billed quantity. The
+`Per window` disclosure is gone: the breakdown is the panel now, not a follow-up question, and
+a collapsed list would have hidden the checkboxes. No rate, no material-leg revenue, and no
+measured-vs-billed note — `MaterialUsageRow` and `MaterialUsageLine` lost `rate`, `amount` and
+`measuredQuantity`, and `MaterialUsageSummary.totals` is a plain `Partial<Record<MaterialUnit,
+number>>` of quantities. Rows now sort by descending QUANTITY (the biggest consumer first),
+ties broken alphabetically rather than arbitrarily.
+
+**The checkboxes are information only.** One per window, plus a tri-state one per material row
+that ticks or clears that row's windows. Ticking adds that window's quantity to a
+`Selected · N windows` bar pinned to the bottom of the scroll area, and does nothing else — no
+line is hidden, repriced, selected in the editor, flagged, or saved, and the ticks never reach
+the order payload. `selectedUsageTotals(summary, selected)` sums them per rate unit (m² and
+running metres stay separate, as everywhere else in this report) and IGNORES a key no line
+carries, so a tick left behind by a window that was deleted or edited into an unpriceable
+state cannot survive as a phantom entry. `allUsageLineKeys(summary)` backs "Select all" for
+the same reason: the set it builds can only contain keys the current summary still has. Both
+are new exports of `materialUsage.ts`.
+
+**State** (`OrderDetail.tsx`). `sqmGiveBackRate`, `runningGiveBackRate`, `materialRateDrafts`
+and `giveBackParts` are gone; one `materialUsagePicks: Set<string>` replaces them, lifted for
+the unchanged reasons (`Modal` unmounts its children on close, and the trigger renders at two
+breakpoints). It is deliberately NOT the page's `selected` set — that one drives bulk edit —
+and nothing outside the dialog reads it.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0/0, `pnpm test` 422/422 (425 → the 20 give-back cases
+removed, 17 added for `selectedUsageTotals` / `allUsageLineKeys` / sorting / quantity-only
+rows). API untouched — this report never had a server surface, and no pricing or totals code
+was modified. Rendered and driven in a throwaway Vite harness (the worktree still has no
+`apps/web/.env`, so the real order page cannot boot): ticking two windows of one material
+totalled 6.80 m² while a curtain row stayed at 4.00 m, Select all reproduced the order total
+13.90 m² · 4.00 m exactly, Clear returned the bar to `0 windows · —`, and the row checkbox
+showed the mixed state when only part of its material was ticked.

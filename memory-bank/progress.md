@@ -132,36 +132,32 @@ recomputed) are deliberately separate numbers.
 **Material usage dialog (trigger row above the discount control at both breakpoints;
 `MaterialUsageDialog.tsx`, rendered once for the page):** internal-only — never shown to a
 customer, never printed, absent from the PDF, the public customer view,
-`/orders/:id/present`, and `/orders/:id/overview`. Shows billed material quantity, rate, and
-material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
-hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
-priced; a note surfaces billed-vs-measured area when minimums inflated it. Each material row
-then breaks down into the WINDOWS that made it (2026-08-25): label, blind type, measured size,
-`×N` for a multi-blind line, and that window's own billed quantity in the row's unit — m² for
-the m²-priced types, running metres for Curtains. That breakdown is a `Per window` disclosure
-that starts COLLAPSED, so the rate boxes and the give-back calculator stay on screen on a
-large order. Two discounting
-instruments, **both of which are pure discount math — neither touches a line item**:
-- **Per material.** Each row's rate box is prefilled with the catalog rate and has a reset
-  button inside it. Typing a lower rate and pressing "Discount $X" adds
-  `(catalog rate − typed rate) × that material's billed quantity` to the order's fixed
-  discount. A rate above the catalog rate is clamped to $0.00 with the button disabled.
-- **Across the order.** A `$/m²` rate (and, only when a Curtains line is present, a separate
-  `$/m` rate) applied over every material at once, plus a "Remove $X" button.
+`/orders/:id/present`, and `/orders/:id/overview`. **A read-only report: it writes nothing
+back to the order.** One section per material, grouped by material AND rate unit (m² /
+running metre, a dual-scoped material reading as two unit-qualified rows), showing that
+material's total billed quantity and then every contributing WINDOW inline — label, blind
+type when the row mixes types, measured size, `×N` for a multi-blind line, and that window's
+own billed quantity. Hidden lines are dropped; preset/custom/incomplete lines are counted as
+excluded rather than priced. Rows sort by descending quantity, ties alphabetical.
 
-Both compose through `applyGiveBackPart`: **additive, keyed and reversible.** A second Apply
-sits on top of the first, re-applying one row swaps that row's own figure rather than
-stacking, Reset takes exactly that row's figure back out, and a hand-typed discount is the
-base it all sits on. **The contributions map is session state** — after a reload the discount
-is a plain dollar figure and Reset can no longer undo an earlier session. Applying switches a
-percentage discount to fixed (discarding the percentage), with a warning. Using both
-instruments on the same fabric double-counts it; the dialog warns in red.
+Every window carries a CHECKBOX, and each material row a tri-state one for its whole group.
+Ticking only feeds a `Selected · N windows` bar pinned to the bottom of the dialog
+(`selectedUsageTotals`, per rate unit, units never added together) — it hides nothing,
+reprices nothing, selects nothing in the editor, and is never saved. Stale keys are ignored,
+so a tick left on a since-deleted window cannot linger in the total.
+
+The per-m² give-back calculators were REMOVED on 2026-09-09 (both the per-material rate boxes
+and the order-wide one), with `giveBackAmount`, `rowGiveBack`, `applyGiveBackPart` and
+`ORDER_WIDE_GIVE_BACK`. Their rates were session-only while the discount they wrote was
+saved, so after a reload the panel could neither explain nor undo the figure in the discount
+field. Fabric discounting is now done in the order's own discount field.
 
 Backed by a new public `BaseBlindType.describeMaterialUsage()` (both twins) alongside
 `describeUnitCosts`, which Curtains overrides to report running metres; deliberately NOT the
 source of `materialCost` (bit-identity risk to historical orders) — the two are held
 together by a consistency test in both `pricing.test.ts` suites instead. See
-`knowledge/history/engine_features.md`, 2026-08-22 (two entries), for the full rationale.
+`knowledge/history/engine_features.md`, 2026-08-22 (two entries) and 2026-09-09, for the full
+rationale.
 
 **Settings/catalogs:** Materials (per-blind-type, many-to-many linking), cassette/bottom-rail/
 control/installation option catalogs (scoped per type, price + basis), per-type defaults,

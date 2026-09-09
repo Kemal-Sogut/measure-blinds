@@ -2,26 +2,31 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Material usage aggregation for the internal per-m² discount report — no JSX.
+ * Material usage aggregation for the internal fabric report — no JSX.
  *
- * Fabric is the flexible leg of a quote: cassettes, rails, controls and
- * installation run on tighter margins, so a discount is reasoned about as
- * "give back $X per square metre of fabric". This module answers the two
- * questions that reasoning needs — how much of each material does this
- * order carry, and at what rate — by asking each line's blind-type module
- * rather than re-deriving any area formula. `describeMaterialUsage` is the
- * single source of a billed quantity; nothing here recomputes one.
+ * The report answers ONE question and deliberately nothing else: how much
+ * of each material does this order consume, and which windows made that
+ * figure up. It is a reading, not an instrument — nothing here changes a
+ * line item, a price, or a discount, and no caller may make it do so.
  *
- * Each material row also carries the WINDOWS that made it up
+ * It used to also drive a per-m² give-back calculator that composed a
+ * discount out of typed rates. That was removed: the typed rates were
+ * session-only, so every reload left a dollar discount whose origin the
+ * dialog could no longer explain or take back — figures that contradicted
+ * what the panel showed. Discounting now happens only in the order's own
+ * discount field, where it persists with the order.
+ *
+ * Each material row carries the WINDOWS that made it up
  * ({@link MaterialUsageLine}), because "12 m² of Blackout Ivory" does not
  * say whether that is one oversized opening or six ordinary ones. Those
  * per-line figures are the same readings the row is summed from, never a
  * second calculation, so a row and its breakdown cannot disagree.
  *
- * Everything reported is BILLED quantity: the width and height minimums
- * are applied, because that is what the material leg charged. `measured`
- * travels alongside it so the panel can show how much of the billed area
- * is minimum inflation rather than fabric the customer had.
+ * Every quantity is asked of the line's blind-type module through
+ * `describeMaterialUsage` rather than re-derived here; no area formula
+ * exists in this file. Everything reported is BILLED quantity: the width
+ * and height minimums are applied, because that is the material the order
+ * is charged for and therefore the material that has to be bought.
  *
  * Deliberately React-free and separate from `MaterialUsageDialog.tsx`, for
  * the same Fast Refresh reason `lineItemDrafts.ts` is: a module exporting
@@ -31,11 +36,6 @@
 import { getBlindType, type MaterialUnit } from '../../lib/blindTypes';
 import { blindDraftInputs, type Catalogs, type ItemDraft } from './lineItemDrafts';
 
-/** Rounds to whole cents, as every money helper in the app does. */
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
 /**
  * Identity of one material row — material AND rate unit.
  *
@@ -43,9 +43,9 @@ function round2(n: number): number {
  * through `material_blind_types`, and that join permits one material
  * linked to both Curtains and a m²-priced type; without the unit in the
  * key, running metres and square metres would pool into one meaningless
- * number. The dialog reuses this key to store that row's rate input and
- * its applied give-back, so the grouping and the UI can never disagree
- * about what "one row" is.
+ * number. The dialog reuses this key for its per-row "select every
+ * window" control, so the grouping and the UI can never disagree about
+ * what "one row" is.
  */
 export function materialRowKey(materialId: string, unit: MaterialUnit): string {
   return `${materialId}::${unit}`;
@@ -59,20 +59,24 @@ export function materialRowKey(materialId: string, unit: MaterialUnit): string {
  * question asked when a single oversized opening is what pushed a
  * material's quantity up. Every figure here is the same basis as the row
  * it sits under — billed quantity, line quantity already multiplied in —
- * so the lines of a row always sum to that row's own figures.
+ * so the lines of a row always sum to that row's own quantity.
  *
  * `widthCm` and `heightCm` are the MEASURED dimensions the consultant
  * typed, NOT the minimum-inflated ones the quantity is billed on. They
  * are there to identify the window, and a row that showed 100cm for a
- * 60cm blind would not identify it. The gap between measured and billed
- * is reported once per unit at the bottom of the dialog instead.
+ * 60cm blind would not identify it.
  *
  * `heightCm` is carried even for `running_m` rows, where Curtains does
  * not price on it: the dialog omits it there rather than this module
  * pretending the measurement does not exist.
  */
 export interface MaterialUsageLine {
-  /** The draft's render key — unique per line, and the React list key. */
+  /**
+   * The draft's render key. Unique across the whole order, and — because
+   * a line carries exactly one material and therefore appears under
+   * exactly one row — unique across the summary too. That is what lets
+   * the dialog's selection be a flat set of these keys.
+   */
   key: string;
   /** Room name, or the editor's own `Blind N` fallback when it is blank. */
   label: string;
@@ -86,19 +90,15 @@ export interface MaterialUsageLine {
   itemQuantity: number;
   /** Billed quantity for the whole line, `itemQuantity` included. */
   quantity: number;
-  /** The same figure with the minimum rules skipped. Reporting only. */
-  measuredQuantity: number;
-  /** This line's fabric-leg revenue. */
-  amount: number;
 }
 
 /**
- * One material's contribution across an order, in the unit that
- * material's rate is quoted in for the types that used it.
+ * One material's total across an order, in the unit that material's rate
+ * is quoted in for the types that used it.
  *
- * `amount` is the FABRIC leg only — not the charged price. A consultant's
- * manual override or an add-on is not a fabric-rate change, so neither
- * may distort the effective $/m² this row reports.
+ * Quantity only — no rate and no money. The fabric leg's revenue was
+ * removed with the give-back calculator it existed for; the order's own
+ * totals are where money is read.
  */
 export interface MaterialUsageRow {
   materialId: string;
@@ -107,39 +107,31 @@ export interface MaterialUsageRow {
   unit: MaterialUnit;
   /** Billed quantity across every contributing line, line quantity included. */
   quantity: number;
-  /** The same figure with the minimum rules skipped. Reporting only. */
-  measuredQuantity: number;
-  /** The material's catalog rate — $/m² or $/running-m, per `unit`. */
-  rate: number;
-  /** Fabric-leg revenue across those lines. */
-  amount: number;
   /** How many visible lines contributed, for the dialog's own context. */
   lineCount: number;
   /**
    * Every contributing window, in the order the editor lists them, so the
    * per-line breakdown reads in the same sequence as the line items above
-   * it. Always `lineCount` entries long, and its figures always sum to
+   * it. Always `lineCount` entries long, and its quantities always sum to
    * this row's own.
    */
   lines: MaterialUsageLine[];
 }
 
-/** Order-wide billed figures for one rate unit. */
-export interface MaterialUsageTotal {
-  quantity: number;
-  measured: number;
-  amount: number;
-}
-
 /**
  * What the Material usage panel renders. `totals` carries a key only for
- * a unit some line actually used, so the panel can decide whether to show
- * a running-metre rate input at all.
+ * a unit some line actually used, so the panel never prints a bare
+ * `0.00 m` for an order with no curtains in it.
  */
 export interface MaterialUsageSummary {
-  /** Descending by `amount` — the biggest fabric spend reads first. */
+  /**
+   * Descending by quantity, then by name — the biggest consumer reads
+   * first, and two equal rows keep a stable, alphabetical order rather
+   * than an arbitrary one.
+   */
   rows: MaterialUsageRow[];
-  totals: Partial<Record<MaterialUnit, MaterialUsageTotal>>;
+  /** Billed quantity per rate unit across the whole order. */
+  totals: Partial<Record<MaterialUnit, number>>;
   /** Visible lines carrying no material: preset, custom, or incomplete. */
   excludedCount: number;
 }
@@ -151,9 +143,9 @@ export interface MaterialUsageSummary {
  * Three exclusion rules, each mirroring behaviour that already exists:
  *
  * 1. HIDDEN lines are dropped first, matching `calculateTotals` and the
- *    Worker's own filter — a line excluded from the total must not attract
- *    a give-back. Being dropped first is also why a hidden incomplete line
- *    is not reported as incomplete.
+ *    Worker's own filter — a line excluded from the order is not fabric
+ *    anyone has to buy. Being dropped first is also why a hidden
+ *    incomplete line is not reported as incomplete.
  * 2. PRESET and CUSTOM lines have no material and are counted into
  *    `excludedCount` so the panel can say so out loud.
  * 3. INCOMPLETE blind drafts — anything `blindDraftInputs` refuses — are
@@ -192,7 +184,6 @@ export function summarizeMaterialUsage(
 
     const blindType = getBlindType(item.blinds_type);
     const usage = blindType.describeMaterialUsage(inputs);
-    const rate = inputs.material_price_per_sqm;
     const qty = inputs.quantity;
     const key = materialRowKey(material.id, usage.unit);
 
@@ -201,23 +192,14 @@ export function summarizeMaterialUsage(
       materialName: material.name,
       unit: usage.unit,
       quantity: 0,
-      measuredQuantity: 0,
-      rate,
-      amount: 0,
       lineCount: 0,
       lines: [],
     };
-    // The fabric leg, taken from the type's own breakdown rather than
-    // multiplied out here, so a type that prices fabric unusually is
-    // reported the way it actually charges.
-    const amount = blindType.describeUnitCosts(inputs).material * qty;
 
     row.lineCount += 1;
     row.quantity += usage.quantity * qty;
-    row.measuredQuantity += usage.measured * qty;
-    row.amount += amount;
-    // The same three figures kept per window, so the breakdown cannot
-    // drift from the row it sits under: both are the one usage reading.
+    // The same reading kept per window, so the breakdown cannot drift
+    // from the row it sits under: both are the one usage figure.
     row.lines.push({
       key: item.key,
       // Matches the fallback the line-item list and the presentation
@@ -229,112 +211,66 @@ export function summarizeMaterialUsage(
       heightCm: inputs.height_cm,
       itemQuantity: qty,
       quantity: usage.quantity * qty,
-      measuredQuantity: usage.measured * qty,
-      amount,
     });
     groups.set(key, row);
   }
 
-  const rows = [...groups.values()].sort((a, b) => b.amount - a.amount);
+  const rows = [...groups.values()].sort(
+    (a, b) => b.quantity - a.quantity || a.materialName.localeCompare(b.materialName)
+  );
 
-  const totals: Partial<Record<MaterialUnit, MaterialUsageTotal>> = {};
+  const totals: Partial<Record<MaterialUnit, number>> = {};
   for (const row of rows) {
-    const running = totals[row.unit] ?? { quantity: 0, measured: 0, amount: 0 };
-    running.quantity += row.quantity;
-    running.measured += row.measuredQuantity;
-    running.amount += row.amount;
-    totals[row.unit] = running;
+    totals[row.unit] = (totals[row.unit] ?? 0) + row.quantity;
   }
 
   return { rows, totals, excludedCount };
 }
 
 /**
- * The dollar give-back a set of per-unit rates comes to across a summary.
+ * The billed quantity of a hand-picked set of windows, per rate unit.
  *
- * A unit with no rate entered contributes nothing rather than falling
- * back to another unit's figure — a blank field must never quietly
- * discount an order. The result is rounded to whole cents because it goes
- * straight into the fixed-discount field, which is money.
+ * Backs the dialog's checkboxes, which are an INFORMATION tool and
+ * nothing else: ticking a window does not hide it, reprice it, or mark it
+ * in any way that outlives the dialog. The consultant is asking "what do
+ * these particular windows come to" — the cut list for one room, the
+ * three openings a customer is still deciding on — and this answers it
+ * without the order noticing.
+ *
+ * Selection is a flat set of line keys because a key identifies exactly
+ * one window in exactly one row (see {@link MaterialUsageLine.key}). Keys
+ * that match nothing are ignored rather than treated as zero-quantity
+ * lines, so a stale tick left behind by an edited or deleted line cannot
+ * survive as a phantom entry in the total.
+ *
+ * Units stay separate for the same reason rows do: adding a running metre
+ * to a square metre produces a number that means nothing. A unit appears
+ * in the result only when a selected line actually uses it.
  */
-export function giveBackAmount(
+export function selectedUsageTotals(
   summary: MaterialUsageSummary,
-  rates: Partial<Record<MaterialUnit, number>>
-): number {
-  let total = 0;
-  for (const [unit, figures] of Object.entries(summary.totals)) {
-    // `Object.entries` over a Partial<Record> types the value as possibly
-    // undefined even though a present key always carries one.
-    if (!figures) continue;
-    const rate = rates[unit as MaterialUnit];
-    if (!rate || !Number.isFinite(rate) || rate <= 0) continue;
-    total += figures.quantity * rate;
+  selected: ReadonlySet<string>
+): Partial<Record<MaterialUnit, number>> {
+  const totals: Partial<Record<MaterialUnit, number>> = {};
+  if (selected.size === 0) return totals;
+
+  for (const row of summary.rows) {
+    for (const line of row.lines) {
+      if (!selected.has(line.key)) continue;
+      totals[row.unit] = (totals[row.unit] ?? 0) + line.quantity;
+    }
   }
-  return round2(total);
+  return totals;
 }
 
 /**
- * The dollar give-back one material row comes to at a reduced rate.
+ * Every line key in a summary, in row-then-editor order.
  *
- * Clamped at zero: a rate typed ABOVE the catalog rate is a typo or a
- * change of mind, never a request to add a negative discount — the
- * discount field is money the customer comes off, and it has no
- * meaningful negative. The dialog says so on screen rather than letting a
- * silent zero look like a working Apply.
+ * The dialog's "select all" reads this rather than flattening the rows
+ * itself, so the set it builds can only ever contain keys this summary
+ * still has — the same guarantee that keeps a stale tick out of
+ * {@link selectedUsageTotals}.
  */
-export function rowGiveBack(row: MaterialUsageRow, rate: number): number {
-  if (!Number.isFinite(rate) || rate < 0) return 0;
-  return round2(Math.max(0, row.rate - rate) * row.quantity);
-}
-
-/**
- * The key {@link applyGiveBackPart} files the order-wide give-back under.
- *
- * Cannot collide with a {@link materialRowKey}, which always contains
- * `::` between a uuid and a unit.
- */
-export const ORDER_WIDE_GIVE_BACK = 'order-wide';
-
-/** A composed discount: the new total, and the parts it is made of. */
-export interface GiveBackComposition {
-  discount: number;
-  parts: Record<string, number>;
-}
-
-/**
- * Adds (or replaces, or removes) ONE give-back contribution on top of the
- * discount already in force.
- *
- * This is what makes the dialog's Apply buttons additive rather than
- * destructive: they never overwrite a line item and never overwrite each
- * other. `parts` remembers what each row last contributed, so re-applying
- * a row at a different rate SWAPS that row's figure instead of stacking a
- * second copy of it, and applying `0` (the reset) takes the row's
- * contribution back out. Anything the consultant typed into the discount
- * field by hand is the base everything else sits on, and survives both.
- *
- * `parts` is session state deliberately: nothing persists a per-material
- * rate, so after a reload the discount is just a dollar figure and this
- * map starts empty — which means Reset can no longer take back what an
- * earlier session added. The dialog says so.
- *
- * Clamped at zero, because a negative discount is not a thing. Returns
- * whole cents for the same reason `giveBackAmount` does: the result goes
- * straight into the fixed-discount field.
- */
-export function applyGiveBackPart(
-  parts: Record<string, number>,
-  currentDiscount: number,
-  key: string,
-  amount: number
-): GiveBackComposition {
-  const base = Number.isFinite(currentDiscount) ? currentDiscount : 0;
-  const previous = parts[key] ?? 0;
-  const discount = round2(Math.max(0, base - previous + Math.max(0, amount)));
-
-  const next = { ...parts };
-  if (amount > 0) next[key] = round2(amount);
-  else delete next[key];
-
-  return { discount, parts: next };
+export function allUsageLineKeys(summary: MaterialUsageSummary): string[] {
+  return summary.rows.flatMap((row) => row.lines.map((line) => line.key));
 }
