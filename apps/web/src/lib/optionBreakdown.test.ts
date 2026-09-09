@@ -4,11 +4,16 @@
 /**
  * Unit tests for `optionBreakdown.ts`.
  *
- * These protect the invariant the Order Presentation page is built on:
- * every row's option cells plus its adjustment equal the stored
- * `line_total` EXACTLY, so nothing shown to a customer fails to add up.
- * The fixtures carry real snapshot values, including a case where naive
- * per-leg rounding misses the stored total by two cents.
+ * These protect the invariant the order view is built on: every blind
+ * row's option cells plus its add-ons equal the stored `line_total`
+ * EXACTLY, so nothing shown to a customer fails to add up. The fixtures
+ * carry real snapshot values, including a case where naive per-leg
+ * rounding misses the stored total by two cents.
+ *
+ * They also pin the privacy property the page depends on: a price override
+ * is absorbed into the material cell, so no column of the breakdown
+ * discloses one. `show_original_price` is the only control over that, and
+ * it discloses through the struck-through unit price alone.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -69,9 +74,9 @@ function lineItem(overrides: Partial<LineItem> = {}): LineItem {
 
 describe('describeLineBreakdown', () => {
   it('reports the material name and its cost when the blind has no hardware', () => {
-    const { cells, adjustment } = describeLineBreakdown(lineItem());
+    const { cells, addons } = describeLineBreakdown(lineItem());
     expect(cells.material).toEqual({ name: 'Blackout White', amount: 140 });
-    expect(adjustment).toBe(0);
+    expect(addons).toBe(0);
   });
 
   it('reports colour as a name with no money', () => {
@@ -164,33 +169,71 @@ describe('describeLineBreakdown', () => {
       unit_price: 164.11,
       line_total: 656.44,
     });
-    const { cells, adjustment } = describeLineBreakdown(item);
+    const { cells, addons } = describeLineBreakdown(item);
     expect(cells.cassette.amount).toBe(22.87);
     expect(cells.bottom_rail.amount).toBe(26.91);
     expect(cells.control.amount).toBe(79.96);
     expect(cells.installation.amount).toBe(133.32);
     expect(cells.material.amount).toBe(393.38); // not 393.40
-    expect(adjustment).toBe(0);
+    expect(addons).toBe(0);
   });
 
-  it('reports add-ons as the adjustment', () => {
-    const { adjustment } = describeLineBreakdown(
+  it('reports the add-ons total', () => {
+    const { addons } = describeLineBreakdown(
       lineItem({ addons: [{ label: 'Rush fee', price: 40 }], line_total: 180 })
     );
-    expect(adjustment).toBe(40);
+    expect(addons).toBe(40);
   });
 
-  it('reports a price override as the adjustment, per blind', () => {
-    // Calculated 140, charged 120, qty 2 → line_total 240, adjustment −40.
-    const { cells, adjustment } = describeLineBreakdown(
+  it('sums several add-ons into the one figure', () => {
+    const { addons } = describeLineBreakdown(
+      lineItem({
+        addons: [
+          { label: 'Rush fee', price: 40 },
+          { label: 'Removal', price: 12.5 },
+        ],
+        line_total: 192.5,
+      })
+    );
+    expect(addons).toBe(52.5);
+  });
+
+  it('absorbs a price override into the material cell, leaving no trace', () => {
+    // Calculated 140, charged 120, qty 2 → the row decomposes the 240 that
+    // was CHARGED. Nothing anywhere reports the missing 40.
+    const { cells, addons } = describeLineBreakdown(
       lineItem({ quantity: 2, base_unit_price: 140, unit_price: 120, line_total: 240 })
     );
-    expect(cells.material).toEqual({ name: 'Blackout White', amount: 280 });
-    expect(adjustment).toBe(-40);
+    expect(cells.material).toEqual({ name: 'Blackout White', amount: 240 });
+    expect(addons).toBe(0);
   });
 
-  it('reports an override and add-ons together', () => {
-    const { adjustment } = describeLineBreakdown(
+  it('absorbs the override whether or not the original is shown', () => {
+    // `show_original_price` governs the struck-through unit price and
+    // nothing else: the breakdown is identical either way.
+    const shown = describeLineBreakdown(
+      lineItem({
+        quantity: 2,
+        base_unit_price: 140,
+        unit_price: 120,
+        line_total: 240,
+        show_original_price: true,
+      })
+    );
+    const hidden = describeLineBreakdown(
+      lineItem({
+        quantity: 2,
+        base_unit_price: 140,
+        unit_price: 120,
+        line_total: 240,
+        show_original_price: false,
+      })
+    );
+    expect(shown).toEqual(hidden);
+  });
+
+  it('keeps an override and add-ons apart', () => {
+    const { cells, addons } = describeLineBreakdown(
       lineItem({
         quantity: 2,
         base_unit_price: 140,
@@ -199,20 +242,59 @@ describe('describeLineBreakdown', () => {
         line_total: 280,
       })
     );
-    // −$40 of override, +$40 of add-on: the two really do cancel here.
-    expect(adjustment).toBe(0);
+    // The override is in the material cell; the add-on is its own figure.
+    // Under the old adjustment column these two cancelled to a bare zero.
+    expect(cells.material.amount).toBe(240);
+    expect(addons).toBe(40);
   });
 
-  it('hands a preset or custom line back with no options and its whole total', () => {
-    const { cells, adjustment, lineTotal } = describeLineBreakdown(
-      lineItem({ item_type: 'preset', title: 'Call-out fee', line_total: 75 })
+  it('fits the material cell negative on a blind sold below its hardware', () => {
+    // Hardware alone is 25 + 30 = 55/unit; the line was given away at 40.
+    const { cells, addons } = describeLineBreakdown(
+      lineItem({
+        control_id: 'ct-1',
+        control_name: 'Cordless',
+        control_price_per_item: 25,
+        control_price_basis: 'per_panel',
+        installation_id: 'i-1',
+        installation_name: 'Top fix',
+        installation_price_per_item: 30,
+        installation_price_basis: 'per_unit',
+        base_unit_price: 195,
+        unit_price: 40,
+        line_total: 40,
+      })
+    );
+    expect(cells.control.amount).toBe(25);
+    expect(cells.installation.amount).toBe(30);
+    expect(cells.material.amount).toBe(-15);
+    expect(addons).toBe(0);
+  });
+
+  it('hands a preset or custom line back with no option cells', () => {
+    const { cells, addons, lineTotal } = describeLineBreakdown(
+      lineItem({ item_type: 'preset', title: 'Call-out fee', unit_price: 75, line_total: 75 })
     );
     expect(cells.material).toEqual({ name: null, amount: null });
-    expect(adjustment).toBe(75);
+    expect(addons).toBe(0);
     expect(lineTotal).toBe(75);
   });
 
-  it('always satisfies: sum of cells + adjustment === line_total', () => {
+  it('reports a preset line add-ons figure even though nothing reconciles', () => {
+    const { addons, lineTotal } = describeLineBreakdown(
+      lineItem({
+        item_type: 'preset',
+        title: 'Call-out fee',
+        unit_price: 75,
+        addons: [{ label: 'After hours', price: 25 }],
+        line_total: 100,
+      })
+    );
+    expect(addons).toBe(25);
+    expect(lineTotal).toBe(100);
+  });
+
+  it('always satisfies: sum of cells + add-ons === line_total, for blinds', () => {
     const cases: LineItem[] = [
       lineItem(),
       lineItem({ quantity: 3, unit_price: 140, line_total: 420 }),
@@ -242,12 +324,17 @@ describe('describeLineBreakdown', () => {
         unit_price: 164.11,
         line_total: 656.44,
       }),
-      lineItem({ item_type: 'custom', title: 'Removal', line_total: 60 }),
+      lineItem({
+        base_unit_price: 200,
+        unit_price: 33.33,
+        addons: [{ label: 'Rush', price: 0.01 }],
+        line_total: 33.34,
+      }),
     ];
     for (const item of cases) {
-      const { cells, adjustment, lineTotal } = describeLineBreakdown(item);
+      const { cells, addons, lineTotal } = describeLineBreakdown(item);
       const summed = Object.values(cells).reduce((s, c) => s + (c.amount ?? 0), 0);
-      expect(Math.round((summed + adjustment) * 100) / 100).toBe(lineTotal);
+      expect(Math.round((summed + addons) * 100) / 100).toBe(lineTotal);
     }
   });
 });

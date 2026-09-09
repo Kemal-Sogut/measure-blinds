@@ -19,12 +19,26 @@ payment is recorded but does not advance, and staff may still advance an under-d
 order by hand. Deleting the LAST payment reverts in_progress → awaiting_payment; dropping
 below 50% while some payment remains does not (manual/threshold advances are not auto-undone).
 Order duplication re-prices from the current catalog and leaves payments/logs/appointment/
-warranty/public-token behind. Delete stays guarded (draft/expired only), but the STAGE itself
-no longer is: `POST /api/orders/:id/status` sets any of the six stages from any status,
+warranty/public-token behind. DELETING an order takes everything that belongs to it — line
+items, activity log, payments, change requests, the installation appointment and every stage
+stamp — and leaves the customer, their estimate visits, and the `etransfers` inbox standing;
+transfers applied to the order are released back to the pending inbox rather than left marked
+`applied` on nothing (`apps/api/src/lib/orderDelete.ts`; the button itself is offered at every
+stage). The STAGE is no longer guarded either: `POST /api/orders/:id/status` sets any of the six stages from any status,
 timeline-driven, with `sent_at`/`confirmed_at`/`installed_at` reconciled off the target stage
 index and the installation appointment dropped below `ready`. It never emails and never
 touches the payment ledger; the guarded routes (`/confirm`, `/ready`, `/installed`, `/revert`,
 `/mark-sent`, `/in-progress`) remain for the email, payment, and customer-confirm flows.
+
+**Customer records (view/edit, branch `feat/customer-edit-mode`):** `/customers/:id` opens
+READ-ONLY — label/value rows, `mailto:`/`tel:` on the two contact fields, billing collapsed to
+one line when it mirrors shipping — and a pen button in the header enters the editable form.
+Cancel prompts only when the form actually differs from the record; saving returns to the view
+rather than the list; Delete lives inside edit mode. The same pen sits on the order editor's
+customer card and opens `CustomerEditModal`, which writes the `customers` row WITHOUT saving or
+dirtying the order. `/customers/new` is unchanged. The form is defined once in
+`lib/customerForm.ts` + `components/CustomerFields.tsx` and shared by both surfaces;
+`CustomerCreateModal` deliberately keeps its own compact layout.
 
 **Customer edit requests (migration 41, not yet applied):** a **Request Edit** button sits to
 the LEFT of Confirm on the public estimate page. It opens a dialog, POSTs free text to
@@ -101,7 +115,7 @@ colour and blind-type attributes carry no figure. The amounts come from
 `describeUnitCosts`, × quantity, rounded — and reach the unauthenticated page as
 `option_prices` on the public payload, never as rates or price bases. Warranty certificates issue automatically on paid-in-full
 (10y products / 2y motorised parts, parts-only — no workmanship cover), resendable, staff-
-downloadable. Payment receipt emails per payment. 13 responsive HTML email templates.
+downloadable. Payment receipt emails per payment. 13 responsive HTML email templates. The Send estimate/invoice sheet also shows the customer-facing URL (`/customer/<public_token>`, no `?preview=1`) in a read-only field with a Copy button (`components/CopyLinkField.tsx`), so the page can be handed over WhatsApp/SMS instead of the app's own email; the token is minted through the existing `useOrderPublicToken` mutation after the sheet opens, and a mint failure degrades only that field.
 Production labels (browser `window.print()`, one 3x1.5in label per unit of quantity, shop-code
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).
@@ -115,19 +129,32 @@ client-side over the tab result already fetched, so it costs no request; the ren
 clamped to the live page count, and tab/search changes reset to page 1. The pager reaches
 only as far as the server sends — `GET /api/orders` caps at 100 rows per tab.
 
-**Order Presentation (`/orders/:id/present`):** the customer-facing view a consultant turns
-toward the customer in person, reached from a "Present to Customer" action directly below
-Confirm on the UNCONFIRMED stages only (draft, sent, expired); it saves before navigating,
-same tab. One row per blind, one column per option type carrying that option's money, plus
-`<tfoot>` totals per column that track a stackable filter bar (AND across option types, OR
-within one; every value harvested from the order's own line items with a blind count). Unused
-option columns and the Adjustment column drop out; hidden items are excluded; an option that
-adds nothing prints its bare name. Per-option money comes from the new public
-`BaseBlindType.describeUnitCosts()` — `calculateUnitPrice` is now the SUM of that breakdown,
-so a price basis is still interpreted in exactly one place. Cells are fitted to the stored
-price so `Σ cells + adjustment === line_total` exactly on every row. The filter-tracking
-overall total and the server-authoritative order strip (subtotal/discount/HST/total, never
-recomputed) are deliberately separate numbers.
+**Order view (`/orders/:id/present`):** the app's ONE read-only order view since 2026-08-28,
+when it absorbed the separate Order Overview page (`/orders/:id/overview` is gone). Reached
+from a "Present to Customer" action at EVERY stage; it saves before navigating, same tab.
+
+One row per blind, one column per option type carrying that option's money, plus `<tfoot>`
+totals per column that track a stackable filter bar (AND across option types, OR within one;
+every value harvested from the order's own line items with a blind count). It also carries what
+Overview did: a Note column, a Unit column with the `show_original_price` strikethrough, an
+Add-ons column, an Other-items table, and Paid / Balance due. All blinds stay in one filterable
+table — Overview's per-blind-type tables were not carried over.
+
+A **Price breakdown** switch on the title row governs PER-CHOICE money only: option `+$`
+amounts, their footer totals, add-on prices, and the Add-ons column. Option names, add-on
+labels, Qty, Unit, Note, every line total, the footer overall and the order strip show in BOTH
+states, so the page can never disagree with the estimate the customer was sent. Off on load,
+not persisted; ON is the selling state. Unused option columns drop out independently of it;
+hidden items are excluded; an option that adds nothing prints its bare name.
+
+Per-option money comes from the public `BaseBlindType.describeUnitCosts()` — `calculateUnitPrice`
+is the SUM of that breakdown, so a price basis is interpreted in exactly one place. Cells are
+fitted to the CHARGED price (`unit_price`, not `base_unit_price`) so a price override is
+absorbed into the material cell and `Σ cells + add-ons === line_total` exactly on every row —
+which is why the view has an Add-ons column and no Adjustment column, and why no breakdown
+column discloses an override the consultant left undisclosed. The
+filter-tracking overall total and the server-authoritative order strip
+(subtotal/discount/HST/total/paid/balance, never recomputed) are deliberately separate numbers.
 
 **Material usage dialog (trigger row above the discount control at both breakpoints;
 `MaterialUsageDialog.tsx`, rendered once for the page):** internal-only — never shown to a
@@ -151,6 +178,31 @@ and the order-wide one), with `giveBackAmount`, `rowGiveBack`, `applyGiveBackPar
 `ORDER_WIDE_GIVE_BACK`. Their rates were session-only while the discount they wrote was
 saved, so after a reload the panel could neither explain nor undo the figure in the discount
 field. Fabric discounting is now done in the order's own discount field.
+customer, never printed, absent from the PDF, the public customer view, and
+`/orders/:id/present`. Shows billed material quantity, rate, and
+material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
+hidden lines dropped and preset/custom/incomplete lines counted as excluded rather than
+priced; a note surfaces billed-vs-measured area when minimums inflated it. Each material row
+then breaks down into the WINDOWS that made it (2026-08-25): label, blind type, measured size,
+`×N` for a multi-blind line, and that window's own billed quantity in the row's unit — m² for
+the m²-priced types, running metres for Curtains. That breakdown is a `Per window` disclosure
+that starts COLLAPSED, so the rate boxes and the give-back calculator stay on screen on a
+large order. Two discounting
+instruments, **both of which are pure discount math — neither touches a line item**:
+- **Per material.** Each row's rate box is prefilled with the catalog rate and has a reset
+  button inside it. Typing a lower rate and pressing "Discount $X" adds
+  `(catalog rate − typed rate) × that material's billed quantity` to the order's fixed
+  discount. A rate above the catalog rate is clamped to $0.00 with the button disabled.
+- **Across the order.** A `$/m²` rate (and, only when a Curtains line is present, a separate
+  `$/m` rate) applied over every material at once, plus a "Remove $X" button.
+
+Both compose through `applyGiveBackPart`: **additive, keyed and reversible.** A second Apply
+sits on top of the first, re-applying one row swaps that row's own figure rather than
+stacking, Reset takes exactly that row's figure back out, and a hand-typed discount is the
+base it all sits on. **The contributions map is session state** — after a reload the discount
+is a plain dollar figure and Reset can no longer undo an earlier session. Applying switches a
+percentage discount to fixed (discarding the percentage), with a warning. Using both
+instruments on the same fabric double-counts it; the dialog warns in red.
 
 Backed by a new public `BaseBlindType.describeMaterialUsage()` (both twins) alongside
 `describeUnitCosts`, which Curtains overrides to report running metres; deliberately NOT the
@@ -190,12 +242,14 @@ autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = tru
   driven end to end.
 - **No real device has ever driven the app itself.** Every staff route sits behind
   `ProtectedRoute`, so verification to date is types + tests + production builds, occasionally
-  a signed-in desktop-Chrome session, or (twice, 2026-08-20) a throwaway component-level Vite
-  harness — for the bulk-add row, and for the Order Presentation table and filter bar — never
-  the live app on a real phone/tablet. This is the standing gap behind nearly every "verify
-  before field use" note below. The Presentation page's own shell (data fetch, order-total
-  strip, other-items section, print layout) has therefore never been rendered at all; only its
-  two child components have.
+  a signed-in desktop-Chrome session, or (three times: twice 2026-08-20, again 2026-08-28) a
+  throwaway component-level Vite harness — for the bulk-add row, for the Order Presentation
+  table and filter bar, and for the merged order view's blinds table, other-items table and
+  breakdown toggle — never the live app on a real phone/tablet. `apps/web/.env` does not exist
+  in this worktree, so the full app renders blank locally and a harness is the only way to get
+  these components on screen. This is the standing gap behind nearly every "verify before field
+  use" note below. The order view's own SHELL (data fetch, order-total strip with Paid/Balance,
+  print layout) has still never been rendered at all; only its child components have.
 - Bulk-add's newest UI still has real gaps beyond the row-width fix above: the live
   panel-shorthand split has not been tried on an actual iOS decimal keypad, and the card/row
   contrast pass and wider popups have never been rendered and looked at by a human or an

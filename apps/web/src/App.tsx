@@ -27,7 +27,6 @@ const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
 const OrderList = lazy(() => import('./pages/orders/OrderList'));
 const OrderDetail = lazy(() => import('./pages/orders/OrderDetail'));
 const ManufacturerCopy = lazy(() => import('./pages/orders/ManufacturerCopy'));
-const OrderOverview = lazy(() => import('./pages/orders/OrderOverview'));
 const OrderPresentation = lazy(() => import('./pages/orders/OrderPresentation'));
 const OrderLabels = lazy(() => import('./pages/orders/OrderLabels'));
 const CalendarPage = lazy(() => import('./pages/calendar/CalendarPage'));
@@ -98,7 +97,6 @@ export default function App() {
             <Route path="/orders/new" element={guard(<Layout><OrderDetail /></Layout>)} />
             <Route path="/orders/:id" element={guard(<Layout><OrderDetail /></Layout>)} />
             <Route path="/orders/:id/manufacturer" element={guard(<Layout><ManufacturerCopy /></Layout>)} />
-            <Route path="/orders/:id/overview" element={guard(<Layout><OrderOverview /></Layout>)} />
             <Route path="/orders/:id/present" element={guard(<Layout><OrderPresentation /></Layout>)} />
             <Route path="/orders/:id/labels" element={guard(<Layout><OrderLabels /></Layout>)} />
 

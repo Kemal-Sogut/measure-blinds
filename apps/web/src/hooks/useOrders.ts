@@ -478,7 +478,18 @@ export function useSetOrderStatus(): UseMutationResult<
   });
 }
 
-/** Deletes an order (and its line items + payments). */
+/**
+ * Deletes an order and everything attached to it — line items, activity
+ * log, payments, change requests and the installation visit. The
+ * customer and their estimate visits are kept.
+ *
+ * Three caches move, not one: the order's own detail entry is dropped
+ * outright, the list reloads without it, and BOTH the calendar (its
+ * installation visit is gone) and the pending e-Transfer inbox (any
+ * transfer applied to this order is released back into it, server-side)
+ * are invalidated — otherwise a consultant would still see a visit for
+ * an order that no longer exists, or miss the freed transfer.
+ */
 export function useDeleteOrder(): UseMutationResult<{ id: string }, Error, string> {
   const qc = useQueryClient();
   return useMutation({
@@ -487,6 +498,8 @@ export function useDeleteOrder(): UseMutationResult<{ id: string }, Error, strin
     onSuccess: (_data, id) => {
       qc.removeQueries({ queryKey: ['orders', 'detail', id] });
       void qc.invalidateQueries({ queryKey: LIST_KEY });
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+      void qc.invalidateQueries({ queryKey: ETRANSFERS_KEY });
     },
   });
 }

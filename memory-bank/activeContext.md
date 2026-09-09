@@ -46,6 +46,106 @@ terms tick. Amber, not red — red stays reserved for the cancellation banner. F
 `knowledge/specs/2026-08-26-edit-requests-design.md`. Verified: `tsc` clean both workspaces,
 `oxlint` clean, api 447/447, web 425/425. NOT seen in a browser and NOT deployed; the routes
 500 until migration 41 is applied to project `lgbxxlwsdeuhdgzrjjen`.
+## Where things stand (as of 2026-09-03)
+
+**Current branch: `claude/order-deletion-cascade-hiotl7`** (not merged, not deployed). Order
+deletion now has one owner, `apps/api/src/lib/orderDelete.ts`, called by `DELETE
+/api/orders/:id`. A deleted order takes line items, activity log, payments, change requests,
+the installation appointment and every stage stamp with it (all by FK cascade) and leaves the
+customer, their estimate visits, and the `etransfers` inbox standing. The fix it exists for:
+`etransfers.order_id` is `ON DELETE SET NULL`, so a deleted order used to leave its transfers
+`status = 'applied'` pointing at nothing — invisible to `/api/payments/pending` and to every
+order page. They are now released back to the pending inbox BEFORE the order row goes (and
+re-applied if the delete fails). **Migration 42
+(`20260903000042_release_stranded_etransfers.sql`) is NOT yet applied** to project
+`lgbxxlwsdeuhdgzrjjen`; it is data-only and frees the one row earlier deletions already
+stranded. Web side: both delete confirmations name what goes, and `useDeleteOrder` now also
+invalidates `['appointments']` and `['payments','pending']`. Write-ups in
+`knowledge/history/engine_features.md` and `bug_fixes.md`, both 2026-09-03.
+
+**Merged to `main` (PR #45): `feat/customer-edit-mode`** (not deployed). `/customers/:id` now
+opens READ-ONLY and a pen button enters edit mode; the order editor's customer card got the
+same pen, opening `components/CustomerEditModal` so a wrong number or street can be corrected
+without leaving the order. The editable form was extracted to `lib/customerForm.ts` (pure
+state, `toCustomerInput`, `validateCustomerForm`, `isCustomerFormDirty` — the only new tests,
+21 of them) and `components/CustomerFields.tsx`, shared by both surfaces;
+`components/CustomerCreateModal.tsx` was deliberately left on its own compact layout. NO api,
+schema, hook or route changes. Spec `knowledge/specs/2026-09-02-customer-edit-mode-design.md`,
+plan `knowledge/plans/2026-09-02-customer-edit-mode.md`, write-up in
+`knowledge/history/engine_features.md` 2026-09-02.
+
+Two constraints from that work worth not rediscovering. **`CustomerEditModal` must stay mounted
+at `OrderDetail`'s page tail, OUTSIDE the `fieldset disabled={readOnly}` wrapper** — inside it,
+the dialog inherits the disabled fieldset and nobody can type. And **the base layer gives every
+anchor a 44px min-height**, so a linked value in a label/value row needs `inline-flex
+items-center` or it sits at the top of a 44px box with all the slack below it.
+
+That work also surfaced a long-standing bug, now fixed: `AddressAutocomplete` opened a
+suggestion dropdown over any freshly LOADED address, because `selectionLocked` started `false`
+and the debounce effect runs on mount. It now starts locked when the field mounts with a value.
+See `knowledge/history/bug_fixes.md` 2026-09-02.
+
+**Still outstanding from the 2026-08-26 edit-requests work (now committed on `main` at
+`925d7b1`): migration 41 has NOT been applied** to project `lgbxxlwsdeuhdgzrjjen`
+(`supabase/migrations/20260826000041_order_edit_requests.sql`). The customer edit-request
+routes 500 until it is. Details in `knowledge/history/engine_features.md`, 2026-08-26.
+
+**Also on `main` now — the send sheet carries a copy-the-link area** (committed as
+`a179243`; the paragraph below was written while it was still uncommitted):
+
+Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
+sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
+(read-only URL input + Copy button, with `navigator.clipboard` → `document.execCommand` →
+"press Ctrl/Cmd+C" degradation) is rendered under the optional-message box in
+`OrderDetail`'s send sheet, showing `${window.location.origin}/customer/<public_token>` — the
+LIVE customer page, deliberately without the staff-only `?preview=1` flag. `openSend` became
+`async`: it opens the sheet first, then mints the token through the existing
+`useOrderPublicToken` mutation, so the message box never waits on the network and a mint
+failure degrades only the copy field (`sendLinkError`), never the email path. An unsaved draft
+has no id, so the area is not rendered at all. Purpose: hand the customer page over
+WhatsApp/SMS without being forced through the app's own email. Detail in
+`knowledge/history/engine_features.md`, 2026-09-01. Verified: web `pnpm check` clean,
+`pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
+login wall).
+
+**Also on `main` now — ONE order view** (merged via PR #44; the paragraph below was
+written while `feat/unified-order-view` was still a separate branch):
+
+**Newest, on branch `feat/unified-order-view` (three commits, not merged): ONE order view.**
+`/orders/:id/overview` and `OrderOverview.tsx` are deleted. `/orders/:id/present` is the app's
+only read-only order view and absorbed everything Overview carried — Note column, Unit price
+with the `show_original_price` strikethrough, an Add-ons column, an Other-items TABLE, and
+Paid / Balance due. A **Price breakdown** switch on the title row governs per-choice money only
+(option `+$` amounts, their footer totals, add-on prices, the Add-ons column); line totals,
+the footer overall and the order strip are on screen in BOTH states. Off on load, not persisted.
+Every stage's action set now offers the one **Present to Customer** action (same tab, saves
+first); `ICONS.overview` and the `overview` StageAction are gone.
+
+Decisions worth not re-litigating: all blinds stay in ONE filterable table (Overview's
+per-blind-type tables were deliberately dropped — the `Blind type` column already says it);
+Size stays `(120 + 80) × 210`; the Add-ons column hides WITH the breakdown and appears only
+when a visible line has one. There is NO Adjustment column any more: `describeLineBreakdown`
+fits the material cell against `unit_price` (charged) rather than `base_unit_price`, so a price
+override is absorbed into the material cell and what is left over is the add-ons total by
+construction. `show_original_price` is therefore the ONE control over whether an override is
+disclosed anywhere — through the struck-through unit price alone, independent of the toggle in
+both directions, matching what `public.ts` and the PDF assembly already did. Overview's amber
+"price overridden" dot is dropped for the same reason. New modules: `presentationCells.tsx`,
+`presentationMoney.ts`, `BreakdownToggle.tsx`, `PresentationOtherItems.tsx`.
+`presentationFilters.ts` untouched.
+
+Gotcha worth remembering: `money` had to move OUT of `presentationCells.tsx` into its own
+plain-TS module — `oxlint`'s `react(only-export-components)` fails a `.tsx` that exports both
+components and a function, because it costs the file its Fast Refresh boundary.
+
+Verified `tsc`/`oxlint` clean, web 433/433 (+8, `presentationMoney.test.ts`), and the rendering
+checked in a throwaway Vite harness in both toggle states — line totals byte-identical, every
+row reconciling, cell counts matching. NOT verified against live data: the totals strip's
+Paid/Balance rows and the stage-action wiring (no `apps/web/.env` in this worktree).
+Full write-up in `knowledge/history/engine_features.md`, 2026-08-28; spec in
+`knowledge/specs/2026-08-28-unified-order-view-design.md`.
+
+## Previously (as of 2026-08-26)
 
 NOTE: everything below this point was written on 2026-08-25 and several of the items it calls
 "uncommitted" have since landed on `main` (order-list pagination, the row Delete button,
@@ -217,9 +317,12 @@ primitive layer.
 - Option cells on the Presentation page are FITTED to `round2(calcUnit × qty)` with the
   material cell absorbing the correction, never summed independently. `line_total` is
   `round2(unit_price × qty) + addonsTotal`, so independently-rounded legs miss it by up to two
-  or three cents and would show a phantom adjustment on an ordinary line. Because of the
-  fitting, the Adjustment column means only "override and/or add-ons", which is what lets the
-  page promise a row that adds up in front of a customer.
+  or three cents and would show phantom money on an ordinary line. The fit is against
+  `unit_price`, so the leftover figure IS the add-ons total by construction and the invariant
+  is `Σ cells + add-ons === line_total`. Consequence to know before touching it: a line
+  discounted below its own hardware fits the material cell NEGATIVE, and it is left that way
+  deliberately — the row has to add up and there is no adjustment column to park a remainder
+  in. `OptionValue` renders the sign rather than prefixing `+`.
 - `docs/` is gitignored in this repo. Specs and plans go in `knowledge/specs/` and
   `knowledge/plans/`, NOT the `docs/superpowers/...` default the planning skills suggest.
 - `blindDraftInputs(draft, catalogs)` (`lineItemDrafts.ts`) is the priced-inputs assembly

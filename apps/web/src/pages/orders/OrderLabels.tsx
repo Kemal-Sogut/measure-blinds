@@ -17,7 +17,7 @@
  * from any other device is out of scope.
  *
  * Opened in a new tab from the order page, following the Manufacturer
- * Copy / Order Overview pattern.
+ * Copy pattern.
  */
 
 import { useMemo, useState } from 'react';
@@ -113,7 +113,7 @@ export default function OrderLabels() {
       {/*
         Print rules live in the page rather than the global stylesheet:
         the 3in x 1.5in page size must not leak onto any other printable
-        view (the cut sheet and the order overview are both Letter).
+        view (the cut sheet and the order view are both Letter).
 
         The page header is dropped on paper: it is shared with every
         other page and takes no print classes, so without this it lands

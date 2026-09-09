@@ -79,7 +79,13 @@ export default function AddressAutocomplete({
   // True from the moment a suggestion is applied until the consultant
   // edits the field again. While set, the debounce effect performs no
   // lookup, so an auto-filled address cannot re-open its own dropdown.
-  const selectionLocked = useRef(false);
+  //
+  // It starts locked when the field mounts with a value, because that is
+  // the same situation: an address already chosen and untouched since,
+  // just chosen on an earlier visit and read back off the record. Without
+  // this, opening any saved customer fired a lookup for their own street
+  // and dropped a suggestion list over the form 300ms after it rendered.
+  const selectionLocked = useRef(value.trim().length > 0);
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const debounced = useDebouncedValue(value, 300);

@@ -24,14 +24,14 @@
  *   in_progress      → Mark Ready, Cut Sheet
  *   ready            → Propose Installation (opens the Installation
  *                      section's sheet), Mark Installed
- *   installed        → (none beyond the Overview)
- * Every post-draft stage additionally offers an Order Overview action
- * that opens `/orders/:id/overview` in a NEW TAB — a read-only,
- * itemised listing of the line items (sizes, options, notes, totals).
- * Every UNCONFIRMED stage (draft, sent, expired) offers a Present to
- * Customer action directly below Confirm, which saves and then navigates
- * to `/orders/:id/present` — the filterable, per-option view shown to the
- * customer in person.
+ *   installed        → (none beyond Present to Customer)
+ * EVERY stage offers a Present to Customer action, which saves and then
+ * navigates in the same tab to `/orders/:id/present` — the app's one
+ * read-only order view. It is filterable and per-option for the customer
+ * conversation, and carries notes, unit prices, add-ons and the balance
+ * for the consultant's own read; a switch on its title row reveals or
+ * hides what each individual choice cost. It replaced a separate Order
+ * Overview page in 2026-08.
  * Save (green), Send (blue), Download (gray) and Delete (icon-only,
  * red, saved orders) live in the TOP BAR
  * (PageHeader right slot, icon-only on phones) at every stage; the
@@ -74,6 +74,8 @@ import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
 import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import CustomerEditModal from '../../components/CustomerEditModal';
+import CopyLinkField from '../../components/CopyLinkField';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
 import { expiryFromPreset, presetFromDates, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
@@ -437,12 +439,6 @@ const ICONS = {
       <path d="M17 18h1M12 18h1M7 18h1" />
     </ActionIcon>
   ),
-  overview: (
-    <ActionIcon>
-      <path d="M8 6h13M8 12h13M8 18h13" />
-      <path d="M3 6h.01M3 12h.01M3 18h.01" />
-    </ActionIcon>
-  ),
   present: (
     <ActionIcon>
       <rect x="2" y="3" width="20" height="14" rx="2" />
@@ -588,6 +584,10 @@ export default function OrderDetail() {
   const customersQ = useCustomerSearch(customerTerm);
   // Quick add-customer pop-up opened from the customer picker sheet.
   const [addingCustomer, setAddingCustomer] = useState(false);
+  // Inline customer-record editor, opened by the pen on the customer card.
+  // Separate from `addingCustomer` because the two dialogs edit different
+  // things and may not both be open.
+  const [editingCustomer, setEditingCustomer] = useState(false);
 
   // ── Mobile action bar geometry ──────────────────────────────────
   // The bar is `position: fixed`, which on iOS is positioned against the
@@ -648,6 +648,14 @@ export default function OrderDetail() {
 
   // Send estimate/invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
+
+  // The customer-facing URL shown (with a Copy button) inside the send
+  // sheet, so the consultant can pass the page along over WhatsApp/SMS
+  // instead of emailing it. `null` while the capability token is still
+  // being minted; the error string replaces the field if minting fails,
+  // which must NOT block the email itself.
+  const [sendLink, setSendLink] = useState<string | null>(null);
+  const [sendLinkError, setSendLinkError] = useState<string | null>(null);
 
   // Send-receipt sheet state: the payment row being receipted and the
   // optional personal message included in the receipt email.
@@ -1222,11 +1230,31 @@ export default function OrderDetail() {
     if (await save()) toast.success('Order saved.');
   }
 
-  /** Opens the send sheet (message box) for the current mode. */
-  function openSend() {
+  /**
+   * Opens the send sheet (message box) for the current mode, and — for
+   * an already-saved order — resolves the customer-facing link shown
+   * beside the Copy button.
+   *
+   * The sheet opens FIRST and the token is minted afterwards: the mint
+   * is a network round trip, and the message box must not wait on it.
+   * A failure only degrades the copy field (the same email the button
+   * sends still carries the link), so it is surfaced inline rather than
+   * as a toast. An unsaved draft has no id and therefore no token yet;
+   * it simply shows no link area.
+   */
+  async function openSend() {
     if (!customer?.email) return toast.error('This customer has no email address.');
     setSendMessage('');
+    setSendLink(null);
+    setSendLinkError(null);
     setSheet('send');
+    if (!id) return;
+    try {
+      const { public_token } = await publicTokenMut.mutateAsync(id);
+      setSendLink(`${window.location.origin}/customer/${public_token}`);
+    } catch (e) {
+      setSendLinkError(e instanceof Error ? e.message : 'Could not prepare the link.');
+    }
   }
 
   /** Submits the send sheet — estimate or invoice depending on mode. */
@@ -1383,7 +1411,13 @@ export default function OrderDetail() {
 
   async function handleDeleteOrder() {
     if (!id) return;
-    if (!window.confirm('Delete this order permanently? Its line items and payments are removed.')) return;
+    if (
+      !window.confirm(
+        'Delete this order permanently? Its line items, activity log, payments, ' +
+          'change requests and installation visit are removed. The customer is kept.',
+      )
+    )
+      return;
     try {
       await deleteMut.mutateAsync(id);
       toast.success('Order deleted.');
@@ -2029,20 +2063,14 @@ export default function OrderDetail() {
    * actions. Save, Send and Download are NOT part of this set — they
    * live permanently in the top bar (see `headerActions`), and Record
    * Payment lives in the Payments panel body (see `paymentsPanel`).
-   * The Order Overview action is included at every post-draft stage and
-   * opens `/orders/:id/overview` in a new tab.
+   * The Present to Customer action is included at EVERY stage: it opens
+   * the app's one read-only order view, which serves both the customer
+   * conversation and the consultant's itemised read.
    */
   const stageActions = (): {
     primary: StageAction | null;
     secondary: StageAction[];
   } => {
-    const overview: StageAction = {
-      key: 'overview',
-      icon: ICONS.overview,
-      label: 'Order Overview',
-      short: 'Overview',
-      onClick: () => window.open(`/orders/${id}/overview`, '_blank', 'noopener'),
-    };
     const confirm: StageAction = {
       key: 'confirm',
       icon: ICONS.confirm,
@@ -2069,7 +2097,7 @@ export default function OrderDetail() {
 
     // Sent — confirm the order.
     if (status === 'sent') {
-      return { primary: confirm, secondary: [present, overview] };
+      return { primary: confirm, secondary: [present] };
     }
 
     // Awaiting payment — the payment itself is recorded from the
@@ -2083,7 +2111,7 @@ export default function OrderDetail() {
         onClick: handleReverse,
         disabled: unconfirmMut.isPending,
       };
-      return { primary: null, secondary: [reverse, overview] };
+      return { primary: null, secondary: [reverse, present] };
     }
 
     // In progress — mark the order ready; open the workshop cut sheet.
@@ -2110,7 +2138,7 @@ export default function OrderDetail() {
         short: 'Labels',
         onClick: () => window.open(`/orders/${id}/labels`, '_blank', 'noopener'),
       };
-      return { primary: markReady, secondary: [manufacturer, labels, overview] };
+      return { primary: markReady, secondary: [manufacturer, labels, present] };
     }
 
     // Ready — propose the installation (emails the customer).
@@ -2131,19 +2159,19 @@ export default function OrderDetail() {
         disabled: installedMut.isPending,
         tone: 'text-success',
       };
-      return { primary: propose, secondary: [markInstalled, overview] };
+      return { primary: propose, secondary: [markInstalled, present] };
     }
 
     // Installed — nothing left to advance; payments (still allowed) are
     // recorded from the Payments panel.
     if (status === 'installed') {
-      return { primary: null, secondary: [overview] };
+      return { primary: null, secondary: [present] };
     }
 
     // Expired — the estimate lapsed but was never confirmed, so the
     // presentation view still applies here (Save/Send/Download are in the
     // top bar; send after updating the expiry date).
-    return { primary: null, secondary: [present, overview] };
+    return { primary: null, secondary: [present] };
   };
 
   /**
@@ -2258,7 +2286,7 @@ export default function OrderDetail() {
         <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save'}</span>
       </button>
       <button
-        onClick={openSend}
+        onClick={() => void openSend()}
         disabled={sendDisabled}
         title={isInvoice ? 'Send Invoice' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
         aria-label={isInvoice ? 'Send Invoice' : 'Send Estimate'}
@@ -2412,6 +2440,7 @@ export default function OrderDetail() {
             <CustomerCard
               customer={customer}
               onPick={() => setSheet('customer')}
+              onEdit={() => setEditingCustomer(true)}
               readOnly={readOnly}
             />
 
@@ -2818,6 +2847,25 @@ export default function OrderDetail() {
         />
       )}
 
+      {/*
+        Inline customer-record editor. Mounted here, at the page tail,
+        rather than beside the card — the card sits inside the
+        `fieldset disabled={readOnly}` wrapper, and a dialog rendered in
+        that subtree would inherit the disabled state and present a form
+        nobody can type into. Writes the customer row only; the order is
+        neither saved nor dirtied.
+      */}
+      {editingCustomer && customer && (
+        <CustomerEditModal
+          customer={customer}
+          onClose={() => setEditingCustomer(false)}
+          onSaved={(saved) => {
+            setCustomer(saved);
+            setEditingCustomer(false);
+          }}
+        />
+      )}
+
       {/* Preset picker bottom sheet */}
       {sheet === 'preset' && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
@@ -3045,6 +3093,19 @@ export default function OrderDetail() {
                   className="w-full rounded-md border border-border-input bg-surface px-3 py-2 text-sm"
                 />
               </label>
+              {/*
+                Copy-only path: the same customer page the email links
+                to, for consultants who send over WhatsApp/SMS instead.
+                Hidden on an unsaved draft, which has no token yet.
+              */}
+              {id && (
+                <CopyLinkField
+                  label={`${docLabel} link for the customer`}
+                  value={sendLink}
+                  error={sendLinkError}
+                  hint="Opens the same page the email links to — anyone with this link can view it."
+                />
+              )}
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
