@@ -113,13 +113,45 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.rows[0].quantity).toBeCloseTo(2.8, 10);
   });
 
-  it('reports quantity only — no rate and no money', () => {
-    // The report is a fabric reading, not a pricing surface. Money lives
-    // in the order's own totals, which are server-authoritative.
+  it('carries the catalog rate for the row, as a label', () => {
     const [row] = summarizeMaterialUsage([blind()], catalogs()).rows;
-    expect(row).not.toHaveProperty('rate');
+    expect(row.rate).toBe(50);
+  });
+
+  it('reads the same column as dollars per RUNNING metre for Curtains', () => {
+    // `materials.price_per_sqm` means per running metre for Curtains, so
+    // the rate must be printed against the row's own unit, never as m².
+    const [row] = summarizeMaterialUsage(
+      [
+        blind({
+          key: 'c',
+          blinds_type: 'Curtains',
+          panels: ['300'],
+          cassette_id: '',
+          bottom_rail_id: '',
+        }),
+      ],
+      catalogs()
+    ).rows;
+    expect(row).toMatchObject({ unit: 'running_m', rate: 50 });
+  });
+
+  it('reports no money — the rate is not multiplied back out', () => {
+    // The report is a fabric reading, not a pricing surface: the catalog
+    // rate can have moved since a line was priced, so a revenue figure
+    // computed here would contradict the order's own totals.
+    const [row] = summarizeMaterialUsage([blind()], catalogs()).rows;
     expect(row).not.toHaveProperty('amount');
     expect(row.lines[0]).not.toHaveProperty('amount');
+  });
+
+  it('takes one rate per row — every line in it shares the material', () => {
+    const summary = summarizeMaterialUsage(
+      [blind({ key: 'a' }), blind({ key: 'b', panels: ['100'] })],
+      catalogs()
+    );
+    expect(summary.rows).toHaveLength(1);
+    expect(summary.rows[0].rate).toBe(50);
   });
 
   it('collapses two blinds of the same material into one row', () => {
@@ -176,9 +208,11 @@ describe('summarizeMaterialUsage', () => {
 
   it('ignores a manual price override — a price is not a quantity', () => {
     // What a window was charged has no bearing on how much fabric it
-    // consumes, and the panel must keep reporting the real figure.
+    // consumes, and the panel must keep reporting the real figure. The
+    // rate stays the CATALOG rate for the same reason.
     const summary = summarizeMaterialUsage([blind({ unit_price_override: '25' })], catalogs());
     expect(summary.rows[0].quantity).toBeCloseTo(2.8, 10);
+    expect(summary.rows[0].rate).toBe(50);
   });
 
   it('keeps square metres and running metres in separate rows and totals', () => {

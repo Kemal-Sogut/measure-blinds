@@ -96,9 +96,9 @@ export interface MaterialUsageLine {
  * One material's total across an order, in the unit that material's rate
  * is quoted in for the types that used it.
  *
- * Quantity only — no rate and no money. The fabric leg's revenue was
- * removed with the give-back calculator it existed for; the order's own
- * totals are where money is read.
+ * Quantity plus the catalog RATE, and no other money. The fabric leg's
+ * revenue was removed with the give-back calculator it existed for; the
+ * order's own totals are where a line's or an order's money is read.
  */
 export interface MaterialUsageRow {
   materialId: string;
@@ -107,6 +107,27 @@ export interface MaterialUsageRow {
   unit: MaterialUnit;
   /** Billed quantity across every contributing line, line quantity included. */
   quantity: number;
+  /**
+   * The material's CATALOG rate, in dollars per `unit` — $/m² for the
+   * m²-priced types, $/running-m for Curtains, which is the same
+   * `materials.price_per_sqm` column read two ways (see
+   * `MaterialsForType`). Shown beside the material's name so a consultant
+   * reading a quantity can see what that fabric costs without leaving the
+   * dialog.
+   *
+   * TODAY's catalog rate, taken from the draft the editor is pricing on —
+   * NOT a snapshot of what a saved line was charged. On a price-locked or
+   * long-open order the catalog can have moved since, and then this
+   * differs from the money on the line. It is reference information, not
+   * a reconciliation: nothing here multiplies it back out into a total,
+   * because a rate that has moved would produce a figure the order does
+   * not agree with.
+   *
+   * First contributing line wins, which is exact rather than arbitrary:
+   * the rate is a property of the catalog material, and every line in a
+   * row shares one material.
+   */
+  rate: number;
   /** How many visible lines contributed, for the dialog's own context. */
   lineCount: number;
   /**
@@ -185,6 +206,10 @@ export function summarizeMaterialUsage(
     const blindType = getBlindType(item.blinds_type);
     const usage = blindType.describeMaterialUsage(inputs);
     const qty = inputs.quantity;
+    // Per `unit`, not per m²: for Curtains this column is dollars per
+    // running metre. `blindDraftInputs` reads it off the catalog row, so
+    // it is the same number `MaterialsForType` edits.
+    const rate = inputs.material_price_per_sqm;
     const key = materialRowKey(material.id, usage.unit);
 
     const row = groups.get(key) ?? {
@@ -192,6 +217,7 @@ export function summarizeMaterialUsage(
       materialName: material.name,
       unit: usage.unit,
       quantity: 0,
+      rate,
       lineCount: 0,
       lines: [],
     };

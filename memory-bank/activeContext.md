@@ -11,11 +11,12 @@ fabric report**. Every per-m² give-back went away — the per-material rate box
 order-wide `$/m²` and `$/m` calculator, and `giveBackAmount` / `rowGiveBack` /
 `applyGiveBackPart` / `ORDER_WIDE_GIVE_BACK` with them — because their rates were session
 state while the discount they wrote was saved, leaving a figure on reload that the panel could
-neither explain nor undo. What remains: each material's total billed quantity, every
+neither explain nor undo. What remains: each material's total billed quantity, its catalog rate
+beside the name as a label (`$/m²`, `$/m` for Curtains — never multiplied back out), every
 contributing window listed inline with its own quantity, and a CHECKBOX per window (plus a
 tri-state one per material) whose only effect is a `Selected · N windows` total at the bottom
-of the dialog. `MaterialUsageRow`/`Line` carry quantity only now (no `rate`, `amount`,
-`measuredQuantity`); new exports `selectedUsageTotals` and `allUsageLineKeys`;
+of the dialog. `MaterialUsageRow`/`Line` carry quantity and that display rate only (no
+`amount`, no `measuredQuantity`); new exports `selectedUsageTotals` and `allUsageLineKeys`;
 `OrderDetail`'s four give-back state hooks collapsed into one `materialUsagePicks` set.
 Touches four files, all in `apps/web/src/pages/orders/`. Verified: web `pnpm check` clean,
 `oxlint` 0/0, `pnpm test` 422/422, api untouched; driven in a throwaway Vite harness (ticks,
