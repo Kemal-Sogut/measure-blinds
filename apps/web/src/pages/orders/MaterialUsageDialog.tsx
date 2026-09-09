@@ -23,8 +23,15 @@
  * promise; a checkbox that quietly acted on an order would be the most
  * surprising control on the page.
  *
- * This panel used to also carry per-m² rate boxes that composed a
- * give-back into the order's discount. They were removed. The rates were
+ * Each material's CATALOG rate is printed beside its name — $/m², or
+ * $/running-m for Curtains — so the fabric a quantity refers to can be
+ * priced without leaving the dialog. It is a label, not an input and not
+ * a subtotal: nothing multiplies it by the quantity beside it, because
+ * the catalog rate is today's and a saved line may have been charged an
+ * older one.
+ *
+ * This panel used to carry per-m² rate BOXES that composed a give-back
+ * into the order's discount. They were removed. The typed rates were
  * session-only state, so a reload left a dollar discount the dialog could
  * neither explain nor take back, and the figures on screen stopped
  * matching the order they described. Discounting belongs to the order's
@@ -236,6 +243,14 @@ function MaterialSection({
                   · {row.unit === 'sqm' ? 'square metres' : 'running metres'}
                 </span>
               )}
+              {/* The catalog rate, beside the name it belongs to. Muted
+                  and un-bolded: it is reference information, not part of
+                  the identity of the row, and it must not compete with
+                  the quantity this panel exists to report. */}
+              <span className="font-normal text-text-muted">
+                {' '}
+                · <span className="font-mono">${row.rate.toFixed(2)}</span> / {unit}
+              </span>
             </span>
             <span className="block text-[12px] text-text-secondary">{lines(row.lineCount)}</span>
           </span>

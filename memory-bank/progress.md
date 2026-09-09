@@ -162,7 +162,9 @@ customer, never printed, absent from the PDF, the public customer view,
 `/orders/:id/present`, and `/orders/:id/overview`. **A read-only report: it writes nothing
 back to the order.** One section per material, grouped by material AND rate unit (m² /
 running metre, a dual-scoped material reading as two unit-qualified rows), showing that
-material's total billed quantity and then every contributing WINDOW inline — label, blind
+material's total billed quantity, its CATALOG rate beside the name (`$/m²`, or `$/m` for
+Curtains — a label only; nothing multiplies it out, because it is today's rate and a saved line
+may have been charged an older one), and then every contributing WINDOW inline — label, blind
 type when the row mixes types, measured size, `×N` for a multi-blind line, and that window's
 own billed quantity. Hidden lines are dropped; preset/custom/incomplete lines are counted as
 excluded rather than priced. Rows sort by descending quantity, ties alphabetical.

@@ -4274,3 +4274,34 @@ Re-verified after merging `main` (2026-09-03, the unified order view): web 458/4
 added on the same line of `OrderDetail.tsx`; the merge was then checked for the SEMANTIC
 hazard, since `main` rewrote 94 lines of that file — `CustomerEditModal` still mounts at line
 ~2874, well outside the `fieldset disabled={readOnly}` that closes at ~2613.
+
+## 2026-09-09 — Each material's catalog rate reads beside its name in Material usage
+Follow-up to the read-only Material usage report earlier the same day (entry above). That
+rewrite dropped `MaterialUsageRow.rate` along with the give-back calculators it had been
+feeding, which left the panel able to say a job used 12.40 m² of a fabric without saying what
+that fabric costs — a question consultants were answering by opening the Materials catalog in
+another tab. `rate` is back on the row, and prints beside the material's name as
+`Blackout Ivory · square metres · $50.00 / m²`, muted and un-bolded so it never competes with
+the quantity the panel exists to report.
+
+**Against the ROW's unit, never assumed to be m².** `materials.price_per_sqm` is dollars per
+RUNNING METRE for Curtains and dollars per m² for every other type (systemPatterns, 2026-08-10),
+so the rate renders with `UNIT_LABEL[row.unit]` — `$50.00 / m²` on an m²-priced row and
+`$62.50 / m` on a Curtains row, including when both rows are the same material scoped to both.
+The spelled-out `· square metres` / `· running metres` qualifier on duplicate names STAYS: the
+only thing separating the two rate strings otherwise is a superscript ².
+
+**A label, not a subtotal.** Nothing multiplies the rate by the quantity beside it, and the row
+still carries no `amount`. The figure comes from `blindDraftInputs`, so it is TODAY's catalog
+rate, not a snapshot of what a saved line was charged; on a price-locked or long-open order the
+catalog can have moved since, and a revenue figure derived here would contradict the order's own
+server-authoritative totals. First contributing line wins, which is exact rather than arbitrary
+— the rate belongs to the catalog material, and every line in a row shares one material.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0/0, `pnpm test` 425/425 (422 → +3: the rate on a row, the
+running-metre reading of the same column for Curtains, and one asserting a manual price override
+still leaves the CATALOG rate showing). API untouched. Rendered in a throwaway Vite harness: one
+material scoped to both units showed `$50.00 / m²` and `$62.50 / m` on its two rows, a
+`$137.25 / m²` rate sat correctly beside a name long enough to wrap, and the selected-window
+total was unaffected.

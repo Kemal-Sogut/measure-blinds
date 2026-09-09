@@ -207,9 +207,10 @@ section as the reference implementation for future collapsible UI.
     and nothing recomputes the row from its lines — which is why the sum identity holds
     exactly, why a ticked subset can be totalled from the lines alone, and why adding a figure
     to one means adding it to the other in that one place. Since 2026-09-09 the row and its
-    lines carry QUANTITY only: `rate`, `amount` and `measuredQuantity` were dropped with the
-    give-back calculators they existed for. The unit is `row.unit` throughout,
-    so the m²/running-metre split needs no per-type branch in the dialog.
+    lines carry QUANTITY only, plus the row's display-only catalog `rate`: `amount` and
+    `measuredQuantity` were dropped with the give-back calculators they existed for. The unit
+    is `row.unit` throughout, so the m²/running-metre split needs no per-type branch in the
+    dialog.
   - **It is held consistent with `materialCost` BY TEST, not by construction.** The tempting
     refactor — deriving `materialCost` from `describeMaterialUsage(item).quantity × rate` —
     was deliberately rejected (design §4.2,
@@ -225,7 +226,11 @@ section as the reference implementation for future collapsible UI.
     not derived from the registry, so an eleventh type with a divergent `materialCost` and
     no new `CASES` row drifts silently rather than failing the test.
 - **The Material usage panel READS; it never writes (2026-09-09).** The dialog reports
-  quantities and nothing else — no rate, no money, no control that changes the order. Its
+  quantities, plus each material's catalog rate as a label beside its name — and no control
+  that changes the order. The rate is printed against the ROW's unit (`$/m²`, `$/m` for
+  Curtains) and is never multiplied by the quantity next to it: it is today's catalog figure
+  taken from the draft, so a derived revenue number would contradict a price-locked or
+  long-open order whose lines were charged an older rate. Its
   per-window checkboxes feed one number, the `Selected · N windows` total at the bottom of the
   dialog, and are session-local, unsaved, and invisible to every other part of the page
   (`materialUsagePicks` in `OrderDetail`, deliberately NOT the `selected` set that drives bulk
