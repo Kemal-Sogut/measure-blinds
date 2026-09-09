@@ -202,11 +202,13 @@ section as the reference implementation for future collapsible UI.
   (`apps/web/src/pages/orders/MaterialUsageDialog.tsx` + `materialUsage.ts`) — never the PDF,
   the customer view, or `/orders/:id/present`.
   - **A material row and its per-window breakdown are ONE reading, not two (2026-08-25).**
-    `MaterialUsageRow.lines` is built by pushing the same `describeMaterialUsage` quantity and
-    the same `describeUnitCosts(inputs).material` product the row accumulates, in the same
-    loop pass. Nothing recomputes a per-line figure from the row, and nothing recomputes the
-    row from its lines — which is why the sum identity holds exactly and why adding a figure
-    to one means adding it to the other in that one place. The unit is `row.unit` throughout,
+    `MaterialUsageRow.lines` is built by pushing the same `describeMaterialUsage` quantity the
+    row accumulates, in the same loop pass. Nothing recomputes a per-line figure from the row,
+    and nothing recomputes the row from its lines — which is why the sum identity holds
+    exactly, why a ticked subset can be totalled from the lines alone, and why adding a figure
+    to one means adding it to the other in that one place. Since 2026-09-09 the row and its
+    lines carry QUANTITY only: `rate`, `amount` and `measuredQuantity` were dropped with the
+    give-back calculators they existed for. The unit is `row.unit` throughout,
     so the m²/running-metre split needs no per-type branch in the dialog.
   - **It is held consistent with `materialCost` BY TEST, not by construction.** The tempting
     refactor — deriving `materialCost` from `describeMaterialUsage(item).quantity × rate` —
@@ -222,27 +224,25 @@ section as the reference implementation for future collapsible UI.
     to the `CASES` table in both `pricing.test.ts` suites — that table is hand-maintained,
     not derived from the registry, so an eleventh type with a divergent `materialCost` and
     no new `CASES` row drifts silently rather than failing the test.
-- **Fabric give-backs COMPOSE the order discount; they never touch a line item
-  (2026-08-22).** The Material usage dialog offers two ways to discount fabric — a rate per
-  material, and one rate across the order — and both resolve to a dollar figure added to the
-  order's single FIXED discount by `applyGiveBackPart` (`materialUsage.ts`). No unit price is
-  overridden and no line is repriced, so a price a consultant typed on a line is never at
-  risk from using the dialog.
-  - **Keyed contributions, not a running total.** `Record<key, number>` (keys from
-    `materialRowKey`, plus `ORDER_WIDE_GIVE_BACK`) records what each instrument last
-    contributed. That is what makes Apply additive but idempotent — re-applying one row
-    swaps its own figure rather than stacking a second copy — and makes Reset exact
-    (`amount: 0` removes just that key). A hand-typed discount is the base underneath.
-  - **The map is session state.** Nothing persists a per-material rate, so after a reload the
-    discount is a plain dollar figure and Reset can no longer take an earlier session's
-    contributions back out. Said on screen rather than assumed.
-  - Clamped at zero in both directions: a rate above the catalog rate yields $0.00 with a
-    disabled button, and the composed discount can never go negative.
-  - **An earlier iteration wrote per-line `unit_price_override` and was replaced.** It made
-    the give-back survive a save, but it consumed the one field a consultant uses to price a
-    line by hand and needed a session-only provenance flag to tell the two apart. Discount
-    composition needs neither. Do not reintroduce the override path without that trade-off
-    being asked for again.
+- **The Material usage panel READS; it never writes (2026-09-09).** The dialog reports
+  quantities and nothing else — no rate, no money, no control that changes the order. Its
+  per-window checkboxes feed one number, the `Selected · N windows` total at the bottom of the
+  dialog, and are session-local, unsaved, and invisible to every other part of the page
+  (`materialUsagePicks` in `OrderDetail`, deliberately NOT the `selected` set that drives bulk
+  edit). A checkbox on this panel that acted on a line item would be the most surprising
+  control on the page; keep it that way.
+  - **The give-back calculators were removed, not relocated.** Until 2026-09-09 this dialog
+    composed a discount out of typed per-m² rates via `applyGiveBackPart`. The rates were
+    session state while the money was saved onto the order, so a reload left a discount the
+    panel could neither explain nor take back, and Reset silently no-opped. Anything that
+    turns fabric quantity into money again must persist its own basis with the order first —
+    an earlier iteration that wrote per-line `unit_price_override` was already rejected for
+    consuming the field consultants price by hand.
+  - **Selection is keyed by line-draft key, and a key the summary no longer carries is
+    ignored.** `selectedUsageTotals` walks the summary rather than the set, and
+    `allUsageLineKeys` builds "Select all" from the summary too, so a window deleted or edited
+    into an unpriceable state while the dialog is open drops out of the tally instead of
+    haunting it as a phantom quantity.
 - **One column can mean two things, keyed by type (2026-08-10).** `materials.price_per_sqm`
   is dollars per m² for every type except Curtains, where it is dollars per RUNNING METRE.
   Accepted deliberately over a second column; the mitigation is that `MaterialsForType`

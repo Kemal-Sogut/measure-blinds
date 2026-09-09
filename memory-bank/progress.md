@@ -158,6 +158,26 @@ filter-tracking overall total and the server-authoritative order strip
 
 **Material usage dialog (trigger row above the discount control at both breakpoints;
 `MaterialUsageDialog.tsx`, rendered once for the page):** internal-only — never shown to a
+customer, never printed, absent from the PDF, the public customer view,
+`/orders/:id/present`, and `/orders/:id/overview`. **A read-only report: it writes nothing
+back to the order.** One section per material, grouped by material AND rate unit (m² /
+running metre, a dual-scoped material reading as two unit-qualified rows), showing that
+material's total billed quantity and then every contributing WINDOW inline — label, blind
+type when the row mixes types, measured size, `×N` for a multi-blind line, and that window's
+own billed quantity. Hidden lines are dropped; preset/custom/incomplete lines are counted as
+excluded rather than priced. Rows sort by descending quantity, ties alphabetical.
+
+Every window carries a CHECKBOX, and each material row a tri-state one for its whole group.
+Ticking only feeds a `Selected · N windows` bar pinned to the bottom of the dialog
+(`selectedUsageTotals`, per rate unit, units never added together) — it hides nothing,
+reprices nothing, selects nothing in the editor, and is never saved. Stale keys are ignored,
+so a tick left on a since-deleted window cannot linger in the total.
+
+The per-m² give-back calculators were REMOVED on 2026-09-09 (both the per-material rate boxes
+and the order-wide one), with `giveBackAmount`, `rowGiveBack`, `applyGiveBackPart` and
+`ORDER_WIDE_GIVE_BACK`. Their rates were session-only while the discount they wrote was
+saved, so after a reload the panel could neither explain nor undo the figure in the discount
+field. Fabric discounting is now done in the order's own discount field.
 customer, never printed, absent from the PDF, the public customer view, and
 `/orders/:id/present`. Shows billed material quantity, rate, and
 material-leg revenue per material, grouped by material AND rate unit (m² / running metre),
@@ -188,7 +208,8 @@ Backed by a new public `BaseBlindType.describeMaterialUsage()` (both twins) alon
 `describeUnitCosts`, which Curtains overrides to report running metres; deliberately NOT the
 source of `materialCost` (bit-identity risk to historical orders) — the two are held
 together by a consistency test in both `pricing.test.ts` suites instead. See
-`knowledge/history/engine_features.md`, 2026-08-22 (two entries), for the full rationale.
+`knowledge/history/engine_features.md`, 2026-08-22 (two entries) and 2026-09-09, for the full
+rationale.
 
 **Settings/catalogs:** Materials (per-blind-type, many-to-many linking), cassette/bottom-rail/
 control/installation option catalogs (scoped per type, price + basis), per-type defaults,

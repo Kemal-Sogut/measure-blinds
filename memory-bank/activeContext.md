@@ -4,6 +4,48 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
+## Where things stand (as of 2026-09-09)
+
+**Newest, uncommitted, web-only, no migration:** the **Material usage panel is now a read-only
+fabric report**. Every per-m² give-back went away — the per-material rate boxes, the
+order-wide `$/m²` and `$/m` calculator, and `giveBackAmount` / `rowGiveBack` /
+`applyGiveBackPart` / `ORDER_WIDE_GIVE_BACK` with them — because their rates were session
+state while the discount they wrote was saved, leaving a figure on reload that the panel could
+neither explain nor undo. What remains: each material's total billed quantity, every
+contributing window listed inline with its own quantity, and a CHECKBOX per window (plus a
+tri-state one per material) whose only effect is a `Selected · N windows` total at the bottom
+of the dialog. `MaterialUsageRow`/`Line` carry quantity only now (no `rate`, `amount`,
+`measuredQuantity`); new exports `selectedUsageTotals` and `allUsageLineKeys`;
+`OrderDetail`'s four give-back state hooks collapsed into one `materialUsagePicks` set.
+Touches four files, all in `apps/web/src/pages/orders/`. Verified: web `pnpm check` clean,
+`oxlint` 0/0, `pnpm test` 422/422, api untouched; driven in a throwaway Vite harness (ticks,
+per-unit totals, Select all matching the order total, Clear, the mixed-state row box) but
+STILL not seen inside the real order page — see the blocker below. Write-up in
+`knowledge/history/engine_features.md`, 2026-09-09.
+
+
+**Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
+**customer edit requests** (migration 41,
+`supabase/migrations/20260826000041_order_edit_requests.sql`). A new `order_edit_requests`
+table (`order_id` → orders ON DELETE CASCADE, `message`, `created_at`, `resolved_at`;
+`authenticated_full_access` RLS, anon nothing) backs a **Request Edit** button placed to the
+LEFT of Confirm on the public estimate page. It opens a dialog
+(`apps/web/src/pages/customer-view/EditRequestDialog.tsx`, built on `ui/Modal`), POSTs to
+`/public/estimate/:token/edit-request`, and the message surfaces as an amber card
+(`apps/web/src/pages/orders/EditRequestsCard.tsx`) on the staff order page with a
+**Mark resolved** button per row. Staff routes: `GET /api/orders/:id/edit-requests` and
+`POST /api/orders/:id/edit-requests/:requestId/resolve`.
+
+Design decisions worth not re-litigating: a TABLE not order columns (unlike migration 27's
+`cancel_requested_at`, this is a collection); requests accepted ONLY while the order is `sent`;
+message truncated to 1000 chars rather than rejected; **5 open requests per order** (benign
+read-then-insert race, documented); **no email to the shop** — the order page and the activity
+trail carry it; Confirm is NOT blocked by an open request and Request Edit is NOT gated on the
+terms tick. Amber, not red — red stays reserved for the cancellation banner. Full write-up in
+`knowledge/history/engine_features.md`, 2026-08-26; spec in
+`knowledge/specs/2026-08-26-edit-requests-design.md`. Verified: `tsc` clean both workspaces,
+`oxlint` clean, api 447/447, web 425/425. NOT seen in a browser and NOT deployed; the routes
+500 until migration 41 is applied to project `lgbxxlwsdeuhdgzrjjen`.
 ## Where things stand (as of 2026-09-03)
 
 **Current branch: `claude/order-deletion-cascade-hiotl7`** (not merged, not deployed). Order
@@ -218,11 +260,11 @@ primitive layer.
   worktree has no `apps/web/.env` (only `.env.example`), so
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or
   VITE_SUPABASE_ANON_KEY` at module init and the app never gets past a blank page. A
-  throwaway component harness verified the dialog's own layout and behaviour (rates,
-  additivity, reset, the mobile sheet, the two-rate-input case), but nobody has seen the
-  trigger row in the real totals rail or the mobile totals card, and no save round-trip has
-  run. The per-window breakdown added on 2026-08-25 inherits this: its aggregation is under
-  test, its rendering is not. Needs
+  throwaway component harness has verified the dialog's own layout and behaviour at each
+  rewrite — most recently the 2026-09-09 read-only version's ticks, per-unit selected totals,
+  Select all / Clear, and the tri-state row checkbox — but nobody has seen the trigger row in
+  the real totals rail or the mobile totals card. Its aggregation is under test, its rendering
+  inside the page is not. Needs
   `apps/web/.env` (`VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` for project
   `lgbxxlwsdeuhdgzrjjen`), a valid login, and `apps/api/.dev.vars` with the service-role
   key before this can be driven end to end.

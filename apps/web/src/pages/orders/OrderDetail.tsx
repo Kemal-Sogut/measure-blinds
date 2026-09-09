@@ -149,7 +149,7 @@ import {
   type PriceAdjustmentDraft,
 } from './lineItemDrafts';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
-import { applyGiveBackPart, summarizeMaterialUsage } from './materialUsage';
+import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import EditRequestsCard from './EditRequestsCard';
@@ -555,21 +555,20 @@ export default function OrderDetail() {
   const [discountType, setDiscountType] = useState<DiscountType>('fixed');
   const [discountValue, setDiscountValue] = useState('');
   // ── Material usage dialog ───────────────────────────────────────
-  // All of this is lifted out of the dialog — see MaterialUsageDialogProps'
+  // Both flags are lifted out of the dialog — see MaterialUsageDialogProps'
   // own JSDoc for why: `Modal` unmounts its children when closed, and the
   // trigger renders at two breakpoints that both stay mounted, so local
   // state would be wiped on dismissal and duplicated across widths.
   const [materialUsageOpen, setMaterialUsageOpen] = useState(false);
-  const [sqmGiveBackRate, setSqmGiveBackRate] = useState('');
-  const [runningGiveBackRate, setRunningGiveBackRate] = useState('');
-  /** Per-material rate inputs, keyed by `materialRowKey`. */
-  const [materialRateDrafts, setMaterialRateDrafts] = useState<Record<string, string>>({});
   /**
-   * What each give-back instrument has already contributed to the fixed
-   * discount. Session-only: nothing persists a per-material rate, so a
-   * reload leaves a plain dollar discount and an empty map.
+   * Windows ticked in the Material usage dialog, by line-draft key.
+   *
+   * Purely a reading aid: it feeds that dialog's selected-quantity total
+   * and NOTHING else. It is not `selected` (the line-item selection that
+   * drives bulk edit), it is never saved with the order, and no other
+   * part of this page may read it.
    */
-  const [giveBackParts, setGiveBackParts] = useState<Record<string, number>>({});
+  const [materialUsagePicks, setMaterialUsagePicks] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
@@ -2825,36 +2824,15 @@ export default function OrderDetail() {
         </div>
       )}
 
-      {/* Internal fabric breakdown and its two discounting instruments.
-          Rendered ONCE for the whole page — its trigger is what appears
-          at each breakpoint. */}
+      {/* Internal fabric breakdown. Rendered ONCE for the whole page —
+          its trigger is what appears at each breakpoint. Read-only by
+          design: it reports quantities and writes nothing back. */}
       <MaterialUsageDialog
         open={materialUsageOpen}
         onClose={() => setMaterialUsageOpen(false)}
         summary={materialUsage}
-        rateDrafts={materialRateDrafts}
-        onRateDraftChange={(key, value) =>
-          setMaterialRateDrafts((drafts) => ({ ...drafts, [key]: value }))
-        }
-        appliedParts={giveBackParts}
-        // The ONE place a give-back turns into money. No line item is
-        // touched: `applyGiveBackPart` composes this contribution on top
-        // of the discount already in force, swapping whatever the same
-        // key contributed before, so Apply is additive and Reset (amount
-        // 0) is exact. A percentage discount has no dollar base to add
-        // to, so it is replaced — the dialog warns before that happens.
-        onApplyGiveBack={(key, amount) => {
-          const base = discountType === 'fixed' ? Number(discountValue) || 0 : 0;
-          const composed = applyGiveBackPart(giveBackParts, base, key, amount);
-          setDiscountType('fixed');
-          setDiscountValue(composed.discount.toFixed(2));
-          setGiveBackParts(composed.parts);
-        }}
-        sqmRate={sqmGiveBackRate}
-        onSqmRateChange={setSqmGiveBackRate}
-        runningRate={runningGiveBackRate}
-        onRunningRateChange={setRunningGiveBackRate}
-        discountIsPercent={discountType === 'percent'}
+        selected={materialUsagePicks}
+        onSelectedChange={setMaterialUsagePicks}
       />
 
       {/* Quick add-customer pop-up; the new customer is auto-selected. */}
