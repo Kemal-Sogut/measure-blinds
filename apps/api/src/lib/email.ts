@@ -320,8 +320,15 @@ export interface EstimateEmailInputs {
 /**
  * Builds the branded customer estimate email ("03 — Estimate proposal"
  * in the design doc): greeting, tinted summary card with expiry and
- * total, and a CTA button linking to the public view page. All dynamic
- * strings are HTML-escaped.
+ * total, a "How to go ahead" step list, and a CTA button linking to the
+ * public view page. All dynamic strings are HTML-escaped.
+ *
+ * CONFIRMATION IS EXPLICIT: nothing is ordered until the customer opens
+ * the page, ticks the Terms & Conditions box and presses "Confirm
+ * Estimate" (`CustomerView.tsx`). Customers used to see only "View your
+ * estimate" and never realised a confirmation was expected, so the steps
+ * and the button label spell that out. Keep the step wording in sync with
+ * the customer page's labels and with the estimate PDF's CTA (`pdf.ts`).
  */
 export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
   const company = escapeHtml(i.company.name);
@@ -330,7 +337,7 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
   const expiry = escapeHtml(i.expiryDate);
   const url = escapeHtml(i.viewUrl);
   const body = `${headingHtml('Your estimate is ready')}
-    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your written estimate is ready to review online, with every window and option we discussed.`)}
+    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your written estimate is ready to review online, with every window and option we discussed. <strong>To go ahead with your order, please open your estimate and confirm it.</strong>`)}
     ${summaryCardHtml({
       eyebrow: 'Estimate summary',
       badge: order,
@@ -341,8 +348,14 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
       total: { label: 'Estimated total (incl. HST)', amount: i.total },
     })}
     ${messageBlockHtml(i.message)}
-    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View your estimate')}</div>
-    ${finePrintHtml(`The full estimate is attached as a PDF. Questions or changes? Reply to this email &mdash; we&#39;re happy to adjust anything before you decide.`)}
+    ${checklistHtml('How to go ahead', [
+      'Tap <strong>Review &amp; confirm your estimate</strong> below.',
+      'Check your windows, options and total.',
+      'Tick the box to agree to the Terms &amp; Conditions.',
+      `Press <strong>Confirm Estimate</strong> &mdash; your deposit details will appear right away.`,
+    ])}
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'Review &amp; confirm your estimate')}</div>
+    ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email. The full estimate is also attached as a PDF.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);
 }

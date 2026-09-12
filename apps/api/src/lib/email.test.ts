@@ -60,7 +60,14 @@ describe('buildEstimateEmailHtml', () => {
     expect(html).toContain('$1,234.50');
     expect(html).toContain('2026-07-17');
     expect(html).toContain('https://app.example.com/customer/abc-123');
-    expect(html).toContain('View your estimate');
+    expect(html).toContain('Review &amp; confirm your estimate');
+  });
+
+  it('tells the customer they must confirm online to go ahead', () => {
+    expect(html).toContain('How to go ahead');
+    expect(html).toContain('please open your estimate and confirm it');
+    expect(html).toContain('Confirm Estimate');
+    expect(html).toContain('isn&#39;t placed until you confirm it online');
   });
 
   it('renders the branded footer with contact details and the confidentiality notice', () => {

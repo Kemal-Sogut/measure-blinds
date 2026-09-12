@@ -1,5 +1,29 @@
 # Engine Features / Feature History
 
+## 2026-09-12 — Estimate email and PDF ask the customer to confirm
+Customers received an estimate with only a "View your estimate" button (email) or "View your
+order online" button (PDF) and did not realise they had to open it and press **Confirm
+Estimate** to go ahead.
+
+**Email** (`apps/api/src/lib/email.ts`, `buildEstimateEmailHtml`). The intro ends with a bold
+"To go ahead with your order, please open your estimate and confirm it." A "How to go ahead"
+checklist (reusing `checklistHtml`) walks through: tap the button → check windows/options/total
+→ tick the Terms & Conditions box → press **Confirm Estimate**. The button now reads
+"Review & confirm your estimate"; the fine print states the order isn't placed until confirmed
+online and points at **Request Edit** for changes. Step wording mirrors `CustomerView.tsx`
+labels — keep them in sync.
+
+**PDF** (`apps/api/src/lib/pdf.ts`). New exported `customerCta(docType)` picks the CTA copy.
+An estimate (always unconfirmed — `toPdfData` switches to invoice at confirmation) prints a
+bold 9pt instruction in the totals column above a "Review & confirm online" button; the note
+and button are reserved with one `ensure` so they never split across a page. Invoices keep
+"View your order online" with no note. No route or data changes.
+
+### Verified
+api `pnpm check` clean; `pnpm test` all green, with a new email test for the instructions and a
+new `customerCta` test (existing link-annotation/alignment tests still pass). Sample estimate
+PDF and email were rendered and inspected visually.
+
 ## 2026-09-03 — Order deletion has one owner and a written contract
 `DELETE /api/orders/:id` no longer inlines its own `delete from orders`. The whole contract
 lives in `apps/api/src/lib/orderDelete.ts` (`deleteOrderCascade`), which the route calls and

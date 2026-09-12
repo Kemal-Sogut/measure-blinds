@@ -13,9 +13,12 @@
  * (once at least one payment is recorded) adds a payments list plus an
  * "Amount paid" / "Balance due" block after the totals.
  *
- * CUSTOMER LINK: when the caller supplies `viewUrl`, a clickable
- * "View your order online" button is printed between the totals and the
- * terms, pointing at the customer's own order page. It makes the PDF
+ * CUSTOMER LINK: when the caller supplies `viewUrl`, a clickable button
+ * is printed between the totals and the terms, pointing at the
+ * customer's own order page. On an estimate it reads "Review & confirm
+ * online" under a note telling the customer they must confirm online to
+ * go ahead; on an invoice it reads "View your order online" (see
+ * `customerCta`). It makes the PDF
  * self-sufficient — a customer who kept only the attachment, and staff
  * who downloaded it, can still reach the live page without the email.
  *
@@ -508,6 +511,37 @@ export async function fetchLogo(logoUrl: string | null): Promise<Uint8Array | nu
   }
 }
 
+/** Copy for the customer-page call-to-action printed under the totals. */
+export interface CustomerCta {
+  /** Button text. */
+  label: string;
+  /** Bold note printed above the button, or null for none. */
+  instruction: string | null;
+}
+
+/**
+ * Chooses the customer-page CTA copy for a document type.
+ *
+ * An ESTIMATE is unconfirmed by definition (`toPdfData` switches to
+ * 'invoice' at confirmation), and nothing is ordered until the customer
+ * presses "Confirm Estimate" on their page — so the estimate says so
+ * outright and its button names the action. Customers who only saw
+ * "View your order online" did not realise a confirmation was expected.
+ * An INVOICE is already confirmed and keeps the neutral label.
+ *
+ * Wording mirrors the estimate email (`buildEstimateEmailHtml`) and the
+ * customer page's own button labels; keep the three in sync.
+ */
+export function customerCta(docType: PdfDocumentData['docType']): CustomerCta {
+  return docType === 'estimate'
+    ? {
+        label: 'Review & confirm online',
+        instruction:
+          'To go ahead with your order, open your estimate online and press "Confirm Estimate". Your order is not placed until you confirm.',
+      }
+    : { label: 'View your order online', instruction: null };
+}
+
 /**
  * Renders the order document (Estimate or Invoice) and returns its
  * bytes.
@@ -692,12 +726,21 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
     }
   }
 
-  /* ── "View your order online" CTA ─────────────────────────────── */
+  /* ── Customer-page CTA ────────────────────────────────────────── */
   // Placed after the money and before the terms: it lands on the same
   // page as the total, while a long T&C block may spill to page 2.
   if (data.viewUrl) {
+    const cta = customerCta(data.docType);
     cur.gap(10);
-    drawLinkButton(doc, cur, data.viewUrl, 'View your order online', bold);
+    if (cta.instruction) {
+      // Right-aligned block over the button, same column as the totals.
+      // Reserved as a whole so the note never page-breaks away from it.
+      const lines = wrapText(bold, cta.instruction, 9, TOTALS_W);
+      cur.ensure(lines.length * 12 + 4 + 30);
+      for (const l of lines) cur.line(l, PAGE_W - MARGIN - TOTALS_W, bold, 9, INK, 12);
+      cur.gap(4);
+    }
+    drawLinkButton(doc, cur, data.viewUrl, cta.label, bold);
   }
 
   /* ── Terms & conditions ───────────────────────────────────────── */

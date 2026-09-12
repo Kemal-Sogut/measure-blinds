@@ -106,7 +106,10 @@ item onto that type's saved defaults, including items already on it, so a unifie
 every row identical; leaving it on "No change" over a mixed selection edits colour only.
 
 **Documents & communications:** branded estimate/invoice PDFs (pdf-lib) with a clickable
-"View your order online" link matching the app's brand blue (`#2563eb`) throughout — button,
+customer-page link — on an ESTIMATE it reads "Review & confirm online" under a bold note that
+the order isn't placed until the customer confirms (`customerCta`); on an invoice it stays
+"View your order online". The estimate email likewise carries a "How to go ahead" step list and
+a "Review & confirm your estimate" button. The link matching the app's brand blue (`#2563eb`) throughout — button,
 web, and email templates now agree. Each blind's four hardware options print what they added
 to the LINE beside their names on both the PDF and the public customer page
 (`Cassette: Standard — $28.00`); a zero-cost option prints its name alone, and material,

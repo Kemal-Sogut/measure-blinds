@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString } from 'pdf-lib';
-import { MARGIN, PAGE_W, TOTALS_W, buildDocumentPdf, itemContent, type PdfDocumentData } from './pdf';
+import { MARGIN, PAGE_W, TOTALS_W, buildDocumentPdf, customerCta, itemContent, type PdfDocumentData } from './pdf';
 
 /** One `/Link` annotation read back off a rendered document. */
 interface RenderedLink {
@@ -181,6 +181,13 @@ describe('buildDocumentPdf', () => {
     const [x1, , x2] = link.rect;
     expect(x2).toBeCloseTo(PAGE_W - MARGIN, 5);
     expect(x2 - x1).toBeCloseTo(TOTALS_W, 5);
+  });
+
+  it('asks the customer to confirm on an estimate, but not on an invoice', () => {
+    const estimate = customerCta('estimate');
+    expect(estimate.label).toBe('Review & confirm online');
+    expect(estimate.instruction).toContain('Confirm Estimate');
+    expect(customerCta('invoice')).toEqual({ label: 'View your order online', instruction: null });
   });
 
   it('omits the link block when no customer page URL is supplied', async () => {

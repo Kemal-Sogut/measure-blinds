@@ -4,7 +4,16 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-09-09)
+## Where things stand (as of 2026-09-12)
+
+**Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
+the customer to confirm**. Customers saw only "View your estimate" and didn't know a
+confirmation was expected. Email (`buildEstimateEmailHtml`): bold "to go ahead… confirm it"
+intro line, a "How to go ahead" checklist ending in "Press Confirm Estimate", button renamed
+"Review & confirm your estimate". PDF: new `customerCta(docType)` — estimates print a bold
+instruction above a "Review & confirm online" button; invoices unchanged. Verified: api
+`pnpm check` clean, tests pass; both rendered and inspected. See
+`knowledge/history/engine_features.md`, 2026-09-12.
 
 **Newest, uncommitted, web-only, no migration:** the **Material usage panel is now a read-only
 fabric report**. Every per-m² give-back went away — the per-material rate boxes, the
