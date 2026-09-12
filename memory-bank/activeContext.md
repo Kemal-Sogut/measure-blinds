@@ -6,6 +6,12 @@
 
 ## Where things stand (as of 2026-09-12)
 
+**Newest, uncommitted, web-only, no migration:** the **order page's stage-action slot now leads
+with Save at every stage**; Confirm, Reverse Confirmation and Mark Ready buttons are gone (Confirm
+was pressed as if it were Save). Stage moves happen only on the Progress timeline, which saves
+first and words confirm/reverse moves explicitly; Mark Installed moved into the Installation card.
+See `knowledge/history/engine_features.md`, 2026-09-12.
+
 **Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
 the customer to confirm**. Customers saw only "View your estimate" and didn't know a
 confirmation was expected. Email (`buildEstimateEmailHtml`): bold "to go ahead… confirm it"

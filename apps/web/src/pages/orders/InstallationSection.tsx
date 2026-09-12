@@ -10,11 +10,16 @@
  * Rendered for ready/installed orders only. Shows the scheduled
  * one-hour window and the customer's response status, and (on ready
  * orders) offers:
+ *   Propose Installation — shown while no time is set; opens the sheet
  *   Change time     — re-opens the sheet prefilled; re-emails the
  *                     proposal on the SAME public link
  *   Mark Confirmed  — staff-side confirm for when the customer agreed
  *                     by phone/text/in person (no email is sent)
  *   Delete time     — removes the appointment entirely
+ *   Mark Installed  — moves the order to its terminal `installed` stage
+ *                     (with or without a scheduled time). It lives here,
+ *                     not in the page's stage-action bar, so that bar
+ *                     only ever leads with Save.
  *
  * The sheet is also the CREATION path: the "Propose Installation"
  * action on a ready order opens it (`sheetOpen` is lifted to
@@ -33,6 +38,7 @@ import {
   useConfirmAppointment,
   useDeleteAppointment,
 } from '../../hooks/useCalendar';
+import { useMarkInstalled } from '../../hooks/useOrders';
 import type { OrderStatus } from '../../types';
 
 /** Formats a Date as the API's YYYY-MM-DD. */
@@ -89,6 +95,7 @@ export default function InstallationSection({
   const reproposeMut = useReproposeAppointment();
   const confirmMut = useConfirmAppointment();
   const deleteMut = useDeleteAppointment();
+  const installedMut = useMarkInstalled();
 
   // Sheet form state — prefilled from the existing schedule on open.
   const [date, setDate] = useState<Date>(new Date());
@@ -136,6 +143,21 @@ export default function InstallationSection({
       toast.success('Installation time confirmed.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not confirm the time.');
+    }
+  }
+
+  /**
+   * Marks the order installed — the terminal stage; the Worker stamps
+   * `installed_at`, which drives the post-installation review request.
+   * Asks first, since the card's other buttons sit right beside it.
+   */
+  async function handleMarkInstalled() {
+    if (!window.confirm('Mark this order installed?')) return;
+    try {
+      await installedMut.mutateAsync(orderId);
+      toast.success('Order marked installed.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not mark installed.');
     }
   }
 
@@ -235,6 +257,15 @@ export default function InstallationSection({
             </div>
           )}
         </>
+      )}
+      {orderStatus === 'ready' && (
+        <button
+          onClick={handleMarkInstalled}
+          disabled={installedMut.isPending}
+          className="mt-1 h-10 rounded-md border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
+        >
+          {installedMut.isPending ? 'Saving…' : 'Mark Installed'}
+        </button>
       )}
     </section>
   );

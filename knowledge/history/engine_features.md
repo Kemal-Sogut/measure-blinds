@@ -1,5 +1,34 @@
 # Engine Features / Feature History
 
+## 2026-09-12 — Order page: Save leads every stage; Confirm / Mark Ready buttons removed
+Staff were pressing the big primary **Confirm** button believing it was **Save**, silently
+moving orders to Awaiting Payment. The stage-action slot (desktop pricing-rail footer and the
+mobile sticky bar) now leads with a green **Save** at EVERY stage, unsaved orders included.
+
+**Removed from the stage actions** (`OrderDetail.tsx`, `stageActions`): Confirm (draft/sent),
+Reverse Confirmation (awaiting payment), Mark Ready (in progress), Propose Installation and Mark
+Installed (ready). Remaining secondaries: Present to Customer everywhere, plus Cut Sheet and
+Labels while in progress. `StageAction` gained an optional `fill` (primary background).
+
+**Stage changes happen only on the Progress timeline** (`handleSetStatus` → `POST
+/api/orders/:id/status`). That route already stamps/clears `confirmed_at` and freezes prices, so
+moving to Awaiting Payment IS confirming and moving back below it IS reversing — no API change.
+The prompt names it ("Confirm this order and move it to…", "Reverse the confirmation and move
+this order back to…"). Timeline moves now SAVE FIRST, as Confirm did, so on-screen edits land
+before the Worker freezes prices; the step buttons are disabled while saving.
+
+**Installation card** (`InstallationSection.tsx`) now owns **Mark Installed** (ready orders, with
+or without a scheduled time, behind a `window.confirm`), beside its existing Propose Installation
+/ Change time / Mark Confirmed / Delete time. The `useConfirmOrder`, `useUnconfirmOrder` and
+`useMarkReady` hooks and their API routes are unused by the page now but kept.
+
+### Verified
+web `pnpm check` clean, `oxlint` 0/0, `pnpm test` 458/458. Driven in a throwaway harness with a
+seeded order cache: sent/awaiting-payment/ready stages show Save + Present only; timeline prompt
+wording for confirm/reverse/plain moves; Installation card shows Propose Installation + Mark
+Installed (no time) and Mark Confirmed / Change time / Delete time + Mark Installed (proposed
+time). Not seen inside the logged-in app (no `apps/web/.env`).
+
 ## 2026-09-12 — Estimate email and PDF ask the customer to confirm
 Customers received an estimate with only a "View your estimate" button (email) or "View your
 order online" button (PDF) and did not realise they had to open it and press **Confirm

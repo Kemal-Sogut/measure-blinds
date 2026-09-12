@@ -6,7 +6,7 @@
  *
  * While an order is draft/sent it behaves as an estimate editor:
  * customer, dates, line items with live pricing, discount, totals, and
- * a Send Estimate / Save / Confirm / PDF action set. The editor stays
+ * a Send Estimate / Save / PDF action set. The editor stays
  * live at every later stage too — customer, dates, and line items can
  * always be changed and saved; the Worker recalculates totals on every
  * save regardless of status.
@@ -19,12 +19,11 @@
  * confirmation sheet (recipient, amount/date, optional message) and
  * emails the customer a branded receipt; once sent the row shows a
  * muted "✓ Receipt sent" marker and the action becomes Resend receipt.
- * Stage actions:
- *   awaiting_payment → Reverse Confirmation (user only)
- *   in_progress      → Mark Ready, Cut Sheet
- *   ready            → Propose Installation (opens the Installation
- *                      section's sheet), Mark Installed
- *   installed        → (none beyond Present to Customer)
+ * Stage actions: the primary slot is Save at EVERY stage (Confirm used
+ * to sit there and was pressed as if it were Save). Stage changes —
+ * confirming, reversing a confirmation, marking ready — happen only on
+ * the Progress timeline. In progress adds Cut Sheet and Labels;
+ * Propose Installation and Mark Installed live in the Installation card.
  * EVERY stage offers a Present to Customer action, which saves and then
  * navigates in the same tab to `/orders/:id/present` — the app's one
  * read-only order view. It is filterable and per-option for the customer
@@ -86,11 +85,7 @@ import {
   useUpdateOrder,
   useSendOrder,
   useSendInvoice,
-  useConfirmOrder,
-  useUnconfirmOrder,
   useResolveCancelRequest,
-  useMarkReady,
-  useMarkInstalled,
   useSetOrderStatus,
   useDeleteOrder,
   useDuplicateOrder,
@@ -378,40 +373,10 @@ const ICONS = {
       <path d="M22 2 11 13" />
     </ActionIcon>
   ),
-  confirm: (
-    <ActionIcon>
-      <path d="M20 6 9 17l-5-5" />
-    </ActionIcon>
-  ),
   payment: (
     <ActionIcon>
       <line x1="12" x2="12" y1="2" y2="22" />
       <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-    </ActionIcon>
-  ),
-  ready: (
-    <ActionIcon>
-      <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-      <path d="m3.3 7 8.7 5 8.7-5" />
-      <path d="M12 22V12" />
-    </ActionIcon>
-  ),
-  install: (
-    <ActionIcon>
-      <rect width="18" height="18" x="3" y="4" rx="2" />
-      <path d="M3 10h18M8 2v4M16 2v4" />
-    </ActionIcon>
-  ),
-  installed: (
-    <ActionIcon>
-      <path d="M21.8 10A10 10 0 1 1 17 3.3" />
-      <path d="m9 11 3 3L22 4" />
-    </ActionIcon>
-  ),
-  reverse: (
-    <ActionIcon>
-      <path d="M9 14 4 9l5-5" />
-      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
     </ActionIcon>
   ),
   download: (
@@ -465,8 +430,8 @@ const ICONS = {
  * footer and the mobile sticky bar. `label` is the full wording (used
  * on desktop rows and on the primary button); `short` is the compact
  * wording used by the mobile inline grid where up to three buttons
- * share one row. `tone` optionally recolours the button text (e.g. the
- * success-green Confirm / Mark Installed secondaries).
+ * share one row. `tone` optionally recolours a secondary's text; `fill`
+ * optionally recolours the primary's background.
  */
 type StageAction = {
   key: string;
@@ -476,6 +441,8 @@ type StageAction = {
   onClick: () => void;
   disabled?: boolean;
   tone?: string;
+  /** Background classes replacing the default brand fill on the primary button (Save is green, matching the top-bar Save). */
+  fill?: string;
 };
 
 /**
@@ -525,12 +492,8 @@ export default function OrderDetail() {
   const updateMut = useUpdateOrder();
   const sendMut = useSendOrder();
   const sendInvoiceMut = useSendInvoice();
-  const confirmMut = useConfirmOrder();
-  const unconfirmMut = useUnconfirmOrder();
   const resolveCancelMut = useResolveCancelRequest();
   const resolveEditMut = useResolveEditRequest();
-  const readyMut = useMarkReady();
-  const installedMut = useMarkInstalled();
   const setStatusMut = useSetOrderStatus();
   const deleteMut = useDeleteOrder();
   const duplicateMut = useDuplicateOrder();
@@ -1292,21 +1255,10 @@ export default function OrderDetail() {
     }
   }
 
-  async function handleConfirm() {
-    const savedId = await save();
-    if (!savedId) return;
-    try {
-      await confirmMut.mutateAsync(savedId);
-      toast.success('Order confirmed — awaiting payment.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Confirm failed.');
-    }
-  }
-
   /**
    * Opens the customer presentation view.
    *
-   * Saves first, for the same reason `handleConfirm` does: the page reads
+   * Saves first, for the same reason `handleSetStatus` does: the page reads
    * the SERVER row, so on a draft that has just been typed an unsaved
    * order would be presented empty or stale. Navigates in the SAME tab
    * rather than opening one — a `window.open` after an `await` is treated
@@ -1318,38 +1270,6 @@ export default function OrderDetail() {
     if (!savedId) return;
     navigate(`/orders/${savedId}/present`);
   }
-
-  async function handleReverse() {
-    if (!id) return;
-    try {
-      await unconfirmMut.mutateAsync(id);
-      toast.success('Confirmation reversed — back to sent.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Reverse failed.');
-    }
-  }
-
-  async function handleMarkReady() {
-    if (!id) return;
-    try {
-      await readyMut.mutateAsync(id);
-      toast.success('Order marked ready.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not mark ready.');
-    }
-  }
-
-  async function handleMarkInstalled() {
-    if (!id) return;
-    try {
-      await installedMut.mutateAsync(id);
-      toast.success('Order marked installed.');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not mark installed.');
-    }
-  }
-
-
 
   /**
    * Index of the order's current stage in {@link STAGES}. An `expired`
@@ -1371,15 +1291,32 @@ export default function OrderDetail() {
    * (see `handleSendEstimate`). A backward move is destructive enough to
    * name its consequence in the prompt — an order dropping below Ready
    * loses its installation appointment.
+   *
+   * The timeline is the ONLY place an order changes stage from this page
+   * (the old Confirm / Reverse Confirmation / Mark Ready / Mark Installed
+   * buttons were removed — Confirm was being pressed as if it were Save).
+   * Moving forward past Sent IS confirming (the Worker stamps
+   * `confirmed_at` and freezes prices); moving back below Awaiting Payment
+   * IS reversing it. The prompt names that so the move is deliberate.
+   *
+   * Saves first, as Confirm did: the Worker freezes prices from the
+   * SERVER rows, so edits still on screen must land before the move.
    */
   async function handleSetStatus(to: OrderStatus) {
     if (!id) return;
     const label = STAGES.find((s) => s.key === to)?.label ?? to;
-    const backward = STAGES.findIndex((s) => s.key === to) < curIdx;
+    const toIdx = STAGES.findIndex((s) => s.key === to);
+    const confirmIdx = STAGES.findIndex((s) => s.key === 'awaiting_payment');
+    const backward = toIdx < curIdx;
     const prompt = backward
-      ? `Move this order back to "${label}"? Later-stage progress is cleared.`
-      : `Move this order to "${label}"?`;
+      ? curIdx >= confirmIdx && toIdx < confirmIdx
+        ? `Reverse the confirmation and move this order back to "${label}"? Later-stage progress is cleared.`
+        : `Move this order back to "${label}"? Later-stage progress is cleared.`
+      : curIdx < confirmIdx && toIdx >= confirmIdx
+        ? `Confirm this order and move it to "${label}"?`
+        : `Move this order to "${label}"?`;
     if (!window.confirm(prompt)) return;
+    if (!(await save())) return;
     try {
       await setStatusMut.mutateAsync({ id, to });
       toast.success(`Status changed to ${label}.`);
@@ -2028,7 +1965,7 @@ export default function OrderDetail() {
                 <button
                   type="button"
                   onClick={() => handleSetStatus(stage.key)}
-                  disabled={setStatusMut.isPending}
+                  disabled={setStatusMut.isPending || saving}
                   title={i < curIdx ? `Move back to ${stage.label}` : `Move to ${stage.label}`}
                   aria-label={i < curIdx ? `Move back to ${stage.label}` : `Move to ${stage.label}`}
                   className={`flex h-6 w-6 items-center justify-center rounded-sm text-text-muted hover:bg-surface-sunken disabled:opacity-40 ${i < curIdx ? 'hover:text-brand-600' : 'hover:text-success'
@@ -2058,11 +1995,17 @@ export default function OrderDetail() {
   /**
    * Builds the status-aware action set consumed by both layouts.
    *
-   * `primary` is the single key action for the current stage (null when
-   * the stage has none). `secondary` are the remaining stage-specific
-   * actions. Save, Send and Download are NOT part of this set — they
-   * live permanently in the top bar (see `headerActions`), and Record
-   * Payment lives in the Payments panel body (see `paymentsPanel`).
+   * `primary` is ALWAYS Save, at every stage including an unsaved order.
+   * The big primary slot used to hold Confirm (draft/sent), Mark Ready
+   * (in progress) and Propose Installation (ready); people pressed
+   * Confirm believing it was Save and moved orders to awaiting payment by
+   * accident. Stage moves now happen ONLY on the Progress timeline
+   * (`handleSetStatus`) — moving to Awaiting Payment is the confirmation,
+   * moving back to Sent reverses it, moving to Ready marks it ready —
+   * and the installation actions live in the Installation card.
+   * `secondary` are the remaining stage-specific actions. Send and
+   * Download live in the top bar (see `docActions`), and Record Payment
+   * lives in the Payments panel body (see `paymentsPanel`).
    * The Present to Customer action is included at EVERY stage: it opens
    * the app's one read-only order view, which serves both the customer
    * conversation and the consultant's itemised read.
@@ -2071,13 +2014,14 @@ export default function OrderDetail() {
     primary: StageAction | null;
     secondary: StageAction[];
   } => {
-    const confirm: StageAction = {
-      key: 'confirm',
-      icon: ICONS.confirm,
-      label: 'Confirm',
-      short: 'Confirm',
-      onClick: handleConfirm,
-      disabled: !canAct || !customer || items.length === 0 || confirmMut.isPending,
+    const save: StageAction = {
+      key: 'save',
+      icon: ICONS.save,
+      label: saving ? 'Saving…' : 'Save',
+      short: saving ? 'Saving…' : 'Save',
+      onClick: handleSaveDraft,
+      disabled: !canAct,
+      fill: 'bg-success hover:bg-success/90',
     };
     const present: StageAction = {
       key: 'present',
@@ -2088,42 +2032,11 @@ export default function OrderDetail() {
       disabled: !canAct || !customer || items.length === 0,
     };
 
-    // Before Draft (unsaved) — nothing here; the top-bar Save is the
-    // only available action.
-    if (!id) return { primary: null, secondary: [] };
+    // Before Draft (unsaved) — Save is the only action.
+    if (!id) return { primary: save, secondary: [] };
 
-    // Draft — confirm the order (Send/Save live in the top bar).
-    if (status === 'draft') return { primary: confirm, secondary: [present] };
-
-    // Sent — confirm the order.
-    if (status === 'sent') {
-      return { primary: confirm, secondary: [present] };
-    }
-
-    // Awaiting payment — the payment itself is recorded from the
-    // Payments panel, so only the step-back remains here.
-    if (status === 'awaiting_payment') {
-      const reverse: StageAction = {
-        key: 'reverse',
-        icon: ICONS.reverse,
-        label: unconfirmMut.isPending ? 'Reversing…' : 'Reverse Confirmation',
-        short: unconfirmMut.isPending ? 'Reversing…' : 'Reverse',
-        onClick: handleReverse,
-        disabled: unconfirmMut.isPending,
-      };
-      return { primary: null, secondary: [reverse, present] };
-    }
-
-    // In progress — mark the order ready; open the workshop cut sheet.
+    // In progress — open the workshop cut sheet and labels.
     if (status === 'in_progress') {
-      const markReady: StageAction = {
-        key: 'ready',
-        icon: ICONS.ready,
-        label: readyMut.isPending ? 'Saving…' : 'Mark Ready',
-        short: 'Ready',
-        onClick: handleMarkReady,
-        disabled: readyMut.isPending,
-      };
       const manufacturer: StageAction = {
         key: 'manufacturer',
         icon: ICONS.manufacturer,
@@ -2138,40 +2051,14 @@ export default function OrderDetail() {
         short: 'Labels',
         onClick: () => window.open(`/orders/${id}/labels`, '_blank', 'noopener'),
       };
-      return { primary: markReady, secondary: [manufacturer, labels, present] };
+      return { primary: save, secondary: [manufacturer, labels, present] };
     }
 
-    // Ready — propose the installation (emails the customer).
-    if (status === 'ready') {
-      const propose: StageAction = {
-        key: 'install',
-        icon: ICONS.install,
-        label: 'Propose Installation',
-        short: 'Install',
-        onClick: () => setInstallSheetOpen(true),
-      };
-      const markInstalled: StageAction = {
-        key: 'installed',
-        icon: ICONS.installed,
-        label: installedMut.isPending ? 'Saving…' : 'Mark Installed',
-        short: 'Installed',
-        onClick: handleMarkInstalled,
-        disabled: installedMut.isPending,
-        tone: 'text-success',
-      };
-      return { primary: propose, secondary: [markInstalled, present] };
-    }
-
-    // Installed — nothing left to advance; payments (still allowed) are
-    // recorded from the Payments panel.
-    if (status === 'installed') {
-      return { primary: null, secondary: [present] };
-    }
-
-    // Expired — the estimate lapsed but was never confirmed, so the
-    // presentation view still applies here (Save/Send/Download are in the
-    // top bar; send after updating the expiry date).
-    return { primary: null, secondary: [present] };
+    // Every other stage — draft, sent, awaiting payment, ready, installed,
+    // expired — carries only Save and Present. Payments are recorded from
+    // the Payments panel; the installation proposal and Mark Installed
+    // live in the Installation card.
+    return { primary: save, secondary: [present] };
   };
 
   /**
@@ -2189,7 +2076,8 @@ export default function OrderDetail() {
     const { primary, secondary } = stageActions();
     if (!primary && secondary.length === 0) return null;
     const shared = 'inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
-    const primaryCls = `${vertical ? 'h-[46px]' : 'h-12'} w-full ${shared} bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700`;
+    const primaryCls = (a: StageAction) =>
+      `${vertical ? 'h-[46px]' : 'h-12'} w-full ${shared} ${a.fill ?? 'bg-brand-600 hover:bg-brand-700'} text-sm font-semibold text-white`;
 
     const fullBtn = (a: StageAction, cls: string) => (
       <button key={a.key} onClick={a.onClick} disabled={a.disabled} className={`${cls}${a.tone ? ` ${a.tone}` : ''}`}>
@@ -2202,7 +2090,7 @@ export default function OrderDetail() {
       const secondaryCls = `h-10 w-full ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
       return (
         <div className="flex flex-col gap-2.5">
-          {primary && fullBtn(primary, primaryCls)}
+          {primary && fullBtn(primary, primaryCls(primary))}
           {secondary.map((a) => fullBtn(a, secondaryCls))}
         </div>
       );
@@ -2218,7 +2106,7 @@ export default function OrderDetail() {
       'h-10 min-w-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-1.5 text-[12px] font-medium text-text-secondary disabled:opacity-40';
     return (
       <div className="flex flex-col gap-2">
-        {primary && fullBtn(primary, primaryCls)}
+        {primary && fullBtn(primary, primaryCls(primary))}
         {rows.map((row) => (
           <div key={row[0].key} className="flex gap-2">
             {row.map((a) => (
