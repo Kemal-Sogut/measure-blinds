@@ -69,15 +69,18 @@ const calendarRangeSchema = z.object({ from: isoDate, to: isoDate }).strict();
 const LIST_PAGE_SIZE = 20;
 
 /**
- * Query params for GET / (the "See All" list): an optional kind filter
- * and a 1-based page number. Both arrive as strings on the query and
- * are coerced/validated here so a bad `?page=abc` fails loudly (400)
- * rather than silently paging from row NaN.
+ * Query params for GET / (the "See All" list): an optional kind filter,
+ * a 1-based page number, and an optional `customer_id` that narrows the
+ * list to one customer's visits (the order page's Appointments view).
+ * All arrive as strings on the query and are coerced/validated here so a
+ * bad `?page=abc` or a non-UUID customer id fails loudly (400) rather
+ * than silently paging from row NaN or matching nothing.
  */
 const listQuerySchema = z
   .object({
     kind: z.enum(['estimate', 'installation', 'all']).default('all'),
     page: z.coerce.number().int().min(1).default(1),
+    customer_id: z.string().uuid().optional(),
   })
   .strict();
 
@@ -209,7 +212,8 @@ async function loadCompany(sb: SupabaseClient) {
 
 /**
  * Paginated "See All" appointments list (the calendar's See All page):
- * every appointment (optionally filtered to one kind), newest first
+ * every appointment (optionally filtered to one kind and/or one
+ * customer), newest first
  * (date desc, then time desc), 20 per page. Returns the same
  * lightweight event shape as `/calendar` plus pagination metadata
  * (`page`, `page_size`, `total`, `total_pages`) so the client can
@@ -222,9 +226,10 @@ app.get('/', async (c) => {
   const parsed = listQuerySchema.safeParse({
     kind: c.req.query('kind') ?? undefined,
     page: c.req.query('page') ?? undefined,
+    customer_id: c.req.query('customer_id') ?? undefined,
   });
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const { kind, page } = parsed.data;
+  const { kind, page, customer_id } = parsed.data;
 
   const sb = createSupabaseAdmin(c.env);
   const fromRow = (page - 1) * LIST_PAGE_SIZE;
@@ -244,6 +249,9 @@ app.get('/', async (c) => {
     .order('appointment_time', { ascending: false })
     .range(fromRow, toRow);
   if (kind !== 'all') query = query.eq('kind', kind);
+  // Installations carry the customer too (copied from the order at
+  // booking), so one column filter covers both kinds.
+  if (customer_id) query = query.eq('customer_id', customer_id);
 
   const { data, count, error } = await query;
   if (error) return c.json({ error: error.message }, 500);

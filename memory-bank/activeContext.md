@@ -6,6 +6,15 @@
 
 ## Where things stand (as of 2026-09-12)
 
+**Newest, on branch `order-detail-sectioned-layout` (not merged, not deployed), web + small
+api, no migration:** the **order page is now a section menu + one section + pricing panel**.
+Left rail (xl+): Send/Download/Customer View, sections (Order Details, Items, Payments,
+Appointments, Manufacturer, Logs), Duplicate/Delete; collapsible. Middle: only the selected
+section (`?view=`) with its own buttons; stage actions sit under the Progress timeline. Right:
+pricing + Save; collapsible. Below xl: tab strip, ⋯ header menu, one-row bottom bar with Save.
+`GET /api/appointments` gained an optional `customer_id` filter for the Appointments section.
+Verified in a harness only (no `.env`). See `knowledge/history/engine_features.md`, 2026-09-16.
+
 **Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
 the customer to confirm**. Customers saw only "View your estimate" and didn't know a
 confirmation was expected. Email (`buildEstimateEmailHtml`): bold "to go ahead… confirm it"

@@ -17,6 +17,7 @@
  *   - staff confirm (POST /:id/confirm) flips a non-confirmed visit to
  *     confirmed without any email; 409 when already confirmed
  *   - GET /order/:orderId returns the order's appointment or null
+ *   - GET / narrows to one customer when `customer_id` is given
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,9 +28,11 @@ interface FakeDb {
   calls: string[];
   /** Captured insert payloads keyed by table name */
   insertPayloads: Record<string, unknown[]>;
+  /** Every `.eq(column, value)` applied, as `table.column=value` */
+  eqFilters: string[];
 }
 
-const db: FakeDb = { responses: {}, calls: [], insertPayloads: {} };
+const db: FakeDb = { responses: {}, calls: [], insertPayloads: {}, eqFilters: [] };
 
 /**
  * Minimal thenable query builder that mimics the supabase-js chain.
@@ -42,12 +45,13 @@ function makeBuilder(table: string) {
   const chain = (name: string) =>
     ((...args: unknown[]) => {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
+      if (name === 'eq') db.eqFilters.push(`${state.table}.${String(args[0])}=${String(args[1])}`);
       if (name === 'insert') {
         (db.insertPayloads[state.table] ??= []).push(args[0]);
       }
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'lte', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'lte', 'order', 'limit', 'range']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
@@ -118,6 +122,7 @@ beforeEach(() => {
   db.responses = {};
   db.calls = [];
   db.insertPayloads = {};
+  db.eqFilters = [];
 });
 
 describe('GET /api/appointments/calendar', () => {
@@ -163,6 +168,27 @@ describe('GET /api/appointments/calendar', () => {
 
   it('400s when a required param is missing', async () => {
     const res = await appointmentsApp.request('/calendar?from=2026-08-01', { method: 'GET' }, ENV);
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/appointments (list)', () => {
+  it('narrows the list to one customer when customer_id is given', async () => {
+    db.responses['appointments.select'] = [];
+    const res = await appointmentsApp.request(`/?customer_id=${CUSTOMER_ID}`, { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.eqFilters).toContain(`appointments.customer_id=${CUSTOMER_ID}`);
+  });
+
+  it('applies no customer filter when customer_id is absent', async () => {
+    db.responses['appointments.select'] = [];
+    const res = await appointmentsApp.request('/?kind=all', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.eqFilters.some((f) => f.includes('customer_id'))).toBe(false);
+  });
+
+  it('400s on a customer_id that is not a UUID', async () => {
+    const res = await appointmentsApp.request('/?customer_id=abc', { method: 'GET' }, ENV);
     expect(res.status).toBe(400);
   });
 });

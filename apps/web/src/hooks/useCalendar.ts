@@ -5,7 +5,8 @@
  * TanStack Query hooks for the Calendar tab and the standalone
  * appointments API (`/api/appointments`): the monthly event feed, the
  * per-order installation lookup used by the order page's Installation
- * panel, plus the create / re-propose / staff-confirm / delete
+ * panel, the per-customer visit list behind the order page's
+ * Appointments view, plus the create / re-propose / staff-confirm / delete
  * mutations used by the wizard, the under-grid section lists, and the
  * order page.
  *
@@ -84,6 +85,33 @@ export function useAppointmentsList(
       return await apiFetch<PaginatedAppointments>(`/api/appointments?${params}`);
     },
     placeholderData: keepPreviousData,
+  });
+}
+
+/**
+ * Every appointment booked for one customer — estimate visits AND
+ * installations, across all of their orders — newest first. Drives the
+ * order page's Appointments view, where the consultant wants the whole
+ * visit history of the person they are quoting, not just this order's
+ * installation.
+ *
+ * Reuses the paginated list route with its `customer_id` filter and
+ * reads only the first page (20 rows): a single customer with more than
+ * twenty visits is not a real case, and the full list stays one tap away
+ * on the calendar's See All page. Keyed under `['appointments', …]` so
+ * every appointment mutation's blanket invalidation refreshes it.
+ * Disabled until a customer id is known (an unsaved order may have none).
+ */
+export function useCustomerAppointments(
+  customerId: string | undefined
+): UseQueryResult<CalendarEvent[]> {
+  return useQuery({
+    queryKey: ['appointments', 'customer', customerId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ kind: 'all', page: '1', customer_id: customerId! });
+      return (await apiFetch<PaginatedAppointments>(`/api/appointments?${params}`)).data;
+    },
+    enabled: Boolean(customerId),
   });
 }
 
