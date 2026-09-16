@@ -12,8 +12,8 @@
  *   collapses to an icon strip. The top and bottom actions are icons only
  *   in both forms (one row expanded, a column collapsed); every icon keeps
  *   `title` + `aria-label` so it stays identifiable and accessible.
- * - `OrderSectionTabs` (below xl) is the same section list as a
- *   horizontally scrolling tab strip under the page header. There is no
+ * - `OrderSectionTabs` (below xl) is the same section list as a dropdown
+ *   under the page header. There is no
  *   room for a third column on a phone or tablet, so the document actions
  *   move to `OrderActionsMenu` in the header instead.
  *
@@ -23,7 +23,7 @@
  * an action does.
  */
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { PAGE_CONTAINER } from '../../components/PageHeader';
 import {
   ORDER_SECTIONS,
@@ -296,44 +296,123 @@ export function OrderSectionRail({
 }
 
 /**
- * Below-xl section menu: a sticky, horizontally scrolling tab strip. The
- * active tab is scrolled into view whenever it changes, so a section
- * picked from a deep link is never off-screen to the right.
+ * Below-xl section menu: a full-width dropdown under the page header. The
+ * trigger names the open section (icon, label, badge) with a chevron; the
+ * list shows every section with its badge, saved-only ones disabled until
+ * the order is saved. A dropdown replaced the horizontally scrolling tab
+ * strip because sections past the right edge were easy to miss on a phone.
+ *
+ * The trigger carries a dot when a section OTHER than the open one has a
+ * badge, so a cancellation or balance due is still hinted at while the
+ * list is closed. Closes on outside press, on Escape (returning focus to
+ * the trigger), and after a pick.
  */
 export function OrderSectionTabs({ active, isSaved, onSelect, badges }: SectionMenuProps) {
-  const activeRef = useRef<HTMLButtonElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const listId = useId();
 
   useEffect(() => {
-    activeRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [active]);
+    if (!open) return;
+    const onPointer = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const current = ORDER_SECTIONS.find((s) => s.id === active) ?? ORDER_SECTIONS[0];
+  const currentBadge = badges[current.id];
+  // Most urgent tone among the sections that are not open right now.
+  const otherTones = ORDER_SECTIONS.filter((s) => s.id !== active)
+    .map((s) => badges[s.id]?.tone)
+    .filter((t): t is OrderSectionBadge['tone'] => Boolean(t));
+  const hiddenTone = otherTones.includes('danger')
+    ? 'danger'
+    : otherTones.includes('warning')
+      ? 'warning'
+      : undefined;
 
   return (
     <nav aria-label="Order sections" className="border-b border-border-light bg-surface xl:hidden">
-      <div className={`${PAGE_CONTAINER} flex gap-1 overflow-x-auto py-1.5 [scrollbar-width:none]`}>
-        {ORDER_SECTIONS.map((s) => {
-          const available = isSectionAvailable(s.id, isSaved);
-          const current = s.id === active;
-          const badge = badges[s.id];
-          return (
-            <button
-              key={s.id}
-              ref={current ? activeRef : undefined}
-              type="button"
-              onClick={() => onSelect(s.id)}
-              disabled={!available}
-              aria-current={current ? 'page' : undefined}
-              title={sectionTitle(s.label, available)}
-              className={`flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-[13px] disabled:opacity-40 ${current
-                ? 'bg-brand-100 font-semibold text-brand-600'
-                : 'font-medium text-text-secondary hover:bg-surface-sunken'
-                }`}
+      <div className={`${PAGE_CONTAINER} py-1.5`}>
+        <div ref={rootRef} className="relative">
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-haspopup="listbox"
+            aria-expanded={open}
+            aria-controls={open ? listId : undefined}
+            className="flex h-10 w-full items-center gap-2.5 rounded-md border border-border-light bg-surface px-3 text-[14px] font-semibold text-text-primary hover:bg-surface-sunken"
+          >
+            <span className="text-brand-600">
+              <Glyph size={16}>{SECTION_ICONS[current.id]}</Glyph>
+            </span>
+            <span className="min-w-0 flex-1 truncate text-left">{current.label}</span>
+            {currentBadge && <Badge badge={currentBadge} />}
+            {hiddenTone && (
+              <span
+                aria-label="Another section needs attention"
+                className={`h-2 w-2 shrink-0 rounded-full ${DOT_TONES[hiddenTone]}`}
+              />
+            )}
+            <span className={`text-text-muted transition-transform ${open ? 'rotate-180' : ''}`}>
+              <Glyph size={16}>
+                <path d="m6 9 6 6 6-6" />
+              </Glyph>
+            </span>
+          </button>
+          {open && (
+            <ul
+              id={listId}
+              role="listbox"
+              aria-label="Order sections"
+              className="absolute inset-x-0 top-full z-30 mt-1 overflow-hidden rounded-lg border border-border-light bg-surface py-1 shadow-lg"
             >
-              <Glyph size={15}>{SECTION_ICONS[s.id]}</Glyph>
-              {s.label}
-              {badge && <Badge badge={badge} />}
-            </button>
-          );
-        })}
+              {ORDER_SECTIONS.map((s) => {
+                const available = isSectionAvailable(s.id, isSaved);
+                const selected = s.id === active;
+                const badge = badges[s.id];
+                return (
+                  <li key={s.id} role="none">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      onClick={() => {
+                        setOpen(false);
+                        onSelect(s.id);
+                      }}
+                      disabled={!available}
+                      title={sectionTitle(s.label, available)}
+                      className={`flex h-11 w-full items-center gap-2.5 px-3 text-left text-[14px] disabled:opacity-40 ${selected
+                        ? 'bg-brand-100 font-semibold text-brand-600'
+                        : 'font-medium text-text-primary hover:bg-surface-sunken'
+                        }`}
+                    >
+                      <Glyph size={16}>{SECTION_ICONS[s.id]}</Glyph>
+                      <span className="min-w-0 flex-1 truncate">{s.label}</span>
+                      {badge && <Badge badge={badge} />}
+                      {!available && <span className="text-[12px] font-normal text-text-muted">Save first</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
       </div>
     </nav>
   );
