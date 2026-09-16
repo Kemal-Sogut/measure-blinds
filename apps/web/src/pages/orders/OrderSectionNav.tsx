@@ -9,8 +9,9 @@
  *   Download, Customer View), the section list in the middle, and the
  *   destructive/copy actions at the bottom (Duplicate, Delete) — the
  *   bottom placement keeps Delete as far from Send as the card allows. It
- *   collapses to an icon strip; icons keep `title` + `aria-label` so the
- *   collapsed form stays usable and accessible.
+ *   collapses to an icon strip. The top and bottom actions are icons only
+ *   in both forms (one row expanded, a column collapsed); every icon keeps
+ *   `title` + `aria-label` so it stays identifiable and accessible.
  * - `OrderSectionTabs` (below xl) is the same section list as a
  *   horizontally scrolling tab strip under the page header. There is no
  *   room for a third column on a phone or tablet, so the document actions
@@ -37,7 +38,7 @@ import {
 export interface OrderNavAction {
   key: string;
   icon: ReactNode;
-  /** Visible label; also the tooltip and accessible name when collapsed. */
+  /** Menu label below xl; the rail's tooltip and accessible name (the rail shows icons only). */
   label: string;
   onClick: () => void;
   disabled?: boolean;
@@ -155,25 +156,31 @@ function sectionTitle(label: string, available: boolean): string {
   return available ? label : `${label} — save the order first`;
 }
 
-/** Button classes for a rail action, per variant and collapsed state. */
+/**
+ * Button classes for an icon-only rail action. Expanded, the group is one
+ * row and each button takes an equal share of it; collapsed, the group is
+ * a column of 40px squares.
+ */
 function railActionClass(variant: OrderNavAction['variant'], collapsed: boolean): string {
-  const shape = collapsed
-    ? 'h-10 w-10 justify-center'
-    : 'h-10 w-full justify-start px-3';
+  const shape = collapsed ? 'h-10 w-10' : 'h-10 min-w-0 flex-1';
   const tone =
     variant === 'primary'
       ? 'bg-brand-600 text-white hover:bg-brand-700'
       : variant === 'danger'
         ? 'text-danger hover:bg-danger-tint'
         : 'text-text-secondary hover:bg-surface-sunken';
-  return `flex shrink-0 items-center gap-2.5 rounded-md text-[13px] font-medium disabled:opacity-40 ${shape} ${tone}`;
+  return `flex shrink-0 items-center justify-center rounded-md disabled:opacity-40 ${shape} ${tone}`;
 }
 
-/** A stack of rail actions (top or bottom group). */
+/**
+ * A group of rail actions (top or bottom), shown as icons only. The label
+ * is still the tooltip (`title`, or the action's longer explanation) and
+ * the accessible name, so nothing is lost for hover or screen readers.
+ */
 function RailActions({ actions, collapsed }: { actions: OrderNavAction[]; collapsed: boolean }) {
   if (actions.length === 0) return null;
   return (
-    <div className={`flex flex-col gap-1 p-2 ${collapsed ? 'items-center' : ''}`}>
+    <div className={`flex gap-1 p-2 ${collapsed ? 'flex-col items-center' : 'flex-row'}`}>
       {actions.map((a) => (
         <button
           key={a.key}
@@ -185,7 +192,6 @@ function RailActions({ actions, collapsed }: { actions: OrderNavAction[]; collap
           className={railActionClass(a.variant, collapsed)}
         >
           {a.icon}
-          {!collapsed && <span className="truncate">{a.label}</span>}
         </button>
       ))}
     </div>

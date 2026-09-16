@@ -8,9 +8,9 @@ place (pricing rail footer / mobile bar). It read as too busy.
 
 **Layout (xl+, three columns).**
 - **Left — `OrderSectionRail`** (`pages/orders/OrderSectionNav.tsx`): order identity (status,
-  customer, order date); **Send**, **Download**, **Customer View** on top; the sections
+  customer, order date); **Send**, **Download**, **Customer View** on top as an icon-only row (labels in tooltips); the sections
   **Order Details, Items, Payments, Appointments, Manufacturer, Logs**; **Duplicate** and
-  **Delete Order** at the bottom. Collapses to an icon strip. Sections carry markers: red dot
+  **Delete Order** at the bottom, also icons only. Collapses to an icon strip. Sections carry markers: red dot
   for an open cancellation, amber count for open edit requests, item count, amber dot for a
   balance due, red/amber dot when the installation time is change-requested/proposed.
 - **Middle — the selected section only**, titled, with its own buttons: Order Details holds the
