@@ -601,3 +601,30 @@ export interface CompanySettings {
    */
   maintenance_message: string | null;
 }
+
+/** Event kinds recorded in the staff Alerts feed (migration 43). */
+export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received';
+
+/**
+ * One row of `GET /api/notifications` — an event that happened without
+ * staff present (customer confirm, customer edit request, incoming
+ * e-Transfer). Name, order number and amount are snapshots taken when
+ * the event happened, not live joins.
+ */
+export interface AppNotification {
+  id: string;
+  kind: NotificationKind;
+  /**
+   * Set for `edit_request` / `order_confirmed` (the alert links to this
+   * order); always null for `etransfer_received`, which does not link.
+   */
+  order_id: string | null;
+  /** '' when unknown — e.g. an e-Transfer that matched no order. */
+  order_number: string;
+  /** Customer display name, or the e-Transfer sender. May be ''. */
+  customer_name: string;
+  /** e-Transfer amount in dollars; null for order events. */
+  amount: number | null;
+  /** ISO timestamp of the event. */
+  created_at: string;
+}

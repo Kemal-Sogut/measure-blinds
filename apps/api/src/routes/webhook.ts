@@ -21,6 +21,7 @@ import { createSupabaseAdmin } from '../lib/supabase';
 import { recordOrderPayment } from '../lib/payments';
 import { resolveOrder } from '../lib/etransferMatch';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
+import { recordNotification } from '../lib/notifications';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -90,6 +91,15 @@ app.post('/etransfer', async (c) => {
         .from('etransfers')
         .insert({ ...base, status: 'applied', order_id: match.id, payment_id: result.paymentId });
 
+      // Staff alert. No order_id on purpose: payment alerts do not link,
+      // and must outlive the order (see migration 43).
+      await recordNotification(sb, {
+        kind: 'etransfer_received',
+        orderNumber: match.order_number,
+        customerName: p.sender,
+        amount: p.amount,
+      });
+
       // Same side effect the staff payment route applies: an e-Transfer
       // that settles the order issues the warranty. Never fatal — the
       // Apps Script must not retry an applied transfer because an email
@@ -109,6 +119,11 @@ app.post('/etransfer', async (c) => {
 
   const { error } = await sb.from('etransfers').insert({ ...base, status: 'pending' });
   if (error) return c.json({ error: error.message }, 500);
+  await recordNotification(sb, {
+    kind: 'etransfer_received',
+    customerName: p.sender,
+    amount: p.amount,
+  });
   return c.json({ status: 'pending' });
 });
 

@@ -22,6 +22,7 @@ import appointmentsRoutes from './routes/appointments';
 import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
+import notificationsRoutes from './routes/notifications';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
 
@@ -121,6 +122,9 @@ app.route('/api/appointments', appointmentsRoutes);
 
 /** Payment reconciliation — the unmatched e-Transfer inbox. */
 app.route('/api/payments', paymentsRoutes);
+
+/** Staff Alerts feed — customer confirms, edit requests, e-Transfers. */
+app.route('/api/notifications', notificationsRoutes);
 
 /** Public customer view + confirm — token-gated, rate-limited (Phase 9). */
 app.route('/public', publicRoutes);

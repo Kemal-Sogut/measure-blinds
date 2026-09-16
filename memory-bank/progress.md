@@ -231,7 +231,15 @@ page keep the past ones) and whose appointment-detail page carries an "Add order
 autocomplete live on both customer-entry surfaces (`ADDRESS_SEARCH_ENABLED = true` in
 `AddressAutocomplete.tsx`), dormant after a suggestion is picked until the field is edited.
 
+**Notifications (staff alerts):** sidebar bell → `/notifications`, newest first, 15 per page.
+Written best-effort (never blocks the event) on customer confirm, customer edit request, and every
+ingested e-Transfer (applied or pending); order alerts link to the order, payment alerts don't.
+Table `notifications`, migration 43. No read/unread state.
+
 ## What's Left / Known Issues
+- **Migration 43 (`notifications`) is not applied** to `lgbxxlwsdeuhdgzrjjen`. Until it is,
+  the Notifications page errors and the confirm / edit-request / webhook writers log a failed
+  alert insert (their own action still succeeds). The page has only been seen in a mocked harness.
 - **The Material usage dialog has never been rendered inside the real order page.** This is
   a harder blocker than the general "no real device" gap below: the dev server boots, but
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or

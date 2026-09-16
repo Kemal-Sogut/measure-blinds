@@ -59,6 +59,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
+import { recordNotification } from '../lib/notifications';
 import { getBlindType } from '../lib/blindTypes';
 import { originalLineTotal } from '../lib/lineItemAdjustments';
 import { optionLineAmounts, type OptionPricedItem } from '../lib/optionBreakdown';
@@ -536,6 +537,12 @@ app.post('/estimate/:token/confirm', async (c) => {
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
 
   await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
+  await recordNotification(sb, {
+    kind: 'order_confirmed',
+    orderId: order.id,
+    orderNumber: updated.order_number,
+    customerName: displayName(order.customer),
+  });
 
   // Internal notification — best effort, never blocks the customer.
   try {
@@ -748,6 +755,12 @@ app.post('/estimate/:token/edit-request', async (c) => {
   // staff read it in full on the order page, and the trail stays a
   // scannable list of what happened (same rule as the cancellation note).
   await logOrderEvent(sb, order.id, 'Customer requested changes.');
+  await recordNotification(sb, {
+    kind: 'edit_request',
+    orderId: order.id,
+    orderNumber: order.order_number,
+    customerName: displayName(order.customer),
+  });
 
   return c.json({ data: publicEditRequests([inserted])[0] });
 });

@@ -43,7 +43,7 @@ interface NavItem {
 }
 
 /**
- * The four sections, in the order they appear in both the rail and the
+ * The five sections, in the order they appear in both the rail and the
  * phone overlay. Orders is the app's home screen and lives at "/".
  */
 const ITEMS: NavItem[] = [
@@ -62,6 +62,12 @@ const ITEMS: NavItem[] = [
     to: '/calendar',
     label: 'Calendar',
     d: 'M3 10h18 M8 2v4M16 2v4 M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
+  },
+  {
+    // Bell: customer confirmations, edit requests and e-Transfers.
+    to: '/notifications',
+    label: 'Notifications',
+    d: 'M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9 M13.73 21a2 2 0 0 1-3.46 0',
   },
   {
     to: '/settings',

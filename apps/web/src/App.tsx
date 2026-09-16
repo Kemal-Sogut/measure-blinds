@@ -32,6 +32,7 @@ const OrderLabels = lazy(() => import('./pages/orders/OrderLabels'));
 const CalendarPage = lazy(() => import('./pages/calendar/CalendarPage'));
 const AppointmentsList = lazy(() => import('./pages/calendar/AppointmentsList'));
 const AppointmentDetail = lazy(() => import('./pages/calendar/AppointmentDetail'));
+const NotificationsPage = lazy(() => import('./pages/notifications/NotificationsPage'));
 const SettingsIndex = lazy(() => import('./pages/settings/SettingsIndex'));
 const CompanyInfo = lazy(() => import('./pages/settings/CompanyInfo'));
 const Materials = lazy(() => import('./pages/settings/Materials'));
@@ -104,6 +105,9 @@ export default function App() {
             <Route path="/calendar" element={guard(<Layout><CalendarPage /></Layout>)} />
             <Route path="/appointments" element={guard(<Layout><AppointmentsList /></Layout>)} />
             <Route path="/appointments/:id" element={guard(<Layout><AppointmentDetail /></Layout>)} />
+
+            {/* Notifications — customer confirms, edit requests, e-Transfers */}
+            <Route path="/notifications" element={guard(<Layout><NotificationsPage /></Layout>)} />
 
             {/* Legacy /estimates paths map onto the order screens */}
             <Route path="/estimates" element={<Navigate to="/" replace />} />

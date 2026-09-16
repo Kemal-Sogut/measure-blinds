@@ -1,5 +1,52 @@
 # Engine Features / Feature History
 
+## 2026-09-16 — Notifications page (bell in the sidebar) for customer and payment events
+Three things happen with no staff member watching — a customer presses **Request Edit**, a
+customer presses **Confirm Estimate**, and the Gmail Apps Script reports an **Interac
+e-Transfer** — and each was only discoverable by opening the right order (or reading the shop
+inbox). They now land in one feed.
+
+**Data — migration 43** (`supabase/migrations/20260916000043_notifications.sql`, MUST be applied
+to `lgbxxlwsdeuhdgzrjjen` before deploy; until then `GET /api/notifications` 500s and the three
+writers log an error but still succeed). Table `notifications`: `kind` (CHECK
+`edit_request | order_confirmed | etransfer_received`), `order_id` (FK → orders, ON DELETE
+CASCADE), snapshots `order_number`, `customer_name` (customer display name, or the e-Transfer
+sender), `amount` (e-Transfers only), `created_at`. Snapshots, not joins, so the list query is
+join-free and an alert keeps its wording. `authenticated_full_access` RLS, anon nothing.
+
+**Writers.** `apps/api/src/lib/notifications.ts` `recordNotification` — best effort, never throws
+(PostgREST error or thrown client both swallowed + logged). Called AFTER the event persists:
+`public.ts` confirm (after the guarded UPDATE wins, so a 409 double-confirm never alerts twice),
+`public.ts` edit-request (after the insert), `webhook.ts` in BOTH the applied and the parked
+`pending` branches (duplicates return before either). e-Transfer alerts deliberately carry NO
+`order_id` — they never link, and must survive deletion of the order they paid (the FK
+cascades); the matched order number is kept as text.
+
+**Reader.** `GET /api/notifications?page=N` (`routes/notifications.ts`, mounted in `index.ts`):
+newest first (`created_at desc, id desc` so ties never swap pages), 15 per page, same envelope as
+the appointments list (`page`, `page_size`, `total`, `total_pages ≥ 1`); strict query schema, so
+`?page=0|abc|1.5` or any other param is a 400; `numeric` amounts normalised to numbers.
+
+**Web.** Sidebar item **Notifications** with a bell icon between Calendar and Settings (rail and
+phone overlay). `/notifications` → `pages/notifications/NotificationsPage.tsx`: coloured dot per
+kind (amber edit request, green confirmed, brand blue payment), heading, date/time, one-line
+sentence; pager (‹ Previous · Page x of y · Next ›) at the bottom. Page number lives in `?page=`
+so Back from an order returns to the same page. Order alerts are buttons to `/orders/:id`;
+e-Transfer alerts are plain cards with no hover (`notificationHref`). Wording + link rule are pure
+functions in `notificationText.ts` (blank name/order degrade to "The customer" / "their
+estimate"). `useNotifications` uses `staleTime: 0` — the events come from outside the app, so
+nothing can invalidate the query; it refetches on mount and focus. No unread/read state and no
+badge count — not requested.
+
+### Verified
+api `pnpm check` clean, `pnpm test` 472/472 (new `notifications.routes.test.ts`; public route
+tests now assert one alert per confirm/edit request and none on refusal). web `pnpm check`
+clean, `oxlint` 0/0, `pnpm test` 472/472 (new `notificationText.test.ts`). Driven in a throwaway
+Vite harness with a mocked API (32 alerts): 15 per page, 3 pages, last page 2 rows with Next
+disabled, order rows navigate and e-Transfer rows are not buttons, Back returns to `?page=3`,
+375px no horizontal overflow (heading wraps the date under it). NOT seen against live data, the
+migration is NOT applied, and the webhook branch has no route test (none existed before).
+
 ## 2026-09-16 — Order page split into a section menu, one section, and the pricing panel
 The order page stacked everything — cancellation/edit banners, timeline, customer, dates, items,
 totals, installation, payments, activity log — in one long column, with Save, Send, Download,

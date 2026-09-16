@@ -6,6 +6,16 @@
 
 ## Where things stand (as of 2026-09-16)
 
+**Newest, uncommitted, web + api, needs DATABASE migration 43 applied before deploy:** a
+**Notifications page** (bell icon in the sidebar between Calendar and Settings, `/notifications`).
+Lists customer edit requests, customer confirmations and incoming e-Transfers (applied or
+pending), newest first, 15 per page with a bottom pager (`?page=`). Order alerts open the order;
+e-Transfer alerts don't link. New table `notifications`
+(`supabase/migrations/20260916000043_notifications.sql`), best-effort writer
+`apps/api/src/lib/notifications.ts` called from `public.ts` (confirm, edit-request) and
+`webhook.ts` (both branches), reader `GET /api/notifications`. No unread state or badge.
+Verified by tests + mocked harness only. See `knowledge/history/engine_features.md`, 2026-09-16.
+
 **Newest, on `main` (not deployed), web + small api, no migration:** the **order page is now a
 section menu + one section + pricing panel**. Left rail (xl+): Send/Download/Customer View,
 sections (Order Details, Items, Payments, Appointments, Manufacturer, Logs), Duplicate/Delete;

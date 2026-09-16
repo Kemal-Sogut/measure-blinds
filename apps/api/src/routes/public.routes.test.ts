@@ -38,6 +38,8 @@ interface FakeDb {
    * exercise the cap at all.
    */
   editRequests: Array<Record<string, unknown>>;
+  /** Payloads of every `notifications` INSERT (the staff Alerts feed). */
+  notifications: Array<Record<string, unknown>>;
 }
 
 /** Default company_settings row: shop open, brand fields populated. */
@@ -64,6 +66,7 @@ const db: FakeDb = {
   lastUpdate: null,
   company: openCompany(),
   editRequests: [],
+  notifications: [],
 };
 
 /**
@@ -121,6 +124,10 @@ function makeBuilder(table: string) {
       return { data: db.company };
     }
     if (state.table === 'appointments') return { data: db.appointment };
+    if (state.table === 'notifications' && state.op === 'insert') {
+      db.notifications.push(state.payload ?? {});
+      return { data: null };
+    }
     if (state.table === 'order_edit_requests') {
       if (state.op === 'insert') {
         const row = {
@@ -286,6 +293,7 @@ beforeEach(() => {
   db.lastUpdate = null;
   db.company = openCompany();
   db.editRequests = [];
+  db.notifications = [];
   sentEmails.length = 0;
 });
 
@@ -470,6 +478,26 @@ describe('POST /public/estimate/:token/confirm', () => {
     // the confirmation once, not once per customer click.
     expect(sentEmails).toHaveLength(1);
     expect(sentEmails[0].subject).toContain('confirmed');
+  });
+
+  it('raises exactly one order_confirmed alert linked to the order', async () => {
+    await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    await req(`/estimate/${TOKEN}/confirm`, 'POST'); // 409 — must not alert again
+    expect(db.notifications).toEqual([
+      {
+        kind: 'order_confirmed',
+        order_id: 'e1',
+        order_number: 'F0307-126',
+        customer_name: 'A B',
+        amount: null,
+      },
+    ]);
+  });
+
+  it('raises no alert when the confirm is refused', async () => {
+    db.order = { ...sentOrder(), expiry_date: '2020-01-01' };
+    await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(db.notifications).toHaveLength(0);
   });
 
   it('410 for an expired order', async () => {
@@ -746,6 +774,25 @@ describe('POST /public/estimate/:token/edit-request', () => {
     const res = await postJson('/estimate/not-a-uuid/edit-request', { message: 'hello' });
     expect(res.status).toBe(404);
     expect(db.calls).not.toContain('order_edit_requests.insert');
+  });
+
+  it('raises an edit_request alert linked to the order', async () => {
+    await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'Cordless please' });
+    expect(db.notifications).toEqual([
+      {
+        kind: 'edit_request',
+        order_id: 'e1',
+        order_number: 'F0307-126',
+        customer_name: 'A B',
+        amount: null,
+      },
+    ]);
+  });
+
+  it('raises no alert when the request is refused', async () => {
+    db.order = { ...sentOrder(), status: 'awaiting_payment' };
+    await postJson(`/estimate/${TOKEN}/edit-request`, { message: 'too late' });
+    expect(db.notifications).toHaveLength(0);
   });
 
   it('sends no email — the order page is where staff see the request', async () => {
