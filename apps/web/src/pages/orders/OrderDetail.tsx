@@ -697,6 +697,9 @@ export default function OrderDetail() {
   const section = resolveOrderSection(searchParams.get(ORDER_SECTION_PARAM), Boolean(id));
   const [navCollapsed, toggleNavCollapsed] = useCollapsedPanel(PANEL_STORAGE_KEYS.nav);
   const [pricingCollapsed, togglePricingCollapsed] = useCollapsedPanel(PANEL_STORAGE_KEYS.pricing);
+  // Per-item prices in the pricing panel sit behind an "Items" disclosure,
+  // closed on every visit so the totals are what the panel shows first.
+  const [pricingItemsOpen, setPricingItemsOpen] = useState(false);
 
   /**
    * Switches the middle column. `replace` keeps section hops out of the
@@ -2756,19 +2759,52 @@ export default function OrderDetail() {
               {items.length === 0 && (
                 <p className="text-[13px] text-text-muted">Add a line item to see pricing.</p>
               )}
-              {items.map((it, i) => (
-                <div key={it.key} className="mb-2.5 flex justify-between gap-3">
-                  {/* Wraps rather than truncates — the label is how two
-                      similar lines are told apart. `wrap-anywhere` keeps
-                      the panel's width from growing with the longest one. */}
-                  <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
-                    {draftLabel(it, i)}
-                  </span>
-                  <span className="shrink-0 font-mono text-[13px] text-text-primary">
-                    {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
-                  </span>
-                </div>
-              ))}
+              {items.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setPricingItemsOpen((v) => !v)}
+                    aria-expanded={pricingItemsOpen}
+                    aria-controls="pricing-items-list"
+                    className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-sunken"
+                  >
+                    <span className="text-[13px] font-semibold text-text-primary">
+                      Items <span className="font-normal text-text-muted">({items.length})</span>
+                    </span>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className={`text-text-muted transition-transform ${pricingItemsOpen ? 'rotate-180' : ''}`}
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {pricingItemsOpen && (
+                    <div id="pricing-items-list" className="mt-2">
+                    {items.map((it, i) => (
+                      <div key={it.key} className="mb-2.5 flex justify-between gap-3">
+                        {/* Wraps rather than truncates — the label is how two
+                            similar lines are told apart. `wrap-anywhere` keeps
+                            the panel's width from growing with the longest one. */}
+                        <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
+                          {draftLabel(it, i)}
+                        </span>
+                        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                          {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                    ))}
+                    </div>
+                  )}
+                </>
+              )}
               <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
                 {materialUsageTrigger}
                 {discountControl}

@@ -22,7 +22,7 @@ place (pricing rail footer / mobile bar). It read as too busy.
   for the customer). Manufacturer holds Cut Sheet, Labels and the Material usage trigger — Cut
   Sheet/Labels left the in-progress stage actions and are now reachable at any stage. Logs is
   the extracted `OrderActivityLog`.
-- **Right — pricing panel**: live per-item prices, Material usage, discount, totals, balance,
+- **Right — pricing panel**: per-item prices behind an "Items (n)" disclosure (closed by default, not remembered), Material usage, discount, totals, balance,
   and **Save** (green, footer). Collapses to a strip showing the total/balance and an icon Save;
   while collapsed, the Items section shows the totals + discount card itself.
 
