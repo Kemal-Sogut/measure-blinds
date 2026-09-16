@@ -365,7 +365,17 @@ export interface InvoiceEmailInputs {
   company: CompanyBrand;
   customerFirstName: string;
   orderNumber: string;
-  total: number;
+  /** The order's full total (server-computed, incl. HST). */
+  orderTotal: number;
+  /** Sum of every payment in the order's ledger (server-computed). */
+  paidToDate: number;
+  /**
+   * orderTotal − paidToDate. Positive renders a "Balance due" total line
+   * so a customer who already paid a deposit is not shown the full
+   * amount as if it were still owed; zero or negative renders the
+   * "Paid in full" treatment instead (no balance line at all).
+   */
+  balance: number;
   viewUrl: string;
   /** Optional personal note from the consultant, shown above the CTA. */
   message?: string;
@@ -373,23 +383,32 @@ export interface InvoiceEmailInputs {
 
 /**
  * Builds the branded invoice email sent for a confirmed order, in the
- * same visual system as the estimate email: greeting, invoice summary
- * card, optional note, and a CTA linking to the public view page (no
- * "confirm" step — the order is already confirmed). All dynamic strings
- * are HTML-escaped.
+ * same visual system as the estimate and receipt emails: greeting, an
+ * invoice summary card (order total, paid to date, then either the
+ * "Balance due" headline amount or an accent "Paid in full" headline),
+ * optional note, and a CTA linking to the public view page (no "confirm"
+ * step — the order is already confirmed). All money is server-computed
+ * by the caller from the payment ledger; all dynamic strings are
+ * HTML-escaped.
  */
 export function buildInvoiceEmailHtml(i: InvoiceEmailInputs): string {
   const company = escapeHtml(i.company.name);
   const name = escapeHtml(i.customerFirstName);
   const order = escapeHtml(i.orderNumber);
   const url = escapeHtml(i.viewUrl);
+  const paidInFull = i.balance <= 0;
   const body = `${headingHtml('Your invoice')}
     ${introHtml(`Hi ${name} &mdash; thank you for your order with ${company}. Your invoice is attached, and you can view your order online any time.`)}
     ${summaryCardHtml({
       eyebrow: 'Invoice summary',
       badge: order,
-      rows: [['Customer', name]],
-      total: { label: 'Total (incl. HST)', amount: i.total },
+      headline: paidInFull ? `<span style="color:${C.accent};">Paid in full</span>` : undefined,
+      rows: [
+        ['Customer', name],
+        ['Order total (incl. HST)', `<span style="font-family:${MONO};">$${formatMoney(i.orderTotal)}</span>`],
+        ['Paid to date', `<span style="font-family:${MONO};">$${formatMoney(i.paidToDate)}</span>`],
+      ],
+      total: paidInFull ? undefined : { label: 'Balance due', amount: i.balance },
     })}
     ${messageBlockHtml(i.message)}
     <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'View your order')}</div>

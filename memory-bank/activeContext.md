@@ -4,7 +4,7 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-09-12)
+## Where things stand (as of 2026-09-16)
 
 **Newest, on branch `order-detail-sectioned-layout` (not merged, not deployed), web + small
 api, no migration:** the **order page is now a section menu + one section + pricing panel**.
@@ -14,6 +14,11 @@ section (`?view=`) with its own buttons; stage actions sit under the Progress ti
 pricing + Save; collapsible. Below xl: tab strip, ⋯ header menu, one-row bottom bar with Save.
 `GET /api/appointments` gained an optional `customer_id` filter for the Appointments section.
 Verified in a harness only (no `.env`). See `knowledge/history/engine_features.md`, 2026-09-16.
+
+**Newest, uncommitted, api-only, no migration:** the **invoice email now shows the balance
+due, not the full total**. `send-invoice` derives paid-to-date and balance from the ledger;
+the card lists Order total + Paid to date, then "Balance due" (or "Paid in full"). PDF
+unchanged. See `knowledge/history/bug_fixes.md`, 2026-09-16.
 
 **Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
 the customer to confirm**. Customers saw only "View your estimate" and didn't know a
