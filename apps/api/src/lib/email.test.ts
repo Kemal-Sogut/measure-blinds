@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   escapeHtml,
   buildEstimateEmailHtml,
+  buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildConfirmationNoticeHtml,
   buildAppointmentBookedHtml,
@@ -75,6 +76,41 @@ describe('buildEstimateEmailHtml', () => {
     expect(html).toContain('(613) 699-1837');
     expect(html).toContain('mailto:info@blindsnisa.com');
     expect(html).toContain('Confidentiality notice');
+  });
+});
+
+describe('buildInvoiceEmailHtml', () => {
+  const baseInputs = {
+    company: { name: 'Blinds Nisa', email: 'info@blindsnisa.com' },
+    customerFirstName: '<b>Kemal</b>',
+    orderNumber: 'F2606-1226',
+    orderTotal: 2148,
+    paidToDate: 1074,
+    balance: 1074,
+    viewUrl: 'https://app.example.com/customer/abc-123',
+  };
+
+  it('escapes injected markup in user-supplied strings', () => {
+    const html = buildInvoiceEmailHtml(baseInputs);
+    expect(html).not.toContain('<b>Kemal</b>');
+    expect(html).toContain('&lt;b&gt;Kemal&lt;/b&gt;');
+  });
+
+  it('shows the order total, paid to date and the balance due as the headline amount', () => {
+    const html = buildInvoiceEmailHtml(baseInputs);
+    expect(html).toContain('Order total');
+    expect(html).toContain('$2,148.00');
+    expect(html).toContain('Paid to date');
+    expect(html).toContain('Balance due');
+    expect(html).toContain('$1,074.00');
+    expect(html).not.toContain('Total (incl. HST)');
+    expect(html).not.toContain('Paid in full');
+  });
+
+  it('renders "Paid in full" and no balance line when nothing is owed', () => {
+    const html = buildInvoiceEmailHtml({ ...baseInputs, paidToDate: 2148, balance: 0 });
+    expect(html).toContain('Paid in full');
+    expect(html).not.toContain('Balance due');
   });
 });
 

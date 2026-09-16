@@ -1,5 +1,17 @@
 # Bug Fixes History
 
+## 2026-09-16 — Invoice email showed the full total even after a deposit was paid
+- **Issue:** the invoice email's summary card led with "Total (incl. HST)", so a customer who
+  had already paid a deposit read it as still owing the full amount.
+- **Cause:** `buildInvoiceEmailHtml` only accepted `total`; `POST /api/orders/:id/send-invoice`
+  never looked at the payment ledger.
+- **Fix:** the route now derives `paidToDate` (`sumPayments(order.payments)`) and `balance`
+  server-side, the same way the receipt email does. The invoice card lists Order total and
+  Paid to date, then a "Balance due" total line — or an accent "Paid in full" headline with no
+  balance line when nothing is owed. The attached PDF is unchanged.
+- **Verified:** three new `buildInvoiceEmailHtml` tests in `email.test.ts`; api `pnpm check`
+  clean, `pnpm test` 456 passing.
+
 ## 2026-09-03 — Deleting an order stranded its e-Transfers: money marked "applied" to nothing
 - **Issue:** found while auditing what `DELETE /api/orders/:id` actually leaves behind. Every
   child of an order is cleaned up by an `ON DELETE CASCADE` FK (line items, activity log,

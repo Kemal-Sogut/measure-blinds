@@ -19,11 +19,29 @@
  * confirmation sheet (recipient, amount/date, optional message) and
  * emails the customer a branded receipt; once sent the row shows a
  * muted "✓ Receipt sent" marker and the action becomes Resend receipt.
- * Stage actions: the primary slot is Save at EVERY stage (Confirm used
- * to sit there and was pressed as if it were Save). Stage changes —
- * confirming, reversing a confirmation, marking ready — happen only on
- * the Progress timeline. In progress adds Cut Sheet and Labels;
- * Propose Installation and Mark Installed live in the Installation card.
+ *
+ * Layout (2026-09): three columns from `xl` up, one below.
+ *   - Left: `OrderSectionRail` — Send / Download / Customer View on top,
+ *     the section list (Order Details, Items, Payments, Appointments,
+ *     Manufacturer, Logs) in the middle, Duplicate / Delete at the
+ *     bottom. Collapsible to icons. Below xl the sections become a
+ *     sticky tab strip (`OrderSectionTabs`) and the document actions
+ *     move to the header's `OrderActionsMenu`.
+ *   - Middle: the ONE selected section (`?view=`, see `orderSections.ts`)
+ *     with every button that belongs to it. Editor state stays in this
+ *     component, so switching sections never loses unsaved edits.
+ *   - Right: the pricing panel — per-item live prices, discount, totals
+ *     and the green Save. Collapsible to a strip that keeps the total and
+ *     Save. Below xl, Save and the running total sit in the fixed bottom
+ *     bar, which slides away while the keyboard is up (`useKeyboardOpen`)
+ *     and publishes its height as `--action-bar-h` for bottom padding.
+ *
+ * Stage changes — confirming, reversing a confirmation, marking ready —
+ * happen only on the Progress timeline in Order Details (a Confirm
+ * button used to sit where Save now does and was pressed as if it were
+ * Save). Propose Installation and Mark Installed live in the
+ * Installation card (Appointments section); Cut Sheet and Labels live in
+ * the Manufacturer section.
  * EVERY stage offers a Present to Customer action, which saves and then
  * navigates in the same tab to `/orders/:id/present` — the app's one
  * read-only order view. It is filterable and per-option for the customer
@@ -31,17 +49,6 @@
  * for the consultant's own read; a switch on its title row reveals or
  * hides what each individual choice cost. It replaced a separate Order
  * Overview page in 2026-08.
- * Save (green), Send (blue), Download (gray) and Delete (icon-only,
- * red, saved orders) live in the TOP BAR
- * (PageHeader right slot, icon-only on phones) at every stage; the
- * action areas hold only the stage-specific actions. On mobile the
- * sticky action bar renders the stage's primary action full-width on
- * its own row and every other action as smaller inline buttons (max
- * three per row, max three rows). That bar slides out of the way while
- * the on-screen keyboard is up (`useKeyboardOpen`) and publishes its own
- * height as `--action-bar-h`, which the page reserves as bottom padding
- * — its height varies by stage, so a constant would bury the last line
- * item at some stages.
  *
  * Phone layout note: the line-item rows break onto two lines below `sm`
  * (identity above, price + row actions below). On one line the row's
@@ -49,14 +56,15 @@
  * root is `overflow-x-clip`, the edit/duplicate/delete buttons were not
  * merely cramped — they were unreachable.
  *
- * Ready/installed orders also show the Installation panel
- * (`InstallationSection`): the scheduled window, the customer's
- * response, and change / staff-confirm / delete actions.
+ * The Appointments section shows the Installation panel for
+ * ready/installed orders (`InstallationSection`: the scheduled window,
+ * the customer's response, change / staff-confirm / delete) above every
+ * visit booked for the customer (`CustomerAppointmentsCard`).
  *
  * The generated PDF is an Estimate until the first payment is recorded,
  * after which it is an Invoice.
  *
- * Email invariant: the top-bar Send button is the ONLY control that
+ * Email invariant: the Send action (section rail / header menu) is the ONLY control that
  * emails the customer their "Estimate Ready" mail. The Progress
  * timeline's advance arrows are bookkeeping only — advancing to "Sent"
  * calls the status-only `mark-sent` route, never `send`.
@@ -95,7 +103,6 @@ import {
   useDeletePayment,
   useUnmatchedEtransfers,
   useDismissEtransfer,
-  useOrderLogs,
   useOrderEditRequests,
   useResolveEditRequest,
   useOrderPublicToken,
@@ -108,6 +115,7 @@ import {
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomer, useCustomerSearch } from '../../hooks/useCustomers';
+import { useOrderAppointment } from '../../hooks/useCalendar';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
 import {
@@ -148,6 +156,23 @@ import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
 import BulkAddSheet from './BulkAddSheet';
 import EditRequestsCard from './EditRequestsCard';
+import OrderActivityLog from './OrderActivityLog';
+import CustomerAppointmentsCard from './CustomerAppointmentsCard';
+import OrderActionsMenu from './OrderActionsMenu';
+import {
+  OrderSectionRail,
+  OrderSectionTabs,
+  type OrderNavAction,
+  type OrderSectionBadge,
+} from './OrderSectionNav';
+import {
+  ORDER_SECTIONS,
+  ORDER_SECTION_PARAM,
+  PANEL_STORAGE_KEYS,
+  resolveOrderSection,
+  type OrderSectionId,
+} from './orderSections';
+import { useCollapsedPanel } from './useCollapsedPanel';
 import { nextKey } from './draftKeys';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
@@ -426,32 +451,18 @@ const ICONS = {
 };
 
 /**
- * One status-aware action rendered by both the desktop pricing-rail
- * footer and the mobile sticky bar. `label` is the full wording (used
- * on desktop rows and on the primary button); `short` is the compact
- * wording used by the mobile inline grid where up to three buttons
- * share one row. `tone` optionally recolours a secondary's text; `fill`
- * optionally recolours the primary's background.
+ * One status-aware action (today only Present to Customer), rendered
+ * as a button under the Progress timeline in the Order Details section.
+ * `tone` optionally recolours a secondary button's text.
  */
 type StageAction = {
   key: string;
   icon: ReactNode;
   label: string;
-  short: string;
   onClick: () => void;
   disabled?: boolean;
   tone?: string;
-  /** Background classes replacing the default brand fill on the primary button (Save is green, matching the top-bar Save). */
-  fill?: string;
 };
-
-/**
- * How many activity-log rows the collapsed trail shows. The log grows
- * unbounded over an order's life (every lifecycle mutation appends a row),
- * so the newest slice is rendered by default and the rest stays behind the
- * "Show more" toggle to keep the bottom of the page short.
- */
-const LOG_PREVIEW_COUNT = 10;
 
 /** Every bulk-edit field on "no change" — shared by `bulkState`'s initial value and `openBulkEdit`'s reset so the two can never drift apart. */
 const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '', color: '' };
@@ -459,10 +470,12 @@ const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cass
 export default function OrderDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
-  const { data: logs } = useOrderLogs(id);
   const { data: editRequests } = useOrderEditRequests(id);
+  // Same cache entry InstallationSection reads; here only to badge the
+  // Appointments section when the customer has not agreed to a time yet.
+  const { data: installAppt } = useOrderAppointment(id);
 
   // New-order customer pre-fill. An "Add order" link (e.g. from an
   // appointment's detail page) opens `/orders/new?customer=<id>`; the
@@ -634,9 +647,36 @@ export default function OrderDetail() {
   // cancellation request (accepting sends nothing).
   const [cancelDenyMessage, setCancelDenyMessage] = useState('');
 
-  // Activity-log trail: collapsed to the newest LOG_PREVIEW_COUNT rows
-  // until the reader expands it.
-  const [logsExpanded, setLogsExpanded] = useState(false);
+  // ── Section layout ──────────────────────────────────────────────
+  // The middle column shows ONE section at a time, chosen from the left
+  // rail (xl+) or the tab strip (below xl). It lives in `?view=` so a
+  // reload or Back returns to the same section; see `orderSections.ts`.
+  // Every editor state hook above stays HERE, not in the sections, so
+  // switching sections never discards unsaved edits.
+  const section = resolveOrderSection(searchParams.get(ORDER_SECTION_PARAM), Boolean(id));
+  const [navCollapsed, toggleNavCollapsed] = useCollapsedPanel(PANEL_STORAGE_KEYS.nav);
+  const [pricingCollapsed, togglePricingCollapsed] = useCollapsedPanel(PANEL_STORAGE_KEYS.pricing);
+  // Per-item prices in the pricing panel sit behind an "Items" disclosure,
+  // closed on every visit so the totals are what the panel shows first.
+  const [pricingItemsOpen, setPricingItemsOpen] = useState(false);
+
+  /**
+   * Switches the middle column. `replace` keeps section hops out of the
+   * history stack, so Back leaves the order instead of replaying tabs;
+   * other params (e.g. a new order's `?customer=`) are preserved. The
+   * window scrolls to the top because the new section starts there.
+   */
+  function selectSection(next: OrderSectionId) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        params.set(ORDER_SECTION_PARAM, next);
+        return params;
+      },
+      { replace: true },
+    );
+    window.scrollTo({ top: 0 });
+  }
 
   // Installation propose/change sheet (lives in InstallationSection;
   // lifted here so the ready-status actions panel can open it too).
@@ -1181,7 +1221,9 @@ export default function OrderDetail() {
       const saved = id
         ? await updateMut.mutateAsync({ id, input: payload })
         : await createMut.mutateAsync(payload);
-      if (!id) navigate(`/orders/${saved.id}`, { replace: true });
+      // Carry the open section across the new-order → saved-order URL
+      // change, but not `?customer=`, which only seeds a NEW order.
+      if (!id) navigate(`/orders/${saved.id}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed.');
@@ -1763,7 +1805,8 @@ export default function OrderDetail() {
   );
 
   /**
-   * Payments + balance panel (confirmed orders only).
+   * Payments + balance panel (confirmed orders only) — the body of the
+   * Payments section.
    *
    * Lists the ledger the way it is stored — order total, then ONE row
    * per recorded payment (date · note, amount, send/resend receipt,
@@ -1782,7 +1825,7 @@ export default function OrderDetail() {
           accent={status === 'awaiting_payment' ? 'warning' : 'success'}
           d="M2 8h20 M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2z M6 15h4"
         />
-        <h2 className="flex-1 text-[15px] font-bold text-text-primary">Payments</h2>
+        <h3 className="flex-1 text-[15px] font-bold text-text-primary">Balance &amp; ledger</h3>
         <StatusBadge status={status} />
       </div>
       <div className="flex justify-between">
@@ -1917,8 +1960,15 @@ export default function OrderDetail() {
     </section>
   );
 
-  /** Progress timeline; every stage but the current one is a manual move. */
-  const timelineCard = id && existing && (
+  /**
+   * Progress timeline; every stage but the current one is a manual move.
+   * A function rather than a JSX constant so the stage's action buttons
+   * (built later by `stageActions`) can sit in the same card as the
+   * timeline they advance, instead of in a second card below it.
+   *
+   * @param footer The stage action strip, or null when the stage has none.
+   */
+  const renderTimelineCard = (footer: ReactNode) => id && existing && (
     <section className="rounded-xl border border-border-light bg-surface p-4 shadow-md">
       <div className="mb-3 flex items-center gap-2.5">
         <SectionIcon
@@ -1989,23 +2039,25 @@ export default function OrderDetail() {
           );
         })}
       </ol>
+      {footer}
     </section>
   );
 
   /**
    * Builds the status-aware action set consumed by both layouts.
    *
-   * `primary` is ALWAYS Save, at every stage including an unsaved order.
-   * The big primary slot used to hold Confirm (draft/sent), Mark Ready
-   * (in progress) and Propose Installation (ready); people pressed
-   * Confirm believing it was Save and moved orders to awaiting payment by
-   * accident. Stage moves now happen ONLY on the Progress timeline
+   * `primary` is the single key action for the current stage; it is null
+   * at every stage now. Save used to be pushed into this slot (after
+   * staff pressed Confirm believing it was Save), but in this layout Save
+   * already lives in the pricing panel footer (the mobile bottom bar
+   * below xl). Stage moves happen ONLY on the Progress timeline
    * (`handleSetStatus`) — moving to Awaiting Payment is the confirmation,
-   * moving back to Sent reverses it, moving to Ready marks it ready —
-   * and the installation actions live in the Installation card.
-   * `secondary` are the remaining stage-specific actions. Send and
-   * Download live in the top bar (see `docActions`), and Record Payment
-   * lives in the Payments panel body (see `paymentsPanel`).
+   * moving back to Sent reverses it, moving to Ready marks it ready — and
+   * the installation actions live in the Installation card.
+   * `secondary` render under the Progress timeline. Send, Download and
+   * Customer View live in the section rail (the header's actions menu
+   * below xl); Record Payment lives in the Payments section; Cut Sheet
+   * and Labels live in the Manufacturer section.
    * The Present to Customer action is included at EVERY stage: it opens
    * the app's one read-only order view, which serves both the customer
    * conversation and the consultant's itemised read.
@@ -2014,651 +2066,673 @@ export default function OrderDetail() {
     primary: StageAction | null;
     secondary: StageAction[];
   } => {
-    const save: StageAction = {
-      key: 'save',
-      icon: ICONS.save,
-      label: saving ? 'Saving…' : 'Save',
-      short: saving ? 'Saving…' : 'Save',
-      onClick: handleSaveDraft,
-      disabled: !canAct,
-      fill: 'bg-success hover:bg-success/90',
-    };
     const present: StageAction = {
       key: 'present',
       icon: ICONS.present,
       label: 'Present to Customer',
-      short: 'Present',
       onClick: handlePresent,
       disabled: !canAct || !customer || items.length === 0,
     };
 
-    // Before Draft (unsaved) — Save is the only action.
-    if (!id) return { primary: save, secondary: [] };
+    // Before Draft (unsaved) — nothing here; Save is in the pricing panel.
+    if (!id) return { primary: null, secondary: [] };
 
-    // In progress — open the workshop cut sheet and labels.
-    if (status === 'in_progress') {
-      const manufacturer: StageAction = {
-        key: 'manufacturer',
-        icon: ICONS.manufacturer,
-        label: 'Cut Sheet',
-        short: 'Cut Sheet',
-        onClick: () => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener'),
-      };
-      const labels: StageAction = {
-        key: 'labels',
-        icon: ICONS.labels,
-        label: 'Labels',
-        short: 'Labels',
-        onClick: () => window.open(`/orders/${id}/labels`, '_blank', 'noopener'),
-      };
-      return { primary: save, secondary: [manufacturer, labels, present] };
-    }
-
-    // Every other stage — draft, sent, awaiting payment, ready, installed,
-    // expired — carries only Save and Present. Payments are recorded from
-    // the Payments panel; the installation proposal and Mark Installed
-    // live in the Installation card.
-    return { primary: save, secondary: [present] };
+    // Every saved stage — draft through installed, and expired — carries
+    // only Present. Payments are recorded from the Payments section; the
+    // installation proposal and Mark Installed live in the Installation
+    // card; the cut sheet and labels in the Manufacturer section.
+    return { primary: null, secondary: [present] };
   };
 
-  /**
-   * Renders the stage's action set for one breakpoint. Returns null
-   * when the stage has no panel actions at all (e.g. an unsaved order,
-   * where the only actions are the top-bar Save/Send/Download).
-   *
-   * `vertical` (desktop pricing-rail footer): the primary button, then
-   * every secondary full-width. Otherwise (mobile sticky bar): the
-   * primary action alone on its own full-width row, and the secondaries
-   * as smaller inline buttons with compact labels, packed up to three
-   * per row, so the bar never exceeds three button rows.
-   */
-  const actions = (vertical: boolean) => {
-    const { primary, secondary } = stageActions();
-    if (!primary && secondary.length === 0) return null;
-    const shared = 'inline-flex items-center justify-center gap-2 rounded-sm disabled:opacity-40';
-    const primaryCls = (a: StageAction) =>
-      `${vertical ? 'h-[46px]' : 'h-12'} w-full ${shared} ${a.fill ?? 'bg-brand-600 hover:bg-brand-700'} text-sm font-semibold text-white`;
-
-    const fullBtn = (a: StageAction, cls: string) => (
-      <button key={a.key} onClick={a.onClick} disabled={a.disabled} className={`${cls}${a.tone ? ` ${a.tone}` : ''}`}>
-        {a.icon}
-        {a.label}
-      </button>
-    );
-
-    if (vertical) {
-      const secondaryCls = `h-10 w-full ${shared} border border-border-input bg-surface text-[13px] font-medium text-text-secondary`;
-      return (
-        <div className="flex flex-col gap-2.5">
-          {primary && fullBtn(primary, primaryCls(primary))}
-          {secondary.map((a) => fullBtn(a, secondaryCls))}
-        </div>
-      );
-    }
-
-    // Mobile: pack secondaries into inline rows of ≤3 (2+2 reads better
-    // than 3+1 when there are exactly four).
-    const inline = secondary;
-    const perRow = inline.length === 4 ? 2 : 3;
-    const rows: StageAction[][] = [];
-    for (let i = 0; i < inline.length; i += perRow) rows.push(inline.slice(i, i + perRow));
-    const compactCls =
-      'h-10 min-w-0 flex-1 inline-flex items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-1.5 text-[12px] font-medium text-text-secondary disabled:opacity-40';
-    return (
-      <div className="flex flex-col gap-2">
-        {primary && fullBtn(primary, primaryCls(primary))}
-        {rows.map((row) => (
-          <div key={row[0].key} className="flex gap-2">
-            {row.map((a) => (
-              <button
-                key={a.key}
-                onClick={a.onClick}
-                disabled={a.disabled}
-                className={`${compactCls}${a.tone ? ` ${a.tone}` : ''}`}
-              >
-                {a.icon}
-                <span className="truncate">{a.short}</span>
-              </button>
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  };
-
-  // Desktop rail footer content (null when the stage has no panel
-  // actions, so the empty bordered strip is not rendered).
-  const railActions = actions(true);
-
-  const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
-  const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
-  const docBtn =
-    'inline-flex h-10 min-w-0 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-semibold disabled:opacity-40';
+  const { primary: stagePrimary, secondary: stageSecondary } = stageActions();
 
   /**
-   * Document actions — Save, Send, Download, Customer View, Delete —
-   * colour-coded per the design: Save green, Send blue, the rest
-   * neutral, Delete red. Customer View is deliberately neutral like
-   * Download so the toolbar keeps exactly two coloured actions and the
-   * eye does not compete with Save/Send. It is disabled until the order
-   * is saved: minting the capability token needs a row to mint against.
-   *
-   * These live in a toolbar at the top of the page BODY, not in
-   * `PageHeader`'s right slot. In the header they were five buttons in
-   * a `shrink-0` container: once labels appeared at `sm` they measured
-   * roughly 470px inside a row that was itself capped at 512px, so the
-   * last actions were pushed past the edge and silently swallowed by
-   * the page's `overflow-x-clip` guard. Delete was the first to go —
-   * the least recoverable action, made invisible by a layout accident.
-   *
-   * In the body they get the full content width and are free to WRAP
-   * onto a second line instead of overflowing, which is why the row is
-   * `flex-wrap` with no fixed widths. Labels still collapse below `sm`
-   * (title/aria-label keep them accessible), so on a phone the set is
-   * five ~44px icon buttons that fit one row at 320px.
-   *
-   * The row is rendered inside the page's sticky head block (see
-   * `stickyHead` below), so on `md+` it stays reachable on a long
-   * order without scrolling back to the top.
+   * The stage's lifecycle buttons, as the footer of the Progress card:
+   * the primary action filled (full width on a phone), the rest outlined,
+   * wrapping instead of overflowing. Null when the stage has none (an
+   * unsaved order), so the card keeps no empty strip.
    */
-  const docActions = (
-    <div className={`${PAGE_CONTAINER} flex flex-wrap items-center gap-2 py-2.5`}>
-      <button
-        onClick={handleSaveDraft}
-        disabled={!canAct}
-        title={saving ? 'Saving…' : 'Save as Draft'}
-        aria-label="Save as Draft"
-        className={`${docBtn} bg-success text-white hover:bg-success/90 max-sm:w-11 max-sm:px-0`}
-      >
-        {ICONS.save}
-        <span className="hidden sm:inline">{saving ? 'Saving…' : 'Save'}</span>
-      </button>
-      <button
-        onClick={() => void openSend()}
-        disabled={sendDisabled}
-        title={isInvoice ? 'Send Invoice' : status === 'sent' ? 'Resend Estimate' : 'Send Estimate'}
-        aria-label={isInvoice ? 'Send Invoice' : 'Send Estimate'}
-        className={`${docBtn} bg-brand-600 text-white hover:bg-brand-700 max-sm:w-11 max-sm:px-0`}
-      >
-        {ICONS.send}
-        <span className="hidden sm:inline">
-          {sendBusy ? 'Sending…' : status === 'sent' ? 'Resend' : 'Send'}
-        </span>
-      </button>
-      <button
-        onClick={handlePdf}
-        disabled={(!id && !customer) || saving}
-        title={`Download ${docLabel}`}
-        aria-label={`Download ${docLabel}`}
-        className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
-      >
-        {ICONS.download}
-        <span className="hidden sm:inline">Download</span>
-      </button>
-      <button
-        onClick={() => void handleCustomerView()}
-        disabled={!id || saving || publicTokenMut.isPending}
-        title="Open the page the customer sees"
-        aria-label="Customer View"
-        className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
-      >
-        {ICONS.customerView}
-        <span className="hidden sm:inline">Customer View</span>
-      </button>
-      {/* Duplicate — only for a SAVED order: an unsaved one has no rows
-          to copy, and the Worker duplicates from the database, not from
-          whatever is on screen. */}
-      {id && (
+  const stageActionStrip = (stagePrimary || stageSecondary.length > 0) && (
+    <div className="mt-4 flex flex-wrap gap-2 border-t border-border-light pt-3.5">
+      {stagePrimary && (
         <button
-          onClick={handleDuplicateOrder}
-          disabled={duplicateMut.isPending || saving}
-          title="Create a new draft order with the same customer and items"
-          aria-label="Duplicate Order"
-          className={`${docBtn} border border-border-input bg-surface font-medium text-text-secondary hover:bg-surface-sunken max-sm:w-11 max-sm:px-0`}
+          type="button"
+          onClick={stagePrimary.onClick}
+          disabled={stagePrimary.disabled}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-sm bg-brand-600 px-4 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-40 max-sm:w-full"
         >
-          {ICONS.duplicate}
-          <span className="hidden sm:inline">
-            {duplicateMut.isPending ? 'Duplicating…' : 'Duplicate'}
-          </span>
+          {stagePrimary.icon}
+          {stagePrimary.label}
         </button>
       )}
-      {id && (
+      {stageSecondary.map((a) => (
         <button
-          onClick={handleDeleteOrder}
-          disabled={deleteMut.isPending}
-          title={deleteMut.isPending ? 'Deleting…' : 'Delete Order'}
-          aria-label="Delete Order"
-          className={`${docBtn} border border-border-input bg-surface font-medium text-danger hover:bg-surface-sunken max-sm:w-11 max-sm:px-0 sm:ml-auto`}
+          key={a.key}
+          type="button"
+          onClick={a.onClick}
+          disabled={a.disabled}
+          className={`inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium hover:bg-surface-sunken disabled:opacity-40 sm:flex-none ${a.tone ?? 'text-text-secondary'}`}
         >
-          {ICONS.trash}
-          <span className="hidden sm:inline">Delete</span>
+          {a.icon}
+          <span className="truncate">{a.label}</span>
         </button>
-      )}
+      ))}
     </div>
   );
 
+  const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
+  const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
+
+  /**
+   * Document actions above the section list: Send (the one filled
+   * button), Download and Customer View. Customer View needs a saved row
+   * to mint its capability token against, so it is disabled until then.
+   * The same list feeds the rail (xl+) and the header menu (below xl).
+   */
+  const topNavActions: OrderNavAction[] = [
+    {
+      key: 'send',
+      icon: ICONS.send,
+      label: sendBusy
+        ? 'Sending…'
+        : isInvoice
+          ? 'Send Invoice'
+          : status === 'sent'
+            ? 'Resend Estimate'
+            : 'Send Estimate',
+      onClick: () => void openSend(),
+      disabled: sendDisabled,
+      variant: 'primary',
+    },
+    {
+      key: 'download',
+      icon: ICONS.download,
+      label: `Download ${docLabel}`,
+      onClick: () => void handlePdf(),
+      disabled: (!id && !customer) || saving,
+    },
+    {
+      key: 'customer-view',
+      icon: ICONS.customerView,
+      label: 'Customer View',
+      title: 'Open the page the customer sees',
+      onClick: () => void handleCustomerView(),
+      disabled: !id || saving || publicTokenMut.isPending,
+    },
+  ];
+
+  /**
+   * Copy and destructive actions below the section list, apart from Send.
+   * Both need a saved order: the Worker duplicates from the database, not
+   * from the screen, and an unsaved order has nothing to delete.
+   */
+  const bottomNavActions: OrderNavAction[] = id
+    ? [
+      {
+        key: 'duplicate',
+        icon: ICONS.duplicate,
+        label: duplicateMut.isPending ? 'Duplicating…' : 'Duplicate',
+        title: 'Create a new draft order with the same customer and items',
+        onClick: () => void handleDuplicateOrder(),
+        disabled: duplicateMut.isPending || saving,
+      },
+      {
+        key: 'delete',
+        icon: ICONS.trash,
+        label: deleteMut.isPending ? 'Deleting…' : 'Delete Order',
+        onClick: () => void handleDeleteOrder(),
+        disabled: deleteMut.isPending,
+        variant: 'danger',
+      },
+    ]
+    : [];
+
+  // Section-menu markers: what in each section is waiting on someone.
+  // An open cancellation outranks open edit requests on Order Details,
+  // matching the banners' own order inside that section.
+  const openEditRequestCount = (editRequests ?? []).filter((r) => !r.resolved_at).length;
+  const sectionBadges: Partial<Record<OrderSectionId, OrderSectionBadge>> = {
+    details: existing?.cancel_requested_at
+      ? { tone: 'danger' }
+      : openEditRequestCount > 0
+        ? { text: String(openEditRequestCount), tone: 'warning' }
+        : undefined,
+    items: items.length > 0 ? { text: String(items.length), tone: 'neutral' } : undefined,
+    payments: postConfirm && balance > 0.005 ? { tone: 'warning' } : undefined,
+    appointments:
+      installAppt?.status === 'change_requested'
+        ? { tone: 'danger' }
+        : installAppt?.status === 'proposed'
+          ? { tone: 'warning' }
+          : undefined,
+  };
+
+  /** Order identity at the top of the expanded rail. */
+  const railSummary = (
+    <div className="flex flex-col items-start gap-1">
+      <StatusBadge status={status} />
+      <p className="w-full truncate text-[13px] font-semibold text-text-primary">
+        {customer ? displayName(customer) : 'No customer yet'}
+      </p>
+      <p className="text-[12px] text-text-muted">{format(orderDate, 'MMM d, yyyy')}</p>
+    </div>
+  );
+
+  /** Green Save, shared by the pricing panel footer and the mobile bar. */
+  const saveButtonCls =
+    'inline-flex items-center justify-center gap-2 rounded-sm bg-success text-sm font-semibold text-white hover:bg-success/90 disabled:opacity-40';
+
+  /** Outlined add-item button for the Items section toolbar. */
+  const addBtnCls =
+    'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken max-sm:flex-1';
+
+  /** Totals card for the Items section wherever the pricing panel is not showing them. */
+  const inlineTotalsCard = (
+    <section
+      className={`flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md ${pricingCollapsed ? '' : 'xl:hidden'}`}
+    >
+      {materialUsageTrigger}
+      {discountControl}
+      {totalsRows}
+    </section>
+  );
+
+  /** Header-row buttons for the current section (right of its title). */
+  const sectionToolbar: ReactNode =
+    section === 'items' ? (
+      <>
+        <button type="button" onClick={addBlind} className={`${addBtnCls} border-brand-600/40 text-brand-600`}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          Blind
+        </button>
+        {/* Bulk add: one shared config per blind type, many measurement
+            rows under it — the fast path for a room of the SAME type. */}
+        <button type="button" onClick={() => setSheet('bulkAdd')} className={addBtnCls}>
+          Bulk Add
+        </button>
+        <button type="button" onClick={() => setSheet('preset')} className={addBtnCls}>
+          + Preset
+        </button>
+        <button type="button" onClick={addCustom} className={addBtnCls}>
+          + Custom
+        </button>
+      </>
+    ) : null;
+
+  /** The Items section: bulk toolbar + rows, then totals where the panel is hidden. */
+  const itemsView = (
+    <>
+      {items.length === 0 ? (
+        <section className="rounded-xl border border-dashed border-border-input bg-surface p-6 text-center">
+          <p className="text-[13px] text-text-muted">No items yet.</p>
+          <button
+            type="button"
+            onClick={addBlind}
+            className="mt-3 inline-flex h-10 items-center gap-2 rounded-sm bg-brand-600 px-4 text-[13px] font-semibold text-white hover:bg-brand-700"
+          >
+            Add Standard Blind
+          </button>
+        </section>
+      ) : (
+        <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
+          {(() => {
+            // Bulk edit needs blinds, and its OPTION dropdowns need a
+            // single blind type to scope to — but a selection without
+            // one is no longer refused: the popup asks for the type
+            // and unifies the rows onto it. Only a non-blind row
+            // still blocks. The button says which of the two the
+            // selection is in rather than just greying out.
+            const bulkSelection = bulkEditSelection(items, selected);
+            const canBulkEdit = bulkSelection.ok;
+            const bulkEditHint = bulkSelection.ok
+              ? bulkSelection.blindsType
+                ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
+                : bulkSelection.mixed
+                  ? 'Move the selected blinds onto one type, or edit their colour'
+                  : 'Set a blind type on the selected blinds and edit its options'
+              : bulkSelection.reason === 'empty'
+                ? 'Select blind items to bulk edit'
+                : 'Bulk edit is only available for blind items';
+            // The same verdict in a few words, for the count line.
+            const bulkCountNote = !bulkSelection.ok
+              ? 'not all blinds'
+              : bulkSelection.blindsType
+                ? bulkSelection.blindsType
+                : bulkSelection.mixed
+                  ? 'mixed blind types'
+                  : 'no blind type yet';
+            const canBulkDelete = selected.size > 0;
+            return (
+              <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={items.length > 0 && selected.size === items.length}
+                  ref={(el) => {
+                    if (el) el.indeterminate = selected.size > 0 && selected.size < items.length;
+                  }}
+                  onChange={toggleAll}
+                  aria-label="Select all items"
+                  className="h-4 w-4 rounded-sm accent-brand-600"
+                />
+                {/* The reason bulk edit is unavailable rides on the count
+                    line as well as the button's `title`: a phone has no
+                    hover, so a tooltip alone would explain nothing. */}
+                <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
+                  {selected.size === 0
+                    ? `${items.length} item${items.length !== 1 ? 's' : ''}`
+                    : `${selected.size} selected · ${bulkCountNote}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={openBulkEdit}
+                  disabled={!canBulkEdit}
+                  title={bulkEditHint}
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  disabled={!canBulkDelete}
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Delete
+                </button>
+              </div>
+            );
+          })()}
+
+          <LineItemList
+            items={items}
+            catalogs={catalogs}
+            readOnly={readOnly}
+            postConfirm={postConfirm}
+            selected={selected}
+            onToggleSelect={toggleSelect}
+            onToggleHidden={toggleHidden}
+            onEdit={openEdit}
+            onDuplicate={duplicateItem}
+            onDelete={removeItem}
+            onMove={moveItem}
+            onReorder={reorderItems}
+          />
+        </section>
+      )}
+      {inlineTotalsCard}
+    </>
+  );
+
+  /**
+   * Middle-column body for the selected section. Only the selected one is
+   * mounted; every piece of editor state lives in this component, so
+   * nothing typed is lost when the consultant switches sections.
+   */
+  const sectionBody: ReactNode = (() => {
+    switch (section) {
+      case 'details':
+        return (
+          <>
+            {/* Open cancellation request — needs an answer before anything else */}
+            {cancelRequestBanner}
+            {/* Customer change requests: read before the order is edited.
+                Resolving one is not an edit, so it sits outside the fieldset. */}
+            <EditRequestsCard
+              requests={editRequests ?? []}
+              onResolve={(requestId) => void handleResolveEditRequest(requestId)}
+              resolvingId={resolveEditMut.isPending ? resolveEditMut.variables.requestId : null}
+            />
+            {renderTimelineCard(stageActionStrip)}
+            <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
+              <CustomerCard
+                customer={customer}
+                onPick={() => setSheet('customer')}
+                onEdit={() => setEditingCustomer(true)}
+                readOnly={readOnly}
+              />
+              <OrderDatesCard
+                orderDate={orderDate}
+                onOrderDate={setOrderDate}
+                expiryDate={expiryDate}
+                onExpiryDate={(d) => {
+                  setExpiryDate(d);
+                  setExpiryManual(true);
+                  setExpiryPreset(null);
+                }}
+                expiryPreset={expiryPreset}
+                onExpiryPreset={(preset) => {
+                  setExpiryPreset(preset);
+                  setExpiryManual(true);
+                }}
+                orderNumber={existing?.order_number ?? null}
+              />
+            </fieldset>
+          </>
+        );
+      case 'items':
+        return (
+          <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
+            {itemsView}
+          </fieldset>
+        );
+      case 'payments':
+        return (
+          paymentsPanel || (
+            <section className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-md">
+              Payments can be recorded once the customer confirms the order.
+            </section>
+          )
+        );
+      case 'appointments':
+        return (
+          <>
+            {id && (
+              <InstallationSection
+                orderId={id}
+                orderStatus={status}
+                customerEmail={customer?.email}
+                sheetOpen={installSheetOpen}
+                onOpenSheet={() => setInstallSheetOpen(true)}
+                onCloseSheet={() => setInstallSheetOpen(false)}
+              />
+            )}
+            {status !== 'ready' && status !== 'installed' && (
+              <p className="rounded-xl border border-border-light bg-surface px-4 py-3 text-[13px] text-text-muted shadow-md">
+                An installation can be proposed once the order is marked Ready.
+              </p>
+            )}
+            <CustomerAppointmentsCard customerId={customer?.id} />
+          </>
+        );
+      case 'manufacturer':
+        return (
+          <section className="flex flex-col gap-3 rounded-xl border border-border-light bg-surface p-4 shadow-md">
+            <p className="text-[13px] text-text-muted">
+              Workshop paperwork for this order. Each opens in a new tab and reads the SAVED
+              order — save first if you have changed items.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener')}
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
+              >
+                {ICONS.manufacturer}
+                Cut Sheet
+              </button>
+              <button
+                type="button"
+                onClick={() => window.open(`/orders/${id}/labels`, '_blank', 'noopener')}
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
+              >
+                {ICONS.labels}
+                Labels
+              </button>
+            </div>
+            {materialUsageTrigger}
+          </section>
+        );
+      case 'logs':
+        return id ? <OrderActivityLog orderId={id} /> : null;
+    }
+  })();
+
+  const sectionLabel = ORDER_SECTIONS.find((s) => s.id === section)?.label ?? 'Order Details';
+
+  /** Offset shared by both sticky side columns: below the head block, plus the grid's top gap. */
+  const sideStickyCls =
+    'sticky top-[calc(var(--order-head-h,4rem)+1.5rem)] max-h-[calc(100dvh-var(--order-head-h,4rem)-3rem)]';
+
   return (
     // Bottom padding is the measured height of the fixed action bar
-    // (`--action-bar-h`, published below), falling back to 10rem until
+    // (`--action-bar-h`, published above), falling back to 10rem until
     // the first measurement lands. `overflow-x-clip` is a guard against
-    // a future child overflowing, not a fix for one — nothing here is
-    // supposed to exceed the viewport.
-    // `--page-max` is set HERE, on the page root, rather than on each
-    // container: every `.page-container` below — the sticky head, the
-    // grid, and the fixed action bar — inherits it, so the header, the
-    // body and the bar cannot end up on three different tracks. 1000px
-    // caps the form column plus the summary rail together; past that the
-    // whole block centres in whatever room the nav rail leaves.
-    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] [--page-max:1000px] xl:pb-8">
+    // a future child overflowing, not a fix for one.
+    // `--page-max` is set HERE so the sticky head, the grid and the fixed
+    // action bar all inherit one track. 1480px holds the section rail,
+    // the middle column and the pricing panel; past that the whole block
+    // centres in whatever room the nav rail leaves.
+    <div className="min-h-screen overflow-x-clip bg-surface-muted pb-[var(--action-bar-h,10rem)] [--page-max:1480px] xl:pb-8">
       {/*
-        Sticky head: the page header and the document-action toolbar pin
-        as ONE block, so the second never needs to know the first's
-        height. Sticky only from `md` up — on a phone this block plus the
-        bottom action bar would claim roughly a third of the screen, so
-        there only `PageHeader`'s own `sticky top-0` applies and the
-        toolbar scrolls away with the page.
-
-        Its measured height is published as `--order-head-h` (same
-        ResizeObserver pattern as `--action-bar-h`) because the summary
-        rail has to stick BELOW it. Hard-coding that offset is how the
-        old `top-[57px]` came to be wrong: the header's real height
-        changes with the title's line count and with the `lg` type step.
+        Sticky head: the page header plus, below xl, the section tab
+        strip. Its measured height is published as `--order-head-h`
+        because both side columns stick BELOW it — the header's real
+        height changes with the title's line count and the `lg` type step.
       */}
-      <div
-        ref={setStickyHead}
-        className="z-20 bg-surface-muted md:sticky md:top-0"
-      >
+      <div ref={setStickyHead} className="sticky top-0 z-20 bg-surface-muted">
         <PageHeader
           title={id ? existing?.order_number ?? 'Order' : 'New Order'}
           backTo="/"
           right={
-            <span className="hidden sm:inline-flex">
-              <StatusBadge status={status} />
+            <span className="flex items-center gap-2">
+              <span className="hidden sm:inline-flex xl:hidden">
+                <StatusBadge status={status} />
+              </span>
+              <OrderActionsMenu topActions={topNavActions} bottomActions={bottomNavActions} />
             </span>
           }
         />
-        <div className="border-b border-border-light bg-surface-muted">{docActions}</div>
+        <OrderSectionTabs
+          active={section}
+          isSaved={Boolean(id)}
+          onSelect={selectSection}
+          badges={sectionBadges}
+        />
       </div>
 
       {/*
-        Two fluid columns from `xl` (1280px) up, one below.
-
-        The page body used to be pinned to `max-w-lg` (512px) below `lg`
-        and `max-w-6xl` above, which meant it never tracked the window:
-        on a 768px tablet it rendered a 512px column between two 128px
-        dead gutters. It now uses the shared `PAGE_CONTAINER` track —
-        fluid, capped at 1600px — so main grows and shrinks with the
-        window at every width, inside whatever space the nav rail leaves.
-
-        `xl` rather than `lg` is where the summary rail appears because
-        the rail is a THIRD column: at 1024px the shell is already
-        spending up to 248px on navigation, and splitting the remaining
-        ~776px into a form column plus a 360px rail leaves the form too
-        narrow for its two-up date fields. `minmax(0,1fr)` on the form
-        track is what allows it to shrink below its content's intrinsic
-        width — without it a long line item name would push the grid
-        wider than the viewport, which is the class of bug that made the
-        cards run off the screen.
+        Three columns from `xl` up — section rail, selected section, pricing
+        panel — and one column below. Each side column collapses to a
+        narrow strip. `minmax(0,1fr)` lets the middle track shrink below
+        its content's intrinsic width, so a long line-item name can never
+        push the grid wider than the viewport. The template is inline
+        because it depends on both collapse flags; below xl the element is
+        not a grid, so it has no effect there.
       */}
       <div
-        className={`${PAGE_CONTAINER} pb-4 pt-4 md:pb-6 md:pt-6 xl:grid xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start xl:gap-6 xl:pb-8 xl:pt-8`}
+        className={`${PAGE_CONTAINER} pb-4 pt-4 md:pb-6 md:pt-6 xl:grid xl:items-start xl:gap-6 xl:pb-8 xl:pt-6`}
+        style={{
+          gridTemplateColumns: `${navCollapsed ? '60px' : '232px'} minmax(0,1fr) ${pricingCollapsed ? '52px' : '320px'}`,
+        }}
       >
-        {/* ── Form column ── */}
+        <OrderSectionRail
+          active={section}
+          isSaved={Boolean(id)}
+          onSelect={selectSection}
+          badges={sectionBadges}
+          topActions={topNavActions}
+          bottomActions={bottomNavActions}
+          summary={railSummary}
+          collapsed={navCollapsed}
+          onToggleCollapsed={toggleNavCollapsed}
+        />
+
+        {/* ── Selected section ── */}
         <div className="flex w-full min-w-0 flex-col gap-4">
-          {/* Open cancellation request — needs an answer before anything else */}
-          {cancelRequestBanner}
-
-          {/*
-            Customer change requests. Below the cancellation banner
-            (which outranks everything) and above the timeline, so the
-            instructions are read before the order is edited. Outside the
-            read-only fieldset: resolving one is not an edit to the order.
-          */}
-          <EditRequestsCard
-            requests={editRequests ?? []}
-            onResolve={(requestId) => void handleResolveEditRequest(requestId)}
-            resolvingId={resolveEditMut.isPending ? resolveEditMut.variables.requestId : null}
-          />
-
-          {/* Progress timeline (revert lives here — outside the disabled fieldset) */}
-          {timelineCard}
-
-          <fieldset disabled={readOnly} className="m-0 flex flex-col gap-4 border-0 p-0">
-            {/* Customer card: picker title row + expandable detail panel */}
-            <CustomerCard
-              customer={customer}
-              onPick={() => setSheet('customer')}
-              onEdit={() => setEditingCustomer(true)}
-              readOnly={readOnly}
-            />
-
-            {/* Dates card: order/expiry dates, expiry terms, order number */}
-            <OrderDatesCard
-              orderDate={orderDate}
-              onOrderDate={setOrderDate}
-              expiryDate={expiryDate}
-              onExpiryDate={(d) => {
-                setExpiryDate(d);
-                setExpiryManual(true);
-                setExpiryPreset(null);
-              }}
-              expiryPreset={expiryPreset}
-              onExpiryPreset={(preset) => {
-                setExpiryPreset(preset);
-                setExpiryManual(true);
-              }}
-              orderNumber={existing?.order_number ?? null}
-            />
-
-            {/* Line items summary table */}
-            {(items.length > 0 || !readOnly) && (
-              <section className="overflow-hidden rounded-xl border border-border-light bg-surface shadow-md">
-                {/* Bulk toolbar — only in edit mode */}
-                {!readOnly && items.length > 0 && (() => {
-                  // Bulk edit needs blinds, and its OPTION dropdowns need a
-                  // single blind type to scope to — but a selection without
-                  // one is no longer refused: the popup asks for the type
-                  // and unifies the rows onto it. Only a non-blind row
-                  // still blocks. The button says which of the two the
-                  // selection is in rather than just greying out.
-                  const bulkSelection = bulkEditSelection(items, selected);
-                  const canBulkEdit = bulkSelection.ok;
-                  const bulkEditHint = bulkSelection.ok
-                    ? bulkSelection.blindsType
-                      ? `Edit material and options for the selected ${bulkSelection.blindsType} items`
-                      : bulkSelection.mixed
-                        ? 'Move the selected blinds onto one type, or edit their colour'
-                        : 'Set a blind type on the selected blinds and edit its options'
-                    : bulkSelection.reason === 'empty'
-                      ? 'Select blind items to bulk edit'
-                      : 'Bulk edit is only available for blind items';
-                  // The same verdict in a few words, for the count line —
-                  // the shared type when there is one, else what stands in
-                  // its place ("mixed types" is a state to resolve in the
-                  // popup now, not a refusal).
-                  const bulkCountNote = !bulkSelection.ok
-                    ? 'not all blinds'
-                    : bulkSelection.blindsType
-                      ? bulkSelection.blindsType
-                      : bulkSelection.mixed
-                        ? 'mixed blind types'
-                        : 'no blind type yet';
-                  const canBulkDelete = selected.size > 0;
-                  return (
-                    <div className="flex items-center gap-2 border-b border-border-light px-3 py-2">
-                      <input
-                        type="checkbox"
-                        checked={items.length > 0 && selected.size === items.length}
-                        ref={(el) => {
-                          if (el) el.indeterminate = selected.size > 0 && selected.size < items.length;
-                        }}
-                        onChange={toggleAll}
-                        aria-label="Select all items"
-                        className="h-4 w-4 rounded-sm accent-brand-600"
-                      />
-                      {/*
-                        The reason bulk edit is unavailable rides on the
-                        count line as well as on the button's `title`: a
-                        phone has no hover, so a tooltip alone would leave
-                        a disabled button with no explanation at all.
-                      */}
-                      <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
-                        {selected.size === 0
-                          ? `${items.length} item${items.length !== 1 ? 's' : ''}`
-                          : `${selected.size} selected · ${bulkCountNote}`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={openBulkEdit}
-                        disabled={!canBulkEdit}
-                        title={bulkEditHint}
-                        className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleBulkDelete}
-                        disabled={!canBulkDelete}
-                        className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                          <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                        Delete
-                      </button>
-                    </div>
-                  );
-                })()}
-
-                <LineItemList
-                  items={items}
-                  catalogs={catalogs}
-                  readOnly={readOnly}
-                  postConfirm={postConfirm}
-                  selected={selected}
-                  onToggleSelect={toggleSelect}
-                  onToggleHidden={toggleHidden}
-                  onEdit={openEdit}
-                  onDuplicate={duplicateItem}
-                  onDelete={removeItem}
-                  onMove={moveItem}
-                  onReorder={reorderItems}
-                />
-              </section>
-            )}
-
-            {/* Add buttons */}
-            {!readOnly && (
-              <div className="flex flex-col gap-2">
-                <button
-                  onClick={addBlind}
-                  className="flex h-[46px] items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  Add Standard Blind
-                </button>
-                {/*
-                  Bulk add: one shared config per blind type ("section"),
-                  many measurement rows underneath it — the fast path for
-                  a whole room or house of the SAME type.
-                */}
-                <button
-                  onClick={() => setSheet('bulkAdd')}
-                  className="flex h-11 items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
-                >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M3 4h18v4H3z M3 10h18v4H3z M3 16h18v4H3z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-                  </svg>
-                  Bulk Add
-                </button>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setSheet('preset')}
-                    className="h-11 flex-1 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-text-secondary"
-                  >
-                    + Preset Item
-                  </button>
-                  <button
-                    onClick={addCustom}
-                    className="h-11 flex-1 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-text-secondary"
-                  >
-                    + Custom Item
-                  </button>
-                </div>
-              </div>
-            )}
-
-
-            {/* Totals card for every width below `xl`, where the summary
-                rail is not rendered. Same content, different container. */}
-            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md xl:hidden">
-              {materialUsageTrigger}
-              {discountControl}
-              {totalsRows}
-            </section>
-          </fieldset>
-
-          {/* Installation panel + sheet (ready/installed orders) */}
-          {id && (
-            <InstallationSection
-              orderId={id}
-              orderStatus={status}
-              customerEmail={customer?.email}
-              sheetOpen={installSheetOpen}
-              onOpenSheet={() => setInstallSheetOpen(true)}
-              onCloseSheet={() => setInstallSheetOpen(false)}
-            />
-          )}
-
-          {/* Payments panel (both breakpoints; confirmed orders) */}
-          {paymentsPanel}
-
-          {/* Activity log (very bottom of the page) */}
-          {id && (
-            <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-              <div className="mb-2 flex items-center gap-2.5">
-                <SectionIcon
-                  accent="neutral"
-                  d="M12 22a10 10 0 100-20 10 10 0 000 20z M12 6v6l4 2"
-                />
-                <h2 className="text-[15px] font-bold text-text-primary">Activity Log</h2>
-              </div>
-              {logs && logs.length === 0 && (
-                <p className="text-[13px] text-text-muted">No activity recorded yet.</p>
-              )}
-              {logs && logs.length > 0 && (
-                <>
-                  {/*
-                    Customer-sourced rows (page opened, estimate confirmed,
-                    cancellation asked for or withdrawn) sit on the light-blue
-                    info tint so staff can pick out what the customer did from
-                    what the office did. Padding is applied to every row, not
-                    just tinted ones, so the column alignment never shifts.
-                  */}
-                  <ul className="flex flex-col gap-2.5">
-                    {(logsExpanded ? logs : logs.slice(0, LOG_PREVIEW_COUNT)).map((log) => (
-                      <li
-                        key={log.id}
-                        className={`flex justify-between gap-3 rounded-md px-2 py-1 text-[13px] ${log.source === 'customer' ? 'bg-info-tint' : ''
-                          }`}
-                      >
-                        <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
-                        <span className="shrink-0 whitespace-nowrap font-mono text-xs text-text-muted">
-                          {format(new Date(log.created_at), 'MMM d, yyyy HH:mm')}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  {logs.length > LOG_PREVIEW_COUNT && (
-                    <button
-                      type="button"
-                      onClick={() => setLogsExpanded((v) => !v)}
-                      aria-expanded={logsExpanded}
-                      className="mt-0.5 self-start py-1 text-[13px] font-medium text-brand-600 hover:underline"
-                    >
-                      {logsExpanded
-                        ? 'Show less'
-                        : `Show ${logs.length - LOG_PREVIEW_COUNT} more`}
-                    </button>
-                  )}
-                </>
-              )}
-            </section>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="mr-auto text-lg font-bold text-text-primary">{sectionLabel}</h2>
+            {sectionToolbar && <div className="flex flex-wrap gap-2 max-sm:w-full">{sectionToolbar}</div>}
+          </div>
+          {sectionBody}
         </div>
 
         {/*
-          ── Summary rail (xl+) ──
-          A card in the grid's second track rather than a full-bleed
-          panel welded to the viewport edge: the grid now has a real
-          gutter, and a bare `border-l` floating in that gutter read as
-          a stray rule. `max-h` + `overflow-y-auto` on the body keep a
-          40-item order's list scrollable inside the card while the
-          totals and actions below it stay pinned.
+          ── Pricing panel (xl+) ──
+          Live pricing per item, totals, discount and Save. `max-h` +
+          `overflow-y-auto` on the body keep a 40-item order's list
+          scrollable while the totals and Save stay pinned. Collapsed, it
+          shrinks to a strip that still shows the running figure and Save.
         */}
-        <aside className="sticky top-[calc(var(--order-head-h,7rem)+2rem)] hidden max-h-[calc(100dvh-var(--order-head-h,7rem)-4rem)] flex-col overflow-hidden rounded-xl border border-border-light bg-surface shadow-md xl:flex">
-          <div className="border-b border-border-light px-5 py-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-              {postConfirm ? 'Order Summary' : 'Live Pricing'}
-            </p>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-            {items.length === 0 && (
-              <p className="text-[13px] text-text-muted">Add a line item to see pricing.</p>
-            )}
-            {items.map((it, i) => (
-              <div key={it.key} className="mb-2.5 flex justify-between gap-3">
-                {/* Wraps rather than truncates, for the same reason the
-                    item rows do — the label is how two similar lines are
-                    told apart. `wrap-anywhere` keeps the rail's own
-                    intrinsic width from growing with the longest label. */}
-                <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
-                  {draftLabel(it, i)}
-                </span>
-                <span className="shrink-0 font-mono text-[13px] text-text-primary">
-                  {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
-                </span>
-              </div>
-            ))}
-            <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
-              {materialUsageTrigger}
-              {discountControl}
-              {totalsRows}
-              {postConfirm && (
-                <div className="mt-2 flex items-baseline justify-between border-t border-border-light pt-2.5">
-                  <span className="text-[13px] text-text-secondary">Balance due</span>
-                  <span
-                    className={`font-mono text-sm font-semibold ${balance <= 0 ? 'text-success' : 'text-text-primary'}`}
-                  >
-                    ${balance.toFixed(2)}
-                  </span>
-                </div>
-              )}
+        {pricingCollapsed ? (
+          <aside className={`${sideStickyCls} hidden flex-col items-center gap-3 rounded-xl border border-border-light bg-surface py-2 shadow-md xl:flex`}>
+            <button
+              type="button"
+              onClick={togglePricingCollapsed}
+              aria-expanded={false}
+              aria-label="Expand pricing panel"
+              title="Expand pricing"
+              className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-sunken hover:text-text-primary"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M15 3v18M10 15l-3-3 3-3" />
+              </svg>
+            </button>
+            <span className="rotate-180 font-mono text-[13px] font-semibold text-text-primary [writing-mode:vertical-rl]">
+              {postConfirm ? 'Balance' : 'Total'} ${(postConfirm ? balance : totals.total).toFixed(2)}
+            </span>
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={!canAct}
+              title={saving ? 'Saving…' : 'Save'}
+              aria-label="Save"
+              className={`${saveButtonCls} mt-auto h-10 w-10`}
+            >
+              {ICONS.save}
+            </button>
+          </aside>
+        ) : (
+          <aside className={`${sideStickyCls} hidden flex-col overflow-hidden rounded-xl border border-border-light bg-surface shadow-md xl:flex`}>
+            <div className="flex items-center justify-between gap-2 border-b border-border-light py-2 pl-5 pr-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+                {postConfirm ? 'Order Summary' : 'Live Pricing'}
+              </p>
+              <button
+                type="button"
+                onClick={togglePricingCollapsed}
+                aria-expanded
+                aria-label="Collapse pricing panel"
+                title="Collapse pricing"
+                className="flex h-8 w-8 items-center justify-center rounded-md text-text-muted hover:bg-surface-sunken hover:text-text-primary"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="2" />
+                  <path d="M15 3v18M8 9l3 3-3 3" />
+                </svg>
+              </button>
             </div>
-          </div>
-          {railActions && (
-            <div className="border-t border-border-light px-5 py-4">{railActions}</div>
-          )}
-        </aside>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              {items.length === 0 && (
+                <p className="text-[13px] text-text-muted">Add a line item to see pricing.</p>
+              )}
+              {items.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setPricingItemsOpen((v) => !v)}
+                    aria-expanded={pricingItemsOpen}
+                    aria-controls="pricing-items-list"
+                    className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-sunken"
+                  >
+                    <span className="text-[13px] font-semibold text-text-primary">
+                      Items <span className="font-normal text-text-muted">({items.length})</span>
+                    </span>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      className={`text-text-muted transition-transform ${pricingItemsOpen ? 'rotate-180' : ''}`}
+                    >
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </button>
+                  {pricingItemsOpen && (
+                    <div id="pricing-items-list" className="mt-2">
+                    {items.map((it, i) => (
+                      <div key={it.key} className="mb-2.5 flex justify-between gap-3">
+                        {/* Wraps rather than truncates — the label is how two
+                            similar lines are told apart. `wrap-anywhere` keeps
+                            the panel's width from growing with the longest one. */}
+                        <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
+                          {draftLabel(it, i)}
+                        </span>
+                        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                          {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
+                        </span>
+                      </div>
+                    ))}
+                    </div>
+                  )}
+                </>
+              )}
+              <div className="mt-4 flex flex-col gap-2 border-t border-border-light pt-3.5">
+                {materialUsageTrigger}
+                {discountControl}
+                {totalsRows}
+                {postConfirm && (
+                  <div className="mt-2 flex items-baseline justify-between border-t border-border-light pt-2.5">
+                    <span className="text-[13px] text-text-secondary">Balance due</span>
+                    <span
+                      className={`font-mono text-sm font-semibold ${balance <= 0 ? 'text-success' : 'text-text-primary'}`}
+                    >
+                      ${balance.toFixed(2)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="border-t border-border-light px-5 py-4">
+              <button
+                type="button"
+                onClick={handleSaveDraft}
+                disabled={!canAct}
+                className={`${saveButtonCls} h-[46px] w-full`}
+              >
+                {ICONS.save}
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </aside>
+        )}
       </div>
 
       {/* ── Sticky action bar, below `xl` ──
-          Carries the running total and the stage's actions at every
-          width where the summary rail is absent — phones AND tablets,
-          which previously got neither (the bar was `lg:hidden`, so a
-          768–1023px tablet had a rail-less page and a hidden bar).
-
-          `app-shell-main` gives it the same `--sidebar-w` inline-start
-          padding as the page content, so on a tablet the bar starts
-          where the nav rail ends instead of sliding underneath it. It
-          is `fixed` rather than `sticky` because it must stay put while
-          the page scrolls; it slides out of the way while the keyboard
-          is up (see `keyboardOpen`) and reports its own height so the
-          page above can reserve exactly that much room. */}
+          The running total (balance once confirmed) and Save, at every
+          width where the pricing panel is absent. Lifecycle actions moved
+          to the Order Details section, so the bar is one row. It is
+          `fixed` so it stays put while the page scrolls, slides away while
+          the keyboard is up (see `keyboardOpen`), and reports its height
+          as `--action-bar-h` so the page reserves exactly that room.
+          `app-shell-main` offsets it past the nav rail on tablets. */}
       <div
         ref={setActionBar}
-        className={`app-shell-main fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3.5 pb-[max(0.875rem,env(safe-area-inset-bottom))] transition-transform duration-200 xl:hidden ${keyboardOpen ? 'pointer-events-none translate-y-full' : ''
+        className={`app-shell-main fixed inset-x-0 bottom-0 z-10 border-t border-border bg-surface py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] transition-transform duration-200 xl:hidden ${keyboardOpen ? 'pointer-events-none translate-y-full' : ''
           }`}
       >
-        {/* Same container track as the page body, so the bar's edges
-            line up with the card edges above it at every width. */}
-        <div className={PAGE_CONTAINER}>
-          <div className="mb-2.5 flex items-baseline justify-between">
-            <span className="text-[13px] text-text-secondary">
+        <div className={`${PAGE_CONTAINER} flex items-center justify-between gap-3`}>
+          <div className="flex min-w-0 flex-col">
+            <span className="text-[12px] text-text-secondary">
               {postConfirm ? 'Balance due' : 'Running total'}
             </span>
             <span className="font-mono text-xl font-semibold text-text-primary">
               ${(postConfirm ? balance : totals.total).toFixed(2)}
             </span>
           </div>
-          {actions(false)}
+          <button
+            type="button"
+            onClick={handleSaveDraft}
+            disabled={!canAct}
+            className={`${saveButtonCls} h-12 shrink-0 px-6`}
+          >
+            {ICONS.save}
+            {saving ? 'Saving…' : 'Save'}
+          </button>
         </div>
       </div>
 

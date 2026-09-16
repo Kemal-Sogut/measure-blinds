@@ -4,13 +4,23 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-09-12)
+## Where things stand (as of 2026-09-16)
 
-**Newest, uncommitted, web-only, no migration:** the **order page's stage-action slot now leads
-with Save at every stage**; Confirm, Reverse Confirmation and Mark Ready buttons are gone (Confirm
-was pressed as if it were Save). Stage moves happen only on the Progress timeline, which saves
-first and words confirm/reverse moves explicitly; Mark Installed moved into the Installation card.
-See `knowledge/history/engine_features.md`, 2026-09-12.
+**Newest, on `main` (not deployed), web + small api, no migration:** the **order page is now a
+section menu + one section + pricing panel**. Left rail (xl+): Send/Download/Customer View,
+sections (Order Details, Items, Payments, Appointments, Manufacturer, Logs), Duplicate/Delete;
+collapsible. Middle: only the selected section (`?view=`) with its own buttons. Right: pricing
+(per-item prices under a collapsed "Items" disclosure) + Save; collapsible. Below xl: tab strip,
+⋯ header menu, one-row bottom bar with Save. There are no Confirm / Reverse / Mark Ready buttons:
+stage moves happen only on the Progress timeline, which saves first and words confirm/reverse
+moves explicitly; Present to Customer is the Progress card's footer; Propose Installation and
+Mark Installed are in the Installation card (Appointments). `GET /api/appointments` gained an
+optional `customer_id` filter. See `knowledge/history/engine_features.md`, 2026-09-16 and 2026-09-12.
+
+**Newest, on `main` (not deployed), api-only, no migration:** the **invoice email now shows the
+balance due, not the full total**. `send-invoice` derives paid-to-date and balance from the
+ledger; the card lists Order total + Paid to date, then "Balance due" (or "Paid in full"). PDF
+unchanged. See `knowledge/history/bug_fixes.md`, 2026-09-16.
 
 **Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
 the customer to confirm**. Customers saw only "View your estimate" and didn't know a

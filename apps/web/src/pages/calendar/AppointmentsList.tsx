@@ -55,8 +55,12 @@ function whenLabel(dateIso: string, time: string): string {
   return `${format(new Date(y, mo - 1, d), 'EEE, MMM d, yyyy')} · ${to12Hour(time)}`;
 }
 
-/** One appointment row — the whole card is a button into the details page. */
-function Row({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) {
+/**
+ * One appointment row — the whole card is a button into the details page.
+ * Exported for the order page's Appointments section, which lists one
+ * customer's visits and should read exactly like this list.
+ */
+export function AppointmentRow({ event, onOpen }: { event: CalendarEvent; onOpen: () => void }) {
   const customerName = displayName(event.customer);
   const status = STATUS_LABEL[event.schedule_status];
   const isInstall = event.kind === 'installation';
@@ -150,7 +154,7 @@ export default function AppointmentsList() {
                 }`}
               >
                 {events.map((ev) => (
-                  <Row
+                  <AppointmentRow
                     key={ev.id}
                     event={ev}
                     onOpen={() => navigate(`/appointments/${ev.id}`)}

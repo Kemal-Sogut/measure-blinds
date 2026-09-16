@@ -1740,6 +1740,11 @@ app.post('/:id/send-invoice', async (c) => {
   const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
   const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
 
+  // Server-authoritative money: both figures derive from the DB ledger,
+  // so a deposit already received is not presented as still owed.
+  const paidToDate = sumPayments(order.payments);
+  const balance = Math.round((Number(order.total) - paidToDate) * 100) / 100;
+
   let pdf: Uint8Array;
   try {
     // toPdfData renders an Invoice because the order is confirmed.
@@ -1756,7 +1761,9 @@ app.post('/:id/send-invoice', async (c) => {
         company: brandFromSettings(company),
         customerFirstName: greetingName(order.customer),
         orderNumber: order.order_number,
-        total: Number(order.total),
+        orderTotal: Number(order.total),
+        paidToDate,
+        balance,
         viewUrl,
         message,
       }),

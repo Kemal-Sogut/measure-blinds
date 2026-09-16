@@ -1,5 +1,58 @@
 # Engine Features / Feature History
 
+## 2026-09-16 — Order page split into a section menu, one section, and the pricing panel
+The order page stacked everything — cancellation/edit banners, timeline, customer, dates, items,
+totals, installation, payments, activity log — in one long column, with Save, Send, Download,
+Customer View, Duplicate and Delete in a toolbar above it and the stage actions in a third
+place (pricing rail footer / mobile bar). It read as too busy.
+
+**Layout (xl+, three columns).**
+- **Left — `OrderSectionRail`** (`pages/orders/OrderSectionNav.tsx`): order identity (status,
+  customer, order date); **Send**, **Download**, **Customer View** on top; the sections
+  **Order Details, Items, Payments, Appointments, Manufacturer, Logs**; **Duplicate** and
+  **Delete Order** at the bottom. Collapses to an icon strip. Sections carry markers: red dot
+  for an open cancellation, amber count for open edit requests, item count, amber dot for a
+  balance due, red/amber dot when the installation time is change-requested/proposed.
+- **Middle — the selected section only**, titled, with its own buttons: Order Details holds the
+  banners, the Progress card (stage moves happen on its timeline; Present to Customer is its footer), customer and dates. Items holds the
+  add buttons (Blind, Bulk Add, + Preset, + Custom) in its title row, the bulk toolbar and rows.
+  Payments holds the ledger + Record Payment + warranty strip (or a "once confirmed" note).
+  Appointments holds `InstallationSection` plus the new `CustomerAppointmentsCard` (every visit
+  for the customer). Manufacturer holds Cut Sheet, Labels and the Material usage trigger — Cut
+  Sheet/Labels left the in-progress stage actions and are now reachable at any stage. Logs is
+  the extracted `OrderActivityLog`.
+- **Right — pricing panel**: per-item prices behind an "Items (n)" disclosure (closed by default, not remembered), Material usage, discount, totals, balance,
+  and **Save** (green, footer). Collapses to a strip showing the total/balance and an icon Save;
+  while collapsed, the Items section shows the totals + discount card itself.
+
+**Below xl.** Sections become a sticky, horizontally scrolling tab strip under the header
+(`OrderSectionTabs`); the five document actions move to a ⋯ menu in the header
+(`OrderActionsMenu`); the fixed bottom bar is now one row — running total/balance and Save.
+
+**Behaviour details.** The selected section lives in `?view=` (`orderSections.ts`,
+`resolveOrderSection`): unknown values and saved-only sections on an unsaved order fall back
+to Order Details; switching uses `replace` so Back leaves the order; saving a new order keeps
+the open section. All editor state still lives in `OrderDetail`, so switching sections never
+loses unsaved edits. Collapse flags persist per browser in localStorage
+(`bn.order.navCollapsed`, `bn.order.pricingCollapsed`, `useCollapsedPanel`), every access wrapped.
+
+**API.** `GET /api/appointments` accepts an optional `customer_id` (UUID, 400 otherwise) that
+filters both kinds by `appointments.customer_id`; `useCustomerAppointments` reads page 1.
+`AppointmentsList`'s row is exported as `AppointmentRow` and reused. No migration.
+
+### Verified
+web `pnpm check` clean, `oxlint` 0/0, `pnpm test` 464/464 (new `orderSections.test.ts`); api
+`pnpm check` clean, `pnpm test` 459/459 (three new list-filter route tests). Driven in a
+throwaway Vite harness with a seeded query cache at 1440px (every section, both collapses) and
+375px (tab strip, ⋯ menu, bottom bar, no horizontal overflow, Propose Installation → Appointments
++ sheet). Not yet seen against live data — no `apps/web/.env` in this checkout.
+
+**Merged with the 2026-09-12 "Save leads every stage" change.** That change put Save in the
+stage-action slot; here Save already sits in the pricing panel footer / mobile bar, so the
+Progress card's footer keeps only Present to Customer. Confirm / Reverse / Mark Ready are gone
+(the timeline does them, saving first); Propose Installation and Mark Installed are in the
+Installation card in the Appointments section.
+
 ## 2026-09-12 — Order page: Save leads every stage; Confirm / Mark Ready buttons removed
 Staff were pressing the big primary **Confirm** button believing it was **Save**, silently
 moving orders to Awaiting Payment. The stage-action slot (desktop pricing-rail footer and the
