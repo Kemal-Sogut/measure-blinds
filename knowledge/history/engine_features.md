@@ -1,5 +1,27 @@
 # Engine Features / Feature History
 
+## 2026-09-17 — Warranty certificate: one template, motorization excluded by footer note
+The certificate and warranty email no longer branch on whether an order looks motorised. The
+old rule (`isMotorised`: `/motor/i` on a blind's `control_name` or a custom row's description)
+could not reliably spot a newly added component — a solar panel, remote, or a new catalog
+control carries no motor flag — so a 2-year term could be silently missing or misapplied.
+
+- **One template for every order.** `buildWarrantyCoverage` (`apps/api/src/lib/warranty.ts`)
+  now returns `{ startsOn, expiry, items }` — every line item on the 10-year product term. Removed:
+  `WARRANTY_YEARS_MOTOR`, `isMotorised`, `hasMotorised`, `motorExpiry`, `motorItems`,
+  `control_name` on `WarrantyItemSource`. Signature unchanged, so `GET /orders/:id/warranty-pdf`
+  needed no edit.
+- **Standing exclusion.** New `MOTORIZATION_EXCLUSION_NOTE` (motors, solar panels, remotes,
+  chargers and other motorization accessories are excluded from this warranty) is the single
+  source for both outputs: printed bold under a rule as the last thing on the PDF
+  (`warrantyPdf.ts`), and as the last fine-print line of the email (`warrantyEmail.ts`, escaped).
+- The PDF's "Motorised parts covered until" row and MOTORISED PARTS section, and the email's
+  "Motorised parts" summary row and motor checklist line, are gone. `WarrantyEmailInputs`
+  `standardExpiry`/`motorExpiry`/`hasMotorised` → `expiry`.
+- Web copy only: the OrderDetail warranty strip hint and the `warranty_starts_on` JSDoc.
+- Verified: api `pnpm check` + `pnpm test` (467 passed), web `pnpm check` + `pnpm lint`; a sample
+  certificate rendered and inspected with the footer note in place.
+
 ## 2026-09-16 — Notifications page (bell in the sidebar) for customer and payment events
 Three things happen with no staff member watching — a customer presses **Request Edit**, a
 customer presses **Confirm Estimate**, and the Gmail Apps Script reports an **Interac

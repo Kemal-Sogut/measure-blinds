@@ -29,19 +29,17 @@ import {
   type WarrantyPdfData,
 } from './warrantyPdf';
 
-const MOTOR_BLIND: WarrantyItemSource = {
+const ROLLER: WarrantyItemSource = {
   item_type: 'blind',
   room_name: 'Living Room',
   blinds_type: 'Roller',
-  control_name: 'Motorized (Bluetooth)',
   quantity: 2,
 };
 
-const MANUAL_BLIND: WarrantyItemSource = {
+const ZEBRA: WarrantyItemSource = {
   item_type: 'blind',
   room_name: 'Bedroom',
   blinds_type: 'Zebra',
-  control_name: 'Chain Control',
   quantity: 1,
 };
 
@@ -51,10 +49,10 @@ const INSTALLATION: WarrantyItemSource = {
   quantity: 3,
 };
 
-/** A certificate for a mixed order, motorised section included. */
+/** A certificate for a mixed order — the one template every order uses. */
 const SAMPLE: WarrantyPdfData = {
   order: { order_number: 'T0408-126', order_date: '2026-08-04' },
-  coverage: buildWarrantyCoverage([MOTOR_BLIND, MANUAL_BLIND, INSTALLATION], '2026-08-20'),
+  coverage: buildWarrantyCoverage([ROLLER, ZEBRA, INSTALLATION], '2026-08-20'),
   customer: {
     first_name: 'Test',
     last_name: 'Customer',
@@ -112,10 +110,10 @@ describe('buildWarrantyPdf', () => {
     expect(bytes.length).toBeGreaterThan(2000);
   });
 
-  it('renders an order with no motorised item (section skipped)', async () => {
+  it('renders an order with no line items', async () => {
     const bytes = await buildWarrantyPdf({
       ...SAMPLE,
-      coverage: buildWarrantyCoverage([MANUAL_BLIND, INSTALLATION], '2026-08-20'),
+      coverage: buildWarrantyCoverage([], '2026-08-20'),
     });
     expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-');
     expect(bytes.length).toBeGreaterThan(2000);
@@ -142,7 +140,7 @@ describe('buildWarrantyPdf', () => {
 
   it('spans multiple pages for a long order without throwing', async () => {
     const many = Array.from({ length: 40 }, (_, i) => ({
-      ...MOTOR_BLIND,
+      ...ROLLER,
       room_name: `Room ${i + 1}`,
     }));
     const bytes = await buildWarrantyPdf({

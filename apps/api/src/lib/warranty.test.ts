@@ -4,46 +4,32 @@
 /**
  * Unit tests for the warranty term rules.
  *
- * Two things are pinned here because a mistake in either prints a wrong
- * date on a legal document: the calendar arithmetic (including the leap
- * clamp that must never roll February into March), and the motorised
- * classification that decides whether a row also carries the two-year
- * motor term on top of its ten-year product term.
+ * Pinned here because a mistake prints a wrong date or a wrong promise on
+ * a legal document: the calendar arithmetic (including the leap clamp
+ * that must never roll February into March), the single ten-year term
+ * applied to every line item without any motor classification, and the
+ * standing motorization exclusion wording.
  */
 
 import { describe, it, expect } from 'vitest';
 import {
+  MOTORIZATION_EXCLUSION_NOTE,
   addYears,
   buildWarrantyCoverage,
-  isMotorised,
   type WarrantyItemSource,
 } from './warranty';
 
-/** A motorised blind as the DB snapshots it. */
-const MOTOR_BLIND: WarrantyItemSource = {
+/** A blind as the DB snapshots it (control deliberately ignored). */
+const BLIND: WarrantyItemSource = {
   item_type: 'blind',
   room_name: 'Living Room',
   blinds_type: 'Roller',
-  control_name: 'Motorized (Bluetooth)',
   quantity: 2,
-};
-
-/** A chain-controlled blind — products term only. */
-const MANUAL_BLIND: WarrantyItemSource = {
-  item_type: 'blind',
-  room_name: 'Bedroom',
-  blinds_type: 'Zebra',
-  control_name: 'Chain Control',
-  quantity: 1,
 };
 
 describe('addYears', () => {
   it('adds ten years to an ordinary date', () => {
     expect(addYears('2026-08-01', 10)).toBe('2036-08-01');
-  });
-
-  it('adds two years to an ordinary date', () => {
-    expect(addYears('2026-08-01', 2)).toBe('2028-08-01');
   });
 
   it('clamps a leap day to the 28th when the target year is not a leap year', () => {
@@ -60,49 +46,39 @@ describe('addYears', () => {
   });
 });
 
-describe('isMotorised', () => {
-  it('flags a Bluetooth motorised control', () => {
-    expect(isMotorised(MOTOR_BLIND)).toBe(true);
+describe('buildWarrantyCoverage', () => {
+  it('puts every line item on the ten-year term, in order', () => {
+    const coverage = buildWarrantyCoverage(
+      [BLIND, { item_type: 'preset', description: 'Installation', quantity: 1 }],
+      '2026-08-01'
+    );
+    expect(coverage.startsOn).toBe('2026-08-01');
+    expect(coverage.expiry).toBe('2036-08-01');
+    expect(coverage.items).toEqual([
+      { label: 'Living Room — Roller', quantity: 2, expiry: '2036-08-01' },
+      { label: 'Installation', quantity: 1, expiry: '2036-08-01' },
+    ]);
   });
 
-  it('flags a non-Bluetooth motorised control', () => {
-    expect(isMotorised({ ...MOTOR_BLIND, control_name: 'Motorized (Non-Bluetooth)' })).toBe(true);
-  });
-
-  it('does not flag manual controls', () => {
-    for (const control of ['Chain Control', 'Cordless', 'Safety Wand']) {
-      expect(isMotorised({ ...MANUAL_BLIND, control_name: control })).toBe(false);
-    }
-  });
-
-  it('flags a custom row sold as a motor part', () => {
-    expect(
-      isMotorised({ item_type: 'custom', description: 'Motor kit replacement', quantity: 1 })
-    ).toBe(true);
+  it('degrades a blind label to whichever half exists', () => {
+    const coverage = buildWarrantyCoverage(
+      [
+        { ...BLIND, room_name: '' },
+        { ...BLIND, blinds_type: null },
+        { item_type: 'blind', quantity: 1 },
+      ],
+      '2026-08-01'
+    );
+    expect(coverage.items.map((i) => i.label)).toEqual(['Roller', 'Living Room', 'Blind']);
   });
 });
 
-describe('buildWarrantyCoverage', () => {
-  it('covers a motorised blind under BOTH terms', () => {
-    const coverage = buildWarrantyCoverage([MOTOR_BLIND], '2026-08-01');
-    expect(coverage.hasMotorised).toBe(true);
-    expect(coverage.standardItems).toHaveLength(1);
-    expect(coverage.standardItems[0].expiry).toBe('2036-08-01');
-    expect(coverage.motorItems).toHaveLength(1);
-    expect(coverage.motorItems[0].expiry).toBe('2028-08-01');
-    expect(coverage.motorItems[0].label).toContain('motor & moving parts');
-  });
-
-  it('reports no motorised section for an order without motors', () => {
-    const coverage = buildWarrantyCoverage(
-      [MANUAL_BLIND, { item_type: 'preset', description: 'Installation', quantity: 1 }],
-      '2026-08-01'
-    );
-    expect(coverage.hasMotorised).toBe(false);
-    expect(coverage.motorItems).toHaveLength(0);
-    expect(coverage.standardItems.map((i) => i.label)).toEqual([
-      'Bedroom — Zebra',
-      'Installation',
-    ]);
+describe('MOTORIZATION_EXCLUSION_NOTE', () => {
+  it('excludes motorization-related products, naming the common ones', () => {
+    const note = MOTORIZATION_EXCLUSION_NOTE.toLowerCase();
+    expect(note).toContain('excluded from this warranty');
+    for (const word of ['motorization', 'motors', 'solar panels', 'remotes']) {
+      expect(note).toContain(word);
+    }
   });
 });

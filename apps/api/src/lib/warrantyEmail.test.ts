@@ -3,8 +3,8 @@
 
 /**
  * Unit tests for the warranty email template — pins the content the
- * customer must see (order number, every coverage date), the conditional
- * motorised lines, and the HTML-escaping contract that keeps customer
+ * customer must see (order number, coverage dates), the single template
+ * with its motorization exclusion footer, and the HTML-escaping contract that keeps customer
  * and company names from injecting markup.
  *
  * Kept beside `warrantyEmail.ts` rather than in `email.test.ts` for the
@@ -24,37 +24,28 @@ const BASE: WarrantyEmailInputs = {
   customerFirstName: 'Kemal',
   orderNumber: 'T0408-126',
   coverageStart: '20 August 2026',
-  standardExpiry: '20 August 2036',
-  motorExpiry: '20 August 2028',
-  hasMotorised: true,
+  expiry: '20 August 2036',
   viewUrl: 'https://example.com/customer/abc-123',
 };
 
 describe('buildWarrantyEmailHtml', () => {
-  it('states the order number, the customer and every coverage date', () => {
+  it('states the order number, the customer and both coverage dates', () => {
     const html = buildWarrantyEmailHtml(BASE);
     expect(html).toContain('T0408-126');
     expect(html).toContain('Kemal');
     expect(html).toContain('20 August 2026');
     expect(html).toContain('20 August 2036');
-    expect(html).toContain('20 August 2028');
     expect(html).toContain('https://example.com/customer/abc-123');
-  });
-
-  it('omits the motor term entirely when the order has no motorised product', () => {
-    const html = buildWarrantyEmailHtml({ ...BASE, hasMotorised: false });
-    expect(html).not.toContain('20 August 2028');
-    expect(html).not.toContain('Motorised parts');
-    expect(html).not.toContain('2 years on motors');
-    // The ten-year cover is still stated.
     expect(html).toContain('10 years on blinds, fabric and hardware');
   });
 
-  it('states both terms when the order is motorised', () => {
+  it('never promises a motor term, and ends with the motorization exclusion', () => {
     const html = buildWarrantyEmailHtml(BASE);
-    expect(html).toContain('Motorised parts');
-    expect(html).toContain('2 years on motors and motorised parts');
-    expect(html).toContain('10 years on blinds, fabric and hardware');
+    expect(html).not.toMatch(/2 years|motorised parts/i);
+    const note = html.lastIndexOf('Motorization-related products');
+    expect(note).toBeGreaterThan(html.indexOf('To make a claim'));
+    expect(html).toContain('solar panels, remotes');
+    expect(html).toContain('are excluded from this warranty');
   });
 
   it('states the parts-only limit and the service fee in the email itself', () => {

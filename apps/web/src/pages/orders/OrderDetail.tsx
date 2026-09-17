@@ -1781,7 +1781,7 @@ export default function OrderDetail() {
       </div>
       <p className="text-[11px] leading-snug text-text-muted">
         The certificate is emailed automatically when the balance clears — 10 years on
-        products, 2 years on motorised parts.
+        products; motorization-related products are excluded.
       </p>
       <div className="flex gap-2">
         <button

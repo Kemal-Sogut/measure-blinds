@@ -168,7 +168,7 @@ export interface Order {
    * The date warranty coverage runs from — the day the order was paid in
    * full; `null` until then. Snapshotted server-side so every
    * regeneration of the certificate prints identical expiry dates
-   * (coverage + 10 years on products, + 2 years on motorised parts).
+   * (coverage + 10 years on products; motorization is excluded).
    */
   warranty_starts_on: string | null;
   /**

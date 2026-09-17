@@ -3,14 +3,20 @@
 
 /**
  * Warranty term rules — the single source of truth for what is covered,
- * for how long, and until when.
+ * for how long, until when, and what is excluded.
  *
- * The shop's policy has two terms: products carry TEN years, and the
- * motor plus its moving parts on a motorised blind carry TWO. A
- * motorised blind is therefore covered by BOTH — the blind itself for
- * ten years, its motor for two — which is why `buildWarrantyCoverage`
- * returns a motorised item in `standardItems` as well as `motorItems`
- * rather than moving it between them.
+ * ONE TEMPLATE FOR EVERY ORDER. Products carry a single ten-year term.
+ * Motorization-related products (motors, solar panels, remotes and the
+ * like) are NOT covered by this certificate at all — they carry their own
+ * shorter warranty — and that exclusion is stated as a standing footer
+ * note on every certificate and email ({@link MOTORIZATION_EXCLUSION_NOTE}).
+ *
+ * Why no per-order motor section: whether a line item is motorised cannot
+ * be told reliably from the order. Custom and preset rows are free text,
+ * and a newly added catalog component carries no motor flag, so any
+ * keyword guess would sooner or later print the wrong term on a legal
+ * document. A fixed exclusion that holds for every order cannot be wrong
+ * in that way.
  *
  * Coverage is measured from the date the order was paid in full
  * (`orders.warranty_starts_on`), never from "today": the certificate is
@@ -26,15 +32,13 @@
 /** Years of coverage on products (fabric, cassette, rail, manual controls). */
 export const WARRANTY_YEARS_STANDARD = 10;
 
-/** Years of coverage on a motor and its moving parts. */
-export const WARRANTY_YEARS_MOTOR = 2;
-
 /**
- * Matches the motorised catalog controls (`Motorized (Bluetooth)` and
- * `Motorized (Non-Bluetooth)`) and any preset/custom row sold as a motor
- * or motor part. Kept as one pattern so both checks can never drift.
+ * The standing exclusion printed in the footer of the certificate and the
+ * warranty email, identically on every order. Plain text (no markup, no
+ * entities) so the PDF can draw it directly and the email can escape it.
  */
-const MOTOR_PATTERN = /motor/i;
+export const MOTORIZATION_EXCLUSION_NOTE =
+  'Note: Motorization-related products — such as motors, solar panels, remotes, chargers and other motorization accessories — are excluded from this warranty.';
 
 /**
  * The minimal line-item shape the warranty rules read. Deliberately
@@ -47,8 +51,6 @@ export interface WarrantyItemSource {
   room_name?: string | null;
   blinds_type?: string | null;
   description?: string | null;
-  /** Snapshotted control catalog name; the motorised signal for blinds. */
-  control_name?: string | null;
   quantity: number;
 }
 
@@ -57,7 +59,7 @@ export interface WarrantyItem {
   /** Human label, e.g. "Living Room — Roller" or a custom description. */
   label: string;
   quantity: number;
-  /** Last day of cover for THIS row's term, YYYY-MM-DD. */
+  /** Last day of cover, YYYY-MM-DD. */
   expiry: string;
 }
 
@@ -69,15 +71,9 @@ export interface WarrantyCoverage {
   /** Paid-in-full date coverage runs from, YYYY-MM-DD. */
   startsOn: string;
   /** `startsOn` + 10 years — the product term. */
-  standardExpiry: string;
-  /** `startsOn` + 2 years — the motor term. */
-  motorExpiry: string;
-  /** True when the order contains at least one motorised product. */
-  hasMotorised: boolean;
-  /** Every line item, on the ten-year product term. */
-  standardItems: WarrantyItem[];
-  /** Only the motorised items, on the two-year motor term. */
-  motorItems: WarrantyItem[];
+  expiry: string;
+  /** Every line item, on the ten-year product term, in order. */
+  items: WarrantyItem[];
 }
 
 /** Zero-pads a month or day to two digits. */
@@ -124,21 +120,6 @@ export function addYears(startIso: string, years: number): string {
 }
 
 /**
- * Whether a line item is motorised, and therefore also carries the
- * two-year motor term.
- *
- * A blind is judged on its snapshotted `control_name` (the catalog ships
- * `Motorized (Bluetooth)` and `Motorized (Non-Bluetooth)`); a preset or
- * custom row is judged on its description, which is how a separately
- * sold motor or replacement part reaches an order.
- */
-export function isMotorised(item: WarrantyItemSource): boolean {
-  return MOTOR_PATTERN.test(
-    (item.item_type === 'blind' ? item.control_name : item.description) ?? ''
-  );
-}
-
-/**
  * Names a line item for the certificate. Blinds read "{room} — {type}",
  * degrading to whichever half exists so a row with no room still prints
  * something a customer can identify; preset and custom rows use their
@@ -155,14 +136,10 @@ function itemLabel(item: WarrantyItemSource): string {
 }
 
 /**
- * Builds the full coverage picture for one order.
- *
- * Every line item lands in `standardItems` on the ten-year term. The
- * motorised ones ALSO land in `motorItems` on the two-year term, labelled
- * to make clear it is the motor and its moving parts that carry the
- * shorter cover — not the blind, which keeps its ten years. The
- * certificate renders `motorItems` as its own section, and omits that
- * section entirely when `hasMotorised` is false.
+ * Builds the full coverage picture for one order: every line item on the
+ * ten-year product term. No item is classified or singled out — the
+ * motorization exclusion is a fixed footer note, not a per-item decision
+ * (see the module header for why).
  *
  * @param lineItems The order's line items (any order; sequence is preserved)
  * @param startsOn Paid-in-full date, YYYY-MM-DD
@@ -172,29 +149,14 @@ export function buildWarrantyCoverage(
   lineItems: WarrantyItemSource[],
   startsOn: string
 ): WarrantyCoverage {
-  const standardExpiry = addYears(startsOn, WARRANTY_YEARS_STANDARD);
-  const motorExpiry = addYears(startsOn, WARRANTY_YEARS_MOTOR);
-
-  const standardItems: WarrantyItem[] = [];
-  const motorItems: WarrantyItem[] = [];
-  for (const item of lineItems) {
-    const label = itemLabel(item);
-    const quantity = Number(item.quantity);
-    standardItems.push({ label, quantity, expiry: standardExpiry });
-    if (isMotorised(item)) {
-      // The blind keeps its ten years; only the motor drops to two, so
-      // the label has to say which part this shorter row covers.
-      const motorLabel = item.item_type === 'blind' ? `${label} — motor & moving parts` : label;
-      motorItems.push({ label: motorLabel, quantity, expiry: motorExpiry });
-    }
-  }
-
+  const expiry = addYears(startsOn, WARRANTY_YEARS_STANDARD);
   return {
     startsOn,
-    standardExpiry,
-    motorExpiry,
-    hasMotorised: motorItems.length > 0,
-    standardItems,
-    motorItems,
+    expiry,
+    items: lineItems.map((item) => ({
+      label: itemLabel(item),
+      quantity: Number(item.quantity),
+      expiry,
+    })),
   };
 }

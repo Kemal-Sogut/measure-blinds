@@ -7,12 +7,17 @@
  *
  * Layout, top to bottom: company header with the certificate title and
  * order number, a buyer-information block, a coverage summary (start
- * date, both expiry dates, and the parts-only banner), the ten-year
- * product list, a two-year motorised-parts section that appears only
- * when the order contains a motor, the warranty terms, and how to claim.
+ * date, expiry date, and the parts-only banner), the ten-year product
+ * list, the warranty terms, how to claim, and a footer note excluding
+ * motorization-related products.
+ *
+ * ONE TEMPLATE: every order gets the same sections. There is no
+ * conditional motor section — motorised items cannot be identified
+ * reliably from an order, so motorization is excluded by a standing
+ * footer note instead (see `warranty.ts`).
  *
  * SCOPE: this is a PARTS warranty. The shop replaces defective
- * components free within the stated periods; workmanship and labour are
+ * components free within the stated period; workmanship and labour are
  * excluded and the standard service fee applies to every visit. Nothing
  * on this document may imply otherwise.
  *
@@ -43,12 +48,16 @@ import {
   addressLines,
   drawRight,
 } from './pdf';
-import { WARRANTY_YEARS_MOTOR, WARRANTY_YEARS_STANDARD, type WarrantyCoverage } from './warranty';
+import {
+  MOTORIZATION_EXCLUSION_NOTE,
+  WARRANTY_YEARS_STANDARD,
+  type WarrantyCoverage,
+} from './warranty';
 
 /**
  * The certificate's standing terms.
  *
- * PARTS ONLY. Within the stated periods the shop supplies the defective
+ * PARTS ONLY. Within the stated period the shop supplies the defective
  * component or a replacement free of charge; workmanship and labour are
  * NOT covered, and the standard service fee is payable on every visit —
  * including a visit where the part itself is free under this warranty.
@@ -65,7 +74,7 @@ import { WARRANTY_YEARS_MOTOR, WARRANTY_YEARS_STANDARD, type WarrantyCoverage } 
  * Settings is a deliberate follow-up, not an oversight.
  */
 export const WARRANTY_TERMS = [
-  'This warranty covers PARTS ONLY. Within the periods stated above, measured from the coverage start date, we supply the defective component or its replacement free of charge.',
+  'This warranty covers PARTS ONLY. Within the period stated above, measured from the coverage start date, we supply the defective component or its replacement free of charge.',
   'Workmanship and labour are NOT covered. Our standard service fee applies to every call-out, inspection, removal, refitting and re-installation visit — including visits where the part itself is supplied free under this warranty.',
   'It does not cover accidental damage, misuse, improper cleaning, alterations or repairs not carried out by us, normal fading or wear of fabric, damage caused by exceeding the recommended operating conditions, or installations in commercial premises.',
   'The warranty applies to the original purchaser at the installation address shown above and is not transferable.',
@@ -218,21 +227,11 @@ export async function buildWarrantyPdf(data: WarrantyPdfData): Promise<Uint8Arra
   labelledRow(
     cur,
     `Products covered until (${WARRANTY_YEARS_STANDARD} years)`,
-    data.coverage.standardExpiry,
+    data.coverage.expiry,
     font,
     bold,
     rightEdge
   );
-  if (data.coverage.hasMotorised) {
-    labelledRow(
-      cur,
-      `Motorised parts covered until (${WARRANTY_YEARS_MOTOR} years)`,
-      data.coverage.motorExpiry,
-      font,
-      bold,
-      rightEdge
-    );
-  }
 
   // The parts-only limit sits with the dates, not in the small print:
   // a customer who reads only the coverage block must still learn that a
@@ -242,35 +241,13 @@ export async function buildWarrantyPdf(data: WarrantyPdfData): Promise<Uint8Arra
 
   /* ── Ten-year product list ────────────────────────────────────── */
   sectionHeading(cur, `COVERED PRODUCTS — ${WARRANTY_YEARS_STANDARD} YEARS`, bold, 16);
-  for (const item of data.coverage.standardItems) {
+  for (const item of data.coverage.items) {
     cur.ensure(14);
     const rowTop = cur.y;
     drawRight(cur.page, item.expiry, rightEdge, rowTop, font, 9, SOFT);
     drawRight(cur.page, `x ${item.quantity}`, rightEdge - 80, rowTop, font, 9, SOFT);
     cur.wrapped(item.label, MARGIN, CONTENT_W - 150, font, 10);
     cur.gap(2);
-  }
-
-  /* ── Two-year motorised section (omitted when there is no motor) ─ */
-  if (data.coverage.hasMotorised) {
-    sectionHeading(cur, `MOTORISED PARTS — ${WARRANTY_YEARS_MOTOR} YEARS`, bold, 30);
-    cur.wrapped(
-      `Motorised blinds — the motor and its moving parts — are covered for ${WARRANTY_YEARS_MOTOR} years from the coverage start date. The blind itself remains covered for ${WARRANTY_YEARS_STANDARD} years.`,
-      MARGIN,
-      CONTENT_W,
-      font,
-      9,
-      SOFT
-    );
-    cur.gap(4);
-    for (const item of data.coverage.motorItems) {
-      cur.ensure(14);
-      const rowTop = cur.y;
-      drawRight(cur.page, item.expiry, rightEdge, rowTop, font, 9, SOFT);
-      drawRight(cur.page, `x ${item.quantity}`, rightEdge - 80, rowTop, font, 9, SOFT);
-      cur.wrapped(item.label, MARGIN, CONTENT_W - 150, font, 10);
-      cur.gap(2);
-    }
   }
 
   /* ── Terms ────────────────────────────────────────────────────── */
@@ -290,6 +267,15 @@ export async function buildWarrantyPdf(data: WarrantyPdfData): Promise<Uint8Arra
     9,
     SOFT
   );
+
+  /* ── Footer note: motorization exclusion (every order) ────────── */
+  // Printed last, under its own rule, on every certificate regardless of
+  // what the order contains — it is a standing exclusion, not a reading
+  // of the line items.
+  cur.gap(14);
+  cur.ensure(40);
+  cur.rule();
+  cur.wrapped(MOTORIZATION_EXCLUSION_NOTE, MARGIN, CONTENT_W, bold, 9, INK);
 
   return doc.save();
 }
