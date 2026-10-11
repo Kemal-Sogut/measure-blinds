@@ -146,7 +146,8 @@ section as the reference implementation for future collapsible UI.
   is priced per running metre × pleat fullness and height does not enter at all, so no
   granular hook could express it. That remains the exception: prefer the smallest hook, and
   fork `calculateUnitPrice` only when the formula's SHAPE changes, not its coefficients.
-  (2026-07-12)
+  (2026-07-12) **Sheer (2026-10-10) subclasses `CurtainsBlindType`** and only relabels — so
+  "prices like Curtains" checks are `instanceof CurtainsBlindType`, never a name compare.
 - **A blind type owns more than a formula (2026-08-09).** `BaseBlindType` also carries
   `attributeSchema` (a `.strict()` Zod contract for that type's extra inputs; base accepts
   only `{}`), `defaultAttributes()`, and `describeAttributes()` → `{label, value}[]`. The

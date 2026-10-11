@@ -1,5 +1,26 @@
 # Engine Features / Feature History
 
+## 2026-10-10 — "Sheer" blind type, priced exactly like Curtains
+New blind type **Sheer** (distinct from Vertical Sheer, which keeps the area formula).
+
+- **Pricing.** `SheerBlindType` (`apps/{api,web}/src/lib/blindTypes/sheer.ts`, twinned) SUBCLASSES
+  `CurtainsBlindType` and overrides only the label (`'Sheer'`, alias `'sheers'`): fabric per
+  running metre × pleat fullness + 0.5 m hem per panel, height ignored, `pleat_type_id` attribute
+  resolved against `pleat_types`. `CurtainsBlindType.blindType` widened to `string` so the
+  subclass can relabel. Registered in both registries + barrels.
+- **UI.** Form registry maps Sheer → `CurtainsForm`. The two name-compares on `'Curtains'` became
+  `instanceof CurtainsBlindType`: Materials page shows `Price / m` + the Pleat Types link
+  (`MaterialsForType.tsx`), bulk-add shows the Pleat picker (`BulkAddSectionCard.tsx`). Anything
+  keyed on `describeMaterialUsage().unit === 'running_m'` picks Sheer up automatically.
+- **Data — migration 44** (`supabase/migrations/20261010000044_sheer_blind_type.sql`, MUST be
+  applied to `lgbxxlwsdeuhdgzrjjen`). Inserts `blind_types` row `Sheer` (sort 11) and, one-shot,
+  copies Curtains' current hardware scoping links (cassette/bottom rail/control/installation) and
+  hardware defaults; default material is not copied. Re-run is a no-op once the row exists.
+  `seed.sql` gets the row too.
+- **Tests.** Both `pricing.test.ts` suites: a Sheer block asserting identical unit price + usage to
+  Curtains and a $330 worked example, plus Sheer rows in the usage/leg parity table; Sheer added to
+  the canonical lists in both `attributes.test.ts` and `blindForms.test.ts`.
+
 ## 2026-09-17 — Warranty certificate: one template, motorization excluded by footer note
 The certificate and warranty email no longer branch on whether an order looks motorised. The
 old rule (`isMotorised`: `/motor/i` on a blind's `control_name` or a custom row's description)

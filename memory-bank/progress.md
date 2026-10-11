@@ -74,7 +74,8 @@ in the fixed bottom bar). Confirm is gated behind a Terms checkbox (UI-only — 
 Issues).
 
 **Blind types & pricing:** ten canonical blind types as modules (`lib/blindTypes/`, twinned
-api/web); Curtains is the one type with a genuinely divergent formula (fabric per running
+api/web), plus **Sheer** (migration 44), a `CurtainsBlindType` subclass that prices identically
+to Curtains; Curtains is the one type with a genuinely divergent formula (fabric per running
 metre × pleat fullness + per-panel hem allowance + a fixed installation charge). Every
 type's extra inputs live in `line_items.attributes` jsonb, validated by a per-type
 `.strict()` Zod schema server-side. Hardware slots (cassette/bottom rail/control/

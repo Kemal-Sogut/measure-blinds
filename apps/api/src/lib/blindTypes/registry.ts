@@ -24,6 +24,7 @@ import { VerticalSheerBlindType } from './verticalSheer';
 import { VerticalPanelBlindType } from './verticalPanel';
 import { VerticalRollerBlindType } from './verticalRoller';
 import { CurtainsBlindType } from './curtains';
+import { SheerBlindType } from './sheer';
 
 /**
  * Normalises a blind-type name to a lookup key: lowercased, reduced to
@@ -38,7 +39,7 @@ export function normalizeBlindType(name: string | null | undefined): string {
 /** Fallback used when a blind type has no dedicated module. */
 const defaultBlindType = new BaseBlindType();
 
-/** One instance per supported blind type (the canonical ten). */
+/** One instance per supported blind type (the canonical ten, plus Sheer). */
 const blindTypes: readonly BaseBlindType[] = [
   new RollerBlindType(),
   new ZebraBlindType(),
@@ -50,6 +51,7 @@ const blindTypes: readonly BaseBlindType[] = [
   new VerticalPanelBlindType(),
   new VerticalRollerBlindType(),
   new CurtainsBlindType(),
+  new SheerBlindType(),
 ];
 
 /** normalised name/alias → blind-type module instance. */

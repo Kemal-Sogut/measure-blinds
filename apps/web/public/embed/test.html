@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- Copyright (c) 2026 Blinds Nisa. All rights reserved. -->
+<!-- Local harness for the embeddable lead form: mimics the WordPress
+     "Free Estimate" page. No data-api → demo mode (nothing is sent). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free Estimate – embed test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body { margin: 0; background: #fff; color: #111; font-family: "Plus Jakarta Sans", sans-serif; }
+    header { padding: 18px 16px; border-bottom: 1px solid #eee; font-weight: 800; }
+    header span { color: #e21616; }
+    main { max-width: 1080px; margin: 0 auto; padding: 40px 16px 80px; }
+    h1 { font-size: clamp(28px, 5vw, 40px); margin: 0 0 8px; letter-spacing: -.02em; }
+    main > p { margin: 0 0 28px; color: #555; }
+  </style>
+</head>
+<body>
+  <header>Blinds<span>nisa</span></header>
+  <main>
+    <h1>Get a Free Estimate</h1>
+    <p>Tell us about your windows and we'll come to you, free of charge.</p>
+
+    <div id="bn-lead-form" data-phone="613-699-1837" data-email="info@blindsnisa.com"></div>
+    <script src="lead-form.js" defer></script>
+  </main>
+</body>
+</html>

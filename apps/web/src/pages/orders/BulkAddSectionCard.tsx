@@ -71,7 +71,7 @@ import {
   LABEL,
   OptionSelect,
 } from './blindForms/fields';
-import { getBlindType } from '../../lib/blindTypes';
+import { CurtainsBlindType, getBlindType } from '../../lib/blindTypes';
 
 /** Shared chevron path for the section card's expand/collapse control. */
 const CHEVRON_PATH = 'm6 9 6 6 6-6';
@@ -124,10 +124,12 @@ function SectionTypeSelect({
  * A section's type-specific attribute inputs — the extension point for "a
  * section whose blind type has attributes must expose them".
  *
- * Curtains is the only blind type with a UI-editable attribute today (its
- * Pleat picker, `pleat_type_id` — see `CurtainsForm.tsx`), so this is the
- * only case below. There is no generic, declarative registry of
- * "attribute key → label → catalog list" to drive this from (each
+ * Curtains — and Sheer, which subclasses it and shares its form — is the
+ * only blind type with a UI-editable attribute today (its Pleat picker,
+ * `pleat_type_id` — see `CurtainsForm.tsx`), so this is the only case
+ * below, gated by `instanceof` so both types get it. There is no generic,
+ * declarative registry of "attribute key → label → catalog list" to drive
+ * this from (each
  * per-type form file hand-writes its own `AttributeSelect`/`AttributeText`
  * calls), so a future type that grows an attribute needs a case added HERE
  * too, exactly as it needs one added to its own `<Type>Form.tsx` — the two
@@ -148,7 +150,7 @@ function SectionAttributes({
   catalogs: Catalogs;
   onChange: (next: BlindDraft) => void;
 }) {
-  if (getBlindType(config.blinds_type).blindType !== 'Curtains') return null;
+  if (!(getBlindType(config.blinds_type) instanceof CurtainsBlindType)) return null;
   return (
     <AttributeSelect
       draft={config}

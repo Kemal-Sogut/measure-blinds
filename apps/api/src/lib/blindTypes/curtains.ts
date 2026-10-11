@@ -58,7 +58,9 @@ import {
 const HEM_ALLOWANCE_M = 0.5;
 
 export class CurtainsBlindType extends BaseBlindType {
-  readonly blindType = 'Curtains';
+  // Widened to `string`: SheerBlindType subclasses this module and
+  // overrides the label, which a literal 'Curtains' type would forbid.
+  readonly blindType: string = 'Curtains';
   readonly aliases = ['curtain'];
 
   /**

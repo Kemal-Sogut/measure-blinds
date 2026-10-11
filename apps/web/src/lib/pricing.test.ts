@@ -588,6 +588,57 @@ describe('describeMaterialUsage', () => {
   });
 });
 
+describe('Sheer', () => {
+  /**
+   * Sheer subclasses the Curtains module and must price IDENTICALLY to it
+   * — running metres of width x pleat fullness plus the per-panel hem
+   * allowance, height ignored. Comparing against Curtains (rather than
+   * re-deriving the numbers) is what keeps the two from drifting if the
+   * Curtains formula changes. Mirrored in the api twin.
+   */
+  function sheer(
+    panels: number[],
+    height_cm: number,
+    material_price_per_sqm: number,
+    attributes: Record<string, string | number | boolean> = {}
+  ): BlindInputs {
+    return {
+      panels,
+      height_cm,
+      material_price_per_sqm,
+      hardware: { control: { price: 10, basis: 'per_panel' } },
+      attributes,
+      quantity: 1,
+    };
+  }
+
+  const CASES = [
+    sheer([300], 200, 40, { pleat_multiplier: 2.5 }),
+    sheer([150, 150], 260, 62, { pleat_multiplier: 2 }),
+    sheer([60], 90, 39.95),
+  ];
+
+  it('resolves to its own module, distinct from Vertical Sheer', () => {
+    expect(getBlindType('Sheer').blindType).toBe('Sheer');
+    expect(getBlindType('sheers').blindType).toBe('Sheer');
+    expect(getBlindType('Vertical Sheer').blindType).toBe('Vertical Sheer');
+  });
+
+  it.each(CASES)('prices exactly like Curtains ($panels, $height_cm cm)', (item) => {
+    expect(calculateBlindUnitPriceForType('Sheer', item)).toBe(
+      calculateBlindUnitPriceForType('Curtains', item)
+    );
+    expect(getBlindType('Sheer').describeMaterialUsage(item)).toEqual(
+      getBlindType('Curtains').describeMaterialUsage(item)
+    );
+  });
+
+  it('prices fabric by the running metre times the pleat multiplier', () => {
+    // 3.0 m x 2.5 x $40 = 300, + 1 panel x 0.5 m x $40 hem = 20, + $10 control = $330.00
+    expect(calculateBlindUnitPriceForType('Sheer', CASES[0])).toBe(330);
+  });
+});
+
 describe('describeMaterialUsage agrees with the material leg it reports on', () => {
   /**
    * The web half of the spec §4.2 mitigation. `materialCost` is
@@ -612,6 +663,8 @@ describe('describeMaterialUsage agrees with the material leg it reports on', () 
     { type: 'Curtains', item: blind({ panels: [150, 150], height_cm: 200, material_price_per_sqm: 62, attributes: { pleat_multiplier: 2 } }) },
     { type: 'Curtains', item: blind({ panels: [60], height_cm: 90, material_price_per_sqm: 39.95, attributes: { pleat_multiplier: 3 } }) },
     { type: 'Curtains', item: blind({ panels: [420], height_cm: 280, material_price_per_sqm: 88.5 }) },
+    { type: 'Sheer', item: blind({ panels: [300], height_cm: 200, material_price_per_sqm: 40, attributes: { pleat_multiplier: 2.5 } }) },
+    { type: 'Sheer', item: blind({ panels: [150, 150], height_cm: 240, material_price_per_sqm: 31.5 }) },
   ];
 
   it.each(CASES)('$type: material leg equals usage x rate', ({ type, item }) => {

@@ -33,7 +33,7 @@ import { useState, type ChangeEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
-import { getBlindType } from '../../lib/blindTypes';
+import { CurtainsBlindType, getBlindType } from '../../lib/blindTypes';
 import {
   useCatalogList,
   useCreateCatalogItem,
@@ -170,17 +170,19 @@ export default function MaterialsForType() {
   const scoped = (materials ?? []).filter((m) => m.blind_type_ids.includes(blindTypeId));
 
   /**
-   * Curtains price fabric by the RUNNING METRE, not by area — the shared
-   * `price_per_sqm` column holds a per-metre rate for this type alone
-   * (see `lib/blindTypes/curtains.ts`). Relabelling is load-bearing, not
+   * Curtains (and Sheer, which subclasses it) price fabric by the RUNNING
+   * METRE, not by area — the shared `price_per_sqm` column holds a
+   * per-metre rate for these types alone (see `lib/blindTypes/curtains.ts`). Relabelling is load-bearing, not
    * cosmetic: an m² price entered here would under-quote every curtain by
    * roughly its drop in metres.
    *
-   * Resolved through the canonical label rather than a raw string compare
+   * Resolved through the pricing module rather than a raw string compare
    * so aliases and legacy spellings behave the same way they do in the
-   * pricing engine.
+   * pricing engine, and as an `instanceof` check so every type that
+   * inherits the Curtains formula (today: Sheer) gets the per-metre label
+   * and the Pleat Types link too.
    */
-  const isCurtains = getBlindType(type?.name).blindType === 'Curtains';
+  const isCurtains = getBlindType(type?.name) instanceof CurtainsBlindType;
   const priceLabel = isCurtains ? 'Price / m' : 'Price / m²';
   const priceSuffix = isCurtains ? 'per m' : 'per m²';
 
@@ -359,7 +361,7 @@ export default function MaterialsForType() {
           </div>
         </div>
 
-        {/* Pleat types — Curtains only; a pleat is meaningless without fabric */}
+        {/* Pleat types — Curtains and Sheer only; a pleat is meaningless without fabric */}
         {isCurtains && (
           <Link
             to="/settings/pleat-types"

@@ -56,6 +56,10 @@ const byKey = new Map<string, BlindFormComponent>([
   [normalizeBlindType('Vertical Panel'), VerticalPanelForm],
   [normalizeBlindType('Vertical Roller'), VerticalRollerForm],
   [normalizeBlindType('Curtains'), CurtainsForm],
+  // Sheer subclasses the Curtains pricing module and takes exactly the
+  // same inputs (widths, height, material, pleat, hardware), so it reuses
+  // the Curtains form rather than duplicating it.
+  [normalizeBlindType('Sheer'), CurtainsForm],
 ]);
 
 /**

@@ -4,8 +4,15 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-09-16)
+## Where things stand (as of 2026-10-10)
 
+**Newest, uncommitted, web + api, needs DATABASE migration 44 applied before deploy:** a new
+**Sheer** blind type that prices exactly like Curtains (`SheerBlindType extends
+CurtainsBlindType`, reuses `CurtainsForm`, per-metre Materials label + Pleat Types link).
+Migration 44 adds the row and copies Curtains' hardware scoping/defaults. See
+`knowledge/history/engine_features.md` 2026-10-10.
+
+**Previously (2026-09-16):**
 **Newest, uncommitted, web + api, needs DATABASE migration 43 applied before deploy:** a
 **Notifications page** (bell icon in the sidebar between Calendar and Settings, `/notifications`).
 Lists customer edit requests, customer confirmations and incoming e-Transfers (applied or

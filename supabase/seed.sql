@@ -33,7 +33,8 @@ select * from (values
   ('Vertical Sheer',  7),
   ('Vertical Panel',  8),
   ('Vertical Roller', 9),
-  ('Curtains',        10)
+  ('Curtains',        10),
+  ('Sheer',           11)
 ) as v(name, sort_order)
 where not exists (select 1 from public.blind_types);
 

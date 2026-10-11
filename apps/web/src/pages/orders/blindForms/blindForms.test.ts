@@ -20,7 +20,7 @@ import { describe, it, expect } from 'vitest';
 import { getBlindForm } from './index';
 import DefaultForm from './DefaultForm';
 
-/** The ten canonical type names, as stored in `line_items.blinds_type`. */
+/** The canonical type names (the original ten plus Sheer), as stored in `line_items.blinds_type`. */
 const CANONICAL = [
   'Roller',
   'Zebra',
@@ -32,6 +32,7 @@ const CANONICAL = [
   'Vertical Panel',
   'Vertical Roller',
   'Curtains',
+  'Sheer',
 ] as const;
 
 describe('getBlindForm', () => {
@@ -48,12 +49,13 @@ describe('getBlindForm', () => {
   });
 
   it('resolves the aliases the pricing registry answers to', () => {
-    // Sunscreen/Solar and Curtains carry aliases in lib/blindTypes; a form
+    // Sunscreen/Solar, Curtains and Sheer carry aliases in lib/blindTypes; a form
     // registry that missed them would render the default for those names
     // while pricing used the real module.
     expect(getBlindForm('solar')).toBe(getBlindForm('Sunscreen'));
     expect(getBlindForm('Sun-screen/Solar')).toBe(getBlindForm('Sunscreen'));
     expect(getBlindForm('curtain')).toBe(getBlindForm('Curtains'));
+    expect(getBlindForm('sheers')).toBe(getBlindForm('Sheer'));
   });
 
   it('gives every canonical type its own form', () => {

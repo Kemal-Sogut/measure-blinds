@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { BaseBlindType, type BlindPricingInputs } from './base';
 import { getBlindType } from './registry';
 
-/** The ten canonical type names, as stored in `line_items.blinds_type`. */
+/** The canonical type names (the original ten plus Sheer), as stored in `line_items.blinds_type`. */
 const CANONICAL = [
   'Roller',
   'Zebra',
@@ -33,6 +33,7 @@ const CANONICAL = [
   'Vertical Panel',
   'Vertical Roller',
   'Curtains',
+  'Sheer',
 ] as const;
 
 describe('attribute contract', () => {
