@@ -2,14 +2,15 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Cron entry for the Titan inbox sync (every 5 minutes, cron
- * {@link INBOX_SYNC_CRON}, dispatched from `index.ts`'s scheduled handler). Wires the real pieces — the TLS
+ * Cron entry for the Titan inbox sync. `index.ts` runs it on the
+ * every-minute cron when `schedule.isInboxSyncDue` says so (every minute
+ * 08:00–22:00 Toronto, every 10 minutes otherwise). Wires the real pieces — the TLS
  * socket to Titan, the Supabase store — around `syncInbox`.
  *
  * Skips quietly (one log line) until TITAN_IMAP_USER and
  * TITAN_IMAP_PASSWORD are set, so deploying the code before the secrets
- * is harmless. A run is capped at 4 minutes so a stalled server cannot
- * overlap many runs; on any connection-level failure the error is
+ * is harmless. A run is capped at 50 seconds so a stalled server cannot
+ * overlap runs; on any connection-level failure the error is
  * written to both folders' sync state (shown in Settings) and the
  * cursors stay where they were. Never logs the password: IMAP errors
  * carry only the command verb.
@@ -22,11 +23,11 @@ import { openTitanSource } from './titanConnect';
 import type { Env } from '../../index';
 import type { MailSource } from './types';
 
-/** The cron expression this sync runs on; must match wrangler.toml. */
-export const INBOX_SYNC_CRON = '*/5 * * * *';
-
-/** Hard cap for one run. */
-const SYNC_TIMEOUT_MS = 4 * 60 * 1000;
+/**
+ * Hard cap for one run: under the one-minute cron interval, so runs never
+ * pile up (an overlap would be harmless anyway — message ids are UNIQUE).
+ */
+const SYNC_TIMEOUT_MS = 50 * 1000;
 
 /** Runs one inbox sync with production wiring. Never throws. */
 export async function runInboxSync(env: Env): Promise<void> {
@@ -51,7 +52,7 @@ export async function runInboxSync(env: Env): Promise<void> {
       return syncInbox({ source, store, mailbox: user, now: () => new Date() });
     })();
     const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('Inbox sync timed out after 4 minutes')), SYNC_TIMEOUT_MS);
+      timer = setTimeout(() => reject(new Error('Inbox sync timed out after 50 seconds')), SYNC_TIMEOUT_MS);
     });
     const report = await Promise.race([work, timeout]);
     console.log(

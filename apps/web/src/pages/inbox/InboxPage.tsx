@@ -11,13 +11,15 @@
  * opening a conversation and pressing Back returns to the same list.
  * Each row shows the other party, the subject, a preview of the latest
  * message ("You: …" when the shop wrote last), the time, the message
- * count, and the linked customer.
+ * count, and the linked customer. A blue dot marks a conversation with an
+ * unopened incoming email, and a tab gets the same dot while any of its
+ * conversations (New or Handled) is unread.
  */
 
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
-import { useInboxThreads } from '../../hooks/useInbox';
+import { useInboxThreads, useInboxUnread } from '../../hooks/useInbox';
 import { displayName } from '../../lib/customerName';
 import type { EmailThreadStatus, EmailThreadSummary } from '../../types';
 import {
@@ -31,9 +33,14 @@ import {
   type InboxParams,
 } from './inboxText';
 
-/** One conversation row; bold title while it's New. */
+/** The small blue "unread" dot used on rows and tabs. */
+function UnreadDot() {
+  return <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 rounded-pill bg-brand-600" />;
+}
+
+/** One conversation row; a blue dot and bold name while it has an unopened email. */
 function ThreadRow({ thread, onOpen }: { thread: EmailThreadSummary; onOpen: () => void }) {
-  const isNew = thread.status === 'new';
+  const unread = thread.unread;
   return (
     <button
       type="button"
@@ -41,8 +48,12 @@ function ThreadRow({ thread, onOpen }: { thread: EmailThreadSummary; onOpen: () 
       className="flex w-full flex-col gap-0.5 rounded-xl border border-border-light bg-surface p-3 text-left shadow-sm hover:bg-surface-muted"
     >
       <span className="flex items-baseline justify-between gap-2">
-        <span className={`truncate text-sm text-text-primary ${isNew ? 'font-bold' : 'font-semibold'}`}>
-          {threadTitle(thread)}
+        <span className="flex min-w-0 items-center gap-2">
+          {unread && <UnreadDot />}
+          <span className={`truncate text-sm text-text-primary ${unread ? 'font-bold' : 'font-semibold'}`}>
+            {threadTitle(thread)}
+          </span>
+          {unread && <span className="sr-only">(unread)</span>}
         </span>
         <time dateTime={thread.last_message_at} className="shrink-0 text-[12px] text-text-muted">
           {formatThreadTime(thread.last_message_at)}
@@ -77,6 +88,7 @@ export default function InboxPage() {
   const [params, setParams] = useSearchParams();
   const state = parseInboxParams(params);
   const { data, isLoading, error, isPlaceholderData } = useInboxThreads(state.category, state.status, state.page);
+  const unreadCounts = useInboxUnread().data;
   const threads = data?.data ?? [];
   const totalPages = data?.total_pages ?? 1;
 
@@ -106,7 +118,15 @@ export default function InboxPage() {
               className={segment(c === state.category)}
               onClick={() => go({ category: c, page: 1 })}
             >
-              {CATEGORY_LABELS[c]}
+              <span className="inline-flex items-center gap-1.5">
+                {CATEGORY_LABELS[c]}
+                {(unreadCounts?.[c] ?? 0) > 0 && (
+                  <>
+                    <UnreadDot />
+                    <span className="sr-only">(unread)</span>
+                  </>
+                )}
+              </span>
             </button>
           ))}
         </div>

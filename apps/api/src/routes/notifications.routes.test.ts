@@ -27,13 +27,17 @@ interface FakeDb {
   count: number;
   range: [number, number] | null;
   orders: Array<[string, { ascending: boolean }]>;
+  select: string;
 }
-const db: FakeDb = { rows: [], count: 0, range: null, orders: [] };
+const db: FakeDb = { rows: [], count: 0, range: null, orders: [], select: '' };
 
 /** Thenable builder mimicking the supabase-js chain used by the route. */
 function makeBuilder() {
   const builder: Record<string, unknown> = {};
-  builder.select = () => builder;
+  builder.select = (cols: string) => {
+    db.select = cols;
+    return builder;
+  };
   builder.order = (col: string, opts: { ascending: boolean }) => {
     db.orders.push([col, opts]);
     return builder;
@@ -76,6 +80,7 @@ beforeEach(() => {
   db.count = 0;
   db.range = null;
   db.orders = [];
+  db.select = '';
 });
 
 describe('GET /api/notifications', () => {
@@ -119,6 +124,12 @@ describe('GET /api/notifications', () => {
     const body = (await res.json()) as FeedBody;
     expect(db.range).toEqual([30, 44]);
     expect(body).toMatchObject({ page: 3, total: 31, total_pages: 3 });
+  });
+
+  it('returns the Inbox conversation link and subject for email alerts', async () => {
+    await notificationsApp.request('/', {}, ENV);
+    expect(db.select).toContain('email_thread_id');
+    expect(db.select).toContain('subject');
   });
 
   it('reports one page when there are no alerts at all', async () => {

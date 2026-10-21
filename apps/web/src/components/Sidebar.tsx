@@ -32,6 +32,7 @@ import { useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth, useCompanySettings } from '../hooks';
 import { useSidebar } from '../hooks/useSidebar';
+import { useInboxUnread } from '../hooks/useInbox';
 
 /** One nav destination; `end` forces exact matching for Orders at "/". */
 interface NavItem {
@@ -112,6 +113,28 @@ function NavIcon({ d, size = 20 }: { d: string; size?: number }) {
 }
 
 /**
+ * An item's icon with an optional blue dot on its top-right corner — used
+ * for the Inbox item while any conversation has an unopened email. The
+ * dot is decorative; the item's label carries "(unread)" for screen readers.
+ */
+function ItemIcon({ d, size, dot, active }: { d: string; size: number; dot: boolean; active: boolean }) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      <NavIcon d={d} size={size} />
+      {dot && (
+        // White on the selected (blue) item, blue everywhere else.
+        <span
+          aria-hidden="true"
+          className={`absolute -right-0.5 -top-0.5 h-2 w-2 rounded-pill ring-2 ${
+            active ? 'bg-white ring-brand-600' : 'bg-brand-600 ring-surface'
+          }`}
+        />
+      )}
+    </span>
+  );
+}
+
+/**
  * Brand mark + company name. The name is hidden (not unmounted) in the
  * collapsed rail so collapsing never re-runs the settings query or
  * reflows the logo.
@@ -178,6 +201,10 @@ export default function Sidebar() {
   const mobileOpen = useSidebar((s) => s.mobileOpen);
   const closeMobile = useSidebar((s) => s.closeMobile);
   const toggleCollapsed = useSidebar((s) => s.toggleCollapsed);
+  // Polls every minute; the dot shows while any conversation is unread.
+  const inboxUnread = (useInboxUnread().data?.total ?? 0) > 0;
+  const dotFor = (item: NavItem) => item.to === '/inbox' && inboxUnread;
+  const labelFor = (item: NavItem) => (dotFor(item) ? `${item.label} (unread)` : item.label);
   const { pathname } = useLocation();
 
   // Navigating is the whole point of the overlay, so a route change
@@ -238,8 +265,8 @@ export default function Sidebar() {
               key={item.to}
               to={item.to}
               end={item.end}
-              title={collapsed ? item.label : undefined}
-              aria-label={collapsed ? item.label : undefined}
+              title={collapsed ? labelFor(item) : undefined}
+              aria-label={collapsed ? labelFor(item) : undefined}
               className={({ isActive }) =>
                 itemClass(
                   isActive,
@@ -249,8 +276,17 @@ export default function Sidebar() {
                 )
               }
             >
-              <NavIcon d={item.d} size={collapsed ? 20 : 18} />
-              {!collapsed && <span className="truncate">{item.label}</span>}
+              {({ isActive }) => (
+                <>
+                  <ItemIcon d={item.d} size={collapsed ? 20 : 18} dot={dotFor(item)} active={isActive} />
+                  {!collapsed && (
+                    <span className="truncate">
+                      {item.label}
+                      {dotFor(item) && <span className="sr-only"> (unread)</span>}
+                    </span>
+                  )}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -305,8 +341,13 @@ export default function Sidebar() {
                   itemClass(isActive, 'min-h-14 gap-3.5 px-4 text-[15px]')
                 }
               >
-                <NavIcon d={item.d} size={22} />
-                {item.label}
+                {({ isActive }) => (
+                  <>
+                    <ItemIcon d={item.d} size={22} dot={dotFor(item)} active={isActive} />
+                    {item.label}
+                    {dotFor(item) && <span className="sr-only"> (unread)</span>}
+                  </>
+                )}
               </NavLink>
             ))}
           </nav>

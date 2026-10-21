@@ -1,5 +1,36 @@
 # Engine Features / Feature History
 
+## 2026-10-21 — Inbox sync every minute in business hours (Workers Free plan safe)
+The inbox cron is now `* * * * *`; `lib/inbox/schedule.ts` (`isInboxSyncDue`, Intl
+America/Toronto, so DST is automatic) syncs every minute 08:00–21:59 Toronto and every 10th
+minute otherwise (~900 syncs/day, 1,440 cron invocations/day — well under the Free plan's
+100k requests/day). Because the Free plan gives a cron run 10 ms of CPU (network waits don't
+count; parsing does — measured ~0.6 ms per plain email, ~7 ms per MB), the sync was reshaped:
+each message is fetched only up to its first 256 KB (`MAX_MESSAGE_BYTES`; text comes first,
+only the attachment list of a bigger message can be incomplete), a run stops fetching after
+512 KB (`RUN_BYTE_BUDGET`) or 5 messages per folder (`FETCH_LIMIT_PER_FOLDER`), folders are
+processed INBOX then Sent in UID order (no cross-folder date sort; reverse header matching
+covers a reply stored before its parent), and the cursor is saved after EVERY message so a run
+cut short never redoes work. Run timeout 50 s (under the cron interval). The web list, unread
+counts and an open conversation refresh every minute. Verified: api 604 tests, web 504.
+
+## 2026-10-21 — Inbox unread dots + a Notifications entry per received email
+Migration 46 adds `email_threads.unread` (separate from New/Handled): `refresh_email_thread`
+sets it whenever an incoming email is stored (the same moment a Handled conversation goes back
+to New — that reopen rule already existed), and `POST /api/inbox/:id/read` clears it when the
+conversation is opened. Outgoing replies never set it. `GET /api/inbox/unread` returns unread
+counts per category + total. The web shows a blue dot (and bold name) on unread conversation
+rows, a dot on every category tab with an unread conversation (New or Handled), and a dot on
+the sidebar's Inbox icon (white on the selected item so it stays visible); screen readers get
+"(unread)". Lists and counts poll every minute. Each incoming email the sync stores also writes
+a `notifications` row of the new kind `email_received` ("New email — Jane Doe: Quote for
+kitchen"), linked by the new `notifications.email_thread_id` (cascades) and `subject` snapshot;
+tapping it opens the conversation. Ignored conversations and your own replies write no alert.
+The alert is best effort (`recordNotification` swallows errors), so it can't hold the sync
+cursor back. Existing New conversations whose last message was incoming were back-filled as
+unread. Verified: api 597 tests, web 504, tsc clean; dots and the alert row seen in a fixture
+harness.
+
 ## 2026-10-21 — Titan inbox: conversations from info@blindsnisa.com in the app
 A `*/5 * * * *` cron on `blinds-nisa-api` reads new mail from the Titan mailbox's INBOX and
 Sent folders over read-only IMAP (`cloudflare:sockets` TLS to imap.titan.email:993; in-house

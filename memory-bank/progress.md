@@ -12,6 +12,8 @@ conversations (reply headers, else subject + other party), trims quoted history,
 conversations with Settings → Email Rules, and auto-links a customer when exactly one has the
 sender's email. `/inbox` has Inquiry / Supplier / Payment / Other tabs with New/Handled, and
 each conversation is a bubble thread with category, customer/order link and Mark handled.
+Unread dots (rows, tabs, sidebar) and a "New email" Notifications entry per received email are
+on `feat/inbox-unread` (migration 46).
 
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
 (+ expired), auto-expiry on sent (only `sent` orders lapse). Editing an `expired` estimate's

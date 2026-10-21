@@ -10,9 +10,13 @@
  * talks to Titan: the app never changes the mailbox.
  *
  * Route order matters (locked Hono pattern): every literal path —
- * `/rules`, `/rules/reorder`, `/rules/reapply`, `/status` — is
+ * `/rules`, `/rules/reorder`, `/rules/reapply`, `/status`, `/unread` — is
  * registered before `/:threadId`. Ids are checked as UUIDs up front so
  * a bad id is a 404, not a Postgres cast error.
+ *
+ * Unread: the sync marks a conversation unread when an incoming email
+ * arrives; `POST /:threadId/read` (sent when staff open it) clears it, and
+ * `GET /unread` counts unread conversations per category for the dots.
  *
  * Thread updates: picking a category by hand sets `category_locked`
  * (Re-apply rules then leaves the thread alone); `handled` stamps
@@ -242,6 +246,24 @@ app.get('/status', async (c) => {
   return c.json({ data: data ?? [] });
 });
 
+/**
+ * Unread conversations per category (any status) plus the total — drives
+ * the dots on the Inbox tabs and on the sidebar's Inbox item. Reads only
+ * unread rows (partial index `email_threads_unread_idx`).
+ */
+app.get('/unread', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb.from('email_threads').select('category').eq('unread', true);
+  if (error) return c.json({ error: error.message }, 500);
+  const counts: Record<EmailCategory, number> = { inquiry: 0, supplier: 0, payment: 0, other: 0 };
+  for (const row of data ?? []) {
+    const category = row.category as EmailCategory;
+    if (category in counts) counts[category] += 1;
+  }
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  return c.json({ data: { ...counts, total } });
+});
+
 /** One page of conversations for a category tab + status, newest activity first. */
 app.get('/', async (c) => {
   const parsed = listQuerySchema.safeParse(c.req.query());
@@ -253,7 +275,7 @@ app.get('/', async (c) => {
   const { data, count, error } = await sb
     .from('email_threads')
     .select(
-      'id, subject, counterpart_address, counterpart_name, category, status, last_message_at, last_direction, last_snippet, message_count, customer_id, order_id, customer:customers(id, first_name, last_name)',
+      'id, subject, counterpart_address, counterpart_name, category, status, unread, last_message_at, last_direction, last_snippet, message_count, customer_id, order_id, customer:customers(id, first_name, last_name)',
       { count: 'exact' }
     )
     .eq('category', category)
@@ -282,7 +304,7 @@ app.get('/:threadId', async (c) => {
   const { data: thread, error } = await sb
     .from('email_threads')
     .select(
-      'id, subject, counterpart_address, counterpart_name, category, category_locked, status, handled_at, last_message_at, last_direction, last_snippet, message_count, customer_id, order_id, customer:customers(id, first_name, last_name), order:orders(id, order_number, status)'
+      'id, subject, counterpart_address, counterpart_name, category, category_locked, status, handled_at, unread, last_message_at, last_direction, last_snippet, message_count, customer_id, order_id, customer:customers(id, first_name, last_name), order:orders(id, order_number, status)'
     )
     .eq('id', id)
     .maybeSingle();
@@ -310,6 +332,17 @@ app.get('/:threadId', async (c) => {
   }
 
   return c.json({ data: { ...thread, messages: messages ?? [], customer_orders: customerOrders } });
+});
+
+/** Marks a conversation read (staff opened it); the next incoming email marks it unread again. */
+app.post('/:threadId/read', async (c) => {
+  const id = c.req.param('threadId');
+  if (!UUID_RE.test(id)) return c.json({ error: 'Conversation not found' }, 404);
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb.from('email_threads').update({ unread: false }).eq('id', id).select('id').maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Conversation not found' }, 404);
+  return c.json({ data });
 });
 
 /** Triage update (see the module comment for the link rules). */

@@ -490,6 +490,8 @@ describe('POST /public/estimate/:token/confirm', () => {
         order_number: 'F0307-126',
         customer_name: 'A B',
         amount: null,
+        email_thread_id: null,
+        subject: '',
       },
     ]);
   });
@@ -785,6 +787,8 @@ describe('POST /public/estimate/:token/edit-request', () => {
         order_number: 'F0307-126',
         customer_name: 'A B',
         amount: null,
+        email_thread_id: null,
+        subject: '',
       },
     ]);
   });

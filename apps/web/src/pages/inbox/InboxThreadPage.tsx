@@ -6,15 +6,18 @@
  * a bubble, oldest at the top, scrolled to the newest on open — the
  * other party on the left, the shop (info@blindsnisa.com, read from
  * Titan's Sent folder) on the right. Back returns to the conversation's
- * category tab. Replies are written in Titan; they appear here after
- * the next 5-minute sync.
+ * category tab. Opening an unread conversation marks it read, which
+ * clears its dot, its tab's dot and (when it was the last one) the
+ * sidebar's. Replies are written in Titan; they appear here after
+ * the next sync (every minute 8 AM–10 PM, every 10 minutes overnight); an
+ * open conversation refreshes itself every minute.
  */
 
 import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
-import { useInboxThread } from '../../hooks/useInbox';
+import { useInboxThread, useMarkInboxThreadRead } from '../../hooks/useInbox';
 import MessageBubble from './MessageBubble';
 import ThreadControls from './ThreadControls';
 import { threadTitle } from './inboxText';
@@ -23,8 +26,17 @@ import { threadTitle } from './inboxText';
 export default function InboxThreadPage() {
   const { id } = useParams();
   const { data: thread, isLoading, error } = useInboxThread(id);
+  const markRead = useMarkInboxThreadRead();
   const endRef = useRef<HTMLDivElement>(null);
   const messageCount = thread?.messages.length ?? 0;
+  const unreadId = thread?.unread ? thread.id : null;
+  const { mutate: markReadMutate } = markRead;
+
+  // Opening the conversation reads it. Runs once per unread state: the
+  // mutation refetches the thread, which comes back with unread = false.
+  useEffect(() => {
+    if (unreadId) markReadMutate(unreadId);
+  }, [unreadId, markReadMutate]);
 
   useEffect(() => {
     if (messageCount > 0) endRef.current?.scrollIntoView({ block: 'end' });
@@ -50,7 +62,7 @@ export default function InboxThreadPage() {
               ))}
             </div>
             <p className="text-center text-[12px] text-text-muted">
-              Reply from Titan. Your reply shows up here within about 5 minutes.
+              Reply from Titan. Your reply shows up here within a couple of minutes (up to 10 overnight).
             </p>
             <div ref={endRef} />
           </>

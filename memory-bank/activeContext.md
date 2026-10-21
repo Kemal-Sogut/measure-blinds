@@ -6,6 +6,12 @@
 
 ## Where things stand (as of 2026-10-21)
 
+**Newest, on branch `feat/inbox-unread`, web + api, migration 46 applied**: unread dots on
+Inbox rows, category tabs and the sidebar, plus a "New email" Notifications entry per received
+email. Same branch: the sync now runs every minute 08:00–22:00 Toronto (every 10 min overnight),
+sized for the Workers Free plan's 10 ms CPU per cron run. Migration 46 is applied. See
+`knowledge/history/engine_features.md` 2026-10-21 (Inbox unread dots; Inbox sync every minute).
+
 **Newest, uncommitted, web-only, no migration:** an **eye icon beside the order number** in the
 order header: grey once the estimate is sent, green once the customer opened their order page
 (`customer_viewed_at`). See `knowledge/history/engine_features.md` 2026-10-21.

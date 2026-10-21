@@ -6,7 +6,8 @@
  * list per category tab, one conversation, triage updates, and the
  * Settings → Email Rules CRUD + sync status.
  *
- * Mail arrives from outside the app (the 5-minute cron), so the list and
+ * Mail arrives from outside the app (the sync cron: every minute 8 AM–10 PM
+ * Toronto, every 10 minutes overnight), so the list and
  * thread queries are always stale and the list also polls every minute
  * while open. Every mutation invalidates the whole `['inbox']` key space
  * it can affect, so tabs, counts and the open thread never disagree.
@@ -31,6 +32,7 @@ import type {
   EmailThreadStatus,
   EmailThreadSummary,
   InboxSyncState,
+  InboxUnreadCounts,
 } from '../types';
 
 /** Every inbox endpoint wraps its payload as `{ data }`. */
@@ -83,6 +85,35 @@ export function useInboxThread(id: string | undefined): UseQueryResult<EmailThre
     queryFn: async () => (await apiFetch<Envelope<EmailThreadDetail>>(`/api/inbox/${id}`)).data,
     enabled: Boolean(id),
     staleTime: 0,
+    // An open conversation picks up a new reply without leaving the page.
+    refetchInterval: 60_000,
+  });
+}
+
+/**
+ * Unread conversations per category + total, for the tab dots and the
+ * sidebar dot. Polls every minute (matching the daytime sync) and is
+ * invalidated with everything else under `['inbox']`.
+ */
+export function useInboxUnread(): UseQueryResult<InboxUnreadCounts> {
+  return useQuery({
+    queryKey: [...INBOX_KEY, 'unread'],
+    queryFn: async () => (await apiFetch<Envelope<InboxUnreadCounts>>('/api/inbox/unread')).data,
+    staleTime: 0,
+    refetchInterval: 60_000,
+  });
+}
+
+/**
+ * Marks a conversation read (called when it is opened). Refreshes the
+ * lists, the counts and the thread so every dot clears at once.
+ */
+export function useMarkInboxThreadRead(): UseMutationResult<{ id: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<Envelope<{ id: string }>>(`/api/inbox/${id}/read`, { method: 'POST' })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: INBOX_KEY }),
   });
 }
 

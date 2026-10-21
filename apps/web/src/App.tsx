@@ -109,7 +109,7 @@ export default function App() {
             <Route path="/appointments" element={guard(<Layout><AppointmentsList /></Layout>)} />
             <Route path="/appointments/:id" element={guard(<Layout><AppointmentDetail /></Layout>)} />
 
-            {/* Inbox — Titan conversations (INBOX + Sent), synced every 5 minutes */}
+            {/* Inbox — Titan conversations (INBOX + Sent), synced every minute 8 AM–10 PM, every 10 min overnight */}
             <Route path="/inbox" element={guard(<Layout><InboxPage /></Layout>)} />
             <Route path="/inbox/:id" element={guard(<Layout><InboxThreadPage /></Layout>)} />
 

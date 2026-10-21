@@ -9,7 +9,8 @@
  * Every method throws on a database error (the sync then retries that
  * message next run) except `insertMessage`, which reports a 23505
  * unique violation on `message_id` as `'duplicate'` — the normal outcome
- * when two runs overlap. Thread summaries and merges run in SQL
+ * when two runs overlap — and `notifyIncomingEmail`, which is best effort
+ * (`recordNotification` swallows its own errors). Thread summaries and merges run in SQL
  * (`refresh_email_thread`, `merge_email_threads`, migration 45) so they
  * are atomic. Customer linking matches the counterpart address against
  * live customers case-insensitively and links only when exactly one
@@ -17,6 +18,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { recordNotification } from '../notifications';
 import type { EmailRule } from './rules';
 import type { ThreadRef } from './threading';
 import type { AttachmentMeta, EmailCategory, EmailDirection, InboxFolder } from './types';
@@ -87,8 +89,17 @@ export interface InboxStore {
   createThread(thread: NewThread): Promise<string>;
   insertMessage(message: NewMessage): Promise<'inserted' | 'duplicate'>;
   mergeThreads(keepId: string, dropIds: string[]): Promise<void>;
-  /** Recomputes summary columns; `reopen` moves a handled thread back to new. */
+  /**
+   * Recomputes summary columns; `reopen` (an incoming message was stored)
+   * moves a handled thread back to new and marks it unread.
+   */
   refreshThread(threadId: string, reopen: boolean): Promise<void>;
+  /**
+   * Adds a "New email" entry to the Notifications page for one stored
+   * incoming email. Best effort: never throws, so a failed alert can't
+   * hold the sync cursor back.
+   */
+  notifyIncomingEmail(notice: { threadId: string; senderName: string; subject: string }): Promise<void>;
 }
 
 /**
@@ -263,6 +274,15 @@ export function createSupabaseInboxStore(sb: SupabaseClient): InboxStore {
     async mergeThreads(keepId, dropIds) {
       const { error } = await sb.rpc('merge_email_threads', { p_keep: keepId, p_drop: dropIds });
       if (error) throw failure('Merge threads', error);
+    },
+
+    async notifyIncomingEmail(notice) {
+      await recordNotification(sb, {
+        kind: 'email_received',
+        emailThreadId: notice.threadId,
+        customerName: notice.senderName,
+        subject: notice.subject,
+      });
     },
 
     async refreshThread(threadId, reopen) {

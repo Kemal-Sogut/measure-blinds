@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { AppNotification } from '../../types';
-import { notificationDetail, notificationHref } from './notificationText';
+import { NOTIFICATION_TITLES, notificationDetail, notificationHref } from './notificationText';
 
 /** A fully populated order-confirmed alert; tests override fields. */
 function alert(over: Partial<AppNotification> = {}): AppNotification {
@@ -20,6 +20,8 @@ function alert(over: Partial<AppNotification> = {}): AppNotification {
     order_number: 'F0916-126',
     customer_name: 'Jane Doe',
     amount: null,
+    email_thread_id: null,
+    subject: '',
     created_at: '2026-09-16T12:00:00.000Z',
     ...over,
   };
@@ -40,6 +42,28 @@ describe('notificationHref', () => {
 
   it('does not link an order event with no order id', () => {
     expect(notificationHref(alert({ order_id: null }))).toBeNull();
+  });
+});
+
+describe('email alerts', () => {
+  const email = (over: Partial<AppNotification> = {}) =>
+    alert({ kind: 'email_received', order_id: null, order_number: '', email_thread_id: 't1', subject: 'Quote for kitchen', ...over });
+
+  it('opens the Inbox conversation', () => {
+    expect(notificationHref(email())).toBe('/inbox/t1');
+  });
+
+  it('does not link when the conversation id is missing', () => {
+    expect(notificationHref(email({ email_thread_id: null }))).toBeNull();
+  });
+
+  it('names the sender and the subject', () => {
+    expect(NOTIFICATION_TITLES.email_received).toBe('New email');
+    expect(notificationDetail(email())).toBe('Jane Doe: Quote for kitchen');
+  });
+
+  it('falls back when sender or subject is blank', () => {
+    expect(notificationDetail(email({ customer_name: '', subject: '' }))).toBe('Someone: (no subject)');
   });
 });
 

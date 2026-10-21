@@ -9,11 +9,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createMailSource, pickSentFolder, type ImapCommands } from './mailSource';
+import { MAX_MESSAGE_BYTES, RUN_BYTE_BUDGET, createMailSource, pickSentFolder, type ImapCommands } from './mailSource';
 
-/** In-memory stand-in for the IMAP commands the source uses. */
-function fakeImap(uidValidity: number, uids: number[]) {
+/** In-memory stand-in for the IMAP commands the source uses. `sizes` overrides a UID's byte size. */
+function fakeImap(uidValidity: number, uids: number[], sizes: Record<number, number> = {}) {
   const fetched: number[] = [];
+  const caps: number[] = [];
   const imap: ImapCommands = {
     async list() {
       return [];
@@ -28,13 +29,15 @@ function fakeImap(uidValidity: number, uids: number[]) {
       // Real servers answer "n:*" with the last message when n is past it.
       return hits.length ? hits : uids.length ? [Math.max(...uids)] : [];
     },
-    async uidFetchRaw(uid: number) {
+    async uidFetchRaw(uid: number, maxBytes: number) {
       fetched.push(uid);
-      return uid === 13 ? null : new TextEncoder().encode(`message ${uid}`);
+      caps.push(maxBytes);
+      if (uid === 13) return null;
+      return sizes[uid] ? new Uint8Array(Math.min(sizes[uid], maxBytes)) : new TextEncoder().encode(`message ${uid}`);
     },
     async logout() {},
   };
-  return { imap, fetched };
+  return { imap, fetched, caps };
 }
 
 describe('pickSentFolder', () => {
@@ -93,6 +96,22 @@ describe('readFolder', () => {
     const read = await createMailSource(imap, async () => {}).readFolder('INBOX', { uidValidity: 7, afterUid: 11 }, 50);
     expect(read.messages.map((m) => m.uid)).toEqual([12]);
     expect(read.scannedThroughUid).toBe(13);
+  });
+
+  it('reads at most the first 256 KB of each message', async () => {
+    const { imap, caps } = fakeImap(7, [5]);
+    await createMailSource(imap, async () => {}).readFolder('INBOX', { uidValidity: 7, afterUid: 4 }, 50);
+    expect(MAX_MESSAGE_BYTES).toBe(262_144);
+    expect(caps).toEqual([MAX_MESSAGE_BYTES]);
+  });
+
+  it('stops fetching once the run byte budget is spent (Free-plan CPU cap)', async () => {
+    const big = MAX_MESSAGE_BYTES;
+    const { imap, fetched } = fakeImap(7, [5, 6, 7, 8], { 5: big, 6: big, 7: big });
+    const read = await createMailSource(imap, async () => {}).readFolder('INBOX', { uidValidity: 7, afterUid: 4 }, 50);
+    expect(RUN_BYTE_BUDGET).toBe(2 * big);
+    expect(fetched).toEqual([5, 6]);
+    expect(read.scannedThroughUid).toBe(6);
   });
 
   it('reports highestUid 0 for an empty folder', async () => {

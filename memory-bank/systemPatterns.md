@@ -286,9 +286,12 @@ section as the reference implementation for future collapsible UI.
   Materials.
 
 ## Email ingestion (Titan inbox, 2026-10-21)
-- Cron `*/5 * * * *` → `lib/inbox/run.ts` (`runInboxSync`) → `syncInbox` in `lib/inbox/sync.ts`,
+- Cron `* * * * *` → `lib/inbox/schedule.ts` (`isInboxSyncDue`: every minute 08:00–22:00 Toronto,
+  every 10th minute otherwise) → `lib/inbox/run.ts` (`runInboxSync`) → `syncInbox` in `lib/inbox/sync.ts`,
   which takes an injected `MailSource` (IMAP) and `InboxStore` (Supabase) so the whole pipeline
   is tested in memory. `cloudflare:sockets` is imported ONLY by `lib/inbox/titanConnect.ts`.
+- Workers FREE plan: 10 ms CPU per cron run. Hence 256 KB per message, 512 KB / 5 messages per
+  folder per run, and a cursor save after every message.
 - Per-folder UID cursors in `email_sync_state` (UIDVALIDITY + last UID). First run / folder
   rename / UIDVALIDITY change → jump to the newest UID, never re-import. A store failure holds
   the cursor just before that message; `email_messages.message_id` UNIQUE absorbs re-fetches.

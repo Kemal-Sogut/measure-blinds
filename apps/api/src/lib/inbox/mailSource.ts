@@ -10,17 +10,24 @@
  * cursor (no fetch unless the cursor's UIDVALIDITY still matches; only
  * UIDs above it; at most `limit` per run).
  *
- * Messages are fetched one at a time and capped at {@link MAX_MESSAGE_BYTES}
- * so a huge attachment cannot exhaust the Worker's memory; headers and
- * body text come first in practice, so only the attachment list of such
- * a message can be incomplete.
+ * Sized for the Workers FREE plan, where a cron run gets 10 ms of CPU
+ * (network waits don't count, parsing does — measured ~0.6 ms for a plain
+ * email, ~7 ms per MB of raw message). So each message is fetched one at a
+ * time and only its first {@link MAX_MESSAGE_BYTES} are read (headers and
+ * body text come first in practice; only the attachment list of a larger
+ * message can be incomplete — the files stay in Titan anyway), and a run
+ * stops fetching once {@link RUN_BYTE_BUDGET} bytes are in hand. Whatever
+ * is left is picked up by the next run a minute later.
  */
 
 import type { ImapClient, MailboxListing } from './imapClient';
 import type { FolderCursor, FolderRead, MailSource, RawMessage } from './types';
 
-/** Per-message fetch cap (first 5 MB of the raw source). */
-export const MAX_MESSAGE_BYTES = 5_000_000;
+/** Per-message fetch cap: the first 256 KB of the raw source (~2 ms to parse). */
+export const MAX_MESSAGE_BYTES = 262_144;
+
+/** Stop fetching more messages in one run once this many bytes were read. */
+export const RUN_BYTE_BUDGET = 2 * MAX_MESSAGE_BYTES;
 
 /** Folder names tried, in order, when no folder carries the `\Sent` flag. */
 const SENT_FOLDER_NAMES = ['sent', 'sent items', 'sent messages', 'sent mail', 'inbox.sent', 'inbox/sent'];
@@ -79,12 +86,17 @@ export function createMailSource(
         .filter((uid) => uid > cursor.afterUid)
         .slice(0, limit);
       const messages: RawMessage[] = [];
+      let bytes = 0;
       for (const uid of uids) {
         const raw = await imap.uidFetchRaw(uid, MAX_MESSAGE_BYTES);
-        if (raw) messages.push({ uid, raw });
+        read.scannedThroughUid = uid;
+        if (raw) {
+          messages.push({ uid, raw });
+          bytes += raw.length;
+        }
+        if (bytes >= RUN_BYTE_BUDGET) break;
       }
       read.messages = messages;
-      read.scannedThroughUid = uids.length ? uids[uids.length - 1] : null;
       return read;
     },
 

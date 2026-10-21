@@ -9,8 +9,10 @@ compatibility_flags = ["nodejs_compat"]
 # 14:00 UTC — customer emails at 10 AM Toronto (EDT; 9 AM during EST):
 #             day-before appointment/installation reminders + review
 #             requests 2 days after an order is marked installed.
-# */5       — Titan inbox sync (lib/inbox/run.ts). Must match INBOX_SYNC_CRON.
-crons = ["0 6 * * *", "0 14 * * *", "*/5 * * * *"]
+# * * * * * — Titan inbox sync tick (lib/inbox/schedule.ts decides: every
+#             minute 08:00–22:00 Toronto, every 10th minute otherwise).
+#             Must match INBOX_SYNC_CRON.
+crons = ["0 6 * * *", "0 14 * * *", "* * * * *"]
 
 [vars]
 ENVIRONMENT = "development"

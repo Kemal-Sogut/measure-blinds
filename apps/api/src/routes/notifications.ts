@@ -50,7 +50,7 @@ app.get('/', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, count, error } = await sb
     .from('notifications')
-    .select('id, kind, order_id, order_number, customer_name, amount, created_at', {
+    .select('id, kind, order_id, order_number, customer_name, amount, email_thread_id, subject, created_at', {
       count: 'exact',
     })
     .order('created_at', { ascending: false })

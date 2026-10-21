@@ -26,7 +26,8 @@ import notificationsRoutes from './routes/notifications';
 import inboxRoutes from './routes/inbox';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
-import { INBOX_SYNC_CRON, runInboxSync } from './lib/inbox/run';
+import { runInboxSync } from './lib/inbox/run';
+import { INBOX_SYNC_CRON, isInboxSyncDue } from './lib/inbox/schedule';
 
 /** Environment bindings provided by Cloudflare Workers runtime. */
 export interface Env {
@@ -158,8 +159,10 @@ export default {
    *   0 14 * * * — customer emails at 10 AM Toronto (EDT; 9 AM in
    *                winter): day-before appointment + installation
    *                reminders and review requests 2 days after install.
-   *   every 5 min — Titan inbox sync (INBOX_SYNC_CRON; INBOX + Sent →
-   *                email_threads / email_messages); see lib/inbox/run.ts.
+   *   every minute — Titan inbox sync (INBOX_SYNC_CRON; INBOX + Sent →
+   *                email_threads / email_messages). Actually syncs every
+   *                minute 08:00–22:00 Toronto and every 10th minute
+   *                otherwise (lib/inbox/schedule.ts); see lib/inbox/run.ts.
    *                Checked FIRST: the final branch below runs auto-expiry
    *                for any cron it does not recognise.
    */
@@ -167,7 +170,7 @@ export default {
     ctx.waitUntil(
       (async () => {
         if (event.cron === INBOX_SYNC_CRON) {
-          await runInboxSync(env);
+          if (isInboxSyncDue(new Date(event.scheduledTime))) await runInboxSync(env);
           return;
         }
         if (event.cron === '0 14 * * *') {
