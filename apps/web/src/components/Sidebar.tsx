@@ -43,7 +43,7 @@ interface NavItem {
 }
 
 /**
- * The five sections, in the order they appear in both the rail and the
+ * The six sections, in the order they appear in both the rail and the
  * phone overlay. Orders is the app's home screen and lives at "/".
  */
 const ITEMS: NavItem[] = [
@@ -62,6 +62,12 @@ const ITEMS: NavItem[] = [
     to: '/calendar',
     label: 'Calendar',
     d: 'M3 10h18 M8 2v4M16 2v4 M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z',
+  },
+  {
+    // Envelope: Titan conversations, sorted by Settings → Email Rules.
+    to: '/inbox',
+    label: 'Inbox',
+    d: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M22 6l-10 7L2 6',
   },
   {
     // Bell: customer confirmations, edit requests and e-Transfers.
