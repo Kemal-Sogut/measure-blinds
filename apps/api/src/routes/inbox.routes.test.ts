@@ -80,15 +80,25 @@ beforeEach(() => {
 });
 
 describe('GET /', () => {
-  it('defaults to Inquiry / New / page 1 and returns the pager envelope', async () => {
+  it('defaults to All / New / page 1 (no category filter) and returns the pager envelope', async () => {
     answers.email_threads = [{ data: [{ id: T1 }], count: 16 }];
     const res = await inboxApp.request('/', {}, ENV);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ data: [{ id: T1 }], page: 1, page_size: 15, total: 16, total_pages: 2 });
     const [call] = callsFor('email_threads');
-    expect(call.ops).toContainEqual(['eq', ['category', 'inquiry']]);
+    expect(call.ops.some(([m, args]) => m === 'eq' && args[0] === 'category')).toBe(false);
     expect(call.ops).toContainEqual(['eq', ['status', 'new']]);
     expect(op(call, 'range')).toEqual([0, 14]);
+  });
+
+  it('filters by one category when a tab is picked', async () => {
+    answers.email_threads = [{ data: [], count: 0 }];
+    const res = await inboxApp.request('/?category=supplier&status=handled&page=2', {}, ENV);
+    expect(res.status).toBe(200);
+    const [call] = callsFor('email_threads');
+    expect(call.ops).toContainEqual(['eq', ['category', 'supplier']]);
+    expect(call.ops).toContainEqual(['eq', ['status', 'handled']]);
+    expect(op(call, 'range')).toEqual([15, 29]);
   });
 
   it.each(['/?category=spam', '/?status=open', '/?page=0', '/?foo=1'])('400 for %s', async (path) => {

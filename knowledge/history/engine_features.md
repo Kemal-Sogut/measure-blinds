@@ -1,5 +1,15 @@
 # Engine Features / Feature History
 
+## 2026-10-21 — Inbox "All" tab
+The Inbox gets an **All** tab, first and now the default (`/inbox` with no `?category=`): every
+conversation, New or Handled, across all categories, newest activity first. Rows on All carry a
+small category chip. Its unread dot follows `GET /api/inbox/unread`'s `total`. API:
+`GET /api/inbox?category=all` (also the default) drops the category filter; single-category
+tabs work as before. A conversation's Back button now returns to the exact tab/status/page it
+was opened from (the list's query string rides in router state), else to All — e.g. from a
+notification. **Deploy order:** the API first (the old API rejects `category=all` with 400;
+the old web always sends a category, so it keeps working against the new API).
+
 ## 2026-10-21 — Inbox sync every minute in business hours (Workers Free plan safe)
 The inbox cron is now `* * * * *`; `lib/inbox/schedule.ts` (`isInboxSyncDue`, Intl
 America/Toronto, so DST is automatic) syncs every minute 08:00–21:59 Toronto and every 10th

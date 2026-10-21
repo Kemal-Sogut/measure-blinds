@@ -651,6 +651,9 @@ export interface AppNotification {
  */
 export type EmailCategory = 'inquiry' | 'supplier' | 'payment' | 'other';
 
+/** An Inbox list tab: one category, or `all` (every category together). */
+export type InboxTab = EmailCategory | 'all';
+
 /** `new` until staff mark the conversation handled; an incoming reply reopens it. */
 export type EmailThreadStatus = 'new' | 'handled';
 
