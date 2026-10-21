@@ -174,6 +174,7 @@ import {
 } from './orderSections';
 import { useCollapsedPanel } from './useCollapsedPanel';
 import { nextKey } from './draftKeys';
+import CustomerViewedEye from './CustomerViewedEye';
 import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
 
 /**
@@ -2511,6 +2512,7 @@ export default function OrderDetail() {
       <div ref={setStickyHead} className="sticky top-0 z-20 bg-surface-muted">
         <PageHeader
           title={id ? existing?.order_number ?? 'Order' : 'New Order'}
+          titleAdornment={id ? <CustomerViewedEye order={existing} /> : undefined}
           backTo="/"
           right={
             <span className="flex items-center gap-2">

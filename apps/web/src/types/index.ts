@@ -181,6 +181,14 @@ export interface Order {
   cancel_requested_at: string | null;
   /** The customer's stated reason, shown in the staff warning banner. */
   cancel_request_note: string;
+  /**
+   * When the customer first opened their public order page
+   * (`/customer/:token`); `null` = never opened. Written once by
+   * `POST /public/estimate/:token/view` and never reset (not by a
+   * re-send, not by a stage reversal); staff previews never set it.
+   * Drives the eye icon beside the order number in the order header.
+   */
+  customer_viewed_at: string | null;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */

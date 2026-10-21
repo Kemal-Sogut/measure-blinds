@@ -45,7 +45,13 @@ pnpm dev:api    # → http://localhost:8787
 
 # Start both simultaneously
 pnpm dev
+
+# Deploy to Cloudflare — prompts for which apps (or: pnpm run deploy:apps web api)
+pnpm run deploy:apps
 ```
+`pnpm run deploy:apps` (`scripts/deploy.mjs`) builds each chosen app if it has a `build` script,
+then runs `npx wrangler deploy` in `apps/<name>`. Use `pnpm run`, not bare `pnpm deploy` —
+that is pnpm's built-in workspace-deploy command.
 
 ## Environment Variables
 ### Worker secrets (via `wrangler secret put`)

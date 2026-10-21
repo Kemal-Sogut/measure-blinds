@@ -957,12 +957,19 @@ async function readDetail(sb: SupabaseClient, id: string) {
 /** Statuses selectable as a direct `?status=` filter. */
 const LIST_STATUSES = ['draft', 'sent', 'awaiting_payment', 'in_progress', 'ready', 'installed', 'expired'];
 
-/** Lists orders with status tab + search filters. */
+/**
+ * Lists orders with status tab + search filters, newest issue date
+ * (`order_date`) first. `order_date` is a plain date, so same-day
+ * orders fall back to newest-created first. Sorting happens here, not
+ * in the web list, so the 100-row cap keeps the most recent orders
+ * rather than an arbitrary slice.
+ */
 app.get('/', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   let query = sb
     .from('orders')
     .select('*, customer:customers(id, first_name, last_name), payments(amount)')
+    .order('order_date', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(100);
 
@@ -1574,10 +1581,7 @@ app.post('/:id/send', async (c) => {
       html: buildEstimateEmailHtml({
         company: brandFromSettings(company),
         customerFirstName: greetingName(order.customer),
-        orderNumber: order.order_number,
-        total: Number(order.total),
         message,
-        expiryDate: order.expiry_date,
         viewUrl,
       }),
       attachments: [

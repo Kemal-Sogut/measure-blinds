@@ -22,6 +22,46 @@ web 500 tests, tsc clean, Worker dry-run bundle builds, Inbox/thread/Email Rules
 in a fixture harness at desktop and 375px. Not yet run against the real mailbox. Spec
 `knowledge/specs/2026-10-14-titan-inbox-design.md`, plan `knowledge/plans/2026-10-21-titan-inbox.md`.
 
+## 2026-10-21 — "Customer opened it" eye beside the order number
+The order page header now shows a small eye icon right after the order number
+(`PageHeader` gained an optional `titleAdornment` slot; `CustomerViewedEye.tsx` renders it,
+the rule lives in the pure `customerViewed.ts`). No eye until the estimate has been sent; a
+**grey** eye once `orders.sent_at` is set; a **green** eye once `orders.customer_viewed_at` is
+set (hover shows "Customer opened the order page · Oct 21, 3:14 p.m."). An opened page stays
+green even if a stage reversal later cleared `sent_at`. Web-only, no API or migration change:
+the detail read already selects `*`, and `customer_viewed_at` was already written once by
+`POST /public/estimate/:token/view` (never by staff previews). It reports **page opens**, not
+email opens, so it isn't fooled by mail clients that pre-load images. `Order` type gained
+`customer_viewed_at`. Tests: `customerViewed.test.ts`. Verified in a component harness at
+desktop and 375px widths.
+
+## 2026-10-20 — Interactive root deploy script
+`pnpm run deploy:apps` (`scripts/deploy.mjs`, Node built-ins only) lists every `apps/*` folder
+that has a `wrangler.toml` (with its Worker name), asks which to deploy (numbers, names, or
+`a` for all), then for each one in turn runs `pnpm run build` if the app has a build script and
+`npx wrangler deploy` in that app's directory. Names passed as arguments skip the prompt
+(`pnpm run deploy:apps web api`). Fail-fast: the first failed build/deploy stops the run with a
+non-zero exit. The web build matters because `apps/web` deploys `./dist` as static assets.
+Named `deploy:apps` because `pnpm deploy` is a pnpm built-in.
+
+## 2026-10-14 — Estimate email trimmed to a greeting + button
+`buildEstimateEmailHtml` (`apps/api/src/lib/email.ts`) no longer renders the "Estimate summary"
+card (order number badge, Customer, Valid until, Estimated total) or the "How to go ahead"
+checklist. The body is now: heading, a one-line greeting that sends the customer to the
+**Review & confirm your estimate** button (and says they must confirm to go ahead), the
+consultant's optional note, the button, fine print and the link fallback. `EstimateEmailInputs`
+dropped `orderNumber`, `total` and `expiryDate`; the `/send` caller in `routes/orders.ts` was
+updated. The subject line still names the order, and the PDF attachment still carries the full
+breakdown. `email.test.ts` now asserts that the summary card, expiry and total are absent.
+
+## 2026-10-14 — Orders list sorted by issue date, newest first
+`GET /api/orders` (`apps/api/src/routes/orders.ts`) now orders by `order_date` DESC (the
+order's issue date, shown in the list's Date column), tie-broken by `created_at` DESC for
+same-day orders. It previously sorted by `created_at` alone, so a back- or forward-dated order
+landed out of place. The sort is server-side on purpose: the route caps at 100 rows, and a
+client-side sort would only reorder whatever slice the cap kept. `OrderList.tsx` is unchanged —
+it pages the response in the order received.
+
 ## 2026-10-10 — "Sheer" blind type, priced exactly like Curtains
 New blind type **Sheer** (distinct from Vertical Sheer, which keeps the area formula).
 
