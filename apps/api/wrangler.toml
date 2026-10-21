@@ -9,10 +9,13 @@ compatibility_flags = ["nodejs_compat"]
 # 14:00 UTC — customer emails at 10 AM Toronto (EDT; 9 AM during EST):
 #             day-before appointment/installation reminders + review
 #             requests 2 days after an order is marked installed.
-crons = ["0 6 * * *", "0 14 * * *"]
+# */5       — Titan inbox sync (lib/inbox/run.ts). Must match INBOX_SYNC_CRON.
+crons = ["0 6 * * *", "0 14 * * *", "*/5 * * * *"]
 
 [vars]
 ENVIRONMENT = "development"
+TITAN_IMAP_HOST = "imap.titan.email"
+TITAN_IMAP_PORT = "993"
 
 # Secrets (set via `wrangler secret put`):
 # SUPABASE_URL
@@ -22,3 +25,5 @@ ENVIRONMENT = "development"
 # RESEND_FROM       (e.g. "Blinds Nisa <estimates@blindsnisa.com>")
 # RESEND_REPLY_TO   (e.g. "info@blindsnisa.com")
 # ETRANSFER_WEBHOOK_SECRET  (shared with the Gmail Apps Script)
+# TITAN_IMAP_USER           (e.g. "info@blindsnisa.com" — the inbox sync)
+# TITAN_IMAP_PASSWORD       (that mailbox's password; sync is skipped until set)

@@ -25,6 +25,7 @@ import webhookRoutes from './routes/webhook';
 import notificationsRoutes from './routes/notifications';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
+import { INBOX_SYNC_CRON, runInboxSync } from './lib/inbox/run';
 
 /** Environment bindings provided by Cloudflare Workers runtime. */
 export interface Env {
@@ -39,6 +40,14 @@ export interface Env {
   ENVIRONMENT: string;
   /** Shared secret the e-Transfer Apps Script sends as a Bearer token. */
   ETRANSFER_WEBHOOK_SECRET?: string;
+  /** Titan mailbox login for the inbox sync (e.g. "info@blindsnisa.com"); sync is skipped while unset. */
+  TITAN_IMAP_USER?: string;
+  /** Titan mailbox password — Worker secret only, never logged. */
+  TITAN_IMAP_PASSWORD?: string;
+  /** IMAP host, default "imap.titan.email" ([vars]). */
+  TITAN_IMAP_HOST?: string;
+  /** IMAP TLS port, default "993" ([vars]). */
+  TITAN_IMAP_PORT?: string;
 }
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -145,10 +154,18 @@ export default {
    *   0 14 * * * — customer emails at 10 AM Toronto (EDT; 9 AM in
    *                winter): day-before appointment + installation
    *                reminders and review requests 2 days after install.
+   *   every 5 min — Titan inbox sync (INBOX_SYNC_CRON; INBOX + Sent →
+   *                email_threads / email_messages); see lib/inbox/run.ts.
+   *                Checked FIRST: the final branch below runs auto-expiry
+   *                for any cron it does not recognise.
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       (async () => {
+        if (event.cron === INBOX_SYNC_CRON) {
+          await runInboxSync(env);
+          return;
+        }
         if (event.cron === '0 14 * * *') {
           const sent = await runDailyEmailJobs(env);
           console.log(
