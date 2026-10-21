@@ -24,10 +24,14 @@ import type {
   EmailThreadStatus,
   EmailThreadSummary,
   InboxSyncState,
+  InboxTab,
 } from '../../types';
 
-/** Tab order on the Inbox page. */
+/** The categories, in tab and select order. */
 export const CATEGORY_ORDER: EmailCategory[] = ['inquiry', 'supplier', 'payment', 'other'];
+
+/** Tab order on the Inbox page: All first (the default), then each category. */
+export const TAB_ORDER: InboxTab[] = ['all', ...CATEGORY_ORDER];
 
 /** Tab and select labels. */
 export const CATEGORY_LABELS: Record<EmailCategory, string> = {
@@ -36,6 +40,9 @@ export const CATEGORY_LABELS: Record<EmailCategory, string> = {
   payment: 'Payment',
   other: 'Other',
 };
+
+/** Inbox tab labels: All plus the category labels. */
+export const TAB_LABELS: Record<InboxTab, string> = { all: 'All', ...CATEGORY_LABELS };
 
 /** Rule field names as staff read them. */
 export const RULE_FIELD_LABELS: Record<EmailRuleField, string> = {
@@ -60,18 +67,18 @@ export const RULE_ACTION_LABELS: Record<EmailRuleAction, string> = {
 
 /** The Inbox list's URL state. */
 export interface InboxParams {
-  category: EmailCategory;
+  category: InboxTab;
   status: EmailThreadStatus;
   page: number;
 }
 
-/** Reads `?category=&status=&page=`; anything unknown falls back to Inquiry / New / 1. */
+/** Reads `?category=&status=&page=`; anything unknown falls back to All / New / 1. */
 export function parseInboxParams(params: URLSearchParams): InboxParams {
   const category = params.get('category');
   const status = params.get('status');
   const page = Number(params.get('page'));
   return {
-    category: CATEGORY_ORDER.includes(category as EmailCategory) ? (category as EmailCategory) : 'inquiry',
+    category: TAB_ORDER.includes(category as InboxTab) ? (category as InboxTab) : 'all',
     status: status === 'handled' ? 'handled' : 'new',
     page: Number.isInteger(page) && page >= 1 ? page : 1,
   };
@@ -80,7 +87,7 @@ export function parseInboxParams(params: URLSearchParams): InboxParams {
 /** The inverse of {@link parseInboxParams}, omitting defaults for clean URLs. */
 export function inboxParamsToSearch(p: InboxParams): Record<string, string> {
   const out: Record<string, string> = {};
-  if (p.category !== 'inquiry') out.category = p.category;
+  if (p.category !== 'all') out.category = p.category;
   if (p.status !== 'new') out.status = p.status;
   if (p.page > 1) out.page = String(p.page);
   return out;

@@ -25,13 +25,13 @@ import {
 } from './inboxText';
 
 describe('parseInboxParams / inboxParamsToSearch', () => {
-  it('defaults to Inquiry / New / page 1', () => {
-    expect(parseInboxParams(new URLSearchParams())).toEqual({ category: 'inquiry', status: 'new', page: 1 });
+  it('defaults to All / New / page 1', () => {
+    expect(parseInboxParams(new URLSearchParams())).toEqual({ category: 'all', status: 'new', page: 1 });
   });
 
   it('ignores unknown values', () => {
     expect(parseInboxParams(new URLSearchParams('category=spam&status=x&page=-2'))).toEqual({
-      category: 'inquiry',
+      category: 'all',
       status: 'new',
       page: 1,
     });
@@ -40,7 +40,8 @@ describe('parseInboxParams / inboxParamsToSearch', () => {
   it('round-trips and omits defaults', () => {
     const p = { category: 'supplier' as const, status: 'handled' as const, page: 3 };
     expect(parseInboxParams(new URLSearchParams(inboxParamsToSearch(p)))).toEqual(p);
-    expect(inboxParamsToSearch({ category: 'inquiry', status: 'new', page: 1 })).toEqual({});
+    expect(inboxParamsToSearch({ category: 'all', status: 'new', page: 1 })).toEqual({});
+    expect(inboxParamsToSearch({ category: 'inquiry', status: 'new', page: 1 })).toEqual({ category: 'inquiry' });
   });
 });
 

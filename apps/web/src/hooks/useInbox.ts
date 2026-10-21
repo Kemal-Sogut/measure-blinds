@@ -3,7 +3,7 @@
 
 /**
  * TanStack Query hooks for the Inbox (`/api/inbox`): the conversation
- * list per category tab, one conversation, triage updates, and the
+ * list per tab (All or one category), one conversation, triage updates, and the
  * Settings → Email Rules CRUD + sync status.
  *
  * Mail arrives from outside the app (the sync cron: every minute 8 AM–10 PM
@@ -32,6 +32,7 @@ import type {
   EmailThreadStatus,
   EmailThreadSummary,
   InboxSyncState,
+  InboxTab,
   InboxUnreadCounts,
 } from '../types';
 
@@ -62,9 +63,9 @@ export interface ThreadUpdate {
 const INBOX_KEY = ['inbox'] as const;
 const RULES_KEY = ['inbox', 'rules'] as const;
 
-/** One page of a category tab; keeps the previous page on screen while paging. */
+/** One page of a tab (All or one category); keeps the previous page on screen while paging. */
 export function useInboxThreads(
-  category: EmailCategory,
+  category: InboxTab,
   status: EmailThreadStatus,
   page: number
 ): UseQueryResult<PaginatedThreads> {

@@ -3,17 +3,20 @@
 
 /**
  * The Inbox (`/inbox`, envelope icon in the sidebar): conversations from
- * the shop's Titan mailbox, one category tab at a time (Inquiry,
- * Supplier, Payment, Other — sorted by the rules in Settings → Email
- * Rules), New or Handled, newest activity first, 15 per page.
+ * the shop's Titan mailbox. The first tab, All (the default), lists every
+ * conversation; the others show one category each (Inquiry, Supplier,
+ * Payment, Other — sorted by the rules in Settings → Email Rules). New or
+ * Handled, newest activity first, 15 per page.
  *
  * Tab, status and page live in the URL (`?category=&status=&page=`), so
- * opening a conversation and pressing Back returns to the same list.
+ * opening a conversation and pressing Back returns to the same list (the
+ * list's query string rides along in the router state).
  * Each row shows the other party, the subject, a preview of the latest
  * message ("You: …" when the shop wrote last), the time, the message
- * count, and the linked customer. A blue dot marks a conversation with an
- * unopened incoming email, and a tab gets the same dot while any of its
- * conversations (New or Handled) is unread.
+ * count, the linked customer and, on the All tab, the category. A blue
+ * dot marks a conversation with an unopened incoming email, and a tab
+ * gets the same dot while any of its conversations (New or Handled) is
+ * unread — All while any conversation is.
  */
 
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -24,7 +27,8 @@ import { displayName } from '../../lib/customerName';
 import type { EmailThreadStatus, EmailThreadSummary } from '../../types';
 import {
   CATEGORY_LABELS,
-  CATEGORY_ORDER,
+  TAB_LABELS,
+  TAB_ORDER,
   formatThreadTime,
   inboxParamsToSearch,
   parseInboxParams,
@@ -38,8 +42,19 @@ function UnreadDot() {
   return <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 rounded-pill bg-brand-600" />;
 }
 
-/** One conversation row; a blue dot and bold name while it has an unopened email. */
-function ThreadRow({ thread, onOpen }: { thread: EmailThreadSummary; onOpen: () => void }) {
+/**
+ * One conversation row; a blue dot and bold name while it has an unopened
+ * email. `showCategory` adds the category chip (the All tab mixes them).
+ */
+function ThreadRow({
+  thread,
+  showCategory,
+  onOpen,
+}: {
+  thread: EmailThreadSummary;
+  showCategory: boolean;
+  onOpen: () => void;
+}) {
   const unread = thread.unread;
   return (
     <button
@@ -68,9 +83,18 @@ function ThreadRow({ thread, onOpen }: { thread: EmailThreadSummary; onOpen: () 
         )}
       </span>
       <span className="truncate text-[13px] text-text-muted">{snippetLine(thread)}</span>
-      {thread.customer && (
-        <span className="mt-1 self-start rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
-          {displayName(thread.customer)}
+      {(showCategory || thread.customer) && (
+        <span className="mt-1 flex flex-wrap gap-1.5">
+          {showCategory && (
+            <span className="rounded-pill bg-surface-sunken px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
+              {CATEGORY_LABELS[thread.category]}
+            </span>
+          )}
+          {thread.customer && (
+            <span className="rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
+              {displayName(thread.customer)}
+            </span>
+          )}
         </span>
       )}
     </button>
@@ -109,7 +133,7 @@ export default function InboxPage() {
       <PageHeader title="Inbox" backTo="/" />
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:56rem]">
         <div role="tablist" aria-label="Category" className="flex gap-1 overflow-x-auto rounded-lg bg-surface-sunken p-1">
-          {CATEGORY_ORDER.map((c) => (
+          {TAB_ORDER.map((c) => (
             <button
               key={c}
               type="button"
@@ -119,8 +143,8 @@ export default function InboxPage() {
               onClick={() => go({ category: c, page: 1 })}
             >
               <span className="inline-flex items-center gap-1.5">
-                {CATEGORY_LABELS[c]}
-                {(unreadCounts?.[c] ?? 0) > 0 && (
+                {TAB_LABELS[c]}
+                {(unreadCounts?.[c === 'all' ? 'total' : c] ?? 0) > 0 && (
                   <>
                     <UnreadDot />
                     <span className="sr-only">(unread)</span>
@@ -156,12 +180,19 @@ export default function InboxPage() {
               <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
                 {state.page > 1
                   ? 'No conversations on this page.'
-                  : `No ${state.status === 'new' ? 'new' : 'handled'} ${CATEGORY_LABELS[state.category].toLowerCase()} conversations.`}
+                  : `No ${state.status === 'new' ? 'new' : 'handled'} ${
+                      state.category === 'all' ? '' : `${TAB_LABELS[state.category].toLowerCase()} `
+                    }conversations.`}
               </p>
             ) : (
               <div className={`flex flex-col gap-2 transition-opacity ${isPlaceholderData ? 'opacity-60' : ''}`}>
                 {threads.map((t) => (
-                  <ThreadRow key={t.id} thread={t} onOpen={() => navigate(`/inbox/${t.id}`)} />
+                  <ThreadRow
+                    key={t.id}
+                    thread={t}
+                    showCategory={state.category === 'all'}
+                    onOpen={() => navigate(`/inbox/${t.id}`, { state: { inboxSearch: params.toString() } })}
+                  />
                 ))}
               </div>
             )}

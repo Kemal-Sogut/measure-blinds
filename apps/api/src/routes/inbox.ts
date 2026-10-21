@@ -42,10 +42,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** Batch size for `in()` filters, keeping request URLs short. */
 const ID_CHUNK = 200;
 
-/** `?category=&status=&page=` for the conversation list. */
+/**
+ * `?category=&status=&page=` for the conversation list. `category=all`
+ * (the default, the Inbox's first tab) lists every category together.
+ */
 const listQuerySchema = z
   .object({
-    category: z.enum(EMAIL_CATEGORIES).default('inquiry'),
+    category: z.enum([...EMAIL_CATEGORIES, 'all']).default('all'),
     status: z.enum(['new', 'handled']).default('new'),
     page: z.coerce.number().int().min(1).default(1),
   })
@@ -264,7 +267,7 @@ app.get('/unread', async (c) => {
   return c.json({ data: { ...counts, total } });
 });
 
-/** One page of conversations for a category tab + status, newest activity first. */
+/** One page of conversations for a category tab (or All) + status, newest activity first. */
 app.get('/', async (c) => {
   const parsed = listQuerySchema.safeParse(c.req.query());
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
@@ -272,14 +275,15 @@ app.get('/', async (c) => {
   const fromRow = (page - 1) * INBOX_PAGE_SIZE;
 
   const sb = createSupabaseAdmin(c.env);
-  const { data, count, error } = await sb
+  let query = sb
     .from('email_threads')
     .select(
       'id, subject, counterpart_address, counterpart_name, category, status, unread, last_message_at, last_direction, last_snippet, message_count, customer_id, order_id, customer:customers(id, first_name, last_name)',
       { count: 'exact' }
     )
-    .eq('category', category)
-    .eq('status', status)
+    .eq('status', status);
+  if (category !== 'all') query = query.eq('category', category);
+  const { data, count, error } = await query
     .order('last_message_at', { ascending: false })
     .order('id', { ascending: false })
     .range(fromRow, fromRow + INBOX_PAGE_SIZE - 1);
