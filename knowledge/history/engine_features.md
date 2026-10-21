@@ -1,5 +1,27 @@
 # Engine Features / Feature History
 
+## 2026-10-21 — Titan inbox: conversations from info@blindsnisa.com in the app
+A `*/5 * * * *` cron on `blinds-nisa-api` reads new mail from the Titan mailbox's INBOX and
+Sent folders over read-only IMAP (`cloudflare:sockets` TLS to imap.titan.email:993; in-house
+client in `lib/inbox/imapClient.ts`, `EXAMINE` + `BODY.PEEK` only) and stores it in migration
+45's `email_threads` / `email_messages`. Messages are parsed with postal-mime 2.7.6, quoted
+history is trimmed (`quoteTrim.ts`: "On … wrote:", "… said:", Outlook headers, trailing `>`
+runs; forwards kept), and threaded by In-Reply-To/References (reverse matches and merges
+included), else same subject + other party within 60 days. New conversations are sorted by
+Settings → Email Rules (first match wins; Ignore = not stored) and auto-linked to a customer
+when exactly one has the sender's email. The **Inbox** page (sidebar, `/inbox`) lists
+conversations per tab (Inquiry / Supplier / Payment / Other) and New/Handled; a conversation
+(`/inbox/:id`) is a bubble thread (customer left, shop right), plain text only, "···" reveals
+trimmed history, with category, customer/order link and Mark handled. A customer reply
+reopens a handled conversation. A failed background refresh keeps the last good list on
+screen. First run only sets the cursors (no backfill); no attachments stored; no replying
+from the app; app (Resend) emails are not shown. Secrets: `TITAN_IMAP_USER`,
+`TITAN_IMAP_PASSWORD`. The 5-minute cron is dispatched FIRST in `scheduled()` because the
+handler's final branch runs auto-expiry for any unrecognised cron. Verified: api 590 tests,
+web 500 tests, tsc clean, Worker dry-run bundle builds, Inbox/thread/Email Rules pages seen
+in a fixture harness at desktop and 375px. Not yet run against the real mailbox. Spec
+`knowledge/specs/2026-10-14-titan-inbox-design.md`, plan `knowledge/plans/2026-10-21-titan-inbox.md`.
+
 ## 2026-10-10 — "Sheer" blind type, priced exactly like Curtains
 New blind type **Sheer** (distinct from Vertical Sheer, which keeps the area formula).
 

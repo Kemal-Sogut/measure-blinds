@@ -22,6 +22,8 @@
 | Wrangler | ^4.20.0 | Cloudflare Workers CLI |
 | pdf-lib | ^1.17.1 | Server-side PDF generation (pure JS; @react-pdf needs WASM, forbidden in workerd) |
 | Vitest | ^3.2.0 | Unit + route-level tests in BOTH workspaces (`pnpm test` / `pnpm --filter api test`) |
+| postal-mime | 2.7.6 (exact) | MIME parsing for the Titan inbox sync (runs in workerd and Node) |
+| cloudflare:sockets | workerd built-in | TLS socket to imap.titan.email:993 (only in `lib/inbox/titanConnect.ts`) |
 
 ## Dependencies
 | Service | Purpose | Status |
@@ -51,6 +53,8 @@ pnpm dev
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
 - `APP_URL`
+- `TITAN_IMAP_USER`, `TITAN_IMAP_PASSWORD` — Titan mailbox login for the 5-minute inbox sync
+  (`TITAN_IMAP_HOST` / `TITAN_IMAP_PORT` are committed `[vars]`); the sync skips while unset
 
 ### Frontend (.env)
 - `VITE_SUPABASE_URL`
