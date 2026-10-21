@@ -6,12 +6,12 @@
 
 ## Where things stand (as of 2026-10-21)
 
-**Newest, on branch `feat/titan-inbox` (not deployed), web + api, needs DATABASE migration 45
-and two Worker secrets before deploy:** the **Titan inbox**. A 5-minute cron reads
+**Newest, on branch `feat/titan-inbox` (not deployed), web + api; migration 45 APPLIED
+2026-10-21, still needs two Worker secrets before deploy:** the **Titan inbox**. A 5-minute cron reads
 info@blindsnisa.com (INBOX + Sent, read-only IMAP) into `email_threads` / `email_messages`;
 `/inbox` shows conversations per category tab as a bubble thread (customer left, shop right);
 Settings → Email Rules sorts new conversations and shows sync health. Before deploying the API:
-apply migration 45, then `wrangler secret put TITAN_IMAP_USER` and `TITAN_IMAP_PASSWORD`
+`wrangler secret put TITAN_IMAP_USER` and `TITAN_IMAP_PASSWORD`
 (dashboard or CLI; the sync skips quietly until both exist). Not yet run against the real
 mailbox. See `knowledge/history/engine_features.md` 2026-10-21 (Titan inbox).
 

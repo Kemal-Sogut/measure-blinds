@@ -245,8 +245,9 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
-- **Titan inbox not live:** migration 45 is not applied and `TITAN_IMAP_USER` /
-  `TITAN_IMAP_PASSWORD` are not set; the sync has only run against fakes. Quote trimming was
+- **Titan inbox not live:** migration 45 IS applied (2026-10-21; note the project's migration
+  history table stops at `blind_type_defaults` although 39/43/44 exist — they were applied
+  without being recorded), but `TITAN_IMAP_USER` / `TITAN_IMAP_PASSWORD` are not set; the sync has only run against fakes. Quote trimming was
   tuned on synthetic samples — check a few real Titan replies after the first live sync and add
   any miss to `quoteTrim.test.ts`. The attachment list can be incomplete for messages over 5 MB
   (only the first 5 MB is fetched).
