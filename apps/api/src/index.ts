@@ -23,6 +23,7 @@ import paymentsRoutes from './routes/payments';
 import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
 import notificationsRoutes from './routes/notifications';
+import inboxRoutes from './routes/inbox';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
 import { INBOX_SYNC_CRON, runInboxSync } from './lib/inbox/run';
@@ -134,6 +135,9 @@ app.route('/api/payments', paymentsRoutes);
 
 /** Staff Alerts feed — customer confirms, edit requests, e-Transfers. */
 app.route('/api/notifications', notificationsRoutes);
+
+/** Staff Inbox — Titan conversations, triage and filter rules. */
+app.route('/api/inbox', inboxRoutes);
 
 /** Public customer view + confirm — token-gated, rate-limited (Phase 9). */
 app.route('/public', publicRoutes);
