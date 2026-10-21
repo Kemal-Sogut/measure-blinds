@@ -59,7 +59,8 @@ that is pnpm's built-in workspace-deploy command.
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `RESEND_API_KEY`
 - `APP_URL`
-- `TITAN_IMAP_USER`, `TITAN_IMAP_PASSWORD` — Titan mailbox login for the 5-minute inbox sync
+- `TITAN_IMAP_USER`, `TITAN_IMAP_PASSWORD` — Titan mailbox login for the inbox sync (every minute
+  08:00–22:00 Toronto, every 10 min otherwise; Workers FREE plan, 10 ms CPU per cron run)
   (`TITAN_IMAP_HOST` / `TITAN_IMAP_PORT` are committed `[vars]`); the sync skips while unset
 
 ### Frontend (.env)

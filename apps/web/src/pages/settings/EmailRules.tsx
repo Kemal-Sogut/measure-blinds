@@ -110,8 +110,9 @@ export default function EmailRules() {
       <PageHeader eyebrow="Settings" title="Email Rules" backTo="/settings" />
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
         <Card>
-          <CardHeader title="Mail sync" subtitle="info@blindsnisa.com is checked every 5 minutes" />
+          <CardHeader title="Mail sync" subtitle="info@blindsnisa.com" />
           <CardBody className="flex flex-col gap-1 text-[13px]">
+            <p className="mb-1 text-text-muted">Checked every minute from 8 AM to 10 PM, every 10 minutes overnight.</p>
             {statusQuery.isLoading && <p className="text-text-muted">Loading…</p>}
             {statusQuery.data?.length === 0 && <p className="text-text-muted">Not synced yet.</p>}
             {statusQuery.data?.map((s) => (

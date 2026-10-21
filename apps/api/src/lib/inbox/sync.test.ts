@@ -33,6 +33,7 @@ interface MemThread extends NewThread {
 /** In-memory InboxStore with the same semantics as the Supabase one. */
 class MemoryStore implements InboxStore {
   cursors = new Map<InboxFolder, CursorUpdate>();
+  cursorHistory: Array<[InboxFolder, number]> = [];
   errors: Array<[InboxFolder, string]> = [];
   threads: MemThread[] = [];
   messages: NewMessage[] = [];
@@ -48,6 +49,7 @@ class MemoryStore implements InboxStore {
   }
   async saveCursor(folder: InboxFolder, update: CursorUpdate) {
     this.cursors.set(folder, update);
+    this.cursorHistory.push([folder, update.lastUid]);
   }
   async recordError(folder: InboxFolder, message: string) {
     this.errors.push([folder, message]);
@@ -336,12 +338,21 @@ describe('syncInbox', () => {
     expect(report.duplicates).toBe(1);
   });
 
-  it('takes at most 50 messages per folder per run', async () => {
+  it('takes at most FETCH_LIMIT_PER_FOLDER messages per folder per run', async () => {
     primeCursors();
-    const many = Array.from({ length: 60 }, (_, i) => incoming(i + 1, { id: `m${i}@x`, subject: `S${i}` }));
+    const many = Array.from({ length: 12 }, (_, i) => incoming(i + 1, { id: `m${i}@x`, subject: `S${i}` }));
     await run({ INBOX: { uidValidity: 1, messages: many }, Sent: { uidValidity: 1, messages: [] } });
+    expect(FETCH_LIMIT_PER_FOLDER).toBe(5);
     expect(store.messages).toHaveLength(FETCH_LIMIT_PER_FOLDER);
-    expect(store.cursors.get('inbox')?.lastUid).toBe(50);
+    expect(store.cursors.get('inbox')?.lastUid).toBe(FETCH_LIMIT_PER_FOLDER);
+  });
+
+  it('saves the cursor after every message, so a run cut short keeps its progress', async () => {
+    primeCursors();
+    const three = [1, 2, 3].map((uid) => incoming(uid, { id: `p${uid}@x`, subject: `P${uid}` }));
+    await run({ INBOX: { uidValidity: 1, messages: three }, Sent: { uidValidity: 1, messages: [] } });
+    const inboxSaves = store.cursorHistory.filter(([f]) => f === 'inbox').map(([, uid]) => uid);
+    expect(inboxSaves.slice(0, 3)).toEqual([1, 2, 3]);
   });
 
   it('resets the cursor without importing when UIDVALIDITY changes', async () => {

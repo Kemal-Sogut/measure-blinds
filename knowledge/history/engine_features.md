@@ -1,5 +1,19 @@
 # Engine Features / Feature History
 
+## 2026-10-21 — Inbox sync every minute in business hours (Workers Free plan safe)
+The inbox cron is now `* * * * *`; `lib/inbox/schedule.ts` (`isInboxSyncDue`, Intl
+America/Toronto, so DST is automatic) syncs every minute 08:00–21:59 Toronto and every 10th
+minute otherwise (~900 syncs/day, 1,440 cron invocations/day — well under the Free plan's
+100k requests/day). Because the Free plan gives a cron run 10 ms of CPU (network waits don't
+count; parsing does — measured ~0.6 ms per plain email, ~7 ms per MB), the sync was reshaped:
+each message is fetched only up to its first 256 KB (`MAX_MESSAGE_BYTES`; text comes first,
+only the attachment list of a bigger message can be incomplete), a run stops fetching after
+512 KB (`RUN_BYTE_BUDGET`) or 5 messages per folder (`FETCH_LIMIT_PER_FOLDER`), folders are
+processed INBOX then Sent in UID order (no cross-folder date sort; reverse header matching
+covers a reply stored before its parent), and the cursor is saved after EVERY message so a run
+cut short never redoes work. Run timeout 50 s (under the cron interval). The web list, unread
+counts and an open conversation refresh every minute. Verified: api 604 tests, web 504.
+
 ## 2026-10-21 — Inbox unread dots + a Notifications entry per received email
 Migration 46 adds `email_threads.unread` (separate from New/Handled): `refresh_email_thread`
 sets it whenever an incoming email is stored (the same moment a Handled conversation goes back

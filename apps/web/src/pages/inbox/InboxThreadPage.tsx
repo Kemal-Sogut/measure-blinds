@@ -9,7 +9,8 @@
  * category tab. Opening an unread conversation marks it read, which
  * clears its dot, its tab's dot and (when it was the last one) the
  * sidebar's. Replies are written in Titan; they appear here after
- * the next 5-minute sync.
+ * the next sync (every minute 8 AM–10 PM, every 10 minutes overnight); an
+ * open conversation refreshes itself every minute.
  */
 
 import { useEffect, useRef } from 'react';
@@ -61,7 +62,7 @@ export default function InboxThreadPage() {
               ))}
             </div>
             <p className="text-center text-[12px] text-text-muted">
-              Reply from Titan. Your reply shows up here within about 5 minutes.
+              Reply from Titan. Your reply shows up here within a couple of minutes (up to 10 overnight).
             </p>
             <div ref={endRef} />
           </>

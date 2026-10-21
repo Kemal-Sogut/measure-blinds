@@ -101,7 +101,8 @@ export interface MailSource {
   findSentFolder(): Promise<string | null>;
   /**
    * Opens `folderName` read-only and returns up to `limit` messages with a
-   * UID above `cursor.afterUid`, in ascending UID order. With a null cursor
+   * UID above `cursor.afterUid`, in ascending UID order (fewer when the
+   * per-run byte budget is reached; the rest come next run). With a null cursor
    * or a UIDVALIDITY mismatch it fetches nothing and only reports the
    * folder's current UIDVALIDITY and highest UID.
    */
