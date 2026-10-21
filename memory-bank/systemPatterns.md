@@ -285,6 +285,18 @@ section as the reference implementation for future collapsible UI.
   because of these links. There is no separate "Blind Types" settings page — it lives inside
   Materials.
 
+## Email ingestion (Titan inbox, 2026-10-21)
+- Cron `*/5 * * * *` → `lib/inbox/run.ts` (`runInboxSync`) → `syncInbox` in `lib/inbox/sync.ts`,
+  which takes an injected `MailSource` (IMAP) and `InboxStore` (Supabase) so the whole pipeline
+  is tested in memory. `cloudflare:sockets` is imported ONLY by `lib/inbox/titanConnect.ts`.
+- Per-folder UID cursors in `email_sync_state` (UIDVALIDITY + last UID). First run / folder
+  rename / UIDVALIDITY change → jump to the newest UID, never re-import. A store failure holds
+  the cursor just before that message; `email_messages.message_id` UNIQUE absorbs re-fetches.
+- Pure rule modules: `quoteTrim.ts`, `threading.ts`, `rules.ts`; summaries and merges in SQL
+  (`refresh_email_thread`, `merge_email_threads`).
+- The scheduled handler checks the inbox cron FIRST: its last branch runs auto-expiry for any
+  cron it doesn't recognise.
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
 2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent

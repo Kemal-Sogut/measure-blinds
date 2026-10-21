@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (c) 2026 Blinds Nisa. All rights reserved.
+
+/**
+ * The Inbox (`/inbox`, envelope icon in the sidebar): conversations from
+ * the shop's Titan mailbox, one category tab at a time (Inquiry,
+ * Supplier, Payment, Other — sorted by the rules in Settings → Email
+ * Rules), New or Handled, newest activity first, 15 per page.
+ *
+ * Tab, status and page live in the URL (`?category=&status=&page=`), so
+ * opening a conversation and pressing Back returns to the same list.
+ * Each row shows the other party, the subject, a preview of the latest
+ * message ("You: …" when the shop wrote last), the time, the message
+ * count, and the linked customer.
+ */
+
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import PageHeader from '../../components/PageHeader';
+import { ListSkeleton } from '../../components/Skeleton';
+import { useInboxThreads } from '../../hooks/useInbox';
+import { displayName } from '../../lib/customerName';
+import type { EmailThreadStatus, EmailThreadSummary } from '../../types';
+import {
+  CATEGORY_LABELS,
+  CATEGORY_ORDER,
+  formatThreadTime,
+  inboxParamsToSearch,
+  parseInboxParams,
+  snippetLine,
+  threadTitle,
+  type InboxParams,
+} from './inboxText';
+
+/** One conversation row; bold title while it's New. */
+function ThreadRow({ thread, onOpen }: { thread: EmailThreadSummary; onOpen: () => void }) {
+  const isNew = thread.status === 'new';
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex w-full flex-col gap-0.5 rounded-xl border border-border-light bg-surface p-3 text-left shadow-sm hover:bg-surface-muted"
+    >
+      <span className="flex items-baseline justify-between gap-2">
+        <span className={`truncate text-sm text-text-primary ${isNew ? 'font-bold' : 'font-semibold'}`}>
+          {threadTitle(thread)}
+        </span>
+        <time dateTime={thread.last_message_at} className="shrink-0 text-[12px] text-text-muted">
+          {formatThreadTime(thread.last_message_at)}
+        </time>
+      </span>
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="truncate text-[13px] font-medium text-text-secondary">{thread.subject || '(no subject)'}</span>
+        {thread.message_count > 1 && (
+          <span className="shrink-0 rounded-pill bg-surface-sunken px-1.5 text-[11px] font-semibold text-text-secondary">
+            {thread.message_count}
+          </span>
+        )}
+      </span>
+      <span className="truncate text-[13px] text-text-muted">{snippetLine(thread)}</span>
+      {thread.customer && (
+        <span className="mt-1 self-start rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
+          {displayName(thread.customer)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+const STATUS_OPTIONS: Array<{ value: EmailThreadStatus; label: string }> = [
+  { value: 'new', label: 'New' },
+  { value: 'handled', label: 'Handled' },
+];
+
+/** The conversation list. */
+export default function InboxPage() {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const state = parseInboxParams(params);
+  const { data, isLoading, error, isPlaceholderData } = useInboxThreads(state.category, state.status, state.page);
+  const threads = data?.data ?? [];
+  const totalPages = data?.total_pages ?? 1;
+
+  function go(next: Partial<InboxParams>) {
+    setParams(inboxParamsToSearch({ ...state, ...next }));
+    window.scrollTo({ top: 0 });
+  }
+
+  const segment = (active: boolean) =>
+    `min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold ${
+      active ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'
+    }`;
+  const pagerButton =
+    'h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
+
+  return (
+    <div className="min-h-screen bg-surface-muted pb-16">
+      <PageHeader title="Inbox" backTo="/" />
+      <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:56rem]">
+        <div role="tablist" aria-label="Category" className="flex gap-1 overflow-x-auto rounded-lg bg-surface-sunken p-1">
+          {CATEGORY_ORDER.map((c) => (
+            <button
+              key={c}
+              type="button"
+              role="tab"
+              aria-selected={c === state.category}
+              className={segment(c === state.category)}
+              onClick={() => go({ category: c, page: 1 })}
+            >
+              {CATEGORY_LABELS[c]}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 self-start rounded-lg bg-surface-sunken p-1" aria-label="Status">
+          {STATUS_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              aria-pressed={o.value === state.status}
+              className={segment(o.value === state.status)}
+              onClick={() => go({ status: o.value, page: 1 })}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+
+        {isLoading && <ListSkeleton />}
+        {/* A failed background refresh (the list polls every minute) keeps
+            showing the last good page; the error only replaces an empty one. */}
+        {error && !data && <p className="text-danger">{error.message}</p>}
+
+        {data && (
+          <>
+            {threads.length === 0 ? (
+              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
+                {state.page > 1
+                  ? 'No conversations on this page.'
+                  : `No ${state.status === 'new' ? 'new' : 'handled'} ${CATEGORY_LABELS[state.category].toLowerCase()} conversations.`}
+              </p>
+            ) : (
+              <div className={`flex flex-col gap-2 transition-opacity ${isPlaceholderData ? 'opacity-60' : ''}`}>
+                {threads.map((t) => (
+                  <ThreadRow key={t.id} thread={t} onOpen={() => navigate(`/inbox/${t.id}`)} />
+                ))}
+              </div>
+            )}
+
+            {(totalPages > 1 || state.page > 1) && (
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <button type="button" className={pagerButton} disabled={state.page <= 1} onClick={() => go({ page: state.page - 1 })}>
+                  ‹ Previous
+                </button>
+                <span className="text-[13px] text-text-secondary">
+                  Page {state.page} of {totalPages}
+                </span>
+                <button type="button" className={pagerButton} disabled={state.page >= totalPages} onClick={() => go({ page: state.page + 1 })}>
+                  Next ›
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

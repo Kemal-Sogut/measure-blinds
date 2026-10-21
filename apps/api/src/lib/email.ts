@@ -309,9 +309,6 @@ export function checklistHtml(heading: string, items: string[]): string {
 export interface EstimateEmailInputs {
   company: CompanyBrand;
   customerFirstName: string;
-  orderNumber: string;
-  total: number;
-  expiryDate: string;
   viewUrl: string;
   /** Optional personal note from the consultant, shown above the CTA. */
   message?: string;
@@ -319,41 +316,30 @@ export interface EstimateEmailInputs {
 
 /**
  * Builds the branded customer estimate email ("03 — Estimate proposal"
- * in the design doc): greeting, tinted summary card with expiry and
- * total, a "How to go ahead" step list, and a CTA button linking to the
- * public view page. All dynamic strings are HTML-escaped.
+ * in the design doc): a short greeting that sends the customer to the
+ * CTA button, the consultant's optional note, the button itself, and
+ * fine print. All dynamic strings are HTML-escaped.
+ *
+ * DELIBERATELY DETAIL-FREE: no summary card, order number, expiry date
+ * or total. The email's one job is to get the customer onto the public
+ * view page, where the live figures are; the subject line still names
+ * the order and the PDF attachment carries the full breakdown.
  *
  * CONFIRMATION IS EXPLICIT: nothing is ordered until the customer opens
  * the page, ticks the Terms & Conditions box and presses "Confirm
  * Estimate" (`CustomerView.tsx`). Customers used to see only "View your
- * estimate" and never realised a confirmation was expected, so the steps
- * and the button label spell that out. Keep the step wording in sync with
- * the customer page's labels and with the estimate PDF's CTA (`pdf.ts`).
+ * estimate" and never realised a confirmation was expected, so the
+ * intro and the button label spell that out. Keep the wording in sync
+ * with the customer page's labels and with the estimate PDF's CTA
+ * (`pdf.ts`).
  */
 export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
   const company = escapeHtml(i.company.name);
   const name = escapeHtml(i.customerFirstName);
-  const order = escapeHtml(i.orderNumber);
-  const expiry = escapeHtml(i.expiryDate);
   const url = escapeHtml(i.viewUrl);
   const body = `${headingHtml('Your estimate is ready')}
-    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your written estimate is ready to review online, with every window and option we discussed. <strong>To go ahead with your order, please open your estimate and confirm it.</strong>`)}
-    ${summaryCardHtml({
-      eyebrow: 'Estimate summary',
-      badge: order,
-      rows: [
-        ['Customer', name],
-        ['Valid until', expiry],
-      ],
-      total: { label: 'Estimated total (incl. HST)', amount: i.total },
-    })}
+    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your estimate is ready. Tap the button below to review it and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`)}
     ${messageBlockHtml(i.message)}
-    ${checklistHtml('How to go ahead', [
-      'Tap <strong>Review &amp; confirm your estimate</strong> below.',
-      'Check your windows, options and total.',
-      'Tick the box to agree to the Terms &amp; Conditions.',
-      `Press <strong>Confirm Estimate</strong> &mdash; your deposit details will appear right away.`,
-    ])}
     <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'Review &amp; confirm your estimate')}</div>
     ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email. The full estimate is also attached as a PDF.`)}
     ${linkFallbackHtml(url)}`;

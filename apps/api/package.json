@@ -10,11 +10,12 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "hono": "^4.7.0",
     "@supabase/supabase-js": "^2.49.0",
+    "hono": "^4.7.0",
     "jose": "^6.0.0",
-    "zod": "^3.25.0",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "postal-mime": "2.7.6",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250620.0",

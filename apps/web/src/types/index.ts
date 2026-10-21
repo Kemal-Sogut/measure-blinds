@@ -181,6 +181,14 @@ export interface Order {
   cancel_requested_at: string | null;
   /** The customer's stated reason, shown in the staff warning banner. */
   cancel_request_note: string;
+  /**
+   * When the customer first opened their public order page
+   * (`/customer/:token`); `null` = never opened. Written once by
+   * `POST /public/estimate/:token/view` and never reset (not by a
+   * re-send, not by a stage reversal); staff previews never set it.
+   * Drives the eye icon beside the order number in the order header.
+   */
+  customer_viewed_at: string | null;
   created_at: string;
   updated_at: string;
   /** Server-derived sum of `payments` (present on detail/list reads). */
@@ -627,4 +635,105 @@ export interface AppNotification {
   amount: number | null;
   /** ISO timestamp of the event. */
   created_at: string;
+}
+
+/**
+ * Inbox conversation category (tab). Mirrors the API's EMAIL_CATEGORIES
+ * and the `email_threads.category` CHECK in migration 45.
+ */
+export type EmailCategory = 'inquiry' | 'supplier' | 'payment' | 'other';
+
+/** `new` until staff mark the conversation handled; an incoming reply reopens it. */
+export type EmailThreadStatus = 'new' | 'handled';
+
+/** `in` = the other party (left bubble); `out` = the shop mailbox (right bubble). */
+export type EmailDirection = 'in' | 'out';
+
+/**
+ * One row of the Inbox list (`GET /api/inbox`). The `last_*` fields and
+ * `message_count` are a server-maintained summary of the conversation;
+ * `last_snippet` is the first 140 characters of the newest message's
+ * trimmed text.
+ */
+export interface EmailThreadSummary {
+  id: string;
+  subject: string;
+  counterpart_address: string;
+  counterpart_name: string;
+  category: EmailCategory;
+  status: EmailThreadStatus;
+  last_message_at: string;
+  last_direction: EmailDirection;
+  last_snippet: string;
+  message_count: number;
+  customer_id: string | null;
+  order_id: string | null;
+  customer: { id: string; first_name: string; last_name: string } | null;
+}
+
+/** Attachment metadata only — the file stays in Titan. */
+export interface EmailAttachment {
+  filename: string;
+  mime_type: string;
+  size: number;
+}
+
+/**
+ * One email in a conversation. `reply_text` is what the bubble shows
+ * (quoted history trimmed); `text_body` is the full text behind "···".
+ * Both are plain text: no email HTML ever reaches the browser.
+ */
+export interface EmailMessage {
+  id: string;
+  direction: EmailDirection;
+  from_name: string;
+  from_address: string;
+  to_addresses: string[];
+  sent_at: string;
+  reply_text: string;
+  text_body: string;
+  attachments: EmailAttachment[];
+}
+
+/** One conversation (`GET /api/inbox/:id`): summary + messages oldest first + link options. */
+export interface EmailThreadDetail extends EmailThreadSummary {
+  category_locked: boolean;
+  handled_at: string | null;
+  order: { id: string; order_number: string; status: OrderStatus } | null;
+  messages: EmailMessage[];
+  /** The linked customer's orders, newest first (empty when no customer is linked). */
+  customer_orders: Array<{ id: string; order_number: string; status: OrderStatus }>;
+}
+
+/** What an inbox rule tests: the other party's address/domain, the subject, or the message text. */
+export type EmailRuleField = 'address' | 'domain' | 'subject' | 'body';
+/** How an inbox rule compares (case-insensitive). */
+export type EmailRuleMatch = 'contains' | 'equals' | 'ends_with';
+/** A category, or `ignore` (the conversation is never imported). */
+export type EmailRuleAction = EmailCategory | 'ignore';
+
+/** Body of `POST /api/inbox/rules` (and, partially, `PUT /rules/:id`). */
+export interface EmailRuleInput {
+  field: EmailRuleField;
+  match_type: EmailRuleMatch;
+  value: string;
+  action: EmailRuleAction;
+  enabled?: boolean;
+}
+
+/** A stored inbox rule; enabled rules run in `position` order, first match wins. */
+export interface EmailRule extends Required<EmailRuleInput> {
+  id: string;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Sync health for one Titan folder (`GET /api/inbox/status`). */
+export interface InboxSyncState {
+  folder: 'inbox' | 'sent';
+  folder_name: string;
+  last_run_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
 }

@@ -43,9 +43,6 @@ describe('buildEstimateEmailHtml', () => {
       email: 'info@blindsnisa.com',
     },
     customerFirstName: '<b>Kemal</b>',
-    orderNumber: 'T0408-126',
-    total: 1234.5,
-    expiryDate: '2026-07-17',
     viewUrl: 'https://app.example.com/customer/abc-123',
   });
 
@@ -56,18 +53,21 @@ describe('buildEstimateEmailHtml', () => {
     expect(html).toContain('Blinds &lt;Nisa&gt; &amp; Co');
   });
 
-  it('contains the summary values and CTA link', () => {
-    expect(html).toContain('T0408-126');
-    expect(html).toContain('$1,234.50');
-    expect(html).toContain('2026-07-17');
+  it('contains the CTA link', () => {
     expect(html).toContain('https://app.example.com/customer/abc-123');
     expect(html).toContain('Review &amp; confirm your estimate');
   });
 
-  it('tells the customer they must confirm online to go ahead', () => {
-    expect(html).toContain('How to go ahead');
-    expect(html).toContain('please open your estimate and confirm it');
-    expect(html).toContain('Confirm Estimate');
+  it('carries no details section: no summary card, expiry or total', () => {
+    expect(html).not.toContain('Estimate summary');
+    expect(html).not.toContain('Valid until');
+    expect(html).not.toContain('Estimated total');
+    expect(html).not.toContain('How to go ahead');
+  });
+
+  it('sends the customer to the button and says they must confirm online', () => {
+    expect(html).toContain('Tap the button below');
+    expect(html).toContain('confirm it to go ahead with your order');
     expect(html).toContain('isn&#39;t placed until you confirm it online');
   });
 

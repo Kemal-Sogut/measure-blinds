@@ -54,6 +54,7 @@ export default function PageHeader({
   right,
   eyebrow,
   subtitle,
+  titleAdornment,
 }: {
   title: string;
   backTo: string;
@@ -62,6 +63,12 @@ export default function PageHeader({
   eyebrow?: string;
   /** Secondary identity for the record, e.g. an order number. */
   subtitle?: string;
+  /**
+   * Small inline status shown right after the title on the same line,
+   * e.g. the order page's "customer opened it" eye. It never shrinks;
+   * the title truncates before it does.
+   */
+  titleAdornment?: ReactNode;
 }) {
   return (
     <header className="sticky top-0 z-10 border-b border-border-light bg-surface">
@@ -93,9 +100,18 @@ export default function PageHeader({
               {eyebrow}
             </p>
           )}
-          <h1 className="truncate text-lg font-bold text-text-primary lg:text-[22px]">
-            {title}
-          </h1>
+          {titleAdornment ? (
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-lg font-bold text-text-primary lg:text-[22px]">
+                {title}
+              </h1>
+              {titleAdornment}
+            </div>
+          ) : (
+            <h1 className="truncate text-lg font-bold text-text-primary lg:text-[22px]">
+              {title}
+            </h1>
+          )}
           {subtitle && <p className="truncate text-[13px] text-text-muted">{subtitle}</p>}
         </div>
         {right && <div className="flex min-w-0 items-center justify-end">{right}</div>}

@@ -10,7 +10,8 @@
     "build": "pnpm --filter web build",
     "lint": "pnpm --parallel --filter \"./apps/*\" lint",
     "check": "pnpm --parallel --filter \"./apps/*\" check",
-    "test": "pnpm --filter web test"
+    "test": "pnpm --filter web test",
+    "deploy:apps": "node scripts/deploy.mjs"
   },
   "packageManager": "pnpm@9.15.9",
   "engines": {

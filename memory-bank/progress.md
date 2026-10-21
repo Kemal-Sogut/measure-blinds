@@ -6,6 +6,13 @@
 
 ## What Works
 
+**Inbox (Titan email), on `feat/titan-inbox`:** every 5 minutes the API Worker reads new
+mail from info@blindsnisa.com's INBOX and Sent folders (read-only IMAP), groups it into
+conversations (reply headers, else subject + other party), trims quoted history, sorts new
+conversations with Settings → Email Rules, and auto-links a customer when exactly one has the
+sender's email. `/inbox` has Inquiry / Supplier / Payment / Other tabs with New/Handled, and
+each conversation is a bubble thread with category, customer/order link and Mark handled.
+
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
 (+ expired), auto-expiry on sent (only `sent` orders lapse). Editing an `expired` estimate's
 expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
@@ -238,6 +245,12 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
+- **Titan inbox not live:** migration 45 IS applied (2026-10-21; note the project's migration
+  history table stops at `blind_type_defaults` although 39/43/44 exist — they were applied
+  without being recorded), but `TITAN_IMAP_USER` / `TITAN_IMAP_PASSWORD` are not set; the sync has only run against fakes. Quote trimming was
+  tuned on synthetic samples — check a few real Titan replies after the first live sync and add
+  any miss to `quoteTrim.test.ts`. The attachment list can be incomplete for messages over 5 MB
+  (only the first 5 MB is fetched).
 - **Migration 43 (`notifications`) is not applied** to `lgbxxlwsdeuhdgzrjjen`. Until it is,
   the Notifications page errors and the confirm / edit-request / webhook writers log a failed
   alert insert (their own action still succeeds). The page has only been seen in a mocked harness.

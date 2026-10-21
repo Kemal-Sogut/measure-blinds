@@ -99,6 +99,13 @@ const BUSINESS: Row[] = [
     accent: 'neutral',
     d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M16 13H8 M16 17H8',
   },
+  {
+    to: '/settings/email-rules',
+    label: 'Email Rules',
+    desc: 'Sort incoming mail into Inbox tabs',
+    accent: 'brand',
+    d: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M22 6l-10 7L2 6',
+  },
 ];
 
 /** Icon-badge tint + ink per accent, mirroring `ui/Card`'s CardHeader. */

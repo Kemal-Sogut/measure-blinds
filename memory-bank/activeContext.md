@@ -4,7 +4,20 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-10)
+## Where things stand (as of 2026-10-21)
+
+**Newest, uncommitted, web-only, no migration:** an **eye icon beside the order number** in the
+order header: grey once the estimate is sent, green once the customer opened their order page
+(`customer_viewed_at`). See `knowledge/history/engine_features.md` 2026-10-21.
+
+**Newest, on branch `feat/titan-inbox` (not deployed), web + api; migration 45 APPLIED
+2026-10-21, still needs two Worker secrets before deploy:** the **Titan inbox**. A 5-minute cron reads
+info@blindsnisa.com (INBOX + Sent, read-only IMAP) into `email_threads` / `email_messages`;
+`/inbox` shows conversations per category tab as a bubble thread (customer left, shop right);
+Settings → Email Rules sorts new conversations and shows sync health. Before deploying the API:
+`wrangler secret put TITAN_IMAP_USER` and `TITAN_IMAP_PASSWORD`
+(dashboard or CLI; the sync skips quietly until both exist). Not yet run against the real
+mailbox. See `knowledge/history/engine_features.md` 2026-10-21 (Titan inbox).
 
 **Newest, uncommitted, web + api, needs DATABASE migration 44 applied before deploy:** a new
 **Sheer** blind type that prices exactly like Curtains (`SheerBlindType extends
@@ -396,3 +409,6 @@ primitive layer.
   `draft`, not `sent` (nothing re-sent yet), and only an `expired` order is rewritten. Keep the
   two comparisons in lockstep — a drift between them would leave orders that are neither
   expired nor revivable.
+- The orders list is sorted server-side in `GET /api/orders`: `order_date` DESC, then
+  `created_at` DESC. Keep the sort on the server — the route caps at 100 rows, so a client-side
+  sort would only reorder the slice the cap kept.
