@@ -47,6 +47,7 @@ const PleatTypes = lazy(() => import('./pages/settings/PleatTypes'));
 const InstallationOptions = lazy(() => import('./pages/settings/InstallationOptions'));
 const PresetLineItems = lazy(() => import('./pages/settings/PresetLineItems'));
 const TermsAndConditions = lazy(() => import('./pages/settings/TermsAndConditions'));
+const EmailRules = lazy(() => import('./pages/settings/EmailRules'));
 const CustomerView = lazy(() => import('./pages/customer-view/CustomerView'));
 const AppointmentView = lazy(() => import('./pages/customer-view/AppointmentView'));
 
@@ -133,6 +134,7 @@ export default function App() {
             <Route path="/settings/presets" element={guard(<Layout><PresetLineItems /></Layout>)} />
             <Route path="/settings/defaults" element={guard(<Layout><BlindTypeDefaults /></Layout>)} />
             <Route path="/settings/terms" element={guard(<Layout><TermsAndConditions /></Layout>)} />
+            <Route path="/settings/email-rules" element={guard(<Layout><EmailRules /></Layout>)} />
 
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />
