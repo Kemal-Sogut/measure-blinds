@@ -1189,7 +1189,7 @@ export interface TitanConfig {
  * error propagates, so a bad password never leaks a connection.
  */
 export async function openTitanSource(cfg: TitanConfig): Promise<MailSource> {
-  const socket = connect({ hostname: cfg.host, port: cfg.port }, { secureTransport: 'on' });
+  const socket = connect({ hostname: cfg.host, port: cfg.port }, { secureTransport: 'on', allowHalfOpen: false });
   try {
     const client = await ImapClient.open(socket.readable, socket.writable);
     await client.authenticatePlain(cfg.user, cfg.password);
@@ -5128,7 +5128,7 @@ export default function InboxThreadPage() {
       />
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 [--page-max:56rem]">
         {isLoading && <ListSkeleton />}
-        {error && <p className="text-danger">{error.message}</p>}
+        {error && !thread && <p className="text-danger">{error.message}</p>}
         {thread && (
           <>
             <ThreadControls thread={thread} />
@@ -5280,9 +5280,11 @@ export default function InboxPage() {
         </div>
 
         {isLoading && <ListSkeleton />}
-        {error && <p className="text-danger">{error.message}</p>}
+        {/* A failed background refresh (the list polls every minute) keeps
+            showing the last good page; the error only replaces an empty one. */}
+        {error && !data && <p className="text-danger">{error.message}</p>}
 
-        {!isLoading && !error && (
+        {data && (
           <>
             {threads.length === 0 ? (
               <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
@@ -5528,8 +5530,11 @@ export default function EmailRules() {
         </Card>
 
         <Card>
-          <CardHeader title="Rules" subtitle="Checked top to bottom for each new conversation; the first match wins. No match → Other." />
+          <CardHeader title="Rules" subtitle="First match wins" />
           <CardBody flush>
+            <p className="border-b border-border-light px-4 py-3 text-[13px] text-text-muted">
+              Checked top to bottom for each new conversation. No match → Other.
+            </p>
             {rulesQuery.isLoading && (
               <div className="p-4">
                 <ListSkeleton rows={2} />
@@ -5541,7 +5546,8 @@ export default function EmailRules() {
             <ul className="divide-y divide-border-light">
               {rules.map((rule, index) => (
                 <li key={rule.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-                  <label className="flex min-h-11 min-w-0 flex-1 items-center gap-2 text-sm">
+                  {/* Full width on a phone (buttons wrap below); shares the row from sm up. */}
+                  <label className="flex min-h-11 w-full min-w-0 items-center gap-2 text-sm sm:w-auto sm:flex-1">
                     <input
                       type="checkbox"
                       checked={rule.enabled}
