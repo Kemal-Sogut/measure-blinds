@@ -23,6 +23,7 @@ export const NOTIFICATION_TITLES: Record<NotificationKind, string> = {
   edit_request: 'Edit requested',
   order_confirmed: 'Order confirmed',
   etransfer_received: 'New e-Transfer payment',
+  email_received: 'New email',
 };
 
 /**
@@ -44,17 +45,21 @@ export function notificationDetail(n: AppNotification): string {
       const where = order ? `applied to ${order}` : 'waiting to be assigned to an order';
       return `${money(n.amount)}${from} — ${where}.`;
     }
+    case 'email_received':
+      return `${who || 'Someone'}: ${n.subject.trim() || '(no subject)'}`;
   }
 }
 
 /**
  * Where tapping the row navigates: the linked order page for the two
- * order events, and `null` for e-Transfer alerts, which are deliberately
- * not clickable (an unmatched transfer has no order, and a matched one is
- * already recorded on it). An order event whose order was deleted never
- * reaches the client — the FK cascade removes the alert with it.
+ * order events, the Inbox conversation for a received email, and `null`
+ * for e-Transfer alerts, which are deliberately not clickable (an
+ * unmatched transfer has no order, and a matched one is already recorded
+ * on it). An alert whose order or conversation was deleted never reaches
+ * the client — the FK cascades remove it.
  */
 export function notificationHref(n: AppNotification): string | null {
+  if (n.kind === 'email_received') return n.email_thread_id ? `/inbox/${n.email_thread_id}` : null;
   if (n.kind === 'etransfer_received' || !n.order_id) return null;
   return `/orders/${n.order_id}`;
 }

@@ -6,7 +6,9 @@
  * a bubble, oldest at the top, scrolled to the newest on open — the
  * other party on the left, the shop (info@blindsnisa.com, read from
  * Titan's Sent folder) on the right. Back returns to the conversation's
- * category tab. Replies are written in Titan; they appear here after
+ * category tab. Opening an unread conversation marks it read, which
+ * clears its dot, its tab's dot and (when it was the last one) the
+ * sidebar's. Replies are written in Titan; they appear here after
  * the next 5-minute sync.
  */
 
@@ -14,7 +16,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
-import { useInboxThread } from '../../hooks/useInbox';
+import { useInboxThread, useMarkInboxThreadRead } from '../../hooks/useInbox';
 import MessageBubble from './MessageBubble';
 import ThreadControls from './ThreadControls';
 import { threadTitle } from './inboxText';
@@ -23,8 +25,17 @@ import { threadTitle } from './inboxText';
 export default function InboxThreadPage() {
   const { id } = useParams();
   const { data: thread, isLoading, error } = useInboxThread(id);
+  const markRead = useMarkInboxThreadRead();
   const endRef = useRef<HTMLDivElement>(null);
   const messageCount = thread?.messages.length ?? 0;
+  const unreadId = thread?.unread ? thread.id : null;
+  const { mutate: markReadMutate } = markRead;
+
+  // Opening the conversation reads it. Runs once per unread state: the
+  // mutation refetches the thread, which comes back with unread = false.
+  useEffect(() => {
+    if (unreadId) markReadMutate(unreadId);
+  }, [unreadId, markReadMutate]);
 
   useEffect(() => {
     if (messageCount > 0) endRef.current?.scrollIntoView({ block: 'end' });

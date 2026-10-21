@@ -6,7 +6,8 @@
  * (`/notifications`, bell icon between Calendar and Settings).
  *
  * Lists what happened while nobody was watching — a customer requesting
- * an edit, a customer confirming their order, a new e-Transfer payment —
+ * an edit, a customer confirming their order, a new e-Transfer payment, a
+ * new email in the Titan inbox (opens that conversation) —
  * newest first, 15 per page, with a pager at the bottom. Order alerts are
  * buttons into that order's page; e-Transfer alerts are plain rows and do
  * not navigate (rule in `notificationHref`).
@@ -29,6 +30,7 @@ const KIND_DOT: Record<NotificationKind, string> = {
   edit_request: 'bg-warning',
   order_confirmed: 'bg-success',
   etransfer_received: 'bg-brand-600',
+  email_received: 'bg-scheduled',
 };
 
 /** Reads `?page=` as a positive integer, defaulting to 1. */

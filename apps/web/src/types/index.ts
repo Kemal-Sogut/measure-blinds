@@ -610,8 +610,12 @@ export interface CompanySettings {
   maintenance_message: string | null;
 }
 
-/** Event kinds recorded in the staff Alerts feed (migration 43). */
-export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received';
+/**
+ * Event kinds recorded in the staff Alerts feed (migration 43;
+ * `email_received` added by migration 46 — one per incoming email the
+ * Titan inbox sync stores).
+ */
+export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received' | 'email_received';
 
 /**
  * One row of `GET /api/notifications` — an event that happened without
@@ -633,6 +637,10 @@ export interface AppNotification {
   customer_name: string;
   /** e-Transfer amount in dollars; null for order events. */
   amount: number | null;
+  /** The Inbox conversation an `email_received` alert opens; null for every other kind. */
+  email_thread_id: string | null;
+  /** Email subject snapshot for `email_received`; '' for every other kind. */
+  subject: string;
   /** ISO timestamp of the event. */
   created_at: string;
 }
@@ -662,6 +670,12 @@ export interface EmailThreadSummary {
   counterpart_name: string;
   category: EmailCategory;
   status: EmailThreadStatus;
+  /**
+   * True while an incoming email in this conversation hasn't been opened
+   * (cleared by `POST /api/inbox/:id/read`). Separate from `status`:
+   * New/Handled is the triage decision. Drives the blue dots.
+   */
+  unread: boolean;
   last_message_at: string;
   last_direction: EmailDirection;
   last_snippet: string;
@@ -728,6 +742,12 @@ export interface EmailRule extends Required<EmailRuleInput> {
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * Unread conversations per category plus the total (`GET /api/inbox/unread`).
+ * Any count above 0 shows a dot on that tab; `total` drives the sidebar dot.
+ */
+export type InboxUnreadCounts = Record<EmailCategory, number> & { total: number };
 
 /** Sync health for one Titan folder (`GET /api/inbox/status`). */
 export interface InboxSyncState {

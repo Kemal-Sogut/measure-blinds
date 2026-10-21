@@ -18,7 +18,8 @@
  *      subject fallback; merge when headers prove two threads are one);
  *      a message that starts a thread is classified by the rules
  *      (ignore → not stored) and auto-linked to a customer; insert; refresh
- *      the thread summary (incoming mail reopens a handled thread).
+ *      the thread summary (incoming mail reopens a handled thread and marks
+ *      it unread) and, for incoming mail, add a Notifications entry.
  *   5. Save each folder's cursor — just before the first message the
  *      store failed to save, if any, so it and later ones are retried
  *      (duplicates are skipped next time).
@@ -185,7 +186,15 @@ async function importOne(p: Pending, ctx: ImportContext): Promise<Outcome> {
     throw error;
   }
   // Also run after a lost dedupe race: it deletes a just-created empty thread.
-  await store.refreshThread(threadId, inserted === 'inserted' && direction === 'in');
+  const incoming = inserted === 'inserted' && direction === 'in';
+  await store.refreshThread(threadId, incoming);
+  if (incoming) {
+    await store.notifyIncomingEmail({
+      threadId,
+      senderName: msg.from.name || msg.from.address,
+      subject: msg.subject,
+    });
+  }
   return inserted === 'inserted' ? 'imported' : 'duplicates';
 }
 

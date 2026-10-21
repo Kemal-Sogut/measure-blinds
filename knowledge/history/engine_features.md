@@ -1,5 +1,22 @@
 # Engine Features / Feature History
 
+## 2026-10-21 — Inbox unread dots + a Notifications entry per received email
+Migration 46 adds `email_threads.unread` (separate from New/Handled): `refresh_email_thread`
+sets it whenever an incoming email is stored (the same moment a Handled conversation goes back
+to New — that reopen rule already existed), and `POST /api/inbox/:id/read` clears it when the
+conversation is opened. Outgoing replies never set it. `GET /api/inbox/unread` returns unread
+counts per category + total. The web shows a blue dot (and bold name) on unread conversation
+rows, a dot on every category tab with an unread conversation (New or Handled), and a dot on
+the sidebar's Inbox icon (white on the selected item so it stays visible); screen readers get
+"(unread)". Lists and counts poll every minute. Each incoming email the sync stores also writes
+a `notifications` row of the new kind `email_received` ("New email — Jane Doe: Quote for
+kitchen"), linked by the new `notifications.email_thread_id` (cascades) and `subject` snapshot;
+tapping it opens the conversation. Ignored conversations and your own replies write no alert.
+The alert is best effort (`recordNotification` swallows errors), so it can't hold the sync
+cursor back. Existing New conversations whose last message was incoming were back-filled as
+unread. Verified: api 597 tests, web 504, tsc clean; dots and the alert row seen in a fixture
+harness.
+
 ## 2026-10-21 — Titan inbox: conversations from info@blindsnisa.com in the app
 A `*/5 * * * *` cron on `blinds-nisa-api` reads new mail from the Titan mailbox's INBOX and
 Sent folders over read-only IMAP (`cloudflare:sockets` TLS to imap.titan.email:993; in-house

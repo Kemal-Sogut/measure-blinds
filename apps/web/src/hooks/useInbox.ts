@@ -31,6 +31,7 @@ import type {
   EmailThreadStatus,
   EmailThreadSummary,
   InboxSyncState,
+  InboxUnreadCounts,
 } from '../types';
 
 /** Every inbox endpoint wraps its payload as `{ data }`. */
@@ -83,6 +84,33 @@ export function useInboxThread(id: string | undefined): UseQueryResult<EmailThre
     queryFn: async () => (await apiFetch<Envelope<EmailThreadDetail>>(`/api/inbox/${id}`)).data,
     enabled: Boolean(id),
     staleTime: 0,
+  });
+}
+
+/**
+ * Unread conversations per category + total, for the tab dots and the
+ * sidebar dot. Polls every minute (the sync runs every 5) and is
+ * invalidated with everything else under `['inbox']`.
+ */
+export function useInboxUnread(): UseQueryResult<InboxUnreadCounts> {
+  return useQuery({
+    queryKey: [...INBOX_KEY, 'unread'],
+    queryFn: async () => (await apiFetch<Envelope<InboxUnreadCounts>>('/api/inbox/unread')).data,
+    staleTime: 0,
+    refetchInterval: 60_000,
+  });
+}
+
+/**
+ * Marks a conversation read (called when it is opened). Refreshes the
+ * lists, the counts and the thread so every dot clears at once.
+ */
+export function useMarkInboxThreadRead(): UseMutationResult<{ id: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<Envelope<{ id: string }>>(`/api/inbox/${id}/read`, { method: 'POST' })).data,
+    onSuccess: () => void qc.invalidateQueries({ queryKey: INBOX_KEY }),
   });
 }
 

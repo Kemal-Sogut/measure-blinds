@@ -164,6 +164,41 @@ describe('rules', () => {
   });
 });
 
+describe('unread', () => {
+  it('GET /unread counts unread conversations per category, zero-filled', async () => {
+    answers.email_threads = [{ data: [{ category: 'inquiry' }, { category: 'inquiry' }, { category: 'other' }] }];
+    const res = await inboxApp.request('/unread', {}, ENV);
+    expect(await res.json()).toEqual({ data: { inquiry: 2, supplier: 0, payment: 0, other: 1, total: 3 } });
+    const [call] = callsFor('email_threads');
+    expect(call.ops).toContainEqual(['eq', ['unread', true]]);
+  });
+
+  it('the list and the thread include the unread flag', async () => {
+    answers.email_threads = [{ data: [], count: 0 }, { data: { id: T1, customer_id: null } }];
+    answers.email_messages = [{ data: [] }];
+    await inboxApp.request('/', {}, ENV);
+    await inboxApp.request(`/${T1}`, {}, ENV);
+    const [list, detail] = callsFor('email_threads');
+    expect(String(op(list, 'select')![0])).toMatch(/\bunread\b/);
+    expect(String(op(detail, 'select')![0])).toMatch(/\bunread\b/);
+  });
+
+  it('POST /:threadId/read clears the flag', async () => {
+    answers.email_threads = [{ data: { id: T1 } }];
+    const res = await inboxApp.request(`/${T1}/read`, { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    const [call] = callsFor('email_threads');
+    expect(op(call, 'update')).toEqual([{ unread: false }]);
+    expect(call.ops).toContainEqual(['eq', ['id', T1]]);
+  });
+
+  it('POST /:threadId/read 404s a bad or missing id', async () => {
+    expect((await inboxApp.request('/nope/read', { method: 'POST' }, ENV)).status).toBe(404);
+    answers.email_threads = [{ data: null }];
+    expect((await inboxApp.request(`/${T1}/read`, { method: 'POST' }, ENV)).status).toBe(404);
+  });
+});
+
 describe('GET /:threadId', () => {
   it('404s a non-uuid', async () => {
     expect((await inboxApp.request('/abc', {}, ENV)).status).toBe(404);

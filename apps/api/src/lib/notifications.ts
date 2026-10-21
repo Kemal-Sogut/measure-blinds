@@ -2,12 +2,12 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Write side of the staff Alerts feed (`public.notifications`, migration
- * 43). The three producers — customer confirm and customer edit request
- * in `routes/public.ts`, and the e-Transfer webhook in
- * `routes/webhook.ts` — call `recordNotification` AFTER their own event
- * has persisted, so an alert never announces something that did not
- * happen.
+ * Write side of the staff Alerts feed (`public.notifications`, migrations
+ * 43 and 46). The producers — customer confirm and customer edit request
+ * in `routes/public.ts`, the e-Transfer webhook in `routes/webhook.ts`,
+ * and the Titan inbox sync (`lib/inbox/store.ts`, one alert per stored
+ * incoming email) — call `recordNotification` AFTER their own event has
+ * persisted, so an alert never announces something that did not happen.
  *
  * Best effort by contract: every error (thrown or returned by PostgREST)
  * is swallowed and logged. A customer's confirmation must never fail, and
@@ -20,7 +20,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** The event kinds the table's CHECK constraint accepts. */
-export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received';
+export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received' | 'email_received';
 
 /**
  * One alert to record. Name, order number and amount are display
@@ -41,6 +41,13 @@ export interface NotificationInput {
   customerName?: string | null;
   /** e-Transfer amount; omit for order events. */
   amount?: number | null;
+  /**
+   * The Inbox conversation an `email_received` alert opens. Cascades:
+   * deleting the conversation removes its alerts.
+   */
+  emailThreadId?: string | null;
+  /** Email subject snapshot for `email_received`; '' otherwise. */
+  subject?: string | null;
 }
 
 /**
@@ -58,6 +65,8 @@ export async function recordNotification(
       order_number: input.orderNumber ?? '',
       customer_name: input.customerName ?? '',
       amount: input.amount ?? null,
+      email_thread_id: input.emailThreadId ?? null,
+      subject: input.subject ?? '',
     });
     if (error) console.error(`Notification (${input.kind}) not recorded:`, error.message);
   } catch (e) {

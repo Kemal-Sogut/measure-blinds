@@ -39,6 +39,7 @@ class MemoryStore implements InboxStore {
   rules: EmailRule[] = [];
   customers = new Map<string, string>();
   failInsertFor = new Set<string>();
+  notifications: Array<{ threadId: string; senderName: string; subject: string }> = [];
   private seq = 0;
 
   async getCursor(folder: InboxFolder): Promise<SyncCursor | null> {
@@ -95,6 +96,9 @@ class MemoryStore implements InboxStore {
   async mergeThreads(keepId: string, dropIds: string[]) {
     for (const m of this.messages) if (dropIds.includes(m.threadId)) m.threadId = keepId;
     this.threads = this.threads.filter((t) => !dropIds.includes(t.id));
+  }
+  async notifyIncomingEmail(n: { threadId: string; senderName: string; subject: string }) {
+    this.notifications.push(n);
   }
   async refreshThread(threadId: string, reopen: boolean) {
     const t = this.threads.find((x) => x.id === threadId);
@@ -230,6 +234,26 @@ describe('syncInbox', () => {
       ['out', 'Sure, Tuesday works.'],
     ]);
     expect(store.threads[0].lastDirection).toBe('out');
+  });
+
+  it('adds one notification per stored incoming email, none for replies or duplicates', async () => {
+    primeCursors();
+    const self = { id: 'dup@x', subject: 'Twice' };
+    await run({
+      INBOX: { uidValidity: 1, messages: [incoming(1, { id: 'a@x' }), incoming(2, self)] },
+      Sent: { uidValidity: 1, messages: [outgoing(1, { id: 'b@x', inReplyTo: 'a@x' }), incoming(2, self)] },
+    });
+    expect(store.notifications).toEqual([
+      { threadId: store.threads[0].id, senderName: 'Jane Doe', subject: 'Quote for kitchen' },
+      { threadId: store.threads[1].id, senderName: 'Jane Doe', subject: 'Twice' },
+    ]);
+  });
+
+  it('notifies nothing for an ignored conversation', async () => {
+    primeCursors();
+    store.rules = [{ id: 'r', position: 0, field: 'domain', match_type: 'equals', value: 'example.com', action: 'ignore', enabled: true }];
+    await run({ INBOX: { uidValidity: 1, messages: [incoming(1, { id: 'a@x' })] }, Sent: { uidValidity: 1, messages: [] } });
+    expect(store.notifications).toEqual([]);
   });
 
   it('reopens a handled thread on an incoming reply but not on an outgoing one', async () => {
