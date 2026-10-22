@@ -312,6 +312,14 @@ export interface EstimateEmailInputs {
   viewUrl: string;
   /** Optional personal note from the consultant, shown above the CTA. */
   message?: string;
+  /** The estimate's optional title (migration 47); null/absent prints nothing. */
+  title?: string | null;
+  /**
+   * How many live estimates the customer holds counting this one. Above
+   * one, the email says there is a choice to make — the link opens the
+   * customer's list rather than a single estimate.
+   */
+  activeEstimateCount?: number;
 }
 
 /**
@@ -323,7 +331,11 @@ export interface EstimateEmailInputs {
  * DELIBERATELY DETAIL-FREE: no summary card, order number, expiry date
  * or total. The email's one job is to get the customer onto the public
  * view page, where the live figures are; the subject line still names
- * the order and the PDF attachment carries the full breakdown.
+ * the order and the PDF attachment carries the full breakdown. Two
+ * exceptions (2026-10-22): the estimate's title, when set, is named in
+ * the intro so two options can be told apart, and when the customer holds
+ * more than one live estimate a line says there is a choice to make —
+ * `viewUrl` is then the customer link (`/c/:token`), which lists them all.
  *
  * CONFIRMATION IS EXPLICIT: nothing is ordered until the customer opens
  * the page, ticks the Terms & Conditions box and presses "Confirm
@@ -338,12 +350,26 @@ export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
   const name = escapeHtml(i.customerFirstName);
   const url = escapeHtml(i.viewUrl);
   const body = `${headingHtml('Your estimate is ready')}
-    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your estimate is ready. Tap the button below to review it and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`)}
+    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your estimate${i.title ? ` <strong>${escapeHtml(i.title)}</strong>` : ''} is ready. Tap the button below to review it and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`)}
+    ${(i.activeEstimateCount ?? 1) > 1 ? introHtml(`You have ${i.activeEstimateCount} estimates to choose from &mdash; open each one and confirm the one that suits you.`) : ''}
     ${messageBlockHtml(i.message)}
     <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'Review &amp; confirm your estimate')}</div>
     ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email. The full estimate is also attached as a PDF.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);
+}
+
+/**
+ * Subject line for the estimate email. The title is appended after an
+ * en dash when set; titles are whitespace-collapsed on write
+ * (`lib/orderTitle`), so no newline can reach the header.
+ */
+export function estimateEmailSubject(
+  orderNumber: string,
+  companyName: string,
+  title: string | null | undefined
+): string {
+  return `Your estimate ${orderNumber}${title ? ` – ${title}` : ''} from ${companyName}`;
 }
 
 /** Inputs for the customer-facing invoice email template. */

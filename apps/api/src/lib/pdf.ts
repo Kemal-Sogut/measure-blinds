@@ -52,6 +52,8 @@ export interface PdfDocumentData {
   docType: 'estimate' | 'invoice';
   order: {
     order_number: string;
+    /** Optional estimate title (migration 47), printed under the number. */
+    title?: string | null;
     order_date: string;
     expiry_date: string;
     subtotal: number;
@@ -389,6 +391,22 @@ export class Cursor {
   }
 }
 
+/**
+ * The title line for the meta block, made safe for the standard
+ * Helvetica font (WinAnsi): characters it cannot encode (emoji, CJK) are
+ * dropped rather than letting `drawText` throw and fail the whole PDF.
+ * Truncated to 48 characters so it never runs into the company block.
+ * `null` means print nothing.
+ */
+export function pdfMetaTitle(title: string | null | undefined): string | null {
+  const safe = (title ?? '')
+    .replace(/[^\x20-\x7E\u00A0-\u00FF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026\u20AC]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!safe) return null;
+  return safe.length > 48 ? `${safe.slice(0, 47)}…` : safe;
+}
+
 /** Right-aligned text at the given baseline-top y. */
 export function drawRight(
   page: PDFPage,
@@ -587,6 +605,11 @@ export async function buildDocumentPdf(data: PdfDocumentData): Promise<Uint8Arra
   metaY -= 24;
   drawRight(cur.page, data.order.order_number, rightEdge, metaY, font, 11);
   metaY -= 15;
+  const metaTitle = pdfMetaTitle(data.order.title);
+  if (metaTitle) {
+    drawRight(cur.page, metaTitle, rightEdge, metaY, font, 9, MUTED);
+    metaY -= 12;
+  }
   drawRight(cur.page, `Date: ${data.order.order_date}`, rightEdge, metaY, font, 9, MUTED);
   metaY -= 12;
   // Estimates advertise a validity window; invoices don't expire.

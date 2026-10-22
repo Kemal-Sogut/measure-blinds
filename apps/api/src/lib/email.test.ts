@@ -20,6 +20,7 @@ import {
   buildReviewRequestHtml,
   buildCancellationDeniedHtml,
   buildCancellationNoticeHtml,
+  estimateEmailSubject,
 } from './email';
 
 describe('escapeHtml', () => {
@@ -311,5 +312,32 @@ describe('buildCancellationNoticeHtml', () => {
     });
     expect(html).toContain('withdrawn');
     expect(html).not.toContain('Reason:');
+  });
+});
+
+describe('estimate email — title and choices', () => {
+  const base = { company: { name: 'Blinds Nisa' }, customerFirstName: 'Jane', viewUrl: 'https://x/c/t' };
+
+  it('names the title in the intro, escaped', () => {
+    const html = buildEstimateEmailHtml({ ...base, title: 'Option <A>' });
+    expect(html).toContain('Option &lt;A&gt;');
+  });
+  it('prints no title markup when none is set', () => {
+    expect(buildEstimateEmailHtml({ ...base, title: null })).toContain('Your estimate is ready.');
+  });
+  it('adds the choice line only for more than one active estimate', () => {
+    expect(buildEstimateEmailHtml({ ...base, activeEstimateCount: 1 })).not.toContain('estimates to choose from');
+    expect(buildEstimateEmailHtml({ ...base, activeEstimateCount: 2 })).toContain('You have 2 estimates to choose from');
+  });
+});
+
+describe('estimateEmailSubject', () => {
+  it('omits the title when none is set', () => {
+    expect(estimateEmailSubject('M2010-126', 'Blinds Nisa', null)).toBe('Your estimate M2010-126 from Blinds Nisa');
+  });
+  it('includes the title', () => {
+    expect(estimateEmailSubject('M2010-126', 'Blinds Nisa', 'Option A')).toBe(
+      'Your estimate M2010-126 – Option A from Blinds Nisa'
+    );
   });
 });

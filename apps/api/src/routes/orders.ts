@@ -72,6 +72,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
 import { groupOrdersByCustomer } from '../lib/orderGroups';
+import { ensureCustomerToken, customerLinkUrl, countActiveEstimates } from '../lib/customerLink';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -105,6 +106,7 @@ import {
   sendEmail,
   brandFromSettings,
   buildEstimateEmailHtml,
+  estimateEmailSubject,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildCancellationDeniedHtml,
@@ -1540,6 +1542,7 @@ async function toPdfData(
     docType,
     order: {
       order_number: order.order_number,
+      title: order.title ?? null,
       order_date: order.order_date,
       expiry_date: order.expiry_date,
       subtotal: Number(order.subtotal),
@@ -1644,6 +1647,12 @@ app.get('/:id/pdf', async (c) => {
  * status='sent', sent_at, the public token, and the T&C snapshot. A
  * failed send leaves the order exactly as it was. Resends reuse the
  * existing public_token so previously emailed links keep working.
+ *
+ * The email button and the PDF's CTA link to the CUSTOMER link
+ * (`/c/:token`, minted on first send), which lists every live estimate,
+ * and the email says how many there are to choose from (spec 2026-10-20).
+ * The order's own public_token is still persisted: the customer link
+ * hands it to the detail view, and older emails link to it directly.
  */
 app.post('/:id/send', async (c) => {
   const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
@@ -1667,7 +1676,21 @@ app.post('/:id/send', async (c) => {
 
   const publicToken: string = order.public_token ?? crypto.randomUUID();
   const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
-  const viewUrl = `${c.env.APP_URL}/customer/${publicToken}`;
+
+  // The email and the PDF point at the customer's ONE link, which lists
+  // every live estimate (spec 2026-10-20). The order keeps its own token
+  // too — the link hands it to the detail view, and older emails use it.
+  let customerToken: string | null;
+  let activeEstimateCount: number;
+  try {
+    customerToken = await ensureCustomerToken(sb, order.customer_id);
+    // Counted before this order flips to `sent`, so add it back.
+    activeEstimateCount = (await countActiveEstimates(sb, order.customer_id, today, id)) + 1;
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not prepare the link' }, 500);
+  }
+  if (!customerToken) return c.json({ error: 'Customer not found' }, 404);
+  const viewUrl = customerLinkUrl(c.env.APP_URL, customerToken);
 
   let pdf: Uint8Array;
   try {
@@ -1680,12 +1703,14 @@ app.post('/:id/send', async (c) => {
   try {
     await sendEmail(c.env, {
       to: email,
-      subject: `Your estimate ${order.order_number} from ${company.company_name || 'Blinds Nisa'}`,
+      subject: estimateEmailSubject(order.order_number, company.company_name || 'Blinds Nisa', order.title),
       html: buildEstimateEmailHtml({
         company: brandFromSettings(company),
         customerFirstName: greetingName(order.customer),
         message,
         viewUrl,
+        title: order.title ?? null,
+        activeEstimateCount,
       }),
       attachments: [
         {

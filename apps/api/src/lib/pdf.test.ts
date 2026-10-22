@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber, PDFString } from 'pdf-lib';
-import { MARGIN, PAGE_W, TOTALS_W, buildDocumentPdf, customerCta, itemContent, type PdfDocumentData } from './pdf';
+import { MARGIN, PAGE_W, TOTALS_W, buildDocumentPdf, customerCta, itemContent, pdfMetaTitle, type PdfDocumentData } from './pdf';
 
 /** One `/Link` annotation read back off a rendered document. */
 interface RenderedLink {
@@ -502,5 +502,20 @@ describe('itemContent for flat items and add-ons', () => {
     ] };
     const bytes = await buildDocumentPdf(data);
     expect(bytes.byteLength).toBeGreaterThan(1000);
+  });
+});
+
+describe('pdfMetaTitle', () => {
+  it('is null for no title', () => {
+    expect(pdfMetaTitle(null)).toBeNull();
+    expect(pdfMetaTitle('  ')).toBeNull();
+  });
+  it('drops characters Helvetica cannot encode', () => {
+    expect(pdfMetaTitle('Option A 🎉 – Roller')).toBe('Option A – Roller');
+  });
+  it('truncates long titles with an ellipsis', () => {
+    const t = pdfMetaTitle('x'.repeat(80))!;
+    expect(t.length).toBe(48);
+    expect(t.endsWith('…')).toBe(true);
   });
 });

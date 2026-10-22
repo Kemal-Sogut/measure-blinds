@@ -501,6 +501,8 @@ describe('POST /api/orders/:id/send', () => {
         billing_province: '', billing_postal_code: '' },
     };
     db.responses['orders.select'] = [order];
+    // `/send` resolves the customer link before emailing (spec 2026-10-20).
+    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
     db.responses['company_settings.select'] = [
       { company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 },
     ];
@@ -2467,6 +2469,8 @@ describe('per-item price lock (migration 39)', () => {
 
   /** A draft order ready to be sent, with one unlocked blind on it. */
   function seedSendable() {
+    // `/send` resolves the customer link before emailing (spec 2026-10-20).
+    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
     db.responses['orders.select'] = [
       {
         id: 'o1',
@@ -2817,5 +2821,42 @@ describe('GET /api/orders/by-number/:orderNumber', () => {
 
   it('400s for a malformed number', async () => {
     expect((await ordersApp.request('/by-number/bad%20number!', {}, ENV)).status).toBe(400);
+  });
+});
+
+describe('POST /api/orders/:id/send — customer link', () => {
+  it('emails the customer link, titled subject, and the choice line', async () => {
+    db.responses['orders.select'] = [{
+      id: 'e9', status: 'draft', customer_id: 'c1', order_number: 'M2010-126', title: 'Option A',
+      order_date: '2026-10-20', expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
+      subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
+      public_token: null, terms_snapshot: null, line_items: [], payments: [],
+      customer: { first_name: 'Jane', last_name: 'B', email: 'jane@example.com', phone: '',
+        shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '',
+        shipping_postal_code: '', billing_same_as_shipping: true, billing_address_line1: '',
+        billing_address_line2: '', billing_city: '', billing_province: '', billing_postal_code: '' },
+    }];
+    db.responses['company_settings.select'] = [{ company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C' }];
+    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
+    db.responses['orders.count'] = [1];
+
+    let sent: Record<string, unknown> | null = null;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) {
+        sent = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      const res = await ordersApp.request('/e9/send', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(sent!.subject).toBe('Your estimate M2010-126 – Option A from Blinds Nisa');
+    expect(String(sent!.html)).toContain('http://localhost:5173/c/cust-tok');
+    expect(String(sent!.html)).toContain('You have 2 estimates to choose from');
   });
 });
