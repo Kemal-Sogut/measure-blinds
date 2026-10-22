@@ -77,10 +77,16 @@
  *   - a banner says so, because none of the above is visible otherwise.
  * The `expired` guard is deliberately NOT skipped: an expired estimate
  * really does show the customer an expiry card, so a preview must too.
+ *
+ * CUSTOMER LINK (2026-10-22) — `CustomerPortal` (`/c/:token/*`) also
+ * renders this page for one item of the customer's list: `token` then
+ * comes from the portal payload instead of the URL, and `backTo` adds a
+ * "← All your estimates" link back to that list. The estimate's optional
+ * `title` is shown above its number when set.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
@@ -166,6 +172,8 @@ interface PublicPayment {
 interface PublicEstimate {
   status: string;
   order_number: string;
+  /** Optional consultant label (migration 47); null renders nothing. */
+  title: string | null;
   order_date: string;
   expiry_date: string;
   subtotal: number;
@@ -479,8 +487,17 @@ function Message({ icon, title, body }: { icon: string; title: string; body: str
   );
 }
 
-export default function CustomerView() {
-  const { token } = useParams<{ token: string }>();
+export default function CustomerView({
+  token: tokenProp,
+  backTo,
+}: {
+  /** The order token, when rendered by `CustomerPortal` rather than its own route. */
+  token?: string;
+  /** Where "← All your estimates" goes; omitted when there is no list to return to. */
+  backTo?: string;
+} = {}) {
+  const params = useParams<{ token: string }>();
+  const token = tokenProp ?? params.token;
   const [searchParams] = useSearchParams();
   // Staff opened this from the order page's "Customer View" button. The
   // page renders identically, but nothing here may mutate the order or
@@ -803,6 +820,14 @@ export default function CustomerView() {
         </div>
       )}
       <div className="mx-auto max-w-lg p-4">
+        {backTo && (
+          <Link
+            to={backTo}
+            className="mb-3 inline-flex min-h-11 items-center text-sm font-semibold text-brand-600"
+          >
+            ← All your estimates
+          </Link>
+        )}
         {/* Company header */}
         <header className="mb-4 flex items-center gap-3 rounded-2xl bg-surface-elevated p-4">
           {c?.logo_url && (
@@ -841,6 +866,9 @@ export default function CustomerView() {
 
         {/* Order meta */}
         <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-sm">
+          {estimate.title && (
+            <p className="mb-1 text-[15px] font-semibold text-text-primary">{estimate.title}</p>
+          )}
           <div className="flex justify-between gap-2">
             <span className="font-semibold text-text-primary">
               {confirmed ? 'Order' : 'Estimate'}{' '}

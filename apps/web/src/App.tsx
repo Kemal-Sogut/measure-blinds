@@ -52,6 +52,7 @@ const PresetLineItems = lazy(() => import('./pages/settings/PresetLineItems'));
 const TermsAndConditions = lazy(() => import('./pages/settings/TermsAndConditions'));
 const EmailRules = lazy(() => import('./pages/settings/EmailRules'));
 const CustomerView = lazy(() => import('./pages/customer-view/CustomerView'));
+const CustomerPortal = lazy(() => import('./pages/customer-view/CustomerPortal'));
 const AppointmentView = lazy(() => import('./pages/customer-view/AppointmentView'));
 
 const queryClient = new QueryClient({
@@ -142,6 +143,8 @@ export default function App() {
 
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />
+            {/* Customer link: every live estimate and order for one customer */}
+            <Route path="/c/:token/*" element={<CustomerPortal />} />
             <Route path="/appointment/:token" element={<AppointmentView />} />
             {/* Staff order URL: /<customer-slug>/<order-number>[/<sub>] — React Router
                 ranks static segments first, so every route above still wins. */}
