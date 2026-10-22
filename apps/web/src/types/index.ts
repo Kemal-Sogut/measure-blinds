@@ -134,6 +134,8 @@ export interface Payment {
 export interface Order {
   id: string;
   order_number: string;
+  /** Optional consultant label (migration 47); null renders nothing. */
+  title: string | null;
   customer_id: string;
   status: OrderStatus;
   order_date: string;

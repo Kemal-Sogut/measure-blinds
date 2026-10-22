@@ -136,6 +136,11 @@ export type LineItemInput = BlindItemInput | PresetItemInput | CustomItemInput;
 /** Payload for POST /api/orders and PUT /api/orders/:id. */
 export interface OrderInput {
   customer_id: string;
+  /**
+   * Optional estimate label (migration 47). `null` clears it; omitting
+   * the field leaves the stored title untouched on update.
+   */
+  title?: string | null;
   order_date?: string;
   expiry_date?: string;
   discount_type: DiscountType;
@@ -185,6 +190,57 @@ export function useOrder(id: string | undefined): UseQueryResult<Order> {
     queryKey: ['orders', 'detail', id],
     queryFn: async () => (await apiFetch<Envelope<Order>>(`/api/orders/${id}`)).data,
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * One order by its human number — the loader behind the staff URL
+ * `/<customer-slug>/<order-number>`. Seeds the by-id detail cache so the
+ * page underneath (which reads by id) does not fetch the same order twice.
+ */
+export function useOrderByNumber(orderNumber: string | undefined): UseQueryResult<Order> {
+  const qc = useQueryClient();
+  return useQuery({
+    queryKey: ['orders', 'by-number', orderNumber],
+    queryFn: async () => {
+      const order = (
+        await apiFetch<Envelope<Order>>(`/api/orders/by-number/${encodeURIComponent(orderNumber!)}`)
+      ).data;
+      qc.setQueryData(['orders', 'detail', order.id], order);
+      return order;
+    },
+    enabled: Boolean(orderNumber),
+  });
+}
+
+/** Tabs on the Estimates page (`GET /api/orders/grouped?status=`). */
+export type EstimateTab = 'all' | 'active' | 'confirmed' | 'expired';
+
+/** One customer and their estimates, as `GET /api/orders/grouped` returns them. */
+export interface OrderGroup {
+  customer: { id: string; first_name: string; last_name: string; email: string; phone: string };
+  /** Creation time of this customer's newest estimate in the result — the page's sort key. */
+  newest_created_at: string;
+  /** Newest-created first; rows carry `amount_paid`. */
+  orders: Order[];
+}
+
+/**
+ * Estimates grouped by customer for the Estimates page, customers ordered
+ * by their newest estimate's creation date (server-side). Keyed under the
+ * list prefix so every mutation that invalidates the order list (create,
+ * duplicate, delete, status moves) refreshes the groups too.
+ */
+export function useOrderGroups(tab: EstimateTab, term: string): UseQueryResult<OrderGroup[]> {
+  const q = useDebouncedValue(term.trim(), 300);
+  return useQuery({
+    queryKey: [...LIST_KEY, 'grouped', tab, q],
+    queryFn: async () => {
+      const params = new URLSearchParams({ status: tab });
+      if (q) params.set('q', q);
+      return (await apiFetch<Envelope<OrderGroup[]>>(`/api/orders/grouped?${params}`)).data;
+    },
+    placeholderData: keepPreviousData,
   });
 }
 

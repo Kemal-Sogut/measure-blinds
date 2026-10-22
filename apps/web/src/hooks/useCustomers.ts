@@ -118,3 +118,20 @@ export function useDeleteCustomer(): UseMutationResult<{ id: string }, Error, st
     },
   });
 }
+
+/**
+ * Returns the customer's link token, minting it on first use
+ * (`POST /api/customers/:id/public-link`). The Estimates page's customer
+ * groups copy `${origin}/c/${token}` to the clipboard with it. Nothing
+ * cached changes, so there is nothing to invalidate.
+ */
+export function useCustomerPublicLink(): UseMutationResult<string, Error, string> {
+  return useMutation({
+    mutationFn: async (customerId: string) =>
+      (
+        await apiFetch<Envelope<{ public_token: string }>>(`/api/customers/${customerId}/public-link`, {
+          method: 'POST',
+        })
+      ).data.public_token,
+  });
+}
