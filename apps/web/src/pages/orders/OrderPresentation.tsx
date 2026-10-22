@@ -40,7 +40,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useOrderRouteId } from './orderRouteId';
 import PageHeader from '../../components/PageHeader';
 import StatusBadge from '../../components/StatusBadge';
 import { useOrder } from '../../hooks/useOrders';
@@ -87,7 +87,7 @@ function TotalRow({
 }
 
 export default function OrderPresentation() {
-  const { id } = useParams<{ id: string }>();
+  const id = useOrderRouteId();
   const { data: order, isLoading, error } = useOrder(id);
   const [filters, setFilters] = useState<PresentationFilter[]>([]);
   const [showBreakdown, setShowBreakdown] = useState(false);

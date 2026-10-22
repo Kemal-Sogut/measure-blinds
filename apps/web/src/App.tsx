@@ -26,9 +26,11 @@ const CustomerList = lazy(() => import('./pages/customers/CustomerList'));
 const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
 const OrderList = lazy(() => import('./pages/orders/OrderList'));
 const OrderDetail = lazy(() => import('./pages/orders/OrderDetail'));
-const ManufacturerCopy = lazy(() => import('./pages/orders/ManufacturerCopy'));
-const OrderPresentation = lazy(() => import('./pages/orders/OrderPresentation'));
-const OrderLabels = lazy(() => import('./pages/orders/OrderLabels'));
+// Staff order URLs resolve by order number; the sub-pages render inside it.
+const OrderByNumberRoute = lazy(() => import('./pages/orders/orderRoute'));
+const LegacyOrderRedirect = lazy(() =>
+  import('./pages/orders/orderRoute').then((m) => ({ default: m.LegacyOrderRedirect }))
+);
 const CalendarPage = lazy(() => import('./pages/calendar/CalendarPage'));
 const AppointmentsList = lazy(() => import('./pages/calendar/AppointmentsList'));
 const AppointmentDetail = lazy(() => import('./pages/calendar/AppointmentDetail'));
@@ -99,10 +101,11 @@ export default function App() {
             {/* Orders — the list itself lives at "/", so /orders folds into it */}
             <Route path="/orders" element={<Navigate to="/" replace />} />
             <Route path="/orders/new" element={guard(<Layout><OrderDetail /></Layout>)} />
-            <Route path="/orders/:id" element={guard(<Layout><OrderDetail /></Layout>)} />
-            <Route path="/orders/:id/manufacturer" element={guard(<Layout><ManufacturerCopy /></Layout>)} />
-            <Route path="/orders/:id/present" element={guard(<Layout><OrderPresentation /></Layout>)} />
-            <Route path="/orders/:id/labels" element={guard(<Layout><OrderLabels /></Layout>)} />
+            {/* Ids (notifications, calendar, inbox, old links) redirect to the canonical URL */}
+            <Route path="/orders/:id" element={guard(<Layout><LegacyOrderRedirect /></Layout>)} />
+            <Route path="/orders/:id/manufacturer" element={guard(<Layout><LegacyOrderRedirect sub="manufacturer" /></Layout>)} />
+            <Route path="/orders/:id/present" element={guard(<Layout><LegacyOrderRedirect sub="present" /></Layout>)} />
+            <Route path="/orders/:id/labels" element={guard(<Layout><LegacyOrderRedirect sub="labels" /></Layout>)} />
 
             {/* Calendar */}
             <Route path="/calendar" element={guard(<Layout><CalendarPage /></Layout>)} />
@@ -119,7 +122,7 @@ export default function App() {
             {/* Legacy /estimates paths map onto the order screens */}
             <Route path="/estimates" element={<Navigate to="/" replace />} />
             <Route path="/estimates/new" element={guard(<Layout><OrderDetail /></Layout>)} />
-            <Route path="/estimates/:id" element={guard(<Layout><OrderDetail /></Layout>)} />
+            <Route path="/estimates/:id" element={guard(<Layout><LegacyOrderRedirect /></Layout>)} />
 
             {/* Settings */}
             <Route path="/settings" element={guard(<Layout><SettingsIndex /></Layout>)} />
@@ -139,6 +142,10 @@ export default function App() {
             {/* Public — no auth */}
             <Route path="/customer/:token" element={<CustomerView />} />
             <Route path="/appointment/:token" element={<AppointmentView />} />
+            {/* Staff order URL: /<customer-slug>/<order-number>[/<sub>] — React Router
+                ranks static segments first, so every route above still wins. */}
+            <Route path="/:customerSlug/:orderNumber" element={guard(<Layout><OrderByNumberRoute /></Layout>)} />
+            <Route path="/:customerSlug/:orderNumber/:sub" element={guard(<Layout><OrderByNumberRoute /></Layout>)} />
           </Routes>
         </Suspense>
         <Toaster

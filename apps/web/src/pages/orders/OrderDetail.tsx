@@ -74,7 +74,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useOrderRouteId } from './orderRouteId';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
@@ -469,7 +470,7 @@ type StageAction = {
 const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cassette_id: '', bottom_rail_id: '', control_id: '', installation_id: '', color: '' };
 
 export default function OrderDetail() {
-  const { id } = useParams<{ id: string }>();
+  const id = useOrderRouteId();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);

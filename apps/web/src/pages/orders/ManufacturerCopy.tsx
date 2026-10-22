@@ -27,7 +27,7 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react';
-import { useParams } from 'react-router-dom';
+import { useOrderRouteId } from './orderRouteId';
 import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import { useOrder, useSetCutDone } from '../../hooks/useOrders';
@@ -283,7 +283,7 @@ function FabricSection({ group }: { group: FabricGroup }) {
 }
 
 export default function ManufacturerCopy() {
-  const { id } = useParams<{ id: string }>();
+  const id = useOrderRouteId();
   const { data: order, isLoading, error } = useOrder(id);
   const { data: materials } = useCatalogList<Material>('materials');
   const cutDone = useSetCutDone();

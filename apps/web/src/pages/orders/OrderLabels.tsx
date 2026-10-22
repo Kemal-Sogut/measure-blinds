@@ -21,7 +21,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useOrderRouteId } from './orderRouteId';
 import PageHeader from '../../components/PageHeader';
 import { useOrder } from '../../hooks/useOrders';
 import { buildLabels, type LabelFields } from '../../lib/labels';
@@ -78,7 +78,7 @@ function Label({ fields, pageBreak }: { fields: LabelFields; pageBreak: boolean 
  * asks for exactly that label and still prints its original "3 of 7".
  */
 export default function OrderLabels() {
-  const { id } = useParams<{ id: string }>();
+  const id = useOrderRouteId();
   const { data: order, isLoading, error } = useOrder(id);
 
   const labels = useMemo(() => (order ? buildLabels(order) : []), [order]);
