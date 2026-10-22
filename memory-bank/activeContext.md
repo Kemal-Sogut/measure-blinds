@@ -6,15 +6,15 @@
 
 ## Where things stand (as of 2026-10-22)
 
-**Newest, on branch `feat/customer-hub` (not merged, not deployed), web + api, needs
-MIGRATION 47 applied before deploy:** multiple estimates per customer. `/` is now the
+**Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
+to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the
 **Estimates** page (estimates grouped by customer, newest estimate's `created_at` first,
 collapsible groups); `/orders` is a confirmed-only **Orders** page; staff order URLs are
 `/<customer-slug>/<order-number>` (old `/orders/:id` links redirect); each customer has one
 link `/c/:token` listing live estimates and confirmed orders; the estimate email links it;
 estimates take an optional title. The Customers pages are unchanged. `/public` rate limit is
-now 20/min/IP. Until migration 47 is applied, title saves and the customer link fail against
-the live DB. See `knowledge/history/engine_features.md` 2026-10-22.
+now 20/min/IP. Migration 47 is live, so the deployed (old) code is unaffected and the new code
+can deploy any time. See `knowledge/history/engine_features.md` 2026-10-22.
 
 **Merged to `main` (PR #54), web + api, migration 46 applied**: unread dots on
 Inbox rows, category tabs and the sidebar, plus a "New email" Notifications entry per received
