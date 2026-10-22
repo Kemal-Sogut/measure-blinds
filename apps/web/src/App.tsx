@@ -24,6 +24,7 @@ import './App.css';
 const Login = lazy(() => import('./pages/Login'));
 const CustomerList = lazy(() => import('./pages/customers/CustomerList'));
 const CustomerForm = lazy(() => import('./pages/customers/CustomerForm'));
+const EstimatesPage = lazy(() => import('./pages/estimates/EstimatesPage'));
 const OrderList = lazy(() => import('./pages/orders/OrderList'));
 const OrderDetail = lazy(() => import('./pages/orders/OrderDetail'));
 // Staff order URLs resolve by order number; the sub-pages render inside it.
@@ -91,7 +92,7 @@ export default function App() {
             <Route path="/login" element={<Login />} />
 
             {/* Orders are the app's home screen */}
-            <Route path="/" element={guard(<Layout><OrderList /></Layout>)} />
+            <Route path="/" element={guard(<Layout><EstimatesPage /></Layout>)} />
 
             {/* Customers */}
             <Route path="/customers" element={guard(<Layout><CustomerList /></Layout>)} />
@@ -99,7 +100,7 @@ export default function App() {
             <Route path="/customers/:id" element={guard(<Layout><CustomerForm /></Layout>)} />
 
             {/* Orders — the list itself lives at "/", so /orders folds into it */}
-            <Route path="/orders" element={<Navigate to="/" replace />} />
+            <Route path="/orders" element={guard(<Layout><OrderList /></Layout>)} />
             <Route path="/orders/new" element={guard(<Layout><OrderDetail /></Layout>)} />
             {/* Ids (notifications, calendar, inbox, old links) redirect to the canonical URL */}
             <Route path="/orders/:id" element={guard(<Layout><LegacyOrderRedirect /></Layout>)} />
