@@ -1,5 +1,13 @@
 # Engine Features / Feature History
 
+## 2026-10-22 — Delete an Inbox conversation (app only, Titan untouched)
+A conversation's triage card has **Delete conversation** (asks first). `DELETE /api/inbox/:id`
+removes the `email_threads` row; its messages and its "New email" notifications cascade
+(migrations 45/46 FKs). Nothing is sent to Titan — the mail stays in the mailbox. Deleted mail
+does not come back: the sync only reads UIDs past each folder's cursor and never rescans. A later
+reply to a deleted conversation starts a new one (its References point at messages no longer
+stored). After deleting, the page returns to the list tab/status/page it was opened from.
+
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec
 `knowledge/specs/2026-10-20-customer-hub-multi-estimate-design.md`, plan
