@@ -1,7 +1,8 @@
-# Customer hub & multiple estimates per customer
+# Multiple estimates per customer — grouped Estimates page & customer link
 
-**Date:** 2026-10-20
-**Status:** Design approved in conversation; awaiting spec review before the implementation plan.
+**Date:** 2026-10-20 (revised 2026-10-22)
+**Status:** Design approved in conversation; revised 2026-10-22 — the customer hub was
+dropped in favour of a customer-grouped Estimates page and a confirmed-only Orders page.
 
 ## Problem
 
@@ -11,18 +12,18 @@ the customer sees one estimate at a time and has to ask the shop to "switch to t
 option" — the consultant becomes the go-between for a choice the customer should make
 alone.
 
-The staff side has the same gap: there is no single place that shows everything created
-for one customer. The customer record is a contact card; the work lives in a flat,
-cross-customer list.
+The staff side has the same gap: the home list is a flat, cross-customer list, so two
+options prepared for one customer sit apart and confirmed work is mixed in with quotes.
 
 ## Goal
 
 1. The consultant creates as many estimates for a customer as were discussed.
 2. The customer opens ONE link, sees every estimate that is still valid, opens one,
    and confirms it whenever they like. Confirming one does not touch the others.
-3. The customer page becomes the staff hub for that customer: dashboard tiles, all
-   their estimates, their confirmed orders.
-4. The staff order page lives at `/<customer-slug>/<order-number>`.
+3. The **Estimates** page groups every estimate under its customer (a collapsible row),
+   customers ordered by their newest estimate's creation date.
+4. The **Orders** page lists confirmed orders only.
+5. The staff order page lives at `/<customer-slug>/<order-number>`.
 
 ## Non-goals
 
@@ -32,6 +33,8 @@ cross-customer list.
   status; nothing is copied on confirm.
 - No change to pricing, totals, payments, price locks, e-Transfer matching or the
   status lifecycle (AI_GUIDELINES §1 untouched).
+- **No change to the Customers pages.** `/customers` and `/customers/:id` stay exactly
+  as they are (alphabetical list, read-only detail with edit mode).
 - No customer-token revocation/rotation UI (YAGNI; can be added later).
 - No auto-generated title or summary label. A blank title is simply not shown.
 
@@ -43,82 +46,75 @@ cross-customer list.
 | **Active estimate** (customer-visible) | `sent` and not past `expiry_date`. |
 | **Order** (confirmed) | `awaiting_payment`, `in_progress`, `ready`, `installed`. |
 
-## Data model — migration 45
+## Data model — migration 47
 
-`supabase/migrations/20261020000045_customer_hub.sql`
+`supabase/migrations/20261022000047_customer_hub.sql` (45 and 46 were taken by the inbox work)
 
 - `orders.title text null` — optional consultant-entered label, e.g.
   "Option A – Roller blinds". Check: `char_length(title) <= 120`. Empty string is
   normalised to `null` by the Worker.
 - `customers.public_token uuid null unique` — capability token for the customer link.
   Minted lazily (first estimate send, or **Copy customer link**), never regenerated.
-- `customers.last_activity_at timestamptz not null default now()` — drives the
-  customer list order (see *Customer list order*). Backfilled as
-  `greatest(customers.created_at, max(orders.updated_at))`; index
-  `customers_last_activity_idx (last_activity_at desc)`.
-- Trigger `orders_bump_customer_activity` (AFTER INSERT OR UPDATE on `orders`) sets the
-  owning customer's `last_activity_at = greatest(last_activity_at, now())`. Skipped when
-  the only change is the auto-expiry flip (`status` `sent` → `expired` with nothing else
-  changed), so the nightly cron never reshuffles the list. When an order is moved to a
-  different customer, the NEW customer is bumped.
+- Index `orders_customer_created_idx (customer_id, created_at desc)` for the grouped
+  Estimates query.
 - No new RLS policies (anon still has nothing; public reads go through the Worker).
-- `public.update_order_with_items` (latest definition in
-  `20260811000036_option_price_basis.sql`) writes order fields from `p_fields`; it must
-  be redefined in migration 45 to also write `title`. The create path inserts directly
-  from `orders.ts` and just gains the column.
+- `orders.ts` writes order fields with direct `insert`/`update` calls (the old
+  `update_order_with_items` RPC is no longer called by the app), so `title` needs no
+  function change — the routes just pass it through.
+- The group order needs no stored column: "newest estimate creation date" is
+  `max(orders.created_at)` per customer, which the grouped query yields by reading rows
+  newest-created first.
 
 ## Staff side
 
 ### Navigation
 
-- Sidebar item **Orders** is renamed **Estimates**. The list at `/` is otherwise
-  unchanged: same tabs (All / Active / Awaiting Payment / In Progress / Ready /
-  Installed / Expired), search, pager, Duplicate/Delete, **+ New Estimate** (renamed
-  from + New Order). Page title becomes **Estimates**.
-- **Customers** stays in the sidebar and is the per-customer hub.
+Sidebar: **Estimates** (`/`, home), **Orders** (`/orders`, new), **Customers**
+(unchanged), then the existing items.
 
-### Customer list order — `/customers`
+### Estimates page — `/`
 
-The list is sorted by **most recent estimate activity first**: creating an estimate, or
-saving/sending/confirming/paying on any of a customer's estimates, moves that customer
-to the top. A brand-new customer with no estimates sits at the top too (their
-`last_activity_at` is their creation time) until other activity passes them.
+Every estimate grouped under its customer.
 
-- `GET /api/customers` orders by `last_activity_at desc`, then `last_name`,
-  `first_name` as tie-breakers (replacing today's alphabetical order). Search (`?q=`)
-  keeps the same order.
-- Each row shows a muted "Last activity <relative date>" line so the order reads as
-  intentional, not random.
-- The order is server-side, so the existing `LIST_LIMIT` cap keeps the most recently
-  active customers rather than the first letters of the alphabet.
+- **Order of customers:** by the creation date of that customer's newest estimate,
+  newest first. A new estimate always puts its customer on top. Editing, sending or
+  confirming an older estimate does NOT move the customer.
+- **Group row (collapsed by default):** customer name, estimate count, "Newest
+  <date>", and a short status summary (e.g. `2 active · 1 order`). Tapping toggles it
+  open. While a search term is present, every matching group is expanded.
+- **Inside a group:** that customer's estimates, newest-created first — ALL statuses,
+  confirmed ones included (their status badge reads as an order stage). Row: title (only
+  if set), order number, date, status badge, total; per-row Duplicate and Delete (as on
+  today's list). Rows open `/<customer-slug>/<order-number>`.
+- **Group actions (shown when open):** **+ New Estimate** for this customer
+  (`/orders/new?customer=<id>`), **Copy customer link**, **Customer details**
+  (`/customers/:id`).
+- **Tabs:** All · Active (`draft`, `sent`) · Confirmed · Expired. A tab filters the
+  estimates inside groups; a customer with nothing left in the tab is hidden; the order
+  of customers follows their newest estimate within the tab.
+- **Search:** customer name or order number (today's matching rules).
+- **Paging:** 15 customer groups per page, client-side, pager bottom-right (today's
+  pattern). The API reads at most 500 estimate rows, newest-created first, so on a very
+  large history the oldest customers fall off the first fetch — acceptable at this
+  business's scale and documented in the route.
+- **+ New Estimate** in the page header (customer chosen in the editor, as today).
 
-### Customer page — `/customers/:id`
+### Orders page — `/orders`
 
-`CustomerForm` keeps create (`/customers/new`) and edit mode only; the read state
-becomes a new `CustomerDashboard` with one component per tab.
-
-- **Header:** name, `tel:` / `mailto:` links, one-line shipping address, pen button
-  (enters the existing edit mode), **Copy customer link**, **+ New Estimate**.
-- **Stat tiles:** Active estimates (count of `sent`, unexpired), Orders (confirmed
-  count), Balance owing (Σ balance over confirmed orders), Lifetime total (Σ total over
-  confirmed orders). All figures come from server-computed order totals/balances.
-- **Tabs** (`?tab=`, default `estimates`):
-  - **Estimates** — every `orders` row for the customer, newest first. Row: title (only
-    if set), order number, date, status badge, total. Confirmed rows keep their status
-    badge, which already reads as an order stage. Row actions: open, **Duplicate**
-    (the fast way to build "Option B" from "Option A").
-  - **Orders** — confirmed rows only, with status and balance.
-  - **Appointments** — existing `CustomerAppointmentsCard` data (`GET
-    /api/appointments?customer_id=`).
-  - **Details** — the existing `CustomerDetailView`.
-- **+ New Estimate** opens the order editor with this customer preselected.
+Today's list component, limited to confirmed orders: tabs **All** (every confirmed
+stage) · Awaiting Payment · In Progress · Ready · Installed, search, pager, row actions.
+No "+ New" button — an order is born by confirming an estimate. Rows open
+`/<customer-slug>/<order-number>`. (`/orders` currently redirects to `/`; it becomes this
+page.)
 
 ### Order page URL — `/<customer-slug>/<order-number>`
 
 - e.g. `/jane-smith/M2010-126`, plus `/present`, `/labels`, `/manufacturer` suffixes.
   The page is the existing `OrderDetail` (and siblings).
 - **The order number is authoritative** (it is DB-unique). The slug is cosmetic:
-  `slugify(displayName(customer))` (lowercase, ASCII, hyphens; `customer` when empty).
+  built from first + last name only (lowercase, ASCII, hyphens, max 60; `customer` when
+  there is no name — never the email or phone, which would land in browser history).
+  A slug equal to an app path segment (`settings`, `c`, …) is prefixed `customer-`.
   If the URL's slug differs from the canonical one (rename, typo), the page
   `replace`-navigates to the canonical URL.
 - React Router ranks static segments first, so `/settings/...`, `/customers/...`,
@@ -127,9 +123,11 @@ becomes a new `CustomerDashboard` with one component per tab.
   editor navigates to the canonical URL.
 - Legacy `/orders/:id[...]` and `/estimates/:id` routes become redirects: load by id,
   then `replace` to `orderPath(order)`.
-- One helper, `orderPath(order, suffix?)` in `apps/web/src/lib/orderPath.ts`, replaces
-  every hard-coded `/orders/${id}` link (list rows, notifications, calendar, duplicate,
-  customer tabs).
+- One helper, `orderPath(order, suffix?)` in `apps/web/src/lib/orderPath.ts`, builds
+  the link wherever the order object (number + customer) is at hand: Estimates and
+  Orders rows, the editor's own navigations, duplicate. Places that only hold an order
+  id (notifications, calendar, inbox, appointment detail) keep linking to
+  `/orders/:id`, which redirects.
 
 ### Title field
 
@@ -196,6 +194,13 @@ neighbours for unknown tokens. Sanitized:
 Expired-but-still-`sent` rows are filtered by `expiry_date` (same rule as
 `effectiveStatus`) so the list never offers a stale estimate.
 
+### Rate limit
+
+`/public/*` is limited per IP across all its routes, previously 5 requests/minute.
+Browsing list → estimate → list → estimate is already six, so the budget rises to
+**20/minute** (`PUBLIC_RATE_LIMIT` in `public.ts`). Tokens are random UUIDs; the limit
+is an abuse brake, not what keeps an estimate private.
+
 ### Existing per-estimate links
 
 Links already emailed (`/customer/<order-token>`) keep working unchanged.
@@ -208,67 +213,79 @@ Links already emailed (`/customer/<order-token>`) keep working unchanged.
 - When the customer has more than one active estimate (counted after this send), the
   email adds one line: "You have N estimates to choose from — open each one and confirm
   the one that suits you."
-- Title, when set, appears in the email subject (`Estimate M2010-126 – Option A …`), the
-  email card heading and the PDF heading. Always passed through `escapeHtml` in HTML.
+- Title, when set, appears in the email subject (`Your estimate M2010-126 – Option A from
+  …`), in the email intro line (the estimate email is deliberately detail-free and has no
+  summary card), and in the PDF's right-hand meta block under the order number. Always
+  passed through `escapeHtml` in HTML.
+- Only `/send` switches to the customer link. `GET /:id/pdf` and `send-invoice` keep the
+  per-order link.
 - Email-then-persist ordering is unchanged.
 
 ## API changes
 
 | Route | Change |
 |---|---|
+| `GET /api/orders/grouped?status=&q=` | New. Literal route before `/:id`. `status` ∈ `all`, `active`, `confirmed`, `expired`. Returns customer groups ordered by newest estimate `created_at` desc; orders inside newest-created first; reads ≤500 rows. |
+| `GET /api/orders?status=confirmed` | New status value: every confirmed stage (the Orders page's All tab). |
 | `GET /api/orders/by-number/:orderNumber` | New. Literal route registered BEFORE `/:id`. Same payload as `GET /:id`. |
-| `GET /api/orders?customer_id=` | New optional filter (combines with existing tab/search). |
 | `POST /api/customers/:id/public-link` | New. Mints-if-absent and returns the customer token (Copy customer link). |
 | `GET /public/customer/:token` | New, per the payload above. |
-| `GET /api/customers` | Ordered by `last_activity_at desc`, then name. Rows include `last_activity_at`. |
 | Order create/update schemas | Accept `title` (string ≤120, trimmed, `''`→`null`). Still `.strict()`. |
 | `POST /api/orders/:id/send` | Customer-link URL + multi-estimate line + title. |
 | `GET /public/estimate/:token` | Adds `title`. |
 | Duplicate | Copies `title`; staff edit it to the new option's name. |
 
+Group payload:
+
+```ts
+Array<{
+  customer: { id: string; first_name: string; last_name: string; email: string; phone: string };
+  newest_created_at: string;            // created_at of this customer's newest row in the result
+  orders: Order[];                      // list-row shape incl. amount_paid, newest-created first
+}>
+```
+
 ## Error handling & edge cases
 
 - Unknown/malformed customer token → 404, same wording as estimate routes.
 - `/c/<token>/<order-number>` where the order is not visible for that customer (draft,
-  expired, other customer) → falls back to the list with a toast "That estimate is no
-  longer available."
+  expired, other customer) → the list with the notice "That estimate is no longer
+  available."
 - Staff URL with an unknown order number → existing "order not found" state.
 - A `sent` order past expiry is filtered from the public list even before the cron
   flips it.
-- Customer delete is already `on delete restrict` while orders exist; unaffected.
+- An order whose customer row is missing (should not happen; FK is `restrict`) is
+  grouped under an "Unnamed customer" group keyed by `customer_id`.
 
 ## Testing
 
-- **api:** `/public/customer/:token` (drafts and expired hidden, confirmed shown, unknown
-  token 404, no staff-only fields, balance server-computed); `by-number` route and its
-  registration order; `customer_id` filter; `title` validation (strict schema still
-  rejects money fields; 121 chars rejected; blank → null); send-estimate email with and
-  without title and with 1 vs N active estimates; public-link mint is idempotent;
-  customer list ordered by `last_activity_at desc` with name tie-break.
-- **db (manual SQL check after applying migration 45):** inserting an order bumps its
-  customer; a staff save bumps it; the `sent → expired` flip alone does not; moving an
-  order to another customer bumps the new one.
-- **web:** `slugify`/`orderPath`; canonical-slug redirect; portal rule "one visible item
-  opens directly, otherwise list"; dashboard tile math from fixture orders.
+- **api:** grouping (customer order by newest `created_at`, orders inside newest-first,
+  one group per customer, tab filters); `status=confirmed`; `/public/customer/:token`
+  (drafts and expired hidden, confirmed shown, unknown token 404, no staff-only fields,
+  balance server-computed); `by-number` route and its registration order; `title`
+  validation (strict schema still rejects money fields; 121 chars rejected; blank →
+  null); send-estimate email with and without title and with 1 vs N active estimates;
+  public-link mint is idempotent.
+- **web:** `customerSlug`/`orderPath`; group summary text; portal rule "one visible item
+  opens directly, otherwise list".
 - Verification per AI_GUIDELINES §9: `pnpm check`, `pnpm test`, `pnpm lint` in both
-  workspaces; migration 45 applied before deploy.
+  workspaces; migration 47 applied before deploy.
 
 ## Files (expected)
 
-- `supabase/migrations/20261020000045_customer_hub.sql` (new)
-- `apps/api/src/routes/orders.ts` (title, by-number, customer filter, send link)
-- `apps/api/src/routes/customers.ts` (public-link, list order)
-- `apps/web/src/pages/customers/CustomerList.tsx` (last-activity line)
-- `apps/api/src/routes/public.ts` (customer route, title in estimate payload)
+- `supabase/migrations/20261022000047_customer_hub.sql` (new)
+- `apps/api/src/routes/orders.ts` (title, grouped, confirmed filter, by-number, send link)
+- `apps/api/src/lib/orderGroups.ts` (new — pure grouping)
+- `apps/api/src/routes/customers.ts` (public-link)
+- `apps/api/src/routes/public.ts`, `publicCustomer.ts` (customer route, title in estimate payload)
 - `apps/api/src/lib/email.ts`, `apps/api/src/lib/pdf.ts` (title, link, multi line)
 - `apps/web/src/App.tsx` (routes)
 - `apps/web/src/lib/orderPath.ts` (new)
-- `apps/web/src/pages/customers/CustomerDashboard.tsx` + tab components (new)
-- `apps/web/src/pages/customers/CustomerForm.tsx` (read state hands off to dashboard)
-- `apps/web/src/pages/customer-view/CustomerPortal.tsx` (new)
+- `apps/web/src/pages/estimates/EstimatesPage.tsx`, `EstimateGroup.tsx` (new)
+- `apps/web/src/pages/orders/OrderList.tsx` (confirmed-only Orders page)
+- `apps/web/src/pages/customer-view/CustomerPortal.tsx`, `PortalList.tsx` (new)
 - `apps/web/src/pages/orders/OrderDetail.tsx` (title field, URL handling — minimal touch)
-- `apps/web/src/pages/orders/OrderList.tsx`, `components/Sidebar.tsx` (rename, links)
-- `apps/web/src/hooks/useOrders.ts`, `useCustomers.ts`, `types` (title, by-number,
-  customer filter, public link)
+- `apps/web/src/components/Sidebar.tsx` (Estimates + Orders)
+- `apps/web/src/hooks/useOrders.ts`, `useCustomers.ts`, `types` (title, grouped, by-number, public link)
 - `knowledge/history/engine_features.md`, `memory-bank/activeContext.md`,
   `memory-bank/progress.md`, `memory-bank/systemPatterns.md`
