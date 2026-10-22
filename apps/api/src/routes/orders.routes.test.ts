@@ -2708,3 +2708,41 @@ describe('DELETE /api/orders/:id', () => {
     ]);
   });
 });
+
+describe('POST /api/orders — title', () => {
+  const post = (body: unknown) =>
+    ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+
+  it('stores a trimmed title', async () => {
+    db.orderInsertResults = [{ data: { id: 't1' } }];
+    const res = await post({ ...payload(), title: '  Option A  ' });
+    expect(res.status).toBe(201);
+    expect((db.insertPayloads['orders']?.[0] as Record<string, unknown>).title).toBe('Option A');
+  });
+
+  it('stores a blank title as null', async () => {
+    db.orderInsertResults = [{ data: { id: 't2' } }];
+    await post({ ...payload(), title: '' });
+    expect((db.insertPayloads['orders']?.[0] as Record<string, unknown>).title).toBeNull();
+  });
+
+  it('stores null when no title is sent', async () => {
+    db.orderInsertResults = [{ data: { id: 't3' } }];
+    await post(payload());
+    expect((db.insertPayloads['orders']?.[0] as Record<string, unknown>).title).toBeNull();
+  });
+
+  it('rejects a title over 120 characters', async () => {
+    const res = await post({ ...payload(), title: 'x'.repeat(121) });
+    expect(res.status).toBe(400);
+  });
+
+  it('still rejects client-supplied money next to a title', async () => {
+    const res = await post({ ...payload(), title: 'A', total: 1 });
+    expect(res.status).toBe(400);
+  });
+});

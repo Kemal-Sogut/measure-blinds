@@ -218,3 +218,18 @@ describe('toDuplicateInput', () => {
     });
   });
 });
+
+describe('toDuplicateInput — title', () => {
+  it('copies the title so the copy starts as the same option', () => {
+    const out = toDuplicateInput({
+      customer_id: 'c1', discount_type: 'fixed', discount_value: 0, title: 'Option A', line_items: [],
+    }) as Record<string, unknown>;
+    expect(out.title).toBe('Option A');
+  });
+  it('sends null when the source has no title', () => {
+    const out = toDuplicateInput({
+      customer_id: 'c1', discount_type: 'fixed', discount_value: 0, line_items: [],
+    }) as Record<string, unknown>;
+    expect(out.title).toBeNull();
+  });
+});

@@ -333,6 +333,15 @@ describe('GET /public/estimate/:token', () => {
     expect(res.status).toBe(404);
   });
 
+  it('serves the estimate title, or null when none is set', async () => {
+    db.order = { ...sentOrder(), title: 'Option A' };
+    let body = (await (await req(`/estimate/${TOKEN}`)).json()) as { data: Record<string, unknown> };
+    expect(body.data.title).toBe('Option A');
+    db.order = sentOrder();
+    body = (await (await req(`/estimate/${TOKEN}`)).json()) as { data: Record<string, unknown> };
+    expect(body.data.title).toBeNull();
+  });
+
   it('never forwards the raw attribute blob, only formatted lines', async () => {
     // This endpoint is UNAUTHENTICATED — the capability token is the only
     // gate — so anything spread into the payload is public the moment it

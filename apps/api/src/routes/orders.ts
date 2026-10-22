@@ -70,6 +70,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
+import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -289,6 +290,15 @@ const lineItemSchema = z
 const orderSchema = z
   .object({
     customer_id: z.string().uuid(),
+    /** Optional estimate label (migration 47); blank → null, absent → untouched. */
+    title: z
+      .string()
+      .max(ORDER_TITLE_MAX * 4)
+      .nullable()
+      .optional()
+      .refine((v) => (normalizeOrderTitle(v) ?? '').length <= ORDER_TITLE_MAX, {
+        message: `Title must be ${ORDER_TITLE_MAX} characters or fewer`,
+      }),
     order_date: isoDate.optional(),
     expiry_date: isoDate.optional(),
     discount_type: z.enum(['fixed', 'percent']).default('fixed'),
@@ -1075,6 +1085,7 @@ async function createOrderFromInput(
       .insert({
         order_number,
         customer_id: input.customer_id,
+        title: normalizeOrderTitle(input.title) ?? null,
         order_date,
         expiry_date,
         discount_type: input.discount_type,
@@ -1240,6 +1251,7 @@ app.put('/:id', async (c) => {
     .from('orders')
     .update({
       customer_id: input.customer_id,
+      ...titlePatch(input.title),
       order_date,
       expiry_date,
       discount_type: input.discount_type,

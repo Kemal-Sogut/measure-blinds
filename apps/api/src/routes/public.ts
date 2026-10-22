@@ -351,6 +351,8 @@ app.get('/estimate/:token', async (c) => {
     data: {
       status,
       order_number: order.order_number,
+      // Consultant's label for this option; null renders nothing.
+      title: order.title ?? null,
       order_date: order.order_date,
       expiry_date: order.expiry_date,
       subtotal: order.subtotal,

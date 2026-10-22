@@ -84,6 +84,9 @@ export function toDuplicateInput(order: Record<string, unknown>): unknown {
 
   return {
     customer_id: order.customer_id,
+    // The copy is usually the next option for the same customer; the
+    // consultant renames it ("Option B") in the editor.
+    title: (order.title as string | null | undefined) ?? null,
     discount_type: order.discount_type,
     discount_value: Number(order.discount_value ?? 0),
     line_items: rows.map((li) => {
