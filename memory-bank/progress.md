@@ -6,6 +6,12 @@
 
 ## What Works
 
+**Multiple estimates per customer, on `feat/customer-hub`:** estimates grouped by customer
+on the home page (newest estimate first), a confirmed-only Orders page, optional estimate
+titles, `/<customer-slug>/<order-number>` staff URLs, and one customer link (`/c/:token`) that
+lists every live estimate so the customer picks and confirms one. Tests and type-checks pass;
+see the known issue below about migration 47.
+
 **Inbox (Titan email), on `feat/titan-inbox`:** every 5 minutes the API Worker reads new
 mail from info@blindsnisa.com's INBOX and Sent folders (read-only IMAP), groups it into
 conversations (reply headers, else subject + other party), trims quoted history, sorts new
@@ -247,6 +253,10 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
+- **Migration 47 (`customer_hub`) is not applied** to `lgbxxlwsdeuhdgzrjjen`. Until it is,
+  saving an estimate with a title, sending an estimate (customer-link lookup) and the
+  `/c/:token` page all fail against the live DB. The new pages have not been exercised in a
+  browser against real data yet.
 - **Titan inbox not live:** migration 45 IS applied (2026-10-21; note the project's migration
   history table stops at `blind_type_defaults` although 39/43/44 exist — they were applied
   without being recorded), but `TITAN_IMAP_USER` / `TITAN_IMAP_PASSWORD` are not set; the sync has only run against fakes. Quote trimming was

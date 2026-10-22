@@ -1,5 +1,42 @@
 # Engine Features / Feature History
 
+## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
+A customer can now hold several estimates and choose one themselves. Spec
+`knowledge/specs/2026-10-20-customer-hub-multi-estimate-design.md`, plan
+`knowledge/plans/2026-10-22-customer-hub-multi-estimate.md`. **Needs migration 47 applied
+before deploy** (`20261022000047_customer_hub.sql`: `orders.title`, `customers.public_token`,
+index `orders_customer_created_idx`).
+- **Estimate title:** optional, ≤120 chars, whitespace-collapsed, blank → null and shown
+  nowhere (`lib/orderTitle.ts`). In the editor's Order Details (`OrderTitleCard`), copied by
+  Duplicate, in the public estimate payload, the email subject/intro and the PDF meta block
+  (`pdfMetaTitle` drops characters Helvetica cannot encode).
+- **Estimates page (`/`, home):** estimates grouped by customer (`GET /api/orders/grouped`,
+  pure grouping in `lib/orderGroups.ts`), customers ordered by their NEWEST estimate's
+  `created_at` — a new estimate puts its customer on top; editing or confirming an old one does
+  not. Collapsible groups (collapsed by default, all open while searching) with a status
+  summary, rows with Duplicate/Delete (`OrderRowActions`, moved out of `OrderList`), and group
+  actions + New Estimate / Copy customer link / Customer details. Tabs All / Active /
+  Confirmed / Expired; 15 groups per page; reads at most 500 rows.
+- **Orders page (`/orders`):** the old list, confirmed stages only (`status=confirmed` = All,
+  then Awaiting Payment / In Progress / Ready / Installed); no create button. Sidebar shows
+  Estimates and Orders. Customers pages unchanged.
+- **Staff order URL `/<customer-slug>/<order-number>`** (+ `/present`, `/labels`,
+  `/manufacturer`): loaded by number (`GET /api/orders/by-number/:n`), slug cosmetic (names
+  only, reserved words prefixed `customer-`), non-canonical slugs redirect. `/orders/:id[…]`
+  and `/estimates/:id` redirect, so id-only links (notifications, calendar, inbox) still work.
+  Pages read their id via `useOrderRouteId` (`pages/orders/orderRouteId.ts`).
+- **Customer link `/c/:token`:** `GET /public/customer/:token` lists live (`sent`, unexpired)
+  estimates and confirmed orders, never drafts or expired, each with its own order token so the
+  detail view reuses `/public/estimate/:token` unchanged. One visible item opens directly;
+  otherwise Estimates + Your orders cards with a **View** button; confirming happens inside the
+  estimate. `POST /api/customers/:id/public-link` mints the token (Copy customer link).
+- **Estimate email** now links the customer link and says "You have N estimates to choose
+  from…" when there is more than one; per-order links already emailed keep working.
+- **`/public` rate limit 5 → 20 requests/min/IP** (`PUBLIC_RATE_LIMIT`): browsing list →
+  estimate → list → estimate is already six requests.
+Verified: api 659 tests, web 519, `tsc` clean both, oxlint clean (one pre-existing warning in
+`public/embed/lead-form.js`).
+
 ## 2026-10-21 — Inbox "All" tab
 The Inbox gets an **All** tab, first and now the default (`/inbox` with no `?category=`): every
 conversation, New or Handled, across all categories, newest activity first. Rows on All carry a

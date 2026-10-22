@@ -300,6 +300,20 @@ section as the reference implementation for future collapsible UI.
 - The scheduled handler checks the inbox cron FIRST: its last branch runs auto-expiry for any
   cron it doesn't recognise.
 
+## Estimates, orders and the customer link (2026-10-22)
+- An estimate and an order are the SAME `orders` row; "order" means a confirmed stage
+  (awaiting_payment → installed). The Estimates page shows every row grouped by customer; the
+  Orders page shows confirmed rows only.
+- Grouping happens server-side (`lib/orderGroups.ts`, `GET /api/orders/grouped`): customers
+  ordered by their newest row's `created_at`. `applyListFilters` in `orders.ts` is shared by
+  the flat and grouped lists so both match the same rows.
+- Staff order URLs resolve by ORDER NUMBER; the customer slug is cosmetic and redirected to
+  canonical (`pages/orders/orderRoute.tsx`). Pages read their id via `useOrderRouteId`, never
+  `useParams` directly. Build links with `lib/orderPath.ts`; id-only callers use `/orders/:id`.
+- The customer link (`/c/:token`, `routes/publicCustomer.ts`) only LISTS; it hands out each
+  visible order's own token, and the existing `/public/estimate/:token` routes stay the only
+  place a customer acts on an order. Visibility rules live in `lib/customerPortal.ts`.
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
 2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent

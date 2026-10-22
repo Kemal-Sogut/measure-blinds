@@ -4,9 +4,19 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-21)
+## Where things stand (as of 2026-10-22)
 
-**Newest, on branch `feat/inbox-unread`, web + api, migration 46 applied**: unread dots on
+**Newest, on branch `feat/customer-hub` (not merged, not deployed), web + api, needs
+MIGRATION 47 applied before deploy:** multiple estimates per customer. `/` is now the
+**Estimates** page (estimates grouped by customer, newest estimate's `created_at` first,
+collapsible groups); `/orders` is a confirmed-only **Orders** page; staff order URLs are
+`/<customer-slug>/<order-number>` (old `/orders/:id` links redirect); each customer has one
+link `/c/:token` listing live estimates and confirmed orders; the estimate email links it;
+estimates take an optional title. The Customers pages are unchanged. `/public` rate limit is
+now 20/min/IP. Until migration 47 is applied, title saves and the customer link fail against
+the live DB. See `knowledge/history/engine_features.md` 2026-10-22.
+
+**Merged to `main` (PR #54), web + api, migration 46 applied**: unread dots on
 Inbox rows, category tabs and the sidebar, plus a "New email" Notifications entry per received
 email. Same branch: the sync now runs every minute 08:00–22:00 Toronto (every 10 min overnight),
 sized for the Workers Free plan's 10 ms CPU per cron run. Migration 46 is applied. See
