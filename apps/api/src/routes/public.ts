@@ -57,6 +57,7 @@
 import { Hono } from 'hono';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
+import publicCustomerRoutes from './publicCustomer';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
@@ -77,8 +78,16 @@ const app = new Hono<{ Bindings: Env }>();
 /** UUID v4 shape — reject junk tokens before touching the DB. */
 const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Rate limit everything under /public (5 requests/min/IP). */
-app.use('*', rateLimit(5, 60_000));
+/**
+ * Requests per IP per minute across every `/public/*` route. Raised from
+ * 5 to 20 for the customer link (2026-10-22): browsing list → estimate →
+ * list → estimate is already six requests. Tokens are random UUIDs, so
+ * this is an abuse brake, not what keeps an estimate private.
+ */
+export const PUBLIC_RATE_LIMIT = 20;
+
+/** Rate limit everything under /public (`PUBLIC_RATE_LIMIT` requests/min/IP). */
+app.use('*', rateLimit(PUBLIC_RATE_LIMIT, 60_000));
 
 /** Served when maintenance mode is on and no message is configured. */
 const MAINTENANCE_FALLBACK =
@@ -118,6 +127,9 @@ app.use('*', async (c, next) => {
   const message = (data.maintenance_message as string | null)?.trim() || MAINTENANCE_FALLBACK;
   return c.json({ error: message, maintenance: true, message }, 503);
 });
+
+// Customer link (`/public/customer/:token`) — after both gates above.
+app.route('/customer', publicCustomerRoutes);
 
 /**
  * Best-effort activity-trail entry on an order, always attributed to the

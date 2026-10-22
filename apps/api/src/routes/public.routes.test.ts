@@ -8,7 +8,7 @@
  *   - defensive expiry (sent + past expiry reads as expired, 410 on confirm)
  *   - confirm succeeds exactly once (second attempt → 409), moving the
  *     order sent → awaiting_payment
- *   - the in-memory rate limiter returns 429 after the budget is spent
+ *   - the in-memory rate limiter returns 429 once `PUBLIC_RATE_LIMIT` is spent
  *   - internal notification emails are attempted, against a stubbed
  *     Resend (see `sentEmails` below — the suite performs NO network I/O)
  *   - edit requests: filed only on a live `sent` estimate, capped at five
@@ -171,7 +171,7 @@ vi.mock('../lib/supabase', () => ({
   createSupabaseAdmin: () => ({ from: (t: string) => makeBuilder(t) }),
 }));
 
-import publicApp from './public';
+import publicApp, { PUBLIC_RATE_LIMIT } from './public';
 
 const ENV = {
   SUPABASE_URL: 'https://example.supabase.co',
@@ -920,15 +920,15 @@ describe('customer action logs', () => {
 });
 
 describe('rate limiting', () => {
-  it('returns 429 after 5 requests in a minute from one IP', async () => {
+  it('returns 429 once the per-minute budget is spent from one IP', async () => {
     const ip = '203.0.113.7';
     const statuses: number[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i <= PUBLIC_RATE_LIMIT; i++) {
       const res = await req(`/estimate/${TOKEN}`, 'GET', ip);
       statuses.push(res.status);
     }
-    expect(statuses.slice(0, 5).every((s) => s === 200)).toBe(true);
-    expect(statuses[5]).toBe(429);
+    expect(statuses.slice(0, PUBLIC_RATE_LIMIT).every((s) => s === 200)).toBe(true);
+    expect(statuses[PUBLIC_RATE_LIMIT]).toBe(429);
   });
 });
 
