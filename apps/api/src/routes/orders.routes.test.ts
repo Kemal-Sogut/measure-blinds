@@ -46,6 +46,8 @@ interface FakeDb {
    * when the database rejects a write.
    */
   opErrors: Record<string, { message: string }>;
+  /** Every filter call as [table, method, args] — lets a test prove WHICH row a route asked for. */
+  filters: Array<[string, string, unknown[]]>;
 }
 
 const db: FakeDb = {
@@ -55,6 +57,7 @@ const db: FakeDb = {
   insertPayloads: {},
   updatePayloads: {},
   opErrors: {},
+  filters: [],
 };
 
 /**
@@ -74,9 +77,10 @@ function makeBuilder(table: string) {
       if (name === 'update') {
         (db.updatePayloads[state.table] ??= []).push(args[0]);
       }
+      if (['eq', 'neq', 'in', 'is', 'gte', 'lt'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
@@ -206,6 +210,7 @@ beforeEach(() => {
   db.insertPayloads = {};
   db.updatePayloads = {};
   db.opErrors = {};
+  db.filters = [];
   db.responses = {
     'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
@@ -2744,5 +2749,73 @@ describe('POST /api/orders — title', () => {
   it('still rejects client-supplied money next to a title', async () => {
     const res = await post({ ...payload(), title: 'A', total: 1 });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/orders/grouped', () => {
+  const r = (id: string, customer_id: string, created_at: string, status = 'sent') => ({
+    id, customer_id, created_at, status, total: 100, payments: [{ amount: 40 }],
+    customer: { id: customer_id, first_name: customer_id, last_name: '', email: '', phone: '' },
+  });
+
+  it('groups by customer, newest estimate first, with amount_paid', async () => {
+    db.responses['orders.select'] = [
+      r('o1', 'alice', '2026-10-01T00:00:00Z'),
+      r('o2', 'bob', '2026-10-05T00:00:00Z'),
+      r('o3', 'alice', '2026-10-03T00:00:00Z'),
+    ];
+    const res = await ordersApp.request('/grouped?status=all', {}, ENV);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: Array<{ customer: { id: string }; orders: Array<{ id: string; amount_paid: number }> }> };
+    expect(data.map((g) => g.customer.id)).toEqual(['bob', 'alice']);
+    expect(data[1].orders.map((o) => o.id)).toEqual(['o3', 'o1']);
+    expect(data[0].orders[0].amount_paid).toBe(40);
+  });
+
+  it('filters the confirmed tab to confirmed stages', async () => {
+    db.responses['orders.select'] = [];
+    await ordersApp.request('/grouped?status=confirmed', {}, ENV);
+    expect(db.filters).toContainEqual(['orders', 'in', ['status', ['awaiting_payment', 'in_progress', 'ready', 'installed']]]);
+  });
+
+  it('400s an unknown tab', async () => {
+    expect((await ordersApp.request('/grouped?status=ready', {}, ENV)).status).toBe(400);
+  });
+
+  it('is not swallowed by /:id', async () => {
+    db.responses['orders.select'] = [];
+    await ordersApp.request('/grouped', {}, ENV);
+    expect(db.filters).not.toContainEqual(['orders', 'eq', ['id', 'grouped']]);
+  });
+});
+
+describe('GET /api/orders?status=confirmed', () => {
+  it('selects every confirmed stage', async () => {
+    db.responses['orders.select'] = [];
+    const res = await ordersApp.request('/?status=confirmed', {}, ENV);
+    expect(res.status).toBe(200);
+    expect(db.filters).toContainEqual(['orders', 'in', ['status', ['awaiting_payment', 'in_progress', 'ready', 'installed']]]);
+  });
+});
+
+describe('GET /api/orders/by-number/:orderNumber', () => {
+  it('loads the order by its number, not as an id', async () => {
+    db.responses['orders.select'] = [{ id: 'o1', order_number: 'M2010-126', status: 'draft', expiry_date: '2099-01-01', payments: [{ amount: 10 }] }];
+    const res = await ordersApp.request('/by-number/M2010-126', {}, ENV);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: Record<string, unknown> };
+    expect(body.data.id).toBe('o1');
+    expect(body.data.amount_paid).toBe(10);
+    expect(db.filters).toContainEqual(['orders', 'eq', ['order_number', 'M2010-126']]);
+    expect(db.filters).not.toContainEqual(['orders', 'eq', ['id', 'by-number']]);
+  });
+
+  it('404s for an unknown number', async () => {
+    db.responses['orders.select'] = [];
+    expect((await ordersApp.request('/by-number/Z0101-126', {}, ENV)).status).toBe(404);
+  });
+
+  it('400s for a malformed number', async () => {
+    expect((await ordersApp.request('/by-number/bad%20number!', {}, ENV)).status).toBe(400);
   });
 });

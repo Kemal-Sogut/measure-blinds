@@ -71,6 +71,7 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
+import { groupOrdersByCustomer } from '../lib/orderGroups';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -968,28 +969,28 @@ async function readDetail(sb: SupabaseClient, id: string) {
 const LIST_STATUSES = ['draft', 'sent', 'awaiting_payment', 'in_progress', 'ready', 'installed', 'expired'];
 
 /**
- * Lists orders with status tab + search filters, newest issue date
- * (`order_date`) first. `order_date` is a plain date, so same-day
- * orders fall back to newest-created first. Sorting happens here, not
- * in the web list, so the 100-row cap keeps the most recent orders
- * rather than an arbitrary slice.
+ * The `?status=` and `?q=` filters shared by the flat list (Orders page)
+ * and the grouped list (Estimates page), so both match the same rows.
+ *
+ * status: `all`/empty = no filter; `active` = draft + sent; `confirmed` =
+ * every confirmed stage (the Orders page's "All"); any `LIST_STATUSES`
+ * value = that status. q: order number, or a customer first/last name
+ * (resolved to ids first), sanitised for PostgREST `or()` (AI_GUIDELINES §2).
+ *
+ * `query` is a supabase-js filter builder, typed loosely because the
+ * builder's generic type differs per select string.
  */
-app.get('/', async (c) => {
-  const sb = createSupabaseAdmin(c.env);
-  let query = sb
-    .from('orders')
-    .select('*, customer:customers(id, first_name, last_name), payments(amount)')
-    .order('order_date', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(100);
-
-  const status = c.req.query('status') ?? '';
+async function applyListFilters(
+  sb: SupabaseClient,
+  query: any,
+  status: string,
+  rawQ: string
+): Promise<any> {
   if (status === 'active') query = query.in('status', ['draft', 'sent']);
-  else if (status === 'all') {
-    // No filter — every status, including expired.
-  } else if (LIST_STATUSES.includes(status)) query = query.eq('status', status);
+  else if (status === 'confirmed') query = query.in('status', [...CONFIRMED]);
+  else if (LIST_STATUSES.includes(status)) query = query.eq('status', status);
 
-  const q = (c.req.query('q') ?? '').replace(/[,().%*\\]/g, ' ').trim().slice(0, 100);
+  const q = rawQ.replace(/[,().%*\\]/g, ' ').trim().slice(0, 100);
   if (q) {
     // Match order number directly, or resolve customer ids by name first.
     const { data: matches } = await sb
@@ -1002,6 +1003,27 @@ app.get('/', async (c) => {
       ? query.or(`order_number.ilike.%${q}%,customer_id.in.(${ids.join(',')})`)
       : query.ilike('order_number', `%${q}%`);
   }
+  return query;
+}
+
+/**
+ * Lists orders with status tab + search filters, newest issue date
+ * (`order_date`) first. `order_date` is a plain date, so same-day
+ * orders fall back to newest-created first. Sorting happens here, not
+ * in the web list, so the 100-row cap keeps the most recent orders
+ * rather than an arbitrary slice. `status=confirmed` selects every
+ * confirmed stage — the Orders page's "All" tab.
+ */
+app.get('/', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  let query = sb
+    .from('orders')
+    .select('*, customer:customers(id, first_name, last_name), payments(amount)')
+    .order('order_date', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  query = await applyListFilters(sb, query, c.req.query('status') ?? '', c.req.query('q') ?? '');
 
   const { data, error } = await query;
   if (error) return c.json({ error: error.message }, 500);
@@ -1011,6 +1033,75 @@ app.get('/', async (c) => {
     amount_paid: sumPayments(o.payments),
   }));
   return c.json({ data: rows });
+});
+
+/** Tabs the grouped Estimates page offers. */
+const GROUP_TABS = ['all', 'active', 'confirmed', 'expired'];
+
+/**
+ * Hard cap on rows read for grouping. Rows are read newest-created
+ * first, so on a very large history the customers whose newest estimate
+ * is oldest fall off — acceptable at this business's scale, and the web
+ * pages 15 groups at a time over what is returned.
+ */
+const GROUP_ROW_CAP = 500;
+
+/**
+ * Estimates grouped by customer for the staff Estimates page (spec
+ * 2026-10-20 rev. 2026-10-22). Customers come newest-estimate-created
+ * first; each group's estimates newest-created first (`lib/orderGroups`).
+ * Same filters as `GET /` via `applyListFilters`; rows carry the derived
+ * `amount_paid` like the flat list. MUST stay registered before `/:id`
+ * (AI_GUIDELINES rule 8).
+ */
+app.get('/grouped', async (c) => {
+  const status = c.req.query('status') ?? 'all';
+  if (!GROUP_TABS.includes(status)) return c.json({ error: 'Unknown tab' }, 400);
+  const sb = createSupabaseAdmin(c.env);
+  let query = sb
+    .from('orders')
+    .select('*, customer:customers(id, first_name, last_name, email, phone), payments(amount)')
+    .order('created_at', { ascending: false })
+    .limit(GROUP_ROW_CAP);
+  query = await applyListFilters(sb, query, status, c.req.query('q') ?? '');
+
+  const { data, error } = await query;
+  if (error) return c.json({ error: error.message }, 500);
+  const rows = ((data ?? []) as Record<string, any>[]).map((o) => ({
+    ...o,
+    customer_id: String(o.customer_id),
+    created_at: String(o.created_at),
+    amount_paid: sumPayments(o.payments),
+  }));
+  return c.json({ data: groupOrdersByCustomer(rows) });
+});
+
+/** Order numbers look like `M2010-126`; anything else is refused before a query. */
+const ORDER_NUMBER_RE = /^[A-Za-z0-9-]{1,32}$/;
+
+/**
+ * Returns one order by its human order number — the lookup behind the
+ * staff URL `/<customer-slug>/<order-number>`. The number is unique (DB
+ * index), so it is authoritative; the slug in the web URL is cosmetic.
+ * MUST stay registered before `/:id` (AI_GUIDELINES rule 8). Same payload
+ * as `GET /:id`, including defensive expiry and amount_paid.
+ */
+app.get('/by-number/:orderNumber', async (c) => {
+  const orderNumber = c.req.param('orderNumber');
+  if (!ORDER_NUMBER_RE.test(orderNumber)) return c.json({ error: 'Invalid order number' }, 400);
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb
+    .from('orders')
+    .select(DETAIL_SELECT)
+    .eq('order_number', orderNumber)
+    .order('position', { referencedTable: 'line_items' })
+    .order('paid_on', { referencedTable: 'payments' })
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Order not found' }, 404);
+  data.status = await applyDefensiveExpiry(sb, data);
+  data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
 });
 
 /**
