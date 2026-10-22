@@ -23,6 +23,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
+import { ensureCustomerToken } from '../lib/customerLink';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -143,6 +144,23 @@ app.get('/:id', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Customer not found' }, 404);
   return c.json({ data });
+});
+
+/**
+ * Returns the customer's link token (`/c/:token`), minting it on first
+ * use — backs "Copy customer link" on the Estimates page's customer
+ * groups. Idempotent: an existing token is returned untouched, so links
+ * already shared keep working. 404 for an unknown customer.
+ */
+app.post('/:id/public-link', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  try {
+    const token = await ensureCustomerToken(sb, c.req.param('id'));
+    if (!token) return c.json({ error: 'Customer not found' }, 404);
+    return c.json({ data: { public_token: token } });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not create the link' }, 500);
+  }
 });
 
 /** Partially updates a customer. */

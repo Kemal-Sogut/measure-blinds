@@ -28,8 +28,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 interface FakeDb {
   responses: Record<string, unknown[]>;
   insertPayloads: Record<string, unknown[]>;
+  /** UPDATE payloads per table — proves a route did (or did not) write. */
+  updatePayloads: Record<string, unknown[]>;
 }
-const db: FakeDb = { responses: {}, insertPayloads: {} };
+const db: FakeDb = { responses: {}, insertPayloads: {}, updatePayloads: {} };
 
 /**
  * Minimal thenable builder mimicking the supabase-js chain: every
@@ -44,6 +46,7 @@ function makeBuilder(table: string) {
     ((...args: unknown[]) => {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
       if (name === 'insert') (db.insertPayloads[state.table] ??= []).push(args[0]);
+      if (name === 'update') (db.updatePayloads[state.table] ??= []).push(args[0]);
       return builder;
     }) as unknown;
   for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'is', 'or', 'order', 'limit']) {
@@ -78,6 +81,7 @@ const CUSTOMER = { id: 'c1', first_name: '', last_name: '', email: '', phone: ''
 
 beforeEach(() => {
   db.insertPayloads = {};
+  db.updatePayloads = {};
   db.responses = {
     'customers.insert': [CUSTOMER],
     'customers.update': [CUSTOMER],
@@ -141,5 +145,21 @@ describe('PUT /api/customers/:id validation', () => {
   it('accepts blanking both names on an existing customer', async () => {
     const res = await send('/c1', 'PUT', { first_name: '', last_name: '' });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('POST /api/customers/:id/public-link', () => {
+  it('returns the existing token without writing', async () => {
+    db.responses['customers.select'] = [{ id: 'c1', public_token: 'tok-1' }];
+    const res = await customersApp.request('/c1/public-link', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { public_token: string } }).data.public_token).toBe('tok-1');
+    expect(db.updatePayloads['customers']).toBeUndefined();
+  });
+
+  it('404s for an unknown customer', async () => {
+    db.responses['customers.select'] = [];
+    const res = await customersApp.request('/nope/public-link', { method: 'POST' }, ENV);
+    expect(res.status).toBe(404);
   });
 });
