@@ -31,15 +31,12 @@ interface Envelope<T> {
   data: T;
 }
 
-/** Status tabs shown on the orders list page. */
-export type OrderTab =
-  | 'all'
-  | 'active'
-  | 'awaiting_payment'
-  | 'in_progress'
-  | 'ready'
-  | 'installed'
-  | 'expired';
+/**
+ * Status tabs on the Orders page — confirmed stages only; `confirmed` is
+ * its "All" (every confirmed stage). Estimates have their own tabs
+ * (`EstimateTab`) on the grouped Estimates page.
+ */
+export type OrderTab = 'confirmed' | 'awaiting_payment' | 'in_progress' | 'ready' | 'installed';
 
 /** One flat-priced extra sent with a line item. */
 export interface AddonInput {

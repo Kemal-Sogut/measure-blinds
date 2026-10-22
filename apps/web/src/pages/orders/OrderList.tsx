@@ -2,15 +2,17 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Order list — the app's home screen, mounted at "/" with the "All"
- * tab selected. Segmented status tabs (All / Active / Awaiting Payment
- * / In Progress / Ready / Installed / Expired) and debounced search
- * feed either stacked cards (<lg) or the table (lg+). Rows/cards open
- * the editor; the primary "+ New Order" action is a sticky bar on
- * mobile and lives in the header on desktop. Every row carries two icon
- * actions overlaying its right edge — Duplicate and Delete — so neither
- * requires opening the order first; Delete confirms by order number and
- * calls the same guarded endpoint the order page does.
+ * Orders page (`/orders`) — confirmed orders only, awaiting payment
+ * through installed (spec 2026-10-20 rev. 2026-10-22). Estimates live on
+ * the Estimates page at `/`; an order is born by confirming one, so this
+ * page has no create action. Segmented tabs (All = every confirmed stage
+ * via `status=confirmed` / Awaiting Payment / In Progress / Ready /
+ * Installed) and debounced search feed either stacked cards (<lg) or the
+ * table (lg+). Rows/cards open the order at its canonical
+ * `/<customer-slug>/<order-number>` URL. Every row carries two icon
+ * actions overlaying its right edge — Duplicate and Delete
+ * (`OrderRowActions`, shared with the Estimates page) — so neither
+ * requires opening the order first.
  *
  * Every tab shows at most `PAGE_SIZE` orders at a time, with the pager
  * anchored bottom-right under the list. Paging is client-side over the
@@ -23,168 +25,36 @@
  * that no longer exists.
  *
  * The desktop summary tiles render ONLY on the unfiltered default view
- * (`all` tab, empty search). `useOrderList` filters server-side, so on
- * any other tab `orders` holds just that status and a count drawn from
- * it would describe the filter rather than the business — a number that
+ * (All tab, empty search). `useOrderList` filters server-side, so on any
+ * other tab `orders` holds just that status and a count drawn from it
+ * would describe the filter rather than the business — a number that
  * looks authoritative and is wrong. Restricting them to the one view
- * where `orders` IS every order keeps them honest.
+ * where `orders` IS every confirmed order keeps them honest.
  */
 
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import toast from 'react-hot-toast';
 import StatusBadge from '../../components/StatusBadge';
 import SidebarToggle from '../../components/SidebarToggle';
 import { PAGE_CONTAINER } from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
 import EmptyState from '../../components/EmptyState';
 import { Card, CardBody, StatTile } from '../../components/ui';
-import {
-  useOrderList,
-  useDuplicateOrder,
-  useDeleteOrder,
-  type OrderTab,
-} from '../../hooks/useOrders';
+import { useOrderList, type OrderTab } from '../../hooks/useOrders';
+import { orderPath } from '../../lib/orderPath';
+import OrderRowActions from './OrderRowActions';
 import { displayName } from '../../lib/customerName';
 import type { Order, OrderStatus } from '../../types';
 import type { CardAccent } from '../../components/ui';
 
-/** Geometry-free shape shared by the two per-row icon actions. */
-const ROW_ACTION_CLASS =
-  'flex items-center justify-center rounded-sm transition-colors disabled:opacity-40';
-
-/**
- * The per-row "duplicate this order" action.
- *
- * Its own component because each row needs its OWN pending state — one
- * mutation lifted to the list would spin every row's icon at once — and
- * because rows are whole-row `<button>`s, so this has to be rendered as
- * an absolutely-positioned SIBLING rather than a child.
- *
- * The copy opens immediately: duplicating is nearly always the first
- * step of editing the copy.
- */
-function DuplicateButton({ order, className }: { order: Order; className: string }) {
-  const navigate = useNavigate();
-  const duplicateMut = useDuplicateOrder();
-  return (
-    <button
-      type="button"
-      disabled={duplicateMut.isPending}
-      onClick={async () => {
-        try {
-          const copy = await duplicateMut.mutateAsync(order.id);
-          toast.success(`Duplicated to ${copy.order_number}.`);
-          navigate(`/orders/${copy.id}`);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
-        }
-      }}
-      title={`Duplicate ${order.order_number} into a new draft`}
-      aria-label={`Duplicate ${order.order_number}`}
-      className={`${ROW_ACTION_CLASS} text-text-muted hover:bg-surface-sunken hover:text-brand-600 ${className}`}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="9" y="9" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </button>
-  );
-}
-
-/**
- * The per-row "delete this order" action.
- *
- * Deletion cascades to everything the order owns — line items, activity
- * log, payments, change requests, the installation visit — and cannot
- * be undone, so it is confirmed BY ORDER NUMBER — this icon sits right
- * beside Duplicate, whose worst case is a stray draft, and the row it
- * overlays is one click from opening the order. The wording matches the
- * Delete action on the order page, and both go through the same
- * `DELETE /api/orders/:id`: this is not a looser list-only path.
- *
- * Own mutation and own pending state, for the same reason Duplicate has
- * them — one mutation lifted to the list would disable every row's icon
- * while a single order is deleted. Nothing navigates on success: the
- * hook invalidates the list and the row simply leaves it.
- */
-function DeleteButton({ order, className }: { order: Order; className: string }) {
-  const deleteMut = useDeleteOrder();
-  return (
-    <button
-      type="button"
-      disabled={deleteMut.isPending}
-      onClick={async () => {
-        const ok = window.confirm(
-          `Delete ${order.order_number} permanently? Its line items, activity log, payments, ` +
-            'change requests and installation visit are removed. The customer is kept.',
-        );
-        if (!ok) return;
-        try {
-          await deleteMut.mutateAsync(order.id);
-          toast.success(`${order.order_number} deleted.`);
-        } catch (e) {
-          toast.error(e instanceof Error ? e.message : 'Delete failed.');
-        }
-      }}
-      title={`Delete ${order.order_number} permanently`}
-      aria-label={`Delete ${order.order_number}`}
-      className={`${ROW_ACTION_CLASS} text-text-muted hover:bg-surface-sunken hover:text-danger ${className}`}
-    >
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M3 6h18" />
-        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-        <path d="M10 11v6M14 11v6" />
-      </svg>
-    </button>
-  );
-}
-
-/**
- * Duplicate + Delete as ONE absolutely-positioned sibling overlaying
- * the row. Both breakpoints render this same strip and differ only in
- * geometry, so the two actions cannot drift apart on one layout while
- * staying aligned on the other. Whatever renders it must reserve room
- * for it in its own right padding (`pr-24` on both the card and the
- * table row) — the strip overlays content, it does not push it.
- */
-function RowActions({
-  order,
-  wrapperClass,
-  buttonClass,
-}: {
-  order: Order;
-  wrapperClass: string;
-  buttonClass: string;
-}) {
-  return (
-    <div className={`absolute flex items-center gap-0.5 ${wrapperClass}`}>
-      <DuplicateButton order={order} className={buttonClass} />
-      <DeleteButton order={order} className={buttonClass} />
-    </div>
-  );
-}
-
-/** Tab definitions in display order. */
+/** Tab definitions in display order — confirmed stages only (Orders page). */
 const TABS: { key: OrderTab; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'active', label: 'Active' },
+  { key: 'confirmed', label: 'All' },
   { key: 'awaiting_payment', label: 'Awaiting Payment' },
   { key: 'in_progress', label: 'In Progress' },
   { key: 'ready', label: 'Ready' },
   { key: 'installed', label: 'Installed' },
-  { key: 'expired', label: 'Expired' },
 ];
 
 /**
@@ -213,10 +83,10 @@ const SUMMARY: { status: OrderStatus; label: string; accent: CardAccent; d: stri
     d: 'M20 6L9 17l-5-5',
   },
   {
-    status: 'draft',
-    label: 'Drafts',
+    status: 'installed',
+    label: 'Installed',
     accent: 'neutral',
-    d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6',
+    d: 'M3 21h18 M5 21V7l7-4 7 4v14 M9 21v-6h6v6',
   },
 ];
 
@@ -243,7 +113,7 @@ function customerName(order: Order): string {
 }
 
 export default function OrderList() {
-  const [tab, setTab] = useState<OrderTab>('all');
+  const [tab, setTab] = useState<OrderTab>('confirmed');
   const [term, setTerm] = useState('');
   const [page, setPage] = useState(1);
   const { data: orders, isLoading, error } = useOrderList(tab, term);
@@ -265,39 +135,25 @@ export default function OrderList() {
   }
 
   return (
-    <div className="min-h-screen bg-surface-muted pb-24 sm:pb-8">
+    <div className="min-h-screen bg-surface-muted pb-8">
       <div className={`${PAGE_CONTAINER} py-4 md:py-6 lg:py-8`}>
         {/*
-          Header row. This is the home screen, so there is no back
-          chevron — but below `md` the hamburger is the ONLY route to
-          the other sections now that the bottom tab bar is gone, so it
-          must be here. One row at every width (the old split of a
-          mobile-only <h1> plus a separate `lg:flex` desktop row meant
-          the "New Order" button simply did not exist on a tablet).
+          Header row. A top-level section, so there is no back chevron —
+          but below `md` the hamburger is the ONLY route to the other
+          sections, so it must be here.
         */}
         <div className="mb-5 flex items-center gap-2">
           <SidebarToggle />
           <h1 className="min-w-0 flex-1 truncate text-[22px] font-bold text-text-primary">
             Orders
           </h1>
-          {/* Hidden below `sm`, where the sticky bottom bar carries the
-              same action at full width. */}
-          <Link
-            to="/orders/new"
-            className="hidden h-11 shrink-0 items-center gap-2 rounded-md bg-brand-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-brand-700 sm:flex"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            New Order
-          </Link>
         </div>
 
         {/* Status summary — unfiltered view only; see the module header.
             Two-up from `sm` (where four tiles would each be ~140px and
             unreadable), four-up from `lg`. It used to be `lg:grid` only,
             so a tablet saw nothing at all. */}
-        {orders && tab === 'all' && !term.trim() && (
+        {orders && tab === 'confirmed' && !term.trim() && (
           <div className="mb-4 hidden grid-cols-2 gap-3 sm:grid lg:grid-cols-4">
             {SUMMARY.map((s) => (
               <StatTile
@@ -373,11 +229,11 @@ export default function OrderList() {
             title={
               term
                 ? 'No orders match your search'
-                : tab === 'all'
+                : tab === 'confirmed'
                   ? 'No orders yet'
                   : `No ${tab.replace('_', ' ')} orders`
             }
-            hint={term ? 'Try an order number or customer name.' : 'Create one below.'}
+            hint={term ? 'Try an order number or customer name.' : 'Orders appear here once a customer confirms an estimate.'}
           />
         )}
 
@@ -390,7 +246,7 @@ export default function OrderList() {
               // and a button cannot legally contain another.
               <li key={order.id} className="relative">
                 <button
-                  onClick={() => navigate(`/orders/${order.id}`)}
+                  onClick={() => navigate(orderPath(order))}
                   className="w-full rounded-xl border border-border-light bg-surface p-3.5 pr-24 text-left shadow-sm transition-shadow hover:shadow-md"
                 >
                   <span className="flex items-center justify-between gap-2">
@@ -409,7 +265,7 @@ export default function OrderList() {
                     </span>
                   </span>
                 </button>
-                <RowActions
+                <OrderRowActions
                   order={order}
                   wrapperClass="right-1.5 top-2.5"
                   buttonClass="h-11 w-11"
@@ -437,7 +293,7 @@ export default function OrderList() {
                   // nested inside it.
                   <div key={order.id} className="relative">
                   <button
-                    onClick={() => navigate(`/orders/${order.id}`)}
+                    onClick={() => navigate(orderPath(order))}
                     className={`grid w-full grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] items-center bg-surface px-4 py-3 pr-24 text-left transition-colors hover:bg-surface-sunken ${
                       i > 0 ? 'border-t border-border-light' : ''
                     }`}
@@ -458,7 +314,7 @@ export default function OrderList() {
                       ${Number(order.total).toFixed(2)}
                     </span>
                   </button>
-                    <RowActions
+                    <OrderRowActions
                       order={order}
                       wrapperClass="right-2 top-1/2 -translate-y-1/2"
                       buttonClass="h-9 w-9"
@@ -509,20 +365,6 @@ export default function OrderList() {
         )}
       </div>
 
-      {/* Sticky new-order action, phones only — from `sm` up the same
-          action sits in the header row. `bottom-0` (it used to be
-          `bottom-14`, clearing the bottom tab bar that no longer
-          exists) with the safe-area inset so it clears the iOS home
-          indicator. `app-shell-main` is a no-op at this width but keeps
-          it honest if the breakpoint ever moves above `md`. */}
-      <div className="app-shell-main fixed inset-x-0 bottom-0 z-10 bg-surface-muted p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:hidden">
-        <Link
-          to="/orders/new"
-          className={`${PAGE_CONTAINER} flex h-12 items-center justify-center rounded-md bg-brand-600 text-sm font-semibold text-white shadow-sm hover:bg-brand-700`}
-        >
-          + New Order
-        </Link>
-      </div>
     </div>
   );
 }

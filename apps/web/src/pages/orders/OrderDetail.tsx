@@ -85,6 +85,8 @@ import CustomerCreateModal from '../../components/CustomerCreateModal';
 import CustomerEditModal from '../../components/CustomerEditModal';
 import CopyLinkField from '../../components/CopyLinkField';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
+import OrderTitleCard from './OrderTitleCard';
+import { orderPath } from '../../lib/orderPath';
 import { expiryFromPreset, presetFromDates, type ExpiryPresetId } from '../../lib/expiryTerms';
 import type { CardAccent } from '../../components/ui';
 import { calculateTotals } from '../../lib/totals';
@@ -524,6 +526,8 @@ export default function OrderDetail() {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [orderDate, setOrderDate] = useState<Date>(new Date());
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
+  // Optional estimate label (migration 47); '' is saved as null.
+  const [title, setTitle] = useState('');
   const [expiryManual, setExpiryManual] = useState(false);
   // Expiry term chosen from the shortcut chips ("On receipt", 7 days…).
   // While set, the expiry date follows the order date; picking a date
@@ -692,6 +696,7 @@ export default function OrderDetail() {
       setCustomer(existing.customer ?? null);
       setOrderDate(savedOrderDate);
       setExpiryDate(savedExpiry);
+      setTitle(existing.title ?? '');
       setExpiryManual(true); // persisted expiry counts as chosen
       // Only the resolved dates are stored, so the term that produced
       // them is re-derived — otherwise re-opening a saved order shows an
@@ -1206,6 +1211,7 @@ export default function OrderDetail() {
       customer_id: customer.id,
       order_date: toIso(orderDate),
       expiry_date: toIso(expiryDate),
+      title: title.trim() === '' ? null : title.trim(),
       discount_type: discountType,
       discount_value: Number(discountValue) || 0,
       line_items,
@@ -1225,7 +1231,7 @@ export default function OrderDetail() {
         : await createMut.mutateAsync(payload);
       // Carry the open section across the new-order → saved-order URL
       // change, but not `?customer=`, which only seeds a NEW order.
-      if (!id) navigate(`/orders/${saved.id}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
+      if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed.');
@@ -1312,7 +1318,7 @@ export default function OrderDetail() {
   async function handlePresent() {
     const savedId = await save();
     if (!savedId) return;
-    navigate(`/orders/${savedId}/present`);
+    navigate(existing ? orderPath(existing, 'present') : `/orders/${savedId}/present`);
   }
 
   /**
@@ -1384,7 +1390,7 @@ export default function OrderDetail() {
       // Hydration is keyed off the loaded order, so the editor must be
       // told to hydrate again for the copy it is about to show.
       setHydrated(false);
-      navigate(`/orders/${copy.id}`);
+      navigate(orderPath(copy));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
     }
@@ -2401,6 +2407,7 @@ export default function OrderDetail() {
                 onEdit={() => setEditingCustomer(true)}
                 readOnly={readOnly}
               />
+              <OrderTitleCard value={title} onChange={setTitle} />
               <OrderDatesCard
                 orderDate={orderDate}
                 onOrderDate={setOrderDate}
@@ -2465,7 +2472,7 @@ export default function OrderDetail() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => window.open(`/orders/${id}/manufacturer`, '_blank', 'noopener')}
+                onClick={() => window.open(existing ? orderPath(existing, 'manufacturer') : `/orders/${id}/manufacturer`, '_blank', 'noopener')}
                 className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
               >
                 {ICONS.manufacturer}
@@ -2473,7 +2480,7 @@ export default function OrderDetail() {
               </button>
               <button
                 type="button"
-                onClick={() => window.open(`/orders/${id}/labels`, '_blank', 'noopener')}
+                onClick={() => window.open(existing ? orderPath(existing, 'labels') : `/orders/${id}/labels`, '_blank', 'noopener')}
                 className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
               >
                 {ICONS.labels}
