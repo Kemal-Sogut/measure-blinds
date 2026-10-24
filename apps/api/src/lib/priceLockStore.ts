@@ -11,13 +11,14 @@
  * must stay free of Supabase. Everything here touches the database and
  * therefore exists on the Worker only.
  *
- * Freeze/release points, all in `routes/orders.ts`. Prices freeze when
- * the estimate REACHES THE CUSTOMER, not later: quoting a figure is the
- * commitment, and confirmation only accepts it.
- *   - `POST /:id/send`, `POST /:id/mark-sent` → {@link freezeOrderPrices}
+ * Freeze/release points, in `routes/orders.ts` and `lib/estimateSend.ts`.
+ * Prices freeze when the estimate REACHES THE CUSTOMER, not later: quoting a
+ * figure is the commitment, and confirmation only accepts it.
+ *   - the multi-estimate send (`POST /api/customers/:id/send-estimates`, in
+ *     `lib/estimateSend.ts`) and `POST /:id/mark-sent` → {@link freezeOrderPrices}
  *   - `POST /:id/confirm`, and `POST /:id/status` moving to `sent` or
  *     beyond → freeze too, so a stage reached without passing through
- *     `/send` is still locked (the call is a no-op for items already
+ *     a send is still locked (the call is a no-op for items already
  *     frozen)
  *   - `POST /:id/status` reverting to `draft` → {@link clearOrderPriceLocks}
  *   - reviving a lapsed estimate to `draft` in `PUT /:id` → clear
@@ -161,11 +162,11 @@ interface LockColumns {
  * Freezes every UNLOCKED line item of an order at the price it currently
  * carries.
  *
- * Called the moment an estimate leaves the building — `POST /:id/send`,
- * `POST /:id/mark-sent` — and again at every later stage that could be
- * reached without passing through those (`/confirm` from a draft, a
- * manual `/status` jump), so a quoted price is frozen from the first
- * moment a customer has seen it.
+ * Called the moment an estimate leaves the building — the multi-estimate send
+ * (`POST /api/customers/:id/send-estimates`) or `POST /:id/mark-sent` — and
+ * again at every later stage that could be reached without passing through
+ * those (`/confirm` from a draft, a manual `/status` jump), so a quoted price
+ * is frozen from the first moment a customer has seen it.
  *
  * The frozen figure is the CALCULATED price — `base_unit_price` while an
  * override is in effect, otherwise `unit_price` — because the override is
@@ -212,13 +213,13 @@ export async function freezeOrderPrices(
  * Called when an order is put back to `draft` — a manual status change
  * to draft, or reviving a lapsed estimate by extending its expiry. A
  * draft is a quote nobody is holding, so it is priced from today's
- * catalog again and the next `/send` freezes what that send shows. NOT
+ * catalog again and the next send freezes what that send shows. NOT
  * called when a confirmation is reversed: that lands the order on
  * `sent`, where the customer still holds the estimate.
  *
  * Best-effort by design: the status change it accompanies has already
  * been persisted, and a stale lock only means one save too many keeps a
- * price — the next `/send` re-freezes whatever is unlocked either way.
+ * price — the next send re-freezes whatever is unlocked either way.
  */
 export async function clearOrderPriceLocks(sb: SupabaseClient, orderId: string): Promise<void> {
   const columns: LockColumns = { locked_base_price: null, locked_inputs_fingerprint: null };
