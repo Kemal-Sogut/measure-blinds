@@ -102,6 +102,7 @@ import { toDuplicateInput } from '../lib/orderDuplicate';
 import { deleteOrderCascade } from '../lib/orderDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
+import { logOrderEvent } from '../lib/orderLog';
 import {
   sendEmail,
   brandFromSettings,
@@ -903,29 +904,6 @@ const DETAIL_SELECT = '*, line_items(*), customer:customers(*), payments(*)';
 function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
   const total = (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
   return Math.round(total * 100) / 100;
-}
-
-/**
- * Appends one row to the order's activity trail. Best-effort: a logging
- * failure must never fail the request it is describing, so errors are
- * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
- *
- * `source` marks who caused the entry: 'staff' (the default, so all
- * existing call sites are unchanged) or 'customer' for anything driven
- * from the token'd public page. The web trail renders customer rows on
- * a light-blue background.
- */
-async function logOrderEvent(
-  sb: SupabaseClient,
-  orderId: string,
-  message: string,
-  source: 'staff' | 'customer' = 'staff'
-): Promise<void> {
-  try {
-    await sb.from('order_logs').insert({ order_id: orderId, message, source });
-  } catch {
-    // Logging is diagnostic only — never block the caller's mutation.
-  }
 }
 
 /**
