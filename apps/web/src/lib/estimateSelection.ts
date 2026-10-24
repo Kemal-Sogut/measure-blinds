@@ -81,7 +81,11 @@ export function sendButtonLabel(count: number): string {
  * an estimate "was not sent"; it says the estimate "could not be fully
  * recorded", which is true both for a row that was never marked and for one
  * that was marked but not frozen. The server's per-row `error` text is
- * technical and is not shown to the consultant.
+ * technical and is not shown to the consultant. The closing instruction
+ * agrees with the count: "the estimate" for one, "each estimate" for several.
+ *
+ * Precondition: `failed` is non-empty (the dialog only calls this when the
+ * response carries failures); an empty list yields a sentence with no names.
  */
 export function partialFailureMessage(
   failed: Array<{ id: string; error: string }>,
@@ -89,5 +93,6 @@ export function partialFailureMessage(
 ): string {
   const numberById = new Map(rows.map((r) => [r.id, r.order_number]));
   const names = failed.map((f) => numberById.get(f.id) ?? f.id).join(', ');
-  return `The email was sent, but ${names} could not be fully recorded. Open the estimate and check its status before sending it again.`;
+  const which = failed.length === 1 ? 'the estimate' : 'each estimate';
+  return `The email was sent, but ${names} could not be fully recorded. Open ${which} and check its status before sending it again.`;
 }
