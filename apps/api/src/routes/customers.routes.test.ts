@@ -66,8 +66,12 @@ interface FakeDb {
    * query succeed, and an exhausted queue stops failing. So
    * `[null, { message: '…' }]` on `orders.update` fails the second status
    * write of a send and nothing else.
+   *
+   * `throws: true` makes that query REJECT instead of returning an error
+   * row — supabase-js does that on a transport failure, and a route that
+   * only inspects the returned `error` would lose the rest of its work.
    */
-  opErrors: Record<string, Array<{ message: string } | null>>;
+  opErrors: Record<string, Array<{ message: string; throws?: boolean } | null>>;
 }
 const db: FakeDb = {
   responses: {},
@@ -112,6 +116,7 @@ function makeBuilder(table: string) {
     const key = `${state.table}.${state.op}`;
     db.calls.push(key);
     const failure = db.opErrors[key]?.shift();
+    if (failure?.throws) throw new Error(failure.message);
     if (failure) return { data: null, error: failure };
     return { data: db.responses[key] ?? [], error: null };
   };
@@ -442,6 +447,75 @@ describe('POST /api/customers/:id/send-estimates', () => {
 
     expect(lastEmail().html).toContain('M2010-126');
     expect(lastEmail().html).toContain('M2010-127');
+  });
+
+  it('names the estimates in the order they were selected', async () => {
+    // Ticked already-sent FIRST, draft second. The plan splits those into
+    // two buckets, and concatenating the buckets would swap them in the
+    // email — the consultant's order is the contract (`SelectionPlan`).
+    db.responses['orders.select'] = [
+      orderRow(),
+      orderRow({ id: O2, order_number: 'M2010-127', status: 'sent' }),
+    ];
+    await post({ order_ids: [O2, O1] });
+    const html = lastEmail().html;
+    expect(html).toContain('M2010-127');
+    expect(html.indexOf('M2010-127')).toBeLessThan(html.indexOf('M2010-126'));
+  });
+
+  it('logs the send line and the price lock on a row that went through', async () => {
+    // One draft plus one already-sent row: `total` counts the estimates
+    // newly marked sent, NOT the two the email names.
+    db.responses['orders.select'] = [
+      orderRow(),
+      orderRow({ id: O2, order_number: 'M2010-127', status: 'sent' }),
+    ];
+    await post({ order_ids: [O1, O2] });
+    expect(db.insertPayloads['order_logs']).toEqual([
+      {
+        order_id: O1,
+        message: 'Estimate emailed to ada@example.com (1 of 1 in one send).',
+        source: 'staff',
+      },
+      { order_id: O1, message: 'Item prices locked at send.', source: 'staff' },
+    ]);
+  });
+
+  it('logs the send but not the price lock when the freeze fails', async () => {
+    db.opErrors['line_items.update'] = [{ message: 'freeze refused' }];
+    const res = await post({ order_ids: [O1] });
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as SendBody;
+    // The row IS `sent` — `sent` holds the price lock, so this is the safe
+    // half-write — but the consultant is told the freeze needs a retry.
+    expect(body.data.sent).toEqual([O1]);
+    expect(body.data.failed).toEqual([{ id: O1, error: 'freeze refused' }]);
+    expect(db.insertPayloads['order_logs']).toEqual([
+      {
+        order_id: O1,
+        message: 'Estimate emailed to ada@example.com (1 of 1 in one send).',
+        source: 'staff',
+      },
+    ]);
+  });
+
+  it('keeps going when a status write throws instead of returning an error', async () => {
+    db.responses['orders.select'] = [
+      orderRow(),
+      orderRow({ id: O2, order_number: 'M2010-127' }),
+      orderRow({ id: O3, order_number: 'M2010-128' }),
+    ];
+    db.opErrors['orders.update'] = [null, { message: 'connection reset', throws: true }];
+    const res = await post({ order_ids: [O1, O2, O3] });
+    expect(res.status).toBe(200);
+
+    // A rejection must not abort the rows after it, or the email would be
+    // out with most of the selection still reading `draft` and nothing
+    // in the response saying which.
+    const body = (await res.json()) as SendBody;
+    expect(body.data.sent).toEqual([O1, O3]);
+    expect(body.data.failed).toEqual([{ id: O2, error: 'connection reset' }]);
   });
 
   it('counts what the link will show, not what was ticked', async () => {

@@ -35,6 +35,7 @@ import {
   buildEstimatesEmailHtml,
   estimatesEmailSubject,
   sendEmail,
+  type CompanyBrand,
 } from './email';
 import { logOrderEvent } from './orderLog';
 import { freezeOrderPrices } from './priceLockStore';
@@ -126,12 +127,18 @@ export function planSelection(
 
 /**
  * Builds the activity-log line recorded for each estimate in a multi-estimate
- * send, so the history of every order shows it went out by email and how
- * many estimates shared that email.
+ * send, so the history of every order shows it went out by email and that it
+ * was not the only estimate marked sent by that one action.
+ *
+ * `total` counts the estimates NEWLY MARKED SENT by this send — the rows
+ * these log lines are attached to. It is deliberately NOT the number of
+ * estimates the email names: the email also lists the customer's
+ * already-`sent` estimates, and those rows are never written, so counting
+ * them here would describe log lines that do not exist.
  *
  * @param email  the address the link was sent to
- * @param index  1-based position of this estimate within the send
- * @param total  number of estimates in the send
+ * @param index  1-based position of this estimate among those marked sent
+ * @param total  number of estimates marked sent by this send
  */
 export function sendLogLine(email: string, index: number, total: number): string {
   return `Estimate emailed to ${email} (${index} of ${total} in one send).`;
@@ -190,6 +197,66 @@ const CANDIDATE_SELECT =
   'id, order_number, title, customer_id, status, expiry_date, public_token, terms_snapshot, line_items(id)';
 
 /**
+ * Reads the selected orders and shapes them into {@link SendCandidateRow}s
+ * for {@link planSelection}.
+ *
+ * `line_items(id)` is embedded purely to collapse into `item_count`: the
+ * send never needs the items themselves, and PostgREST cannot filter on
+ * an embedded count, so "an empty estimate cannot be sent" is enforced in
+ * `planSelection` rather than in this query. Rows are NOT filtered by
+ * customer or status here either — every such rule is `planSelection`'s,
+ * so a mismatch produces its user-facing sentence instead of a row that
+ * silently went missing.
+ *
+ * @returns the candidates, or the database's own message for a 500
+ */
+async function readSendCandidates(
+  sb: SupabaseClient,
+  orderIds: string[]
+): Promise<{ rows: SendCandidateRow[] } | { error: string }> {
+  const { data, error } = await sb.from('orders').select(CANDIDATE_SELECT).in('id', orderIds);
+  if (error) return { error: error.message };
+  return {
+    rows: (data ?? []).map((row) => ({
+      id: row.id,
+      order_number: row.order_number,
+      title: row.title,
+      customer_id: row.customer_id,
+      status: row.status,
+      expiry_date: row.expiry_date,
+      item_count: (row.line_items ?? []).length,
+      public_token: row.public_token,
+      terms_snapshot: row.terms_snapshot,
+    })),
+  };
+}
+
+/**
+ * Reads `company_settings` for the email's brand block and for the terms
+ * an estimate falls back to when it carries no snapshot of its own.
+ *
+ * A missing or unreadable settings row must NOT stop a send: the brand
+ * falls back to `brandFromSettings`' default company name and the terms
+ * stay empty, which is the same tolerance the rest of the API shows. An
+ * estimate that already has a `terms_snapshot` keeps it regardless — the
+ * customer is holding those terms.
+ */
+async function readSendBranding(
+  sb: SupabaseClient
+): Promise<{ brand: CompanyBrand; companyTerms: string }> {
+  const { data } = await sb.from('company_settings').select('*').eq('id', 1).maybeSingle();
+  const company = (data ?? {}) as {
+    company_name?: string | null;
+    logo_url?: string | null;
+    address?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    terms_and_conditions?: string | null;
+  };
+  return { brand: brandFromSettings(company), companyTerms: company.terms_and_conditions ?? '' };
+}
+
+/**
  * Writes the plan's drafts to `sent`, one row at a time.
  *
  * SEQUENTIAL BY DESIGN, never `Promise.all`: a row that fails must not
@@ -204,9 +271,12 @@ const CANDIDATE_SELECT =
  * unfrozen items is the safe half-write, because `sent` holds the lock
  * and the next freeze point catches it up.
  *
- * Both failures are reported rather than thrown: the email is already
- * gone (AI_GUIDELINES §2 runs one way only), so there is nothing to roll
- * back and the request stays a 200.
+ * NEVER THROWS. Every failure — a returned `error`, a rejected query, a
+ * refused freeze — is collected into `failed` and the loop moves on, so
+ * the caller always learns the full outcome. The email is already gone
+ * (AI_GUIDELINES §2 runs one way only), so there is nothing to roll back
+ * and the request stays a 200; abandoning the remaining rows would only
+ * leave more of the selection silently reading `draft`.
  *
  * @param email        address the link went to, for the log line
  * @param sentAt       one ISO timestamp for the whole send — the rows
@@ -224,25 +294,37 @@ async function persistSend(
   const failed: Array<{ id: string; error: string }> = [];
 
   for (const [index, row] of toSend.entries()) {
-    const { error } = await sb
-      .from('orders')
-      .update({
-        status: 'sent',
-        sent_at: sentAt,
-        terms_snapshot: row.terms_snapshot ?? companyTerms,
-      })
-      .eq('id', row.id);
-    if (error) {
-      failed.push({ id: row.id, error: error.message });
-      continue;
+    // Every per-row failure is caught, not propagated: supabase-js
+    // REJECTS on a transport failure rather than returning an `error`, and
+    // letting that escape would abandon the remaining rows and answer 500
+    // — after the email has already gone out, so the consultant would
+    // never learn which estimates are still reading `draft`.
+    try {
+      const { error } = await sb
+        .from('orders')
+        .update({
+          status: 'sent',
+          sent_at: sentAt,
+          terms_snapshot: row.terms_snapshot ?? companyTerms,
+        })
+        .eq('id', row.id);
+      if (error) {
+        failed.push({ id: row.id, error: error.message });
+        continue;
+      }
+      sent.push(row.id);
+
+      const freezeError = await freezeOrderPrices(sb, row.id);
+      if (freezeError) failed.push({ id: row.id, error: freezeError });
+
+      await logOrderEvent(sb, row.id, sendLogLine(email, index + 1, toSend.length));
+      if (!freezeError) await logOrderEvent(sb, row.id, 'Item prices locked at send.');
+    } catch (e) {
+      failed.push({
+        id: row.id,
+        error: e instanceof Error ? e.message : 'Could not mark the estimate sent.',
+      });
     }
-    sent.push(row.id);
-
-    const freezeError = await freezeOrderPrices(sb, row.id);
-    if (freezeError) failed.push({ id: row.id, error: freezeError });
-
-    await logOrderEvent(sb, row.id, sendLogLine(email, index + 1, toSend.length));
-    if (!freezeError) await logOrderEvent(sb, row.id, 'Item prices locked at send.');
   }
 
   return { sent, failed };
@@ -296,25 +378,10 @@ export async function runEstimateSend(
   const email = String(customer.email ?? '').trim();
   if (!email) return { error: 'This customer has no email address.', status: 400 };
 
-  const { data: rows, error: rowsError } = await sb
-    .from('orders')
-    .select(CANDIDATE_SELECT)
-    .in('id', input.order_ids);
-  if (rowsError) return { error: rowsError.message, status: 500 };
+  const candidates = await readSendCandidates(sb, input.order_ids);
+  if ('error' in candidates) return { error: candidates.error, status: 500 };
 
-  const candidates: SendCandidateRow[] = (rows ?? []).map((row) => ({
-    id: row.id,
-    order_number: row.order_number,
-    title: row.title,
-    customer_id: row.customer_id,
-    status: row.status,
-    expiry_date: row.expiry_date,
-    item_count: (row.line_items ?? []).length,
-    public_token: row.public_token,
-    terms_snapshot: row.terms_snapshot,
-  }));
-
-  const planned = planSelection(candidates, input.order_ids, customerId, today);
+  const planned = planSelection(candidates.rows, input.order_ids, customerId, today);
   if ('error' in planned) return { error: planned.error, status: 400 };
   const { toSend, toAnnounce } = planned.plan;
 
@@ -326,36 +393,26 @@ export async function runEstimateSend(
   }
   if (!customerToken) return { error: 'Customer not found', status: 404 };
 
+  // The estimates are named in the order the consultant ticked them, which
+  // is the contract `SelectionPlan` documents. `planSelection` hands back
+  // two buckets, so concatenating them would quietly reorder a mixed
+  // selection; the ids are already deduped there, so position in the
+  // request is a total order over these rows.
+  const named = [...toSend, ...toAnnounce].sort(
+    (a, b) => input.order_ids.indexOf(a.id) - input.order_ids.indexOf(b.id)
+  );
+
   // Every named estimate needs its own token too: the customer link hands
   // it to the detail view, and a `sent` row that never went out by email
   // may not have one yet.
-  const named = [...toSend, ...toAnnounce];
   try {
     for (const row of named) await ensureOrderToken(sb, row.id, row.public_token);
   } catch (e) {
     return { error: e instanceof Error ? e.message : 'Could not prepare the link', status: 500 };
   }
 
-  // A missing settings row must not stop a send: the template falls back
-  // to the default brand, and an order with no snapshot keeps empty terms.
-  const { data: settings } = await sb
-    .from('company_settings')
-    .select('*')
-    .eq('id', 1)
-    .maybeSingle();
-  const company = (settings ?? {}) as {
-    company_name?: string | null;
-    logo_url?: string | null;
-    address?: string | null;
-    phone?: string | null;
-    email?: string | null;
-    terms_and_conditions?: string | null;
-  };
-  const brand = brandFromSettings(company);
-  const companyTerms = company.terms_and_conditions ?? '';
+  const { brand, companyTerms } = await readSendBranding(sb);
 
-  // Send order: the estimates going out now, then the live ones the link
-  // also still shows, so the newest news leads the list.
   const estimates = named.map((row) => ({ order_number: row.order_number, title: row.title }));
   let liveCount: number;
   try {
