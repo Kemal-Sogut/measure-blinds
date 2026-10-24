@@ -7,7 +7,7 @@
  * The list hook combines a status tab with a debounced search term.
  * Create/update send measurements + option IDs only — the Worker
  * computes all money authoritatively and its response becomes the
- * cached detail. Lifecycle mutations (send estimate, confirm, reverse
+ * cached detail. Lifecycle mutations (send invoice, confirm, reverse
  * confirmation, record payment, send receipt, complete) refresh both
  * detail and list caches. `downloadOrderPdf` and `downloadWarrantyPdf`
  * stream the Estimate/Invoice and the warranty certificate through the
@@ -369,21 +369,6 @@ function useLifecycleMutation(path: (id: string) => string): UseMutationResult<O
   return useMutation({
     mutationFn: async (id) =>
       (await apiFetch<Envelope<Order>>(path(id), { method: 'POST' })).data,
-    onSuccess: cache,
-  });
-}
-
-/** Emails the estimate to the customer (status → sent on success). */
-export function useSendOrder(): UseMutationResult<Order, Error, { id: string; message?: string }> {
-  const cache = useCacheOrder();
-  return useMutation({
-    mutationFn: async ({ id, message }) =>
-      (
-        await apiFetch<Envelope<Order>>(`/api/orders/${id}/send`, {
-          method: 'POST',
-          body: JSON.stringify({ message }),
-        })
-      ).data,
     onSuccess: cache,
   });
 }
