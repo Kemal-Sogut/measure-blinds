@@ -401,6 +401,12 @@ describe('POST /api/customers/:id/send-estimates', () => {
     expect(body.data.failed).toEqual([]);
     expect(body.data.customer_token).toBe('ctok-1');
 
+    // The freeze really wrote the lock to line_items (one write per order),
+    // not just the log line that says it did.
+    const lockWrites = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(lockWrites).toHaveLength(3);
+    for (const w of lockWrites) expect(w.locked_base_price).toBe(100);
+
     expect(db.updatePayloads['orders']).toHaveLength(3);
     for (const payload of db.updatePayloads['orders'] ?? []) {
       expect(payload).toEqual({

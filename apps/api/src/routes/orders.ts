@@ -1309,11 +1309,11 @@ app.put('/:id', async (c) => {
   );
 
   // Draft, not `sent`, on purpose — no fresh estimate has reached the
-  // customer yet, so a new `/send` is the only path back to `sent`. This
-  // is the exact inverse of the `expiry_date < today` rule that expired
-  // it in `applyDefensiveExpiry`; a still-past date leaves the order
-  // expired (and its prices frozen), and no non-expired status is ever
-  // rewritten here.
+  // customer yet, so sending the estimate by email is the only path back to
+  // `sent`. This is the exact inverse of the `expiry_date < today` rule
+  // that expired it in `applyDefensiveExpiry`; a still-past date leaves
+  // the order expired (and its prices frozen), and no non-expired status
+  // is ever rewritten here.
   const { error: upError } = await sb
     .from('orders')
     .update({
@@ -1619,19 +1619,20 @@ app.get('/:id/pdf', async (c) => {
  *
  * This backs the Progress-timeline advance control, for estimates handed
  * over in person, printed, or delivered through some other channel. The
- * "Estimate Ready" email belongs exclusively to `POST /:id/send`:
+ * "Estimate Ready" email belongs exclusively to the customer-scoped send
+ * (`POST /api/customers/:id/send-estimates`):
  * advancing the lifecycle stage must never put mail in a customer's
  * inbox, otherwise a consultant tidying up the pipeline silently emails
  * people.
  *
- * Differences from `/send`, all deliberate: no customer email address is
- * required (nothing is delivered), and neither `public_token` nor
- * `terms_snapshot` is written — there is no customer-facing link to keep
- * alive and no terms to freeze until a document actually goes out. A
- * later real `/send` mints both lazily, so nothing is lost. The lapsed-
- * expiry guard mirrors `/send` because `applyDefensiveExpiry` flips a
- * `sent` order whose validity date has passed straight to `expired` on
- * the next read, which would make this action look broken.
+ * Differences from the emailed send, all deliberate: no customer email
+ * address is required (nothing is delivered), and neither `public_token`
+ * nor `terms_snapshot` is written — there is no customer-facing link to
+ * keep alive and no terms to freeze until a document actually goes out.
+ * A later real send mints both lazily, so nothing is lost. The lapsed-
+ * expiry guard mirrors the emailed send because `applyDefensiveExpiry`
+ * flips a `sent` order whose validity date has passed straight to
+ * `expired` on the next read, which would make this action look broken.
  */
 app.post('/:id/mark-sent', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -1651,7 +1652,7 @@ app.post('/:id/mark-sent', async (c) => {
   }
 
   // Handed over in person is still handed over: the prices freeze here
-  // exactly as they do on a real `/send`.
+  // exactly as they do on a real emailed send.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
 
@@ -2534,8 +2535,9 @@ app.post('/:id/revert', async (c) => {
   // Prices follow the same rule this route's stamps do (migration 39):
   // `draft` is the only stage where an item is live-priced, so a revert
   // all the way down releases the locks, and any other target freezes
-  // whatever is not frozen yet — a manual jump can skip `/send`
-  // entirely, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — a manual jump can skip the emailed
+  // send entirely, and no stage from `sent` up may be reached
+  // live-priced.
   if (toIdx < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {
@@ -2640,8 +2642,9 @@ app.post('/:id/status', async (c) => {
   // Prices follow the stage the same way the stamps above do (migration
   // 39): `draft` is the only stage where an item is live-priced, so
   // landing there releases the locks, and any other target freezes
-  // whatever is not frozen yet — this route can jump straight past
-  // `/send`, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — this route can jump straight past the
+  // emailed send, and no stage from `sent` up may be reached
+  // live-priced.
   if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {

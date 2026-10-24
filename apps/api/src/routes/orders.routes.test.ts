@@ -480,12 +480,12 @@ describe('POST /api/orders/:id/mark-sent', () => {
   /**
    * Status-only draft → sent. The whole point of this route is that it
    * NEVER emails, so every case asserts Resend was not called: the
-   * "Estimate Ready" email belongs to /send alone.
+   * "Estimate Ready" email belongs to the customer-scoped send alone.
    */
   const markSentOrder = (over: Record<string, unknown> = {}) => ({
     id: 'e7',
     status: 'draft',
-    // Relative, not hardcoded — same time-bomb lesson as the /send test.
+    // Relative, not hardcoded — a fixed date would turn this into a time bomb.
     expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
     ...over,
   });
@@ -790,8 +790,8 @@ describe('POST /api/orders/:id/payments/:paymentId/receipt', () => {
 
   /**
    * Intercepts Resend for the duration of `run`, capturing request
-   * bodies; `status`/`reply` script the API's answer (same fetch-level
-   * mock the /send failure test uses — sendEmail is exercised for real).
+   * bodies; `status`/`reply` script the API's answer (a fetch-level
+   * mock, so sendEmail is exercised for real).
    */
   async function withResend(
     status: number,
