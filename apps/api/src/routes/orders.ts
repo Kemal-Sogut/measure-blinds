@@ -27,7 +27,6 @@
  *   POST   /:id/edit-requests/:requestId/resolve
  *                         mark one change request handled
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
- *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
  *   POST   /:id/public-token
  *                         return the customer-facing capability token,
@@ -72,7 +71,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
 import { groupOrdersByCustomer } from '../lib/orderGroups';
-import { ensureCustomerToken, customerLinkUrl, countActiveEstimates } from '../lib/customerLink';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -106,8 +104,6 @@ import { logOrderEvent } from '../lib/orderLog';
 import {
   sendEmail,
   brandFromSettings,
-  buildEstimateEmailHtml,
-  estimateEmailSubject,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildCancellationDeniedHtml,
@@ -1615,117 +1611,6 @@ app.get('/:id/pdf', async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
   }
-});
-
-/**
- * Sends the estimate to the customer by email with the PDF attached.
- *
- * Ordering (stability improvement from the plan review): the email is
- * sent FIRST; only after Resend confirms success do we persist
- * status='sent', sent_at, the public token, and the T&C snapshot. A
- * failed send leaves the order exactly as it was. Resends reuse the
- * existing public_token so previously emailed links keep working.
- *
- * The email button and the PDF's CTA link to the CUSTOMER link
- * (`/c/:token`, minted on first send), which lists every live estimate,
- * and the email says how many there are to choose from (spec 2026-10-20).
- * The order's own public_token is still persisted: the customer link
- * hands it to the detail view, and older emails link to it directly.
- */
-app.post('/:id/send', async (c) => {
-  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const message = parsed.data.message;
-  const sb = createSupabaseAdmin(c.env);
-  const id = c.req.param('id');
-  const bundle = await loadOrderBundle(sb, id);
-  if (!bundle) return c.json({ error: 'Order not found' }, 404);
-  const { order, company } = bundle;
-
-  if (!EDITABLE.includes(order.status)) {
-    return c.json({ error: `A ${order.status} order's estimate cannot be re-sent.` }, 409);
-  }
-  const today = new Date().toISOString().slice(0, 10);
-  if (order.expiry_date < today) {
-    return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
-  }
-  const email = order.customer?.email;
-  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
-
-  const publicToken: string = order.public_token ?? crypto.randomUUID();
-  const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
-
-  // The email and the PDF point at the customer's ONE link, which lists
-  // every live estimate (spec 2026-10-20). The order keeps its own token
-  // too — the link hands it to the detail view, and older emails use it.
-  let customerToken: string | null;
-  let activeEstimateCount: number;
-  try {
-    customerToken = await ensureCustomerToken(sb, order.customer_id);
-    // Counted before this order flips to `sent`, so add it back.
-    activeEstimateCount = (await countActiveEstimates(sb, order.customer_id, today, id)) + 1;
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Could not prepare the link' }, 500);
-  }
-  if (!customerToken) return c.json({ error: 'Customer not found' }, 404);
-  const viewUrl = customerLinkUrl(c.env.APP_URL, customerToken);
-
-  let pdf: Uint8Array;
-  try {
-    // An unsent order has no payments yet, so this is always an Estimate.
-    pdf = await buildDocumentPdf(await toPdfData(order, company, terms, viewUrl));
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
-  }
-
-  try {
-    await sendEmail(c.env, {
-      to: email,
-      subject: estimateEmailSubject(order.order_number, company.company_name || 'Blinds Nisa', order.title),
-      html: buildEstimateEmailHtml({
-        company: brandFromSettings(company),
-        customerFirstName: greetingName(order.customer),
-        message,
-        viewUrl,
-        title: order.title ?? null,
-        activeEstimateCount,
-      }),
-      attachments: [
-        {
-          filename: `${order.order_number}-estimate.pdf`,
-          content: toBase64(pdf),
-        },
-      ],
-    });
-  } catch (e) {
-    // Send failed → order stays untouched (still draft / previous state).
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
-  }
-
-  // The customer now holds a document quoting these figures, so they
-  // stop being a calculation (migration 39). Frozen before the status
-  // write for the same reason as at `/confirm`: an order that reached
-  // `sent` unlocked would re-price itself on the next save.
-  const freezeError = await freezeOrderPrices(sb, id);
-  if (freezeError) return c.json({ error: freezeError }, 500);
-
-  const { error } = await sb
-    .from('orders')
-    .update({
-      status: 'sent',
-      sent_at: new Date().toISOString(),
-      public_token: publicToken,
-      terms_snapshot: terms,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
-  await logOrderEvent(sb, id, 'Item prices locked at send.');
-
-  const { data: updated } = await readDetail(sb, id);
-  if (updated) updated.amount_paid = sumPayments(updated.payments);
-  return c.json({ data: updated });
 });
 
 /**
