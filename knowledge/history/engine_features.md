@@ -54,7 +54,9 @@ as usual, neither happened as part of this work.
 - Stale `/send` comments in `priceLock.ts` (api + web), `priceLockStore.ts`, `pdf.ts` and
   `customerLink.ts` were repointed to the new route (comments only).
 Verified: api 700 tests, web 532, `tsc` clean both, oxlint 0 errors (one pre-existing warning in
-`public/embed/lead-form.js`).
+`public/embed/lead-form.js`). **The dialog has NOT been exercised in a browser** (the dev server
+stops at the Supabase login wall): the picker, the save-first path and the partial-failure copy
+are covered by unit/route tests only, not seen end to end against a live database.
 
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec
