@@ -547,7 +547,7 @@ export interface CustomerCta {
  * "View your order online" did not realise a confirmation was expected.
  * An INVOICE is already confirmed and keeps the neutral label.
  *
- * Wording mirrors the estimate email (`buildEstimateEmailHtml`) and the
+ * Wording mirrors the estimates email (`buildEstimatesEmailHtml`) and the
  * customer page's own button labels; keep the three in sync.
  */
 export function customerCta(docType: PdfDocumentData['docType']): CustomerCta {
