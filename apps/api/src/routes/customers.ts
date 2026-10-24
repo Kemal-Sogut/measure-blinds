@@ -8,6 +8,7 @@
  *   GET    /            list (excludes soft-deleted), optional `?q=` search
  *   POST   /            create (Zod-validated)
  *   GET    /:id         single customer (404 if missing or soft-deleted)
+ *   GET    /:id/sendable-estimates  estimates eligible for the multi-estimate send
  *   PUT    /:id         partial update (Zod-validated)
  *   DELETE /:id         soft delete — sets `deleted_at`, keeps history
  *
@@ -161,6 +162,55 @@ app.post('/:id/public-link', async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not create the link' }, 500);
   }
+});
+
+/**
+ * Lists the customer's estimates that can be emailed right now — backs the
+ * picker dialog of "Send estimates". An estimate is sendable when it
+ * belongs to this customer, is still `draft` or `sent`, has not expired
+ * (`expiry_date >= today`, compared as `YYYY-MM-DD` strings) and holds at
+ * least one line item. The item filter runs in code over a `line_items(id)`
+ * embed because PostgREST cannot filter on an embedded count; the embed is
+ * an eligibility input only and is NOT part of the payload. Newest-created
+ * first. 404 for an unknown or soft-deleted customer — checked before the
+ * list so a bad id never reads as "no estimates". `total` is coerced to a
+ * number because PostgREST returns numerics as strings.
+ */
+app.get('/:id/sendable-estimates', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const customerId = c.req.param('id');
+
+  const { data: customer, error: customerError } = await sb
+    .from('customers')
+    .select('id')
+    .eq('id', customerId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (customerError) return c.json({ error: customerError.message }, 500);
+  if (!customer) return c.json({ error: 'Customer not found' }, 404);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await sb
+    .from('orders')
+    .select('id, order_number, title, status, order_date, expiry_date, total, line_items(id)')
+    .eq('customer_id', customerId)
+    .in('status', ['draft', 'sent'])
+    .gte('expiry_date', today)
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: error.message }, 500);
+
+  const estimates = (data ?? [])
+    .filter((row) => row.line_items.length > 0)
+    .map((row) => ({
+      id: row.id,
+      order_number: row.order_number,
+      title: row.title,
+      status: row.status,
+      order_date: row.order_date,
+      expiry_date: row.expiry_date,
+      total: Number(row.total),
+    }));
+  return c.json({ data: estimates });
 });
 
 /** Partially updates a customer. */

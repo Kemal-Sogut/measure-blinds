@@ -30,8 +30,10 @@ interface FakeDb {
   insertPayloads: Record<string, unknown[]>;
   /** UPDATE payloads per table — proves a route did (or did not) write. */
   updatePayloads: Record<string, unknown[]>;
+  /** Every filter/order call a route made, as `[table, method, args]`. */
+  filters: Array<[string, string, unknown[]]>;
 }
-const db: FakeDb = { responses: {}, insertPayloads: {}, updatePayloads: {} };
+const db: FakeDb = { responses: {}, insertPayloads: {}, updatePayloads: {}, filters: [] };
 
 /**
  * Minimal thenable builder mimicking the supabase-js chain: every
@@ -47,9 +49,10 @@ function makeBuilder(table: string) {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
       if (name === 'insert') (db.insertPayloads[state.table] ??= []).push(args[0]);
       if (name === 'update') (db.updatePayloads[state.table] ??= []).push(args[0]);
+      if (['eq', 'in', 'gte', 'order'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'is', 'or', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'or', 'order', 'limit']) {
     builder[m] = chain(m);
   }
   const resolve = () => ({ data: db.responses[`${state.table}.${state.op}`] ?? [], error: null });
@@ -82,6 +85,7 @@ const CUSTOMER = { id: 'c1', first_name: '', last_name: '', email: '', phone: ''
 beforeEach(() => {
   db.insertPayloads = {};
   db.updatePayloads = {};
+  db.filters = [];
   db.responses = {
     'customers.insert': [CUSTOMER],
     'customers.update': [CUSTOMER],
@@ -161,5 +165,69 @@ describe('POST /api/customers/:id/public-link', () => {
     db.responses['customers.select'] = [];
     const res = await customersApp.request('/nope/public-link', { method: 'POST' }, ENV);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/customers/:id/sendable-estimates', () => {
+  const today = new Date().toISOString().slice(0, 10);
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'o1',
+    order_number: 'M2010-126',
+    title: 'Living room',
+    status: 'draft',
+    order_date: '2026-10-01',
+    expiry_date: '2026-12-01',
+    total: '1234.50',
+    line_items: [{ id: 'li1' }],
+    ...over,
+  });
+  const get = () => customersApp.request('/c1/sendable-estimates', { method: 'GET' }, ENV);
+  type Body = { data: Array<Record<string, unknown>> };
+
+  it('asks for this customer, draft+sent, expiry from today, newest-created first', async () => {
+    db.responses['orders.select'] = [row()];
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(db.filters).toContainEqual(['orders', 'eq', ['customer_id', 'c1']]);
+    expect(db.filters).toContainEqual(['orders', 'in', ['status', ['draft', 'sent']]]);
+    expect(db.filters).toContainEqual(['orders', 'gte', ['expiry_date', today]]);
+    expect(db.filters).toContainEqual(['orders', 'order', ['created_at', { ascending: false }]]);
+  });
+
+  it('returns exactly the dialog fields, with no item count or sort key', async () => {
+    db.responses['orders.select'] = [row({ created_at: '2026-10-02T00:00:00Z' })];
+    const body = (await (await get()).json()) as Body;
+    expect(body.data).toEqual([
+      {
+        id: 'o1',
+        order_number: 'M2010-126',
+        title: 'Living room',
+        status: 'draft',
+        order_date: '2026-10-01',
+        expiry_date: '2026-12-01',
+        total: 1234.5,
+      },
+    ]);
+  });
+
+  it('drops rows with no line items', async () => {
+    db.responses['orders.select'] = [row({ id: 'empty', line_items: [] }), row({ id: 'full' })];
+    const body = (await (await get()).json()) as Body;
+    expect(body.data.map((r) => r.id)).toEqual(['full']);
+  });
+
+  it('returns total as a number', async () => {
+    db.responses['orders.select'] = [row({ total: '1234.50' })];
+    const body = (await (await get()).json()) as Body;
+    expect(body.data[0]?.total).toBe(1234.5);
+  });
+
+  it('404s for an unknown or soft-deleted customer, without listing estimates', async () => {
+    db.responses['customers.select'] = [];
+    db.responses['orders.select'] = [row()];
+    const res = await get();
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe('Customer not found');
+    expect(db.filters.some(([table]) => table === 'orders')).toBe(false);
   });
 });
