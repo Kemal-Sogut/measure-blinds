@@ -8,19 +8,23 @@
  * that orders the page) and the status summary. Open: the customer's
  * estimates newest-created first — every status, confirmed ones keep
  * their order badge — each opening `/<customer-slug>/<order-number>`,
- * with the shared Duplicate/Delete strip; then three group actions:
- * + New Estimate for this customer, Copy customer link (mints `/c/:token`
- * on first use), and Customer details (`/customers/:id`, unchanged page).
+ * with the shared Duplicate/Delete strip; then four group actions:
+ * + New Estimate for this customer, Send estimates (opens the picker dialog
+ * that emails one link covering the ticked estimates; disabled when the
+ * customer has no email address), Copy customer link (mints `/c/:token` on
+ * first use), and Customer details (`/customers/:id`, unchanged page).
  *
  * Open/closed state is owned by `EstimatesPage` so a search can force
  * every matching group open.
  */
 
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import StatusBadge from '../../components/StatusBadge';
 import OrderRowActions from '../orders/OrderRowActions';
+import SendEstimatesDialog from './SendEstimatesDialog';
 import { useCustomerPublicLink } from '../../hooks/useCustomers';
 import type { OrderGroup } from '../../hooks/useOrders';
 import { displayName } from '../../lib/customerName';
@@ -45,6 +49,7 @@ export default function EstimateGroup({
 }) {
   const navigate = useNavigate();
   const link = useCustomerPublicLink();
+  const [sendOpen, setSendOpen] = useState(false);
   const { customer, orders } = group;
   const panelId = `estimate-group-${customer.id}`;
   const summary = groupSummary(orders);
@@ -137,6 +142,15 @@ export default function EstimateGroup({
             </Link>
             <button
               type="button"
+              onClick={() => setSendOpen(true)}
+              disabled={!customer.email}
+              title={customer.email ? undefined : 'This customer has no email address'}
+              className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+            >
+              Send estimates
+            </button>
+            <button
+              type="button"
               onClick={copyLink}
               disabled={link.isPending}
               className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
@@ -151,6 +165,13 @@ export default function EstimateGroup({
             </Link>
           </div>
         </div>
+      )}
+      {sendOpen && (
+        <SendEstimatesDialog
+          customerId={customer.id}
+          customerEmail={customer.email}
+          onClose={() => setSendOpen(false)}
+        />
       )}
     </li>
   );
