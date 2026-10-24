@@ -6,6 +6,16 @@
 
 ## What Works
 
+**Multi-estimate send, on `feat/multi-estimate-send` (no migration, not deployed):** one
+customer-scoped **Send estimates** dialog (from the customer group on the Estimates page, or
+the Send button on an estimate's page, which saves first and is hidden for `expired`) emails
+ONE customer link covering the ticked estimates, no PDF attached.
+`POST /api/customers/:id/send-estimates` and `GET /api/customers/:id/sendable-estimates`
+replace the deleted `POST /api/orders/:id/send`. A send marks drafts `sent` before freezing
+prices; a partial write failure is a 200 `{ sent, announced, failed }`; a failed email writes
+nothing. api 700 tests, web 532, `tsc` and oxlint clean; the dialog has not been exercised in a
+browser against a live database.
+
 **Multiple estimates per customer, merged to local `main` (migration 47 applied):** estimates grouped by customer
 on the home page (newest estimate first), a confirmed-only Orders page, optional estimate
 titles, `/<customer-slug>/<order-number>` staff URLs, and one customer link (`/c/:token`) that
@@ -23,7 +33,7 @@ on `feat/inbox-unread` (migration 46).
 
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
 (+ expired), auto-expiry on sent (only `sent` orders lapse). Editing an `expired` estimate's
-expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
+expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh send
 is the only path back) inside `PUT /api/orders/:id`, mirroring the `< today` rule that expired
 it; a still-past date leaves it expired, and no non-expired status is ever rewritten there.
 Confirmation is reversible by staff only, and only pre-payment. On the staff order page, stage moves (confirming, reversing a confirmation, marking ready) happen ONLY on the Progress timeline, which saves first; the stage-action slot always leads with Save, and Mark Installed lives in the Installation card. SENDING the estimate (`/send` or `/mark-sent`) FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a price the customer was quoted, and only an item whose own pricing inputs are edited is re-priced and re-locked. Confirming, and any manual stage move to `sent` or beyond, freezes whatever is not frozen yet. `draft` is the only live-priced status — returning an order to draft (manual status change, or reviving a lapsed estimate) is the only thing that releases the locks; unconfirming does not, since the order lands back on `sent`. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
@@ -322,5 +332,6 @@ Table `notifications`, migration 43. No read/unread state.
 | pdf-lib, not @react-pdf | @react-pdf's WASM cannot run in workerd. |
 | UNIQUE order_number + retry | Count-based generation can race under concurrent saves. |
 | Email-then-persist | Any status change that announces something by email persists only after the send succeeds, so a bounced email never leaves the record claiming it went out. |
+| Status before freeze | A send marks a draft `sent` before freezing its prices, so a half-written row is locked, never an unlocked `draft` holding figures the customer has already been emailed. |
 | Twin api/web modules | `pricing.ts`/`totals.ts`/`blindTypes/*`/etc. are mirrored files with mirrored test suites — the shared-package refactor was deliberately deferred; the mirrored suites are the drift alarm. |
 | Catalog seeds must be identities | Pricing recomputes server-side on every save, so a newly seeded value (multiplier/price) applies retroactively to old orders on their next save — seed 0/1, let the shop set real values. |

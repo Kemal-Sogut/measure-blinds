@@ -4,7 +4,20 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-22)
+## Where things stand (as of 2026-10-24)
+
+**Newest, on branch `feat/multi-estimate-send` (from `main`, not deployed), web + api, NO
+migration:** the **multi-estimate send**. Sending is one customer-scoped action: a **Send
+estimates** dialog (opened from the customer group on the Estimates page, or from the Send
+button on an estimate's own page, which saves first) lists that customer's valid estimates
+(`draft`/`sent`, unexpired, with items; all ticked, untick to exclude) and emails ONE link
+(`/c/:token`) with an optional note and NO PDF attached. `POST /api/customers/:id/send-estimates`
+(+ `GET /api/customers/:id/sendable-estimates`, logic in `apps/api/src/lib/estimateSend.ts`)
+replaces the deleted `POST /api/orders/:id/send`. A send writes `sent` BEFORE freezing prices;
+partial failure is a 200 `{ sent, announced, failed }`; a failed email is a 502 with no write.
+Already-`sent` rows are re-announced only (no un-share). Verified api 700 / web 532, `tsc` +
+oxlint clean; the dialog has not been exercised in a browser against a live database. Deploy the
+API before the web. See `knowledge/history/engine_features.md` 2026-10-24.
 
 **Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
 to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the
@@ -70,14 +83,13 @@ balance due, not the full total**. `send-invoice` derives paid-to-date and balan
 ledger; the card lists Order total + Paid to date, then "Balance due" (or "Paid in full"). PDF
 unchanged. See `knowledge/history/bug_fixes.md`, 2026-09-16.
 
-**Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
-the customer to confirm**. Customers saw only "View your estimate" and didn't know a
-confirmation was expected. Email (`buildEstimateEmailHtml`): bold "to go ahead… confirm it"
-intro line, a "How to go ahead" checklist ending in "Press Confirm Estimate", button renamed
-"Review & confirm your estimate". PDF: new `customerCta(docType)` — estimates print a bold
-instruction above a "Review & confirm online" button; invoices unchanged. Verified: api
-`pnpm check` clean, tests pass; both rendered and inspected. See
-`knowledge/history/engine_features.md`, 2026-09-12.
+**On `main`, api-only: the estimate email and estimate PDF tell the customer to confirm.**
+Customers saw only "View your estimate" and didn't know a confirmation was expected. The
+email (`buildEstimatesEmailHtml` in `lib/email.ts`; one template for any number of estimates,
+no PDF attached since 2026-10-24) carries a "How to go ahead" checklist ending in "Press Confirm
+Estimate" and a "Review & confirm your estimate" button. The PDF (`customerCta(docType)`)
+prints a bold instruction above a "Review & confirm online" button on estimates; invoices are
+unchanged. See `knowledge/history/engine_features.md`, 2026-09-12 and 2026-10-24.
 
 **Newest, uncommitted, web-only, no migration:** the **Material usage panel is now a read-only
 fabric report**. Every per-m² give-back went away — the per-material rate boxes, the
@@ -164,23 +176,14 @@ See `knowledge/history/bug_fixes.md` 2026-09-02.
 (`supabase/migrations/20260826000041_order_edit_requests.sql`). The customer edit-request
 routes 500 until it is. Details in `knowledge/history/engine_features.md`, 2026-08-26.
 
-**Also on `main` now — the send sheet carries a copy-the-link area** (committed as
-`a179243`; the paragraph below was written while it was still uncommitted):
-
-Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
-sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
+**The send dialog carries a copy-the-link area.** `apps/web/src/components/CopyLinkField.tsx`
 (read-only URL input + Copy button, with `navigator.clipboard` → `document.execCommand` →
-"press Ctrl/Cmd+C" degradation) is rendered under the optional-message box in
-`OrderDetail`'s send sheet, showing `${window.location.origin}/customer/<public_token>` — the
-LIVE customer page, deliberately without the staff-only `?preview=1` flag. `openSend` became
-`async`: it opens the sheet first, then mints the token through the existing
-`useOrderPublicToken` mutation, so the message box never waits on the network and a mint
-failure degrades only the copy field (`sendLinkError`), never the email path. An unsaved draft
-has no id, so the area is not rendered at all. Purpose: hand the customer page over
-WhatsApp/SMS without being forced through the app's own email. Detail in
-`knowledge/history/engine_features.md`, 2026-09-01. Verified: web `pnpm check` clean,
-`pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
-login wall).
+"press Ctrl/Cmd+C" degradation) sits under the note box in `SendEstimatesDialog` and shows the
+CUSTOMER link (`/c/:token`), so a consultant can hand the page over WhatsApp/SMS without being
+forced through the app's own email. The dialog mints the customer token through the existing
+public-link mutation; a mint failure degrades only the copy field, never the email path. (It
+replaced the per-order send sheet on `OrderDetail`, which showed `/customer/<public_token>`.)
+See `knowledge/history/engine_features.md`, 2026-09-01 and 2026-10-24.
 
 **Also on `main` now — ONE order view** (merged via PR #44; the paragraph below was
 written while `feat/unified-order-view` was still a separate branch):
@@ -292,8 +295,8 @@ both sides; NOT seen in a browser (needs the migration applied). Detail in
 **Also uncommitted, and the one other change here that needs a DATABASE migration applied
 before deploy:** the per-item price lock, in force from SEND onward (migration 39,
 `supabase/migrations/20260825000039_line_items_price_lock.sql`). `line_items` gains
-`locked_base_price` + `locked_inputs_fingerprint`; `POST /:id/send` and `/mark-sent` freeze
-every item at its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of
+`locked_base_price` + `locked_inputs_fingerprint`; the multi-estimate send (`POST /api/customers/:id/send-estimates`) and
+`/mark-sent` freeze every item at its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of
 that item's pricing inputs still matches, and `/confirm` plus any manual stage move to `sent`
 or beyond freeze whatever is not frozen yet. `draft` is the only live-priced status: only
 returning an order to draft (manual status change, or reviving a lapsed estimate) releases a
