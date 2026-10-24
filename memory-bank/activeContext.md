@@ -6,6 +6,10 @@
 
 ## Where things stand (as of 2026-10-22)
 
+**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
+Delete conversation on the Inbox thread page — app only, Titan keeps the mail
+(`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
+
 **Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
 to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the
 **Estimates** page (estimates grouped by customer, newest estimate's `created_at` first,

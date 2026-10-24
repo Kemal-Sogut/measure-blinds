@@ -22,6 +22,11 @@
  * (Re-apply rules then leaves the thread alone); `handled` stamps
  * `handled_at`; linking an order also links that order's customer;
  * changing or clearing the customer clears the order.
+ *
+ * Deleting a conversation removes it from the app only (its messages and
+ * "New email" notifications cascade); Titan keeps the mail. The sync only
+ * reads past its per-folder cursor, so deleted mail is never re-imported;
+ * a later reply to it simply starts a new conversation.
  */
 
 import { Hono } from 'hono';
@@ -399,6 +404,17 @@ app.put('/:threadId', async (c) => {
   }
 
   const { data, error } = await sb.from('email_threads').update(update).eq('id', id).select('id').maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Conversation not found' }, 404);
+  return c.json({ data });
+});
+
+/** Deletes a conversation from the app (not from Titan); messages and its notifications cascade. */
+app.delete('/:threadId', async (c) => {
+  const id = c.req.param('threadId');
+  if (!UUID_RE.test(id)) return c.json({ error: 'Conversation not found' }, 404);
+  const sb = createSupabaseAdmin(c.env);
+  const { data, error } = await sb.from('email_threads').delete().eq('id', id).select('id').maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Conversation not found' }, 404);
   return c.json({ data });
