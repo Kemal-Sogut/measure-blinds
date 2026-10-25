@@ -27,7 +27,6 @@
  *   POST   /:id/edit-requests/:requestId/resolve
  *                         mark one change request handled
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
- *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
  *   POST   /:id/public-token
  *                         return the customer-facing capability token,
@@ -72,7 +71,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
 import { groupOrdersByCustomer } from '../lib/orderGroups';
-import { ensureCustomerToken, customerLinkUrl, countActiveEstimates } from '../lib/customerLink';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -102,11 +100,10 @@ import { toDuplicateInput } from '../lib/orderDuplicate';
 import { deleteOrderCascade } from '../lib/orderDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
+import { logOrderEvent } from '../lib/orderLog';
 import {
   sendEmail,
   brandFromSettings,
-  buildEstimateEmailHtml,
-  estimateEmailSubject,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildCancellationDeniedHtml,
@@ -906,29 +903,6 @@ function sumPayments(payments: Array<{ amount: number | string }> | null | undef
 }
 
 /**
- * Appends one row to the order's activity trail. Best-effort: a logging
- * failure must never fail the request it is describing, so errors are
- * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
- *
- * `source` marks who caused the entry: 'staff' (the default, so all
- * existing call sites are unchanged) or 'customer' for anything driven
- * from the token'd public page. The web trail renders customer rows on
- * a light-blue background.
- */
-async function logOrderEvent(
-  sb: SupabaseClient,
-  orderId: string,
-  message: string,
-  source: 'staff' | 'customer' = 'staff'
-): Promise<void> {
-  try {
-    await sb.from('order_logs').insert({ order_id: orderId, message, source });
-  } catch {
-    // Logging is diagnostic only — never block the caller's mutation.
-  }
-}
-
-/**
  * Defensive expiry: if a sent order's estimate validity date has
  * passed, mark it expired in the DB before returning it, so reads are
  * correct even if the daily cron hasn't run yet. Only `sent` orders
@@ -1335,11 +1309,11 @@ app.put('/:id', async (c) => {
   );
 
   // Draft, not `sent`, on purpose — no fresh estimate has reached the
-  // customer yet, so a new `/send` is the only path back to `sent`. This
-  // is the exact inverse of the `expiry_date < today` rule that expired
-  // it in `applyDefensiveExpiry`; a still-past date leaves the order
-  // expired (and its prices frozen), and no non-expired status is ever
-  // rewritten here.
+  // customer yet, so sending the estimate by email is the only path back to
+  // `sent`. This is the exact inverse of the `expiry_date < today` rule
+  // that expired it in `applyDefensiveExpiry`; a still-past date leaves
+  // the order expired (and its prices frozen), and no non-expired status
+  // is ever rewritten here.
   const { error: upError } = await sb
     .from('orders')
     .update({
@@ -1640,135 +1614,25 @@ app.get('/:id/pdf', async (c) => {
 });
 
 /**
- * Sends the estimate to the customer by email with the PDF attached.
- *
- * Ordering (stability improvement from the plan review): the email is
- * sent FIRST; only after Resend confirms success do we persist
- * status='sent', sent_at, the public token, and the T&C snapshot. A
- * failed send leaves the order exactly as it was. Resends reuse the
- * existing public_token so previously emailed links keep working.
- *
- * The email button and the PDF's CTA link to the CUSTOMER link
- * (`/c/:token`, minted on first send), which lists every live estimate,
- * and the email says how many there are to choose from (spec 2026-10-20).
- * The order's own public_token is still persisted: the customer link
- * hands it to the detail view, and older emails link to it directly.
- */
-app.post('/:id/send', async (c) => {
-  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const message = parsed.data.message;
-  const sb = createSupabaseAdmin(c.env);
-  const id = c.req.param('id');
-  const bundle = await loadOrderBundle(sb, id);
-  if (!bundle) return c.json({ error: 'Order not found' }, 404);
-  const { order, company } = bundle;
-
-  if (!EDITABLE.includes(order.status)) {
-    return c.json({ error: `A ${order.status} order's estimate cannot be re-sent.` }, 409);
-  }
-  const today = new Date().toISOString().slice(0, 10);
-  if (order.expiry_date < today) {
-    return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
-  }
-  const email = order.customer?.email;
-  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
-
-  const publicToken: string = order.public_token ?? crypto.randomUUID();
-  const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
-
-  // The email and the PDF point at the customer's ONE link, which lists
-  // every live estimate (spec 2026-10-20). The order keeps its own token
-  // too — the link hands it to the detail view, and older emails use it.
-  let customerToken: string | null;
-  let activeEstimateCount: number;
-  try {
-    customerToken = await ensureCustomerToken(sb, order.customer_id);
-    // Counted before this order flips to `sent`, so add it back.
-    activeEstimateCount = (await countActiveEstimates(sb, order.customer_id, today, id)) + 1;
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Could not prepare the link' }, 500);
-  }
-  if (!customerToken) return c.json({ error: 'Customer not found' }, 404);
-  const viewUrl = customerLinkUrl(c.env.APP_URL, customerToken);
-
-  let pdf: Uint8Array;
-  try {
-    // An unsent order has no payments yet, so this is always an Estimate.
-    pdf = await buildDocumentPdf(await toPdfData(order, company, terms, viewUrl));
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
-  }
-
-  try {
-    await sendEmail(c.env, {
-      to: email,
-      subject: estimateEmailSubject(order.order_number, company.company_name || 'Blinds Nisa', order.title),
-      html: buildEstimateEmailHtml({
-        company: brandFromSettings(company),
-        customerFirstName: greetingName(order.customer),
-        message,
-        viewUrl,
-        title: order.title ?? null,
-        activeEstimateCount,
-      }),
-      attachments: [
-        {
-          filename: `${order.order_number}-estimate.pdf`,
-          content: toBase64(pdf),
-        },
-      ],
-    });
-  } catch (e) {
-    // Send failed → order stays untouched (still draft / previous state).
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
-  }
-
-  // The customer now holds a document quoting these figures, so they
-  // stop being a calculation (migration 39). Frozen before the status
-  // write for the same reason as at `/confirm`: an order that reached
-  // `sent` unlocked would re-price itself on the next save.
-  const freezeError = await freezeOrderPrices(sb, id);
-  if (freezeError) return c.json({ error: freezeError }, 500);
-
-  const { error } = await sb
-    .from('orders')
-    .update({
-      status: 'sent',
-      sent_at: new Date().toISOString(),
-      public_token: publicToken,
-      terms_snapshot: terms,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
-  await logOrderEvent(sb, id, 'Item prices locked at send.');
-
-  const { data: updated } = await readDetail(sb, id);
-  if (updated) updated.amount_paid = sumPayments(updated.payments);
-  return c.json({ data: updated });
-});
-
-/**
  * Marks the estimate as sent WITHOUT emailing anything — a status-only
  * `draft → sent` transition.
  *
  * This backs the Progress-timeline advance control, for estimates handed
  * over in person, printed, or delivered through some other channel. The
- * "Estimate Ready" email belongs exclusively to `POST /:id/send`:
+ * "Estimate Ready" email belongs exclusively to the customer-scoped send
+ * (`POST /api/customers/:id/send-estimates`):
  * advancing the lifecycle stage must never put mail in a customer's
  * inbox, otherwise a consultant tidying up the pipeline silently emails
  * people.
  *
- * Differences from `/send`, all deliberate: no customer email address is
- * required (nothing is delivered), and neither `public_token` nor
- * `terms_snapshot` is written — there is no customer-facing link to keep
- * alive and no terms to freeze until a document actually goes out. A
- * later real `/send` mints both lazily, so nothing is lost. The lapsed-
- * expiry guard mirrors `/send` because `applyDefensiveExpiry` flips a
- * `sent` order whose validity date has passed straight to `expired` on
- * the next read, which would make this action look broken.
+ * Differences from the emailed send, all deliberate: no customer email
+ * address is required (nothing is delivered), and neither `public_token`
+ * nor `terms_snapshot` is written — there is no customer-facing link to
+ * keep alive and no terms to freeze until a document actually goes out.
+ * A later real send mints both lazily, so nothing is lost. The lapsed-
+ * expiry guard mirrors the emailed send because `applyDefensiveExpiry`
+ * flips a `sent` order whose validity date has passed straight to
+ * `expired` on the next read, which would make this action look broken.
  */
 app.post('/:id/mark-sent', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -1788,7 +1652,7 @@ app.post('/:id/mark-sent', async (c) => {
   }
 
   // Handed over in person is still handed over: the prices freeze here
-  // exactly as they do on a real `/send`.
+  // exactly as they do on a real emailed send.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
 
@@ -2671,8 +2535,9 @@ app.post('/:id/revert', async (c) => {
   // Prices follow the same rule this route's stamps do (migration 39):
   // `draft` is the only stage where an item is live-priced, so a revert
   // all the way down releases the locks, and any other target freezes
-  // whatever is not frozen yet — a manual jump can skip `/send`
-  // entirely, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — a manual jump can skip the emailed
+  // send entirely, and no stage from `sent` up may be reached
+  // live-priced.
   if (toIdx < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {
@@ -2777,8 +2642,9 @@ app.post('/:id/status', async (c) => {
   // Prices follow the stage the same way the stamps above do (migration
   // 39): `draft` is the only stage where an item is live-priced, so
   // landing there releases the locks, and any other target freezes
-  // whatever is not frozen yet — this route can jump straight past
-  // `/send`, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — this route can jump straight past the
+  // emailed send, and no stage from `sent` up may be reached
+  // live-priced.
   if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {

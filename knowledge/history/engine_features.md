@@ -1,5 +1,63 @@
 # Engine Features / Feature History
 
+## 2026-10-24 — Send several estimates in one email (customer-scoped send)
+A customer is normally quoted several options, each its own estimate row, but the old send
+flipped ONE row to `sent` and emailed it — the other options stayed `draft`, invisible on the
+customer link, so the email promised "estimates to choose from" and the page showed one card.
+Sending is now ONE action over a chosen set of a customer's estimates, producing ONE email
+that links the customer link (`/c/:token`). Spec
+`knowledge/specs/2026-10-24-multi-estimate-send-design.md`, plan
+`knowledge/plans/2026-10-24-multi-estimate-send.md`. **No migration.** Deploy the API before
+the web (the new dialog calls routes the old API lacks); both are deployed by hand/`main` push
+as usual, neither happened as part of this work.
+- **New routes (`routes/customers.ts`):** `GET /api/customers/:id/sendable-estimates` — the
+  picker's list: that customer's `draft`/`sent` estimates, expiry today or later, at least one
+  line item, newest-created first. `POST /api/customers/:id/send-estimates` — validates the
+  selection (any bad id → 400, nothing sent), mints the customer token and each order's token,
+  sends ONE email, then writes per row. Logic lives in `lib/estimateSend.ts` (pure
+  `planSelection`/`sendLogLine`, plus `runEstimateSend`, `persistSend`, `readSendCandidates`,
+  `readSendBranding`); the route only parses and responds.
+- **Removed:** `POST /api/orders/:id/send` and the web's `useSendOrder` hook. `logOrderEvent`
+  moved from `routes/orders.ts` to `lib/orderLog.ts` so both routes share it. Estimate emails
+  **no longer attach a PDF** — `buildEstimateEmailHtml` (whose fine print promised the
+  attachment) is replaced by `buildEstimatesEmailHtml` + `estimatesEmailSubject` in
+  `lib/email.ts`: one template for N=1 and N>1, no money in the body (figures live on the
+  page), a plain list of what was sent, and a subject that is order number + title for one
+  estimate and `Your estimates from <Company>` for several. The PDF itself is still
+  downloadable from the staff order page (`GET /api/orders/:id/pdf`).
+- **The count in the email is what the customer link will SHOW after the send**
+  (`countActiveEstimates` + newly sent), not the number ticked — an already-`sent` option the
+  consultant unticked stays on the page, so a count of ticks would under-report it.
+- **Dialog (`pages/estimates/SendEstimatesDialog.tsx`, logic in `lib/estimateSelection.ts`,
+  hooks in `hooks/useSendEstimates.ts`):** every valid estimate ticked on open, untick to
+  exclude, the optional note box, a copy-the-customer-link field (carried over from the old
+  send sheet for consultants who pass the link over WhatsApp/SMS), and the count in the send
+  button ("Send 2 estimates"). Refuses an empty selection and a customer with no email.
+- **Two entry points:** a **Send estimates** action in the customer group on the Estimates
+  page (`EstimateGroup`), and the **Send** button on an estimate's own page, which **saves
+  first** (a failed save aborts and the dialog does not open) and then opens the same dialog.
+  Send stays hidden on an `expired` order.
+- **Status is written BEFORE prices are frozen** (the reverse of the old `/send`).
+  `holdsPriceLock('draft')` is false, so a row left `draft` with frozen items would be silently
+  re-priced by the next `PUT /api/orders/:id`, unfreezing figures the customer already holds by
+  email. A row left `sent` with unfrozen items is the safe half-write: `sent` holds the lock,
+  and a retry completes the freeze. Writes per selected `draft` row: `status='sent'`,
+  `sent_at`, `terms_snapshot`, then `freezeOrderPrices`, then the activity-log lines.
+- **Partial failure is a 200, not a rollback:** `{ sent, announced, failed }`. The customer
+  already holds the email, so the database is pushed toward matching it, not away. Per-row
+  writes run sequentially so a failure leaves a known prefix. A failed EMAIL is a 502 with no
+  write at all (email-then-persist, AI_GUIDELINES §2).
+- **Already-`sent` rows are re-announced only:** no write, no re-freeze, original `sent_at`
+  kept. There is **no un-share**: a sent, unexpired estimate stays on the customer link until
+  its expiry; unticking it only stops it being named again in the email, and the dialog
+  labels such rows so the tick cannot be read as doing more.
+- Stale `/send` comments in `priceLock.ts` (api + web), `priceLockStore.ts`, `pdf.ts` and
+  `customerLink.ts` were repointed to the new route (comments only).
+Verified: api 700 tests, web 532, `tsc` clean both, oxlint 0 errors (one pre-existing warning in
+`public/embed/lead-form.js`). **The dialog has NOT been exercised in a browser** (the dev server
+stops at the Supabase login wall): the picker, the save-first path and the partial-failure copy
+are covered by unit/route tests only, not seen end to end against a live database.
+
 ## 2026-10-22 — Delete an Inbox conversation (app only, Titan untouched)
 A conversation's triage card has **Delete conversation** (asks first). `DELETE /api/inbox/:id`
 removes the `email_threads` row; its messages and its "New email" notifications cascade

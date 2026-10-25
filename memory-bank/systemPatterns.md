@@ -14,7 +14,7 @@
 | RLS on every table | Defense-in-depth; even if Worker is bypassed somehow, RLS blocks unauthorized access |
 | Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
 | Snapshot pricing on line items | Material/cassette/control/installation prices stored on line item at creation time to prevent retroactive price changes |
-| Price lock from send onward | Sending an estimate quotes a price, so each item freezes its calculated price (`locked_base_price`) plus a fingerprint of the inputs behind it (migration 39) at `/send`, not at confirmation. Saving re-uses the frozen figure while the fingerprint matches; only an item whose OWN pricing inputs were edited is re-priced and re-locked. `draft` is the only live-priced status, and returning an order to draft is the only thing that releases a lock |
+| Price lock from send onward | Sending an estimate quotes a price, so each item freezes its calculated price (`locked_base_price`) plus a fingerprint of the inputs behind it (migration 39) at the send (`POST /api/customers/:id/send-estimates`), not at confirmation. Saving re-uses the frozen figure while the fingerprint matches; only an item whose OWN pricing inputs were edited is re-priced and re-locked. `draft` is the only live-priced status, and returning an order to draft is the only thing that releases a lock |
 | Per-option price basis | How a hardware option is charged (per m / m2 / unit / panel) lives on the catalog ROW, not in the formula; one function interprets it |
 | Catalog scoping join tables | Which hardware slots a blind type uses is DATA (`<catalog>_blind_types`), not a code constant — the shop switches a slot off per type from Settings without a deploy |
 | UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
@@ -310,13 +310,28 @@ section as the reference implementation for future collapsible UI.
 - Staff order URLs resolve by ORDER NUMBER; the customer slug is cosmetic and redirected to
   canonical (`pages/orders/orderRoute.tsx`). Pages read their id via `useOrderRouteId`, never
   `useParams` directly. Build links with `lib/orderPath.ts`; id-only callers use `/orders/:id`.
+- **Estimate sends are per customer over a selected set; the order routes no longer email
+  estimates.** One action: `POST /api/customers/:id/send-estimates`, orchestrated in
+  `lib/estimateSend.ts`, emails ONE customer-link message covering the ticked estimates, with
+  no PDF attached and no money in the body. The picker's list is
+  `GET /api/customers/:id/sendable-estimates` (`draft`/`sent`, unexpired, has items). There is
+  no per-order send route. The count in the email is what the link will SHOW after the send
+  (`countActiveEstimates` + newly sent), not the number ticked. Email first, persist after: a
+  failed email is a 502 with no write; a mid-way write failure is a 200
+  `{ sent, announced, failed }` because the customer already holds the email. An already-`sent`
+  row is re-announced only (no write, original `sent_at`); there is no un-share.
+- **A send writes status before freezing prices, so a half-written row errs toward locked.**
+  `holdsPriceLock('draft')` is false: a row left `draft` with frozen items would be silently
+  re-priced by the next `PUT /api/orders/:id`, unfreezing figures the customer already holds.
+  A row left `sent` with unfrozen items is the safe half-write (`sent` holds the lock, a retry
+  completes the freeze). Per-row writes are sequential so a failure leaves a known prefix.
 - The customer link (`/c/:token`, `routes/publicCustomer.ts`) only LISTS; it hands out each
   visible order's own token, and the existing `/public/estimate/:token` routes stay the only
   place a customer acts on an order. Visibility rules live in `lib/customerPortal.ts`.
 
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
-2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent
+2. **Send flow:** (estimate page: Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked) → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices
 3. **Customer confirm:** Email link → Public view → Confirm → status=awaiting_payment → Notification email
 4. **Reverse confirm (user only):** Order detail → Reverse Confirmation → status back to sent
 5. **Payment:** Order detail → Record Payment → ledger row → status=in_progress → balance updates → PDF now an Invoice

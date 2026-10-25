@@ -8,6 +8,8 @@
  *   GET    /            list (excludes soft-deleted), optional `?q=` search
  *   POST   /            create (Zod-validated)
  *   GET    /:id         single customer (404 if missing or soft-deleted)
+ *   GET    /:id/sendable-estimates  estimates eligible for the multi-estimate send
+ *   POST   /:id/send-estimates      emails one link covering several estimates
  *   PUT    /:id         partial update (Zod-validated)
  *   DELETE /:id         soft delete — sets `deleted_at`, keeps history
  *
@@ -24,6 +26,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ensureCustomerToken } from '../lib/customerLink';
+import { runEstimateSend } from '../lib/estimateSend';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -81,6 +84,38 @@ const createSchema = customerSchema.refine(
   (v) => Boolean(v.first_name?.trim() || v.last_name?.trim() || v.email?.trim() || v.phone?.trim()),
   { message: 'Enter a name, email or phone number.' }
 );
+
+/**
+ * Hard cap on the ids one send may carry — a request-size guard, not a
+ * product rule. The picker dialog imposes NO selection limit of its own, so
+ * a customer holding more than this many live estimates could tick past the
+ * cap and be refused; that is accepted because no real customer approaches
+ * it, and the cap is what keeps one request from fanning out into an
+ * unbounded number of row writes and token mints.
+ */
+const MAX_SEND_ESTIMATES = 20;
+
+/**
+ * Body of `POST /:id/send-estimates`.
+ *
+ * `.strict()` is load-bearing (AI_GUIDELINES §1): this route freezes
+ * prices, so a client-supplied money field such as `total` must be
+ * REJECTED with a 400, never silently stripped. Nothing but the ids and
+ * an optional note is accepted — the estimates' figures are the server's.
+ *
+ * The duplicate check is a whole-object refinement rather than an array
+ * one so its issue path stays empty and `firstZodIssue` returns the
+ * sentence verbatim, as it does for `createSchema`.
+ */
+const sendEstimatesSchema = z
+  .object({
+    order_ids: z.array(z.string().uuid()).min(1).max(MAX_SEND_ESTIMATES),
+    message: z.string().max(1000).optional(),
+  })
+  .strict()
+  .refine((v) => new Set(v.order_ids).size === v.order_ids.length, {
+    message: 'Select each estimate only once.',
+  });
 
 /**
  * Strips characters that have structural meaning inside a PostgREST
@@ -161,6 +196,82 @@ app.post('/:id/public-link', async (c) => {
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Could not create the link' }, 500);
   }
+});
+
+/**
+ * Lists the customer's estimates that can be emailed right now — backs the
+ * picker dialog of "Send estimates". An estimate is sendable when it
+ * belongs to this customer, is still `draft` or `sent`, has not expired
+ * (`expiry_date >= today`, compared as `YYYY-MM-DD` strings) and holds at
+ * least one line item. The item filter runs in code over a `line_items(id)`
+ * embed because PostgREST cannot filter on an embedded count; the embed is
+ * an eligibility input only and is NOT part of the payload, and it is read
+ * defensively (`row.line_items ?? []`) exactly as `estimateSend.ts` reads
+ * the same embed, since PostgREST omits the key rather than returning `[]`
+ * when the relationship resolves to nothing. Newest-created
+ * first. 404 for an unknown or soft-deleted customer — checked before the
+ * list so a bad id never reads as "no estimates". `total` is coerced to a
+ * number because PostgREST returns numerics as strings.
+ */
+app.get('/:id/sendable-estimates', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const customerId = c.req.param('id');
+
+  const { data: customer, error: customerError } = await sb
+    .from('customers')
+    .select('id')
+    .eq('id', customerId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (customerError) return c.json({ error: customerError.message }, 500);
+  if (!customer) return c.json({ error: 'Customer not found' }, 404);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await sb
+    .from('orders')
+    .select('id, order_number, title, status, order_date, expiry_date, total, line_items(id)')
+    .eq('customer_id', customerId)
+    .in('status', ['draft', 'sent'])
+    .gte('expiry_date', today)
+    .order('created_at', { ascending: false });
+  if (error) return c.json({ error: error.message }, 500);
+
+  const estimates = (data ?? [])
+    .filter((row) => (row.line_items ?? []).length > 0)
+    .map((row) => ({
+      id: row.id,
+      order_number: row.order_number,
+      title: row.title,
+      status: row.status,
+      order_date: row.order_date,
+      expiry_date: row.expiry_date,
+      total: Number(row.total),
+    }));
+  return c.json({ data: estimates });
+});
+
+/**
+ * Emails the customer ONE link covering the selected estimates and marks
+ * every selected draft as sent — the replacement for the per-order
+ * `POST /api/orders/:id/send`.
+ *
+ * The handler itself only parses and responds: the whole sequence (read,
+ * validate the selection, mint tokens, send, then write) lives in
+ * `lib/estimateSend.ts`, which owns the ordering rules that make the send
+ * safe (AI_GUIDELINES §2 and §6). Statuses are written ONLY after the
+ * email succeeds, so a provider failure is a 502 with no database write.
+ *
+ * A non-empty `failed` still answers 200: the customer already holds the
+ * email, so the response tells the consultant which rows did not get
+ * marked rather than pretending nothing happened.
+ */
+app.post('/:id/send-estimates', async (c) => {
+  const parsed = sendEstimatesSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const sb = createSupabaseAdmin(c.env);
+  const result = await runEstimateSend(sb, c.env, c.req.param('id'), parsed.data);
+  if ('error' in result) return c.json({ error: result.error }, result.status);
+  return c.json(result);
 });
 
 /** Partially updates a customer. */

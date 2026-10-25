@@ -6,7 +6,7 @@
  *
  * While an order is draft/sent it behaves as an estimate editor:
  * customer, dates, line items with live pricing, discount, totals, and
- * a Send Estimate / Save / PDF action set. The editor stays
+ * a Send Estimates / Save / PDF action set. The editor stays
  * live at every later stage too — customer, dates, and line items can
  * always be changed and saved; the Worker recalculates totals on every
  * save regardless of status.
@@ -65,9 +65,11 @@
  * after which it is an Invoice.
  *
  * Email invariant: the Send action (section rail / header menu) is the ONLY control that
- * emails the customer their "Estimate Ready" mail. The Progress
- * timeline's advance arrows are bookkeeping only — advancing to "Sent"
- * calls the status-only `mark-sent` route, never `send`.
+ * emails the customer. On an estimate it saves, then opens the multi-estimate
+ * picker (`SendEstimatesDialog`) that emails one customer link; on a confirmed
+ * order it sends the invoice. It is hidden for an `expired` estimate. The
+ * Progress timeline's advance arrows are bookkeeping only — advancing to
+ * "Sent" calls the status-only `mark-sent` route and emails nobody.
  *
  * All client-side money is a live preview from lib/pricing +
  * lib/totals; the Worker recomputes authoritatively on save.
@@ -84,6 +86,7 @@ import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
 import CustomerEditModal from '../../components/CustomerEditModal';
 import CopyLinkField from '../../components/CopyLinkField';
+import SendEstimatesDialog from '../estimates/SendEstimatesDialog';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
 import OrderTitleCard from './OrderTitleCard';
 import { orderPath } from '../../lib/orderPath';
@@ -94,7 +97,6 @@ import {
   useOrder,
   useCreateOrder,
   useUpdateOrder,
-  useSendOrder,
   useSendInvoice,
   useResolveCancelRequest,
   useSetOrderStatus,
@@ -273,6 +275,15 @@ function fromIso(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
+
+/**
+ * Why Send is refused on an estimate whose expiry date has passed. Kept
+ * word-for-word from the per-order `POST /orders/:id/send` route this
+ * feature replaced: it named the one field that unblocks the send, and
+ * nothing about the multi-estimate picker makes that advice less true.
+ */
+const EXPIRED_ESTIMATE_SEND_MESSAGE =
+  'This estimate has expired — update the expiry date first.';
 
 /** Converts persisted line items into editable drafts. */
 function toDrafts(order: Order): ItemDraft[] {
@@ -507,7 +518,6 @@ export default function OrderDetail() {
 
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
-  const sendMut = useSendOrder();
   const sendInvoiceMut = useSendInvoice();
   const resolveCancelMut = useResolveCancelRequest();
   const resolveEditMut = useResolveEditRequest();
@@ -628,11 +638,16 @@ export default function OrderDetail() {
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
 
-  // Send estimate/invoice sheet — optional note included in the email.
+  // Send-invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
 
-  // The customer-facing URL shown (with a Copy button) inside the send
-  // sheet, so the consultant can pass the page along over WhatsApp/SMS
+  // The multi-estimate send picker (`SendEstimatesDialog`), opened by Send on
+  // an estimate once the page has saved. Rendered from this page's own state;
+  // it has no route of its own.
+  const [estimatePickerOpen, setEstimatePickerOpen] = useState(false);
+
+  // The customer-facing URL shown (with a Copy button) inside the invoice
+  // send sheet, so the consultant can pass the page along over WhatsApp/SMS
   // instead of emailing it. `null` while the capability token is still
   // being minted; the error string replaces the field if minting fails,
   // which must NOT block the email itself.
@@ -1244,19 +1259,60 @@ export default function OrderDetail() {
   }
 
   /**
-   * Opens the send sheet (message box) for the current mode, and — for
-   * an already-saved order — resolves the customer-facing link shown
-   * beside the Copy button.
+   * Whether this estimate's expiry date has already passed.
    *
-   * The sheet opens FIRST and the token is minted afterwards: the mint
-   * is a network round trip, and the message box must not wait on it.
-   * A failure only degrades the copy field (the same email the button
-   * sends still carries the link), so it is surfaced inline rather than
-   * as a toast. An unsaved draft has no id and therefore no token yet;
-   * it simply shows no link area.
+   * Read from the EDITOR's `expiryDate`, not the saved row, so a consultant
+   * who has just pushed the expiry out can send straight away — and so one
+   * who has not is stopped before anything is written. `toIso` is this
+   * page's single notion of a calendar day and the comparison is
+   * lexicographic over `YYYY-MM-DD`, as everywhere else in this codebase;
+   * no `Date` arithmetic, and no second "today" introduced here.
+   *
+   * It is load-bearing for Send because a lapsed estimate does not announce
+   * itself through `status`: the API's defensive expiry sweep only flips
+   * `sent` rows, so a lapsed DRAFT still reads `draft` and still passes
+   * {@link showSend}. The picker, meanwhile, lists only estimates whose
+   * `expiry_date` is today or later — so without this guard Send would save,
+   * open an all-ticked list that silently LACKS the order the consultant is
+   * looking at, and email the wrong set.
+   */
+  const estimateLapsed =
+    !isInvoice && expiryDate !== null && toIso(expiryDate) < toIso(new Date());
+
+  /**
+   * The Send button's handler. An estimate and an invoice go different ways:
+   *
+   * - **Estimate** — saves first, then opens the multi-estimate picker
+   *   (`SendEstimatesDialog`) for this order's customer. The picker reads the
+   *   customer's estimates from the database, so without the save an unsaved
+   *   edit would be emailed, and frozen, at its OLD figures; a failed save
+   *   (validation or network, already toasted by `save`) opens nothing.
+   *   A brand-new order is the one exception to "then opens": `save` moves it
+   *   onto its saved URL, which remounts this page and would discard the
+   *   dialog's state, so it only reports the save and asks for a second tap.
+   * - **Invoice** — opens the send sheet (message box) and, for an
+   *   already-saved order, resolves the customer-facing link shown beside the
+   *   Copy button. The sheet opens FIRST and the token is minted afterwards:
+   *   the mint is a network round trip, and the message box must not wait on
+   *   it. A failure only degrades the copy field (the same email the button
+   *   sends still carries the link), so it is surfaced inline rather than as
+   *   a toast.
+   *
+   * Both paths first block with a toast when the customer has no email, and
+   * the estimate path also blocks a lapsed expiry date ({@link estimateLapsed}).
    */
   async function openSend() {
     if (!customer?.email) return toast.error('This customer has no email address.');
+    if (!isInvoice) {
+      if (estimateLapsed) return toast.error(EXPIRED_ESTIMATE_SEND_MESSAGE);
+      const savedId = await save();
+      if (!savedId) return;
+      if (!id) {
+        return toast.success('Estimate saved. Press Send again to choose what to email.');
+      }
+      setEstimatePickerOpen(true);
+      return;
+    }
     setSendMessage('');
     setSendLink(null);
     setSendLinkError(null);
@@ -1270,27 +1326,9 @@ export default function OrderDetail() {
     }
   }
 
-  /** Submits the send sheet — estimate or invoice depending on mode. */
+  /** Submits the invoice send sheet. */
   async function submitSend() {
-    const message = sendMessage.trim() || undefined;
-    if (isInvoice) {
-      await handleSendInvoice(message);
-    } else {
-      await handleSendEstimate(message);
-    }
-  }
-
-  async function handleSendEstimate(message?: string) {
-    if (!customer?.email) return toast.error('This customer has no email address.');
-    const savedId = await save();
-    if (!savedId) return;
-    try {
-      await sendMut.mutateAsync({ id: savedId, message });
-      toast.success(`Estimate sent to ${customer.email}.`);
-      setSheet('none');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Send failed.');
-    }
+    await handleSendInvoice(sendMessage.trim() || undefined);
   }
 
   async function handleSendInvoice(message?: string) {
@@ -1338,7 +1376,7 @@ export default function OrderDetail() {
    *
    * This is a bookkeeping action and NEVER emails the customer: sending
    * the estimate is the exclusive job of the Send button in the top bar
-   * (see `handleSendEstimate`). A backward move is destructive enough to
+   * (see `openSend`). A backward move is destructive enough to
    * name its consequence in the prompt — an order dropping below Ready
    * loses its installation appointment.
    *
@@ -2128,30 +2166,50 @@ export default function OrderDetail() {
     </div>
   );
 
-  const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
+  const sendBusy = sendInvoiceMut.isPending;
   const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
 
   /**
+   * Send, labelled for what it actually opens.
+   *
+   * On an estimate that is "Send Estimates" at every status, matching the
+   * picker dialog's own title: the action is customer-scoped, so it offers
+   * this customer's whole live set regardless of where THIS order stands.
+   * It used to read "Resend Estimate" once the order was `sent`, which
+   * described the per-order `POST /orders/:id/send` that no longer exists
+   * and promised a single-order resend the picker does not perform.
+   */
+  const sendAction: OrderNavAction = {
+    key: 'send',
+    icon: ICONS.send,
+    label: sendBusy ? 'Sending…' : isInvoice ? 'Send Invoice' : 'Send Estimates',
+    onClick: () => void openSend(),
+    disabled: sendDisabled,
+    variant: 'primary',
+  };
+
+  /**
+   * Whether the Send action is offered. A confirmed order sends its invoice,
+   * so Send stays; an `expired` estimate loses it, because Send on an estimate
+   * now opens the multi-estimate picker, which only offers live estimates.
+   * Reviving the estimate through its expiry date brings the button back.
+   *
+   * Status is not the whole story: a DRAFT whose expiry date has passed is
+   * still `draft`, so it passes this test and keeps the button. That case is
+   * caught in `openSend` by {@link estimateLapsed}, which refuses with the
+   * reason rather than leaving a button that cannot explain itself.
+   */
+  const showSend = isInvoice || status !== 'expired';
+
+  /**
    * Document actions above the section list: Send (the one filled
-   * button), Download and Customer View. Customer View needs a saved row
-   * to mint its capability token against, so it is disabled until then.
-   * The same list feeds the rail (xl+) and the header menu (below xl).
+   * button, absent per {@link showSend}), Download and Customer View.
+   * Customer View needs a saved row to mint its capability token against,
+   * so it is disabled until then. The same list feeds the rail (xl+) and
+   * the header menu (below xl).
    */
   const topNavActions: OrderNavAction[] = [
-    {
-      key: 'send',
-      icon: ICONS.send,
-      label: sendBusy
-        ? 'Sending…'
-        : isInvoice
-          ? 'Send Invoice'
-          : status === 'sent'
-            ? 'Resend Estimate'
-            : 'Send Estimate',
-      onClick: () => void openSend(),
-      disabled: sendDisabled,
-      variant: 'primary',
-    },
+    ...(showSend ? [sendAction] : []),
     {
       key: 'download',
       icon: ICONS.download,
@@ -3036,7 +3094,7 @@ export default function OrderDetail() {
         </div>
       )}
 
-      {/* Send estimate/invoice bottom sheet (with optional message) */}
+      {/* Send invoice bottom sheet (with optional message). Estimates go through SendEstimatesDialog instead. */}
       {sheet === 'send' && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
           <div
@@ -3044,11 +3102,10 @@ export default function OrderDetail() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
-              Send {docLabel.toLowerCase()}
+              Send invoice
             </h2>
             <p className="mb-3 text-[13px] text-text-muted">
-              We&apos;ll email {customer?.email ?? 'the customer'} the {docLabel.toLowerCase()} PDF
-              {isInvoice ? ' and a link to view the order online.' : ' and a link to review and confirm online.'}
+              We&apos;ll email {customer?.email ?? 'the customer'} the invoice PDF and a link to view the order online.
             </p>
             <div className="flex flex-col gap-3">
               <label className="block">
@@ -3072,7 +3129,7 @@ export default function OrderDetail() {
               */}
               {id && (
                 <CopyLinkField
-                  label={`${docLabel} link for the customer`}
+                  label="Invoice link for the customer"
                   value={sendLink}
                   error={sendLinkError}
                   hint="Opens the same page the email links to — anyone with this link can view it."
@@ -3087,17 +3144,28 @@ export default function OrderDetail() {
                 </button>
                 <button
                   onClick={submitSend}
-                  disabled={sendMut.isPending || sendInvoiceMut.isPending}
+                  disabled={sendInvoiceMut.isPending}
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
-                  {sendMut.isPending || sendInvoiceMut.isPending
-                    ? 'Sending…'
-                    : `Send ${docLabel}`}
+                  {sendInvoiceMut.isPending ? 'Sending…' : 'Send Invoice'}
                 </button>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/*
+        Multi-estimate send picker, opened by Send on an estimate after the page
+        has saved. Customer-scoped: it lists this customer's sendable estimates,
+        and its own hooks refresh this order's detail and log caches after a send.
+      */}
+      {estimatePickerOpen && customer && (
+        <SendEstimatesDialog
+          customerId={customer.id}
+          customerEmail={customer.email}
+          onClose={() => setEstimatePickerOpen(false)}
+        />
       )}
 
       {/* Send receipt bottom sheet (per payment, with optional message) */}
