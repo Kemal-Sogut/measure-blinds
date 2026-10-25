@@ -6,6 +6,11 @@
  * consultant may email in one link, how a valid selection splits into
  * "flip these drafts to sent" versus "already sent, only name them", and
  * the wording of every rejection (shown verbatim in a 400 response).
+ *
+ * Every rejection that has a row in hand must NAME that row's
+ * `order_number`, so the consultant can see which ticked estimate to
+ * untick; the tests below therefore give the offending row a distinct
+ * order number wherever more than one row is in play.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -55,34 +60,44 @@ describe('planSelection', () => {
     });
   });
 
-  it('rejects a row of another customer', () => {
+  it('rejects a row of another customer, naming its order number', () => {
     expect(planSelection([row({ customer_id: 'c2' })], ['a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates belongs to another customer.',
+      error: 'Estimate M2010-1 belongs to another customer.',
     });
   });
 
-  it('rejects a confirmed row', () => {
+  it('rejects a confirmed row, naming its order number', () => {
     expect(planSelection([row({ status: 'awaiting_payment' })], ['a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates cannot be sent in its current status.',
+      error: 'Estimate M2010-1 cannot be sent in its current status.',
     });
   });
 
-  it('rejects an expired status row', () => {
+  it('rejects an expired status row, naming its order number', () => {
     expect(planSelection([row({ status: 'expired' })], ['a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates cannot be sent in its current status.',
+      error: 'Estimate M2010-1 cannot be sent in its current status.',
     });
   });
 
-  it('rejects a row whose expiry is before today', () => {
+  it('rejects a row whose expiry is before today, naming its order number', () => {
     const rows = [row({ status: 'sent', expiry_date: '2026-10-23' })];
     expect(planSelection(rows, ['a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates has expired and cannot be sent.',
+      error: 'Estimate M2010-1 has expired and cannot be sent.',
     });
   });
 
-  it('rejects a row with no line items', () => {
+  it('rejects a row with no line items, naming its order number', () => {
     expect(planSelection([row({ item_count: 0 })], ['a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates has no line items and cannot be sent.',
+      error: 'Estimate M2010-1 has no line items and cannot be sent.',
+    });
+  });
+
+  it('names the OFFENDING row, not the first row of the selection', () => {
+    const rows = [
+      row({ id: 'a1', order_number: 'M2010-1' }),
+      row({ id: 'a2', order_number: 'M2010-2', item_count: 0 }),
+    ];
+    expect(planSelection(rows, ['a1', 'a2'], 'c1', TODAY)).toEqual({
+      error: 'Estimate M2010-2 has no line items and cannot be sent.',
     });
   });
 
@@ -98,9 +113,12 @@ describe('planSelection', () => {
   });
 
   it('returns the first failure in request order', () => {
-    const rows = [row({ id: 'a1', item_count: 0 }), row({ id: 'a2', customer_id: 'c2' })];
+    const rows = [
+      row({ id: 'a1', order_number: 'M2010-1', item_count: 0 }),
+      row({ id: 'a2', order_number: 'M2010-2', customer_id: 'c2' }),
+    ];
     expect(planSelection(rows, ['a2', 'a1'], 'c1', TODAY)).toEqual({
-      error: 'One of the selected estimates belongs to another customer.',
+      error: 'Estimate M2010-2 belongs to another customer.',
     });
   });
 });

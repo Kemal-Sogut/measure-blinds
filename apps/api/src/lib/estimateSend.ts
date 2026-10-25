@@ -79,7 +79,13 @@ export interface SelectionPlan {
  * the FIRST failure is returned, so the 400 the route sends names one
  * problem at a time. A repeated id is counted once.
  *
- * The error strings are user-facing copy for that 400 response.
+ * The error strings are user-facing copy for that 400 response, and every
+ * rejection that has a row in hand NAMES THAT ROW BY `order_number`. The
+ * picker dialog ticks estimates by default, so a refusal that said only
+ * "one of the selected estimates" left the consultant with no way to tell
+ * which row to untick. The order number is the only identifier used — never
+ * a uuid, a status value or any other internal detail. The one exception is
+ * an id with no row at all, which by definition has no order number to name.
  *
  * @param rows       candidate rows fetched by the route (may include extras;
  *                   only rows named in `orderIds` are considered)
@@ -107,16 +113,16 @@ export function planSelection(
     const r = byId.get(id);
     if (!r) return { error: 'One of the selected estimates no longer exists.' };
     if (r.customer_id !== customerId) {
-      return { error: 'One of the selected estimates belongs to another customer.' };
+      return { error: `Estimate ${r.order_number} belongs to another customer.` };
     }
     if (r.status !== 'draft' && r.status !== 'sent') {
-      return { error: 'One of the selected estimates cannot be sent in its current status.' };
+      return { error: `Estimate ${r.order_number} cannot be sent in its current status.` };
     }
     if (r.expiry_date < today) {
-      return { error: 'One of the selected estimates has expired and cannot be sent.' };
+      return { error: `Estimate ${r.order_number} has expired and cannot be sent.` };
     }
     if (r.item_count === 0) {
-      return { error: 'One of the selected estimates has no line items and cannot be sent.' };
+      return { error: `Estimate ${r.order_number} has no line items and cannot be sent.` };
     }
 
     (r.status === 'draft' ? plan.toSend : plan.toAnnounce).push(r);
@@ -351,10 +357,13 @@ async function persistSend(
  *      something by email persists only after the email succeeds;
  *   5. only then are the statuses written, by {@link persistSend}.
  *
- * `liveCount` is how many live estimates the link will show AFTER this
+ * `liveCount` is how many LIVE ESTIMATES the customer holds AFTER this
  * send: the stored count plus `toSend.length`, because those rows are
  * still `draft` at that moment and so are not in the count yet. The
- * already-`sent` rows of `toAnnounce` are counted by the query itself.
+ * already-`sent` rows of `toAnnounce` are counted by the query itself. It
+ * counts choices still open, NOT cards on the customer page — that page
+ * also renders confirmed orders, which are no longer estimates to pick
+ * between.
  *
  * @param customerId the customer the estimates must all belong to
  * @returns a report, or an error with the status the route should send

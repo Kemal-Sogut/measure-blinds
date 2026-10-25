@@ -85,7 +85,14 @@ const createSchema = customerSchema.refine(
   { message: 'Enter a name, email or phone number.' }
 );
 
-/** Hard cap on one send, matching the picker dialog's selection limit. */
+/**
+ * Hard cap on the ids one send may carry — a request-size guard, not a
+ * product rule. The picker dialog imposes NO selection limit of its own, so
+ * a customer holding more than this many live estimates could tick past the
+ * cap and be refused; that is accepted because no real customer approaches
+ * it, and the cap is what keeps one request from fanning out into an
+ * unbounded number of row writes and token mints.
+ */
 const MAX_SEND_ESTIMATES = 20;
 
 /**
@@ -198,7 +205,10 @@ app.post('/:id/public-link', async (c) => {
  * (`expiry_date >= today`, compared as `YYYY-MM-DD` strings) and holds at
  * least one line item. The item filter runs in code over a `line_items(id)`
  * embed because PostgREST cannot filter on an embedded count; the embed is
- * an eligibility input only and is NOT part of the payload. Newest-created
+ * an eligibility input only and is NOT part of the payload, and it is read
+ * defensively (`row.line_items ?? []`) exactly as `estimateSend.ts` reads
+ * the same embed, since PostgREST omits the key rather than returning `[]`
+ * when the relationship resolves to nothing. Newest-created
  * first. 404 for an unknown or soft-deleted customer — checked before the
  * list so a bad id never reads as "no estimates". `total` is coerced to a
  * number because PostgREST returns numerics as strings.
@@ -227,7 +237,7 @@ app.get('/:id/sendable-estimates', async (c) => {
   if (error) return c.json({ error: error.message }, 500);
 
   const estimates = (data ?? [])
-    .filter((row) => row.line_items.length > 0)
+    .filter((row) => (row.line_items ?? []).length > 0)
     .map((row) => ({
       id: row.id,
       order_number: row.order_number,

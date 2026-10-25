@@ -331,7 +331,24 @@ describe('buildEstimatesEmailHtml', () => {
     const html = buildEstimatesEmailHtml(base);
     expect(html.split('https://app.example.com/c/abc-123')).toHaveLength(3);
     expect(html).toContain('href="https://app.example.com/c/abc-123"');
-    expect(html).toContain('Review &amp; confirm');
+  });
+
+  it('gives the CTA a singular label for one estimate', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html).toContain('Review &amp; confirm your estimate<');
+    expect(html).not.toContain('Review &amp; confirm your estimates');
+  });
+
+  it('gives the CTA a plural label for several, agreeing with the heading', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: 'Option A' },
+        { order_number: 'M2010-127', title: 'Option B' },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('Review &amp; confirm your estimates');
   });
 
   it('says the order is not placed until the customer confirms online', () => {

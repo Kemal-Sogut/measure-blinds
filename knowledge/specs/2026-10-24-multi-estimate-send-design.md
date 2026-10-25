@@ -155,12 +155,22 @@ call: resolves reviewer Q2.)*
 - Heading: "Your estimate is ready" / "Your estimates are ready".
 - Intro naming the company, and for N > 1 a line saying there are N options to look
   through and that confirming one places that order.
-- **N is what the customer link will actually show after this send**, not the number
-  ticked: `countActiveEstimates(sb, customer_id, today)` read *after* the status
-  writes. Unticking an already-`sent` option leaves it on the page, so a count of
-  ticks would under-report what the customer is about to see and read as a bug.
+- **N is how many LIVE ESTIMATES the customer will hold after this send** — the
+  unconfirmed `sent` estimates the link offers as choices — not the number ticked:
+  `countActiveEstimates(sb, customer_id, today)` read *after* the status writes.
+  Unticking an already-`sent` option leaves it on the page, so a count of ticks would
+  under-report what the customer is about to choose between and read as a bug.
   `countActiveEstimates` therefore stays (it loses its `/send` caller and gains this
   one). *(Builder's call: resolves reviewer Q3.)*
+
+  N is deliberately NOT a count of every card the link renders. `isPortalVisible`
+  (`apps/api/src/lib/customerPortal.ts`) also shows each CONFIRMED order, so a
+  customer with past orders sees more cards than N names. That is correct: the
+  sentence N appears in ("You have N estimates to choose from") is about what is
+  still open to choose, and a confirmed order is no longer an estimate to choose
+  from. *(Correction 2026-10-24: this bullet previously said N was "what the
+  customer link will actually show", which the implementation never matched and
+  should not.)*
 - The consultant's note, when given (`messageBlockHtml`).
 - One button to `/c/:token` — "Review & confirm your estimate(s)".
 - A plain list of what was sent: title (when set) and order number per estimate, **no

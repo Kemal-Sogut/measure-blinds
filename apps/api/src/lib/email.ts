@@ -325,9 +325,14 @@ export interface EstimatesEmailInputs {
   /** Estimates named in this email, in send order. */
   estimates: EstimateEmailLine[];
   /**
-   * How many live estimates the customer link will show after this send.
+   * How many LIVE ESTIMATES the customer will hold after this send — the
+   * unconfirmed options the link offers them to choose between.
+   *
    * Computed by the route — it is NOT `estimates.length`, because the
-   * customer may hold live estimates that this email does not name.
+   * customer may hold live estimates that this email does not name. It is
+   * also NOT the number of cards the link renders: the customer page also
+   * shows confirmed orders, which are no longer estimates to choose from,
+   * so a customer with past orders sees more cards than this names.
    */
   liveCount: number;
 }
@@ -335,9 +340,12 @@ export interface EstimatesEmailInputs {
 /**
  * Builds the branded customer estimates email ("03 — Estimate proposal"
  * in the design doc). One count-aware template serves both a single
- * estimate and several: the heading and intro switch between singular and
- * plural on `estimates.length`, and a "choose" line appears when
- * `liveCount` is above one. The body is a short greeting, the consultant's
+ * estimate and several: the heading, the intro and the CTA button label all
+ * switch between singular and plural on `estimates.length`, and a "choose"
+ * line appears when `liveCount` is above one. A singular button under a
+ * plural heading read as if only one of the listed estimates were
+ * reviewable, so the three agree by construction rather than by habit. The
+ * body is a short greeting, the consultant's
  * optional note, the list of estimates named in this email (order number
  * plus title when set), the CTA button, and fine print. All dynamic
  * strings are HTML-escaped.
@@ -376,7 +384,7 @@ export function buildEstimatesEmailHtml(i: EstimatesEmailInputs): string {
     ${checklistHtml('In this email', items)}
     ${i.liveCount > 1 ? introHtml(`You have ${i.liveCount} estimates to choose from &mdash; open each one and confirm the one that suits you.`) : ''}
     ${messageBlockHtml(i.message)}
-    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'Review &amp; confirm your estimate')}</div>
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, several ? 'Review &amp; confirm your estimates' : 'Review &amp; confirm your estimate')}</div>
     ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);

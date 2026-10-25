@@ -30,6 +30,9 @@
  *     how many estimates were ticked
  *   - email-then-persist (AI_GUIDELINES §2): a failed send is a 502 with
  *     not one database write
+ *   - a selection the server refuses 400s with a sentence that NAMES the
+ *     offending estimate's order number, so the consultant can see which
+ *     ticked row to untick
  *   - the body is `.strict()`, so a client-supplied money field 400s
  *     (AI_GUIDELINES §1) — as do duplicate, missing, excess and malformed
  *     ids and an over-long message
@@ -90,7 +93,11 @@ const db: FakeDb = {
  * Filter arguments are not APPLIED — one scripted response serves every
  * query against a table — but they ARE recorded in `db.filters`, which is
  * how a test proves which rows a route asked for (that a soft-deleted
- * customer was excluded, that an untouched estimate was never frozen). A
+ * customer was excluded, that an untouched estimate was never frozen).
+ * `is` is recorded alongside the value filters precisely so the
+ * `deleted_at is null` guard is assertable: without it a 404 test could
+ * only prove that an empty row set 404s, never that the route asked the
+ * database to exclude soft-deleted customers in the first place. A
  * `select(..., { head: true })` resolves `count` from the
  * `<table>.count` key instead of row data, as `countActiveEstimates` needs.
  */
@@ -102,7 +109,7 @@ function makeBuilder(table: string) {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
       if (name === 'insert') (db.insertPayloads[state.table] ??= []).push(args[0]);
       if (name === 'update') (db.updatePayloads[state.table] ??= []).push(args[0]);
-      if (['eq', 'in', 'gte', 'order'].includes(name)) db.filters.push([state.table, name, args]);
+      if (['eq', 'in', 'is', 'gte', 'order'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
   for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'or', 'order', 'limit']) {
@@ -262,6 +269,13 @@ describe('GET /api/customers/:id/sendable-estimates', () => {
   const get = () => customersApp.request('/c1/sendable-estimates', { method: 'GET' }, ENV);
   type Body = { data: Array<Record<string, unknown>> };
 
+  it('looks the customer up by id, excluding soft-deleted rows', async () => {
+    db.responses['orders.select'] = [row()];
+    expect((await get()).status).toBe(200);
+    expect(db.filters).toContainEqual(['customers', 'eq', ['id', 'c1']]);
+    expect(db.filters).toContainEqual(['customers', 'is', ['deleted_at', null]]);
+  });
+
   it('asks for this customer, draft+sent, expiry from today, newest-created first', async () => {
     db.responses['orders.select'] = [row()];
     const res = await get();
@@ -306,6 +320,10 @@ describe('GET /api/customers/:id/sendable-estimates', () => {
     const res = await get();
     expect(res.status).toBe(404);
     expect(((await res.json()) as { error: string }).error).toBe('Customer not found');
+    // The soft-delete guard is part of the lookup, not an afterthought: a
+    // customer row that exists but is soft-deleted must 404 too, which is
+    // only true because the query carries `deleted_at is null`.
+    expect(db.filters).toContainEqual(['customers', 'is', ['deleted_at', null]]);
     expect(db.filters.some(([table]) => table === 'orders')).toBe(false);
   });
 });
@@ -561,26 +579,30 @@ describe('POST /api/customers/:id/send-estimates', () => {
     expect(res.status).toBe(404);
     expect(((await res.json()) as { error: string }).error).toBe('Customer not found');
     expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(db.filters).toContainEqual(['customers', 'is', ['deleted_at', null]]);
     expect(db.filters.some(([table]) => table === 'orders')).toBe(false);
   });
 
-  it('400s when a selected estimate was confirmed meanwhile', async () => {
-    db.responses['orders.select'] = [orderRow(), orderRow({ id: O2, status: 'confirmed' })];
+  it('400s naming the estimate that was confirmed meanwhile, not the sendable one', async () => {
+    db.responses['orders.select'] = [
+      orderRow(),
+      orderRow({ id: O2, order_number: 'M2010-127', status: 'confirmed' }),
+    ];
     const res = await post({ order_ids: [O1, O2] });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe(
-      'One of the selected estimates cannot be sent in its current status.'
+      'Estimate M2010-127 cannot be sent in its current status.'
     );
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(db.updatePayloads['orders']).toBeUndefined();
   });
 
-  it('400s when a selected estimate expired meanwhile', async () => {
+  it('400s naming the estimate that expired meanwhile', async () => {
     db.responses['orders.select'] = [orderRow({ expiry_date: '2020-01-01' })];
     const res = await post({ order_ids: [O1] });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe(
-      'One of the selected estimates has expired and cannot be sent.'
+      'Estimate M2010-126 has expired and cannot be sent.'
     );
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(db.updatePayloads['orders']).toBeUndefined();
