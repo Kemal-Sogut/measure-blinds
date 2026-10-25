@@ -111,6 +111,7 @@ import {
   useOrderEditRequests,
   useResolveEditRequest,
   useOrderPublicToken,
+  useDismissPriceNotice,
   downloadOrderPdf,
   downloadWarrantyPdf,
   type OrderInput,
@@ -141,6 +142,7 @@ import {
   bulkEditSelection,
   canOverridePrice,
   flatDraftPrice,
+  isAlreadyQuoted,
   newBlindDraft,
   parseAddons,
   parseDraftAttributes,
@@ -155,7 +157,12 @@ import {
   type ItemDraft,
   type Catalogs,
   type PriceAdjustmentDraft,
+  type QuotedPriceChange,
+  quotedPriceChange,
 } from './lineItemDrafts';
+import { PriceUpdateNotice } from './PriceUpdateNotice';
+import { holdsPriceLock } from '../../lib/orderStatus';
+import type { CatalogSlot } from '../../lib/blindTypes/base';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
@@ -287,6 +294,10 @@ const EXPIRED_ESTIMATE_SEND_MESSAGE =
 
 /** Converts persisted line items into editable drafts. */
 function toDrafts(order: Order): ItemDraft[] {
+  // Read once from the order, not per item: every persisted row belongs
+  // to the same order, and this is the half of `isAlreadyQuoted` that
+  // cannot be derived from the row itself.
+  const pricesFrozen = holdsPriceLock(order.status);
   return (order.line_items ?? []).map((li) => {
     if (li.item_type === 'blind') {
       return {
@@ -310,7 +321,7 @@ function toDrafts(order: Order): ItemDraft[] {
           Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
         ),
         quantity: String(li.quantity),
-        ...toAdjustmentDraft(li),
+        ...toAdjustmentDraft(li, pricesFrozen),
       } satisfies BlindDraft;
     }
     return {
@@ -327,7 +338,7 @@ function toDrafts(order: Order): ItemDraft[] {
       // override box. Reading `unit_price` into the base would silently
       // promote the override on every reopen and lose the original.
       unit_price: String(li.base_unit_price ?? li.unit_price),
-      ...toAdjustmentDraft(li),
+      ...toAdjustmentDraft(li, pricesFrozen),
     } satisfies FlatDraft;
   });
 }
@@ -338,8 +349,12 @@ function toDrafts(order: Order): ItemDraft[] {
  * An item is overridden exactly when `base_unit_price` is set, and the
  * charged `unit_price` is then what the consultant typed — so that is
  * what goes back into the override box.
+ *
+ * `pricesFrozen` is the order's own status answer (`holdsPriceLock`),
+ * which every item of that order shares; it is what makes a persisted row
+ * "previously quoted".
  */
-function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
+function toAdjustmentDraft(li: LineItem, pricesFrozen: boolean): PriceAdjustmentDraft {
   return {
     unit_price_override: li.base_unit_price === null ? '' : String(li.unit_price),
     show_original_price: li.show_original_price,
@@ -355,6 +370,12 @@ function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
       li.locked_base_price !== null && li.locked_inputs_fingerprint
         ? { base: Number(li.locked_base_price), fingerprint: li.locked_inputs_fingerprint }
         : null,
+    previously_quoted: pricesFrozen,
+    // What the customer was last SENT for this item, which the lock
+    // cannot say once a save has re-locked an edit. Drives the form's
+    // price-update notice.
+    quoted_base: finiteOrNull(li.quoted_base_price),
+    notice_ack_base: finiteOrNull(li.quoted_notice_ack_base),
   };
 }
 
@@ -365,6 +386,56 @@ function draftLabel(it: ItemDraft, index: number): string {
   }
   return it.description || `Item ${index + 1}`;
 }
+
+/**
+ * A nullable PostgREST numeric as a usable number, or null.
+ *
+ * `null` for an ABSENT column as well as a null one: an API that
+ * predates migration 48 sends neither figure, and `Number(undefined)` is
+ * `NaN`, which would render as a `$NaN` price update rather than as the
+ * "nothing to report" it is.
+ */
+function finiteOrNull(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * How the order's grand total has moved since the estimate was last
+ * SENT, or null when it has not moved — or when no send has stamped
+ * `orders.quoted_total` (migration 48).
+ *
+ * Compared against the LIVE total the editor is showing, unsaved edits
+ * included, so the notice appears as the change is made rather than one
+ * save later. Deliberately not a sum of the per-item notices: a discount,
+ * tax, add-ons, quantity and hidden items all sit between a line's base
+ * price and this figure.
+ *
+ * The status guard is belt-and-braces — a draft's stamp is cleared when
+ * it is released — but it keeps a stale figure from ever being quoted
+ * back at the consultant on an order nobody has been sent.
+ */
+function orderTotalChange(order: Order | undefined, liveTotal: number): QuotedPriceChange | null {
+  if (!order || order.quoted_total === null || !holdsPriceLock(order.status)) return null;
+  const quoted = finiteOrNull(order.quoted_total);
+  if (quoted === null) return null;
+  const from = Math.round(quoted * 100) / 100;
+  if (from === liveTotal) return null;
+  // Dismissed at exactly this total, so staff have seen it. A further
+  // move is a figure nobody has acknowledged, and speaks up again.
+  const acked = finiteOrNull(order.quoted_notice_ack_total);
+  return acked !== null && Math.round(acked * 100) / 100 === liveTotal
+    ? null
+    : { from, to: liveTotal };
+}
+
+/**
+ * Key standing for the ORDER total's price-update notice in the
+ * dismissed-notice set, where every other key is a line-item uid. Not a
+ * uuid, so it can never collide with one.
+ */
+const ORDER_TOTAL_NOTICE = 'order-total';
 
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
 
@@ -531,6 +602,19 @@ export default function OrderDetail() {
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
   const publicTokenMut = useOrderPublicToken();
+  const dismissNoticeMut = useDismissPriceNotice();
+
+  /**
+   * Price-update notices dismissed in THIS session, by line-item uid,
+   * with {@link ORDER_TOTAL_NOTICE} standing for the order total's own.
+   *
+   * The write that makes a dismissal durable lands on the order, but the
+   * line-item drafts hydrate once and are deliberately not rebuilt from
+   * a refetch (that would discard unsaved edits), so the notice would
+   * otherwise sit there until the page was reloaded. This is what hides
+   * it at the click.
+   */
+  const [dismissedNotices, setDismissedNotices] = useState<Set<string>>(new Set());
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -877,11 +961,22 @@ export default function OrderDetail() {
       // `lock: null` for the same reason as `uid: null`: the copy is a
       // NEW item that no confirmation has ever priced, so it is quoted
       // from today's catalog rather than inheriting a frozen price it was
-      // never given.
+      // never given. `previously_quoted` and `quoted_base` go with them:
+      // a copy was never sent to anyone, so it must satisfy today's
+      // hardware requirements and has no earlier figure to be compared
+      // against.
+      const fresh = {
+        key: nextKey(),
+        uid: null,
+        lock: null,
+        previously_quoted: false,
+        quoted_base: null,
+        notice_ack_base: null,
+      } as const;
       const copy: ItemDraft =
         src.item_type === 'blind'
-          ? { ...src, key: nextKey(), uid: null, lock: null, panels: [...src.panels] }
-          : { ...src, key: nextKey(), uid: null, lock: null };
+          ? { ...src, ...fresh, panels: [...src.panels] }
+          : { ...src, ...fresh };
       const next = list.slice();
       next.splice(idx + 1, 0, copy);
       return next;
@@ -1136,14 +1231,23 @@ export default function OrderDetail() {
         // rule the form renders from and the Worker validates against:
         // Curtains has no cassette scoped to it, and demanding one here
         // would make a curtain unsavable.
+        //
+        // An ALREADY-QUOTED item is exempt, exactly as it is on the
+        // Worker (`isAlreadyQuoted`): a slot added to its blind type after
+        // the estimate went out must not be demanded of a price the
+        // customer is already holding. Without this, adding an option
+        // retroactively blocks every save — and so `Present to customer`,
+        // which saves first — on every estimate quoted on that type.
         const uses = slotsForType(catalogs, it.blinds_type);
+        const quoted = isAlreadyQuoted(it);
+        const needs = (slot: CatalogSlot) => !quoted && uses.has(slot);
         if (!it.material_id) return `Item ${i + 1}: choose a material.`;
-        if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
-        if (uses.has('bottom_rail') && !it.bottom_rail_id)
+        if (needs('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
+        if (needs('bottom_rail') && !it.bottom_rail_id)
           return `Item ${i + 1}: choose a bottom rail.`;
-        if (uses.has('control') && !it.control_id)
+        if (needs('control') && !it.control_id)
           return `Item ${i + 1}: choose a control option.`;
-        if (uses.has('installation') && !it.installation_id)
+        if (needs('installation') && !it.installation_id)
           return `Item ${i + 1}: choose an installation option.`;
         if (!qty) return `Item ${i + 1}: enter a quantity.`;
         // Convert once, here. Failing now gives a readable message instead
@@ -1762,6 +1866,56 @@ export default function OrderDetail() {
     <MaterialUsageTrigger summary={materialUsage} onOpen={() => setMaterialUsageOpen(true)} />
   );
 
+  /**
+   * Dismisses one notice: a line item's by uid, or the order total's
+   * with no uid.
+   *
+   * Hides it first and writes second — the acknowledged figure is read
+   * from the order by the Worker, so there is nothing to send and
+   * nothing to be wrong about. A failed write puts the notice back and
+   * says why, rather than leaving a dismissal that will not survive the
+   * next reload.
+   */
+  function dismissNotice(uid?: string) {
+    if (!id) return;
+    const key = uid ?? ORDER_TOTAL_NOTICE;
+    setDismissedNotices((prev) => new Set(prev).add(key));
+    dismissNoticeMut.mutate(
+      { id, uid },
+      {
+        onError: (e) => {
+          setDismissedNotices((prev) => {
+            const next = new Set(prev);
+            next.delete(key);
+            return next;
+          });
+          toast.error(e instanceof Error ? e.message : 'Could not dismiss the notice.');
+        },
+      }
+    );
+  }
+
+  /**
+   * The price-update notice for one line item, or null when its price
+   * has not moved or the notice has just been dismissed.
+   *
+   * Built here rather than inside the edit forms because the dismissal
+   * state and the mutation live here; the forms take it as a node.
+   */
+  function priceNoticeFor(draft: ItemDraft) {
+    const change = quotedPriceChange(draft, catalogs);
+    if (!change || (draft.uid !== null && dismissedNotices.has(draft.uid))) return null;
+    return (
+      <PriceUpdateNotice
+        change={change}
+        // No uid means the item has no row yet, so there is nowhere to
+        // record an acknowledgement — and no stamp either, so in
+        // practice this is unreachable.
+        onDismiss={draft.uid === null ? undefined : () => dismissNotice(draft.uid ?? undefined)}
+      />
+    );
+  }
+
   /** Shared totals rows (subtotal → discount → taxable → HST → total). */
   const totalsRows = (
     <>
@@ -1798,6 +1952,20 @@ export default function OrderDetail() {
           ${totals.total.toFixed(2)}
         </span>
       </div>
+      {/*
+        Under the total, in both hosts that render these rows: what the
+        customer was last sent, whenever it is no longer what they would
+        be sent now. Renders nothing otherwise.
+      */}
+      <PriceUpdateNotice
+        change={
+          dismissedNotices.has(ORDER_TOTAL_NOTICE)
+            ? null
+            : orderTotalChange(existing, totals.total)
+        }
+        label="Order total"
+        onDismiss={() => dismissNotice()}
+      />
     </>
   );
 
@@ -3306,6 +3474,7 @@ export default function OrderDetail() {
                 <BlindEditForm
                   draft={editDraft as BlindDraft}
                   catalogs={catalogs}
+                  notice={priceNoticeFor(editDraft)}
                   onChange={(next) => setEditDraft(next)}
                   footer={actions}
                 />
@@ -3313,6 +3482,7 @@ export default function OrderDetail() {
                 <>
                   <FlatEditForm
                     draft={editDraft as FlatDraft}
+                    notice={priceNoticeFor(editDraft)}
                     onChange={(next) => setEditDraft(next)}
                   />
                   {actions}

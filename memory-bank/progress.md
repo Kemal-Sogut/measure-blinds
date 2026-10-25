@@ -6,6 +6,17 @@
 
 ## What Works
 
+**Quoted-price immunity and price-update notices, on `feat/multi-estimate-send` (migration 48
+written, NOT applied, not deployed):** a hardware option added to a blind type no longer
+reaches back into estimates already quoted on it, so Present to customer works on them again;
+only an item being quoted — new, or one whose own pricing inputs were just edited — must
+satisfy today's requirements. A line item whose price has moved since the last send shows
+`⚠ Price update: $200.00 → $220.00` at the top of its details form, and the order shows the
+same under its total; sending again re-stamps `quoted_base_price`/`quoted_total` and both go
+quiet. Either notice can be dismissed, which records the acknowledged figure on the order (not
+per device) — so a later move speaks up again, and the next send clears it. api 717 tests, web 551, `tsc` clean; not exercised against a live database. Apply
+migration 48 before deploying either side.
+
 **Multi-estimate send, on `feat/multi-estimate-send` (no migration, not deployed):** one
 customer-scoped **Send estimates** dialog (from the customer group on the Estimates page, or
 the Send button on an estimate's page, which saves first and is hidden for `expired`) emails

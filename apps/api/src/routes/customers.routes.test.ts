@@ -347,6 +347,8 @@ describe('POST /api/customers/:id/send-estimates', () => {
     customer_id: 'c1',
     status: 'draft',
     expiry_date: '2099-12-01',
+    // Stamped onto `quoted_total` by the send (migration 48).
+    total: 123,
     public_token: 'otok-1',
     terms_snapshot: null,
     line_items: [{ id: 'li1' }],
@@ -420,19 +422,34 @@ describe('POST /api/customers/:id/send-estimates', () => {
     expect(body.data.customer_token).toBe('ctok-1');
 
     // The freeze really wrote the lock to line_items (one write per order),
-    // not just the log line that says it did.
-    const lockWrites = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    // not just the log line that says it did — and the migration-48 stamp
+    // went down beside it, which is what the editor's price-update
+    // notices are later measured against.
+    const itemWrites = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    const lockWrites = itemWrites.filter((w) => 'locked_base_price' in w);
     expect(lockWrites).toHaveLength(3);
     for (const w of lockWrites) expect(w.locked_base_price).toBe(100);
+    const stampWrites = itemWrites.filter((w) => 'quoted_base_price' in w);
+    expect(stampWrites).toHaveLength(3);
+    for (const w of stampWrites) expect(w.quoted_base_price).toBe(100);
 
-    expect(db.updatePayloads['orders']).toHaveLength(3);
-    for (const payload of db.updatePayloads['orders'] ?? []) {
+    const orderWrites = (db.updatePayloads['orders'] ?? []) as Record<string, unknown>[];
+    const statusWrites = orderWrites.filter((p) => 'status' in p);
+    expect(statusWrites).toHaveLength(3);
+    for (const payload of statusWrites) {
       expect(payload).toEqual({
         status: 'sent',
         sent_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
         terms_snapshot: 'Company terms',
       });
     }
+    // Each send also clears any dismissal: a new quote, so a price that
+    // moves away from it has to speak up again.
+    expect(orderWrites.filter((p) => 'quoted_total' in p)).toEqual([
+      { quoted_total: 123, quoted_notice_ack_total: null },
+      { quoted_total: 123, quoted_notice_ack_total: null },
+      { quoted_total: 123, quoted_notice_ack_total: null },
+    ]);
 
     // The customer link is the only place the figures live: no PDF rides along.
     expect(lastEmail().to).toBe('ada@example.com');
@@ -445,11 +462,17 @@ describe('POST /api/customers/:id/send-estimates', () => {
     await post({ order_ids: [O1, O2] });
     // Interleaved, not batched: each row is written and only then frozen,
     // which also proves the loop is sequential rather than a Promise.all.
+    // Per row: status, freeze, then the migration-48 stamp (its item
+    // write, then the order's own quoted_total).
     expect(db.calls.filter((c) => c === 'orders.update' || c === 'line_items.update')).toEqual([
       'orders.update',
       'line_items.update',
+      'line_items.update',
+      'orders.update',
       'orders.update',
       'line_items.update',
+      'line_items.update',
+      'orders.update',
     ]);
   });
 
@@ -465,7 +488,8 @@ describe('POST /api/customers/:id/send-estimates', () => {
     expect(body.data.sent).toEqual([O1]);
     expect(body.data.announced).toEqual([O2]);
 
-    expect(db.updatePayloads['orders']).toHaveLength(1);
+    const orderWrites = (db.updatePayloads['orders'] ?? []) as Record<string, unknown>[];
+    expect(orderWrites.filter((p) => 'status' in p)).toHaveLength(1);
     expect(db.filters).toContainEqual(['line_items', 'eq', ['order_id', O1]]);
     expect(db.filters).not.toContainEqual(['line_items', 'eq', ['order_id', O2]]);
 
@@ -530,7 +554,9 @@ describe('POST /api/customers/:id/send-estimates', () => {
       orderRow({ id: O2, order_number: 'M2010-127' }),
       orderRow({ id: O3, order_number: 'M2010-128' }),
     ];
-    db.opErrors['orders.update'] = [null, { message: 'connection reset', throws: true }];
+    // [status o1, stamp o1, status o2] — the failure belongs to the second
+    // row's STATUS write, and the migration-48 stamp sits between them.
+    db.opErrors['orders.update'] = [null, null, { message: 'connection reset', throws: true }];
     const res = await post({ order_ids: [O1, O2, O3] });
     expect(res.status).toBe(200);
 
@@ -642,7 +668,8 @@ describe('POST /api/customers/:id/send-estimates', () => {
 
   it('reports a row whose status write failed under failed, with 200', async () => {
     db.responses['orders.select'] = [orderRow(), orderRow({ id: O2, order_number: 'M2010-127' })];
-    db.opErrors['orders.update'] = [null, { message: 'row is locked' }];
+    // Padded for the stamp's own `orders.update`, as above.
+    db.opErrors['orders.update'] = [null, null, { message: 'row is locked' }];
     const res = await post({ order_ids: [O1, O2] });
     expect(res.status).toBe(200);
 

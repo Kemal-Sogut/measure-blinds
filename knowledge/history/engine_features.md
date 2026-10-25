@@ -1,5 +1,61 @@
 # Engine Features / Feature History
 
+## 2026-10-25 — Price-update notices: what the customer was last sent (MIGRATION 48)
+Shipped with the retroactive-option fix above (bug_fixes 2026-10-25); spec
+`knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`. **Migration 48 is NOT yet
+applied** to `lgbxxlwsdeuhdgzrjjen`; apply it BEFORE deploying either side, and deploy the API
+before the web.
+- **Why a second stored figure.** Migration 39's lock answers "what price is in force"; it
+  cannot answer "what did the customer last see", because a save re-locks an edited item at its
+  NEW figure (`lockColumns` in `resolveLineItems`). A notice driven by the lock would therefore
+  vanish the moment Save was pressed — exactly when staff need to know a quoted figure moved.
+- **Migration 48** (`20261025000048_quoted_price_snapshot.sql`): `line_items.quoted_base_price`
+  (the calculated base, pre-override and pre-add-on) and `orders.quoted_total` (the grand
+  total). Written by a SEND, never by a save.
+- **`stampQuotedFigures(sb, orderId, mode)`** in `lib/priceLockStore.ts`, beside
+  `freezeOrderPrices`. `'overwrite'` at the two genuine sends (`lib/estimateSend.ts` and
+  `POST /orders/:id/mark-sent`) — re-sending re-quotes the customer, so the stamp moves to
+  today's figures and every notice goes quiet. That overwrite IS the reset. `'fill'` at a stage
+  reached without a send (`/confirm` from a draft, a manual `/status` jump), mirroring the
+  freeze's rule that a later stage is not a re-quote. `clearOrderPriceLocks` clears both
+  columns, and the revive-to-draft branch of `PUT /:id` nulls `quoted_total` with them.
+  `PUT /:id` never writes the stamps: `buildQuotedMap` carries `quoted_base_price` across the
+  wholesale line-item replacement by `uid`.
+- **Per-item notice.** `quotedPriceChange(draft, catalogs)` in `lineItemDrafts.ts`, rendered by
+  the new `pages/orders/PriceUpdateNotice.tsx` at the TOP of the line-item details form —
+  `BlindEditForm` (above whichever of the eleven type forms is chosen; the wrapper is skipped
+  entirely when there is nothing to report) and `FlatEditForm`, which now takes `catalogs` for
+  this. Reads `⚠ Price update: $200.00 → $220.00`, both directions, with the delta beside it.
+  Nothing in `LineItemRow` (it has its own lock badge) and nothing customer-facing.
+- **Order-level notice.** `orderTotalChange` in `OrderDetail.tsx`, rendered under the Total row
+  inside `totalsRows`, so it appears in both hosts of that block. Measured against
+  `orders.quoted_total`, NOT summed from the per-item notices — a discount, tax, add-ons,
+  quantity and hidden items all sit between a line's base price and the total.
+- **Dismissible.** Each notice carries a **Dismiss** button, and the dismissal is recorded on
+  the order (not per device), so the colleague who confirms it does not meet a notice the
+  consultant already settled. `POST /api/orders/:id/dismiss-price-notice` takes an optional
+  `uid` — the item's notice with one, the order total's without — and carries NO figure: the
+  Worker records the price the order itself holds (`quoted_notice_ack_base` /
+  `quoted_notice_ack_total`), because a client that could name the figure could silence a
+  notice about a price it invented (`.strict()`, so a supplied figure is a 400). The FIGURE is
+  stored rather than a flag, so dismissing settles ONE move: if the price shifts again, today's
+  figure matches neither the stamp nor the acknowledgement and the notice returns. A send
+  clears the acknowledgement as it re-stamps, and `PUT /:id` carries it across the line-item
+  replacement beside the stamp. The acknowledged figure is the one the ORDER holds, not what
+  the editor is previewing — so dismissing mid-edit settles the saved price, and saving that
+  edit raises the notice again at the new one.
+  - The editor hides the notice at the click (`dismissedNotices` in `OrderDetail`, keyed by uid
+    with `ORDER_TOTAL_NOTICE` for the total) and reverts with a toast if the write fails:
+    line-item drafts hydrate ONCE and are deliberately not rebuilt from a refetch, so waiting
+    for the server would leave the notice on screen until a reload.
+  - `BlindEditForm`/`FlatEditForm` take the notice as a `notice?: ReactNode` prop rather than
+    building it: the comparison and the dismissal state both live in `OrderDetail`, and the
+    eleven type forms are untouched.
+- **Deliberately blind** to quantity, add-ons and the manual override: none is part of the
+  quoted base, all three apply live on top of whichever figure is in force, and reporting them
+  would cry wolf on every ordinary edit. Both readers also drop a non-finite stamp, so an API
+  that predates migration 48 renders no notice rather than `$NaN`.
+
 ## 2026-10-24 — Send several estimates in one email (customer-scoped send)
 A customer is normally quoted several options, each its own estimate row, but the old send
 flipped ONE row to `sent` and emailed it — the other options stayed `draft`, invisible on the

@@ -26,6 +26,13 @@
  * `POST /:id/unconfirm` and an accepted cancellation request do NOT
  * release: both land the order back on `sent`, where the customer is
  * still holding the estimate that quoted those prices.
+ *
+ * Migration 48 adds a SECOND pair of figures with a different question
+ * to answer — `line_items.quoted_base_price` and `orders.quoted_total`,
+ * written by {@link stampQuotedFigures}. The lock says what price is in
+ * force; these say what the customer was LAST SENT, which the lock
+ * cannot, because a save re-locks an edited item at its new figure. The
+ * editor's price-update notices are the difference between the two.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -208,6 +215,122 @@ export async function freezeOrderPrices(
 }
 
 /**
+ * The columns a quoted-figure stamp or a release writes.
+ *
+ * The acknowledgement travels with the stamp everywhere: a figure
+ * dismissed by staff is an answer to one quote, and the moment that
+ * quote is replaced (or released) the answer is stale.
+ */
+export interface QuotedColumns {
+  quoted_base_price: number | null;
+  quoted_notice_ack_base: number | null;
+}
+
+/**
+ * Records what the customer is being SENT: each line item's calculated
+ * base price and the order's grand total, in `quoted_base_price` and
+ * `quoted_total` (migration 48).
+ *
+ * The editor shows a price-update notice wherever today's figure differs
+ * from the stamp — per item at the top of its details form, and once
+ * below the order total. So the stamp, not the price lock, is what those
+ * notices are measured against: a save re-locks an edited item at its
+ * NEW price, which would make a lock-based notice vanish exactly when it
+ * was earned.
+ *
+ * `mode` decides what an existing stamp means:
+ *   - `'overwrite'` at a genuine send (the multi-estimate send and
+ *     `/mark-sent`). Re-sending re-quotes the customer, so the stamp
+ *     moves to today's figures and every notice goes quiet. This is the
+ *     reset.
+ *   - `'fill'` at a stage that was reached WITHOUT a send (`/confirm`
+ *     from a draft, a manual `/status` jump). Mirrors
+ *     {@link freezeOrderPrices}: a later stage is not a re-quote, so an
+ *     existing stamp is left exactly where the send put it.
+ *
+ * The stamped figure is the CALCULATED price — `base_unit_price` while an
+ * override is in effect, otherwise `unit_price` — matching the lock, so
+ * the two figures are always comparable.
+ *
+ * Both filters are applied in memory rather than in the query: the rule
+ * is small, the row counts are tiny, and keeping it here is what the
+ * tests pin it to.
+ *
+ * @returns an error message, or null on success. Treated exactly like a
+ *          freeze failure by its callers — an order that reached `sent`
+ *          with no stamp would show no notice when its prices later
+ *          moved, which is the bug this exists to prevent.
+ */
+export async function stampQuotedFigures(
+  sb: SupabaseClient,
+  orderId: string,
+  mode: 'overwrite' | 'fill'
+): Promise<string | null> {
+  const { data: order, error: orderError } = await sb
+    .from('orders')
+    .select('total, quoted_total')
+    .eq('id', orderId)
+    .maybeSingle();
+  if (orderError) return orderError.message;
+  if (!order) return 'Order not found';
+
+  const { data, error } = await sb
+    .from('line_items')
+    .select('id, base_unit_price, unit_price, quoted_base_price')
+    .eq('order_id', orderId);
+  if (error) return error.message;
+
+  const rows = ((data ?? []) as Record<string, unknown>[]).filter(
+    (row) => mode === 'overwrite' || n(row.quoted_base_price) === null
+  );
+  const writes = rows.map(async (row) => {
+    const columns: QuotedColumns = {
+      quoted_base_price: n(row.base_unit_price) ?? n(row.unit_price) ?? 0,
+      // Any dismissal is dropped with the stamp it answered: this is a
+      // NEW quote, so a price that moves away from it has to speak up
+      // again however recently staff silenced the last one.
+      quoted_notice_ack_base: null,
+    };
+    return sb.from('line_items').update(columns).eq('id', row.id as string);
+  });
+  const results = await Promise.all(writes);
+  const failed = results.find((r) => r.error);
+  if (failed?.error) return failed.error.message;
+
+  if (mode === 'fill' && n(order.quoted_total) !== null) return null;
+  const { error: totalError } = await sb
+    .from('orders')
+    .update({ quoted_total: n(order.total) ?? 0, quoted_notice_ack_total: null })
+    .eq('id', orderId);
+  return totalError?.message ?? null;
+}
+
+/**
+ * Indexes an order's stored quoted figures — the stamp and the
+ * acknowledgement that may have silenced its notice — by line-item
+ * `uid`.
+ *
+ * `PUT /:id` replaces every line item wholesale, so both have to be
+ * carried across that replacement by uid, the only identity that
+ * survives it. A row with neither (never sent) maps to nothing and is
+ * re-inserted with nulls, which is what it had. Shaped as the columns
+ * themselves so the caller spreads the result rather than rebuilding it.
+ */
+export function buildQuotedMap(
+  rows: Record<string, unknown>[] | null | undefined
+): Map<string, QuotedColumns> {
+  const map = new Map<string, QuotedColumns>();
+  for (const row of rows ?? []) {
+    if (!row.uid) continue;
+    const quoted = n(row.quoted_base_price);
+    const ack = n(row.quoted_notice_ack_base);
+    if (quoted === null && ack === null) continue;
+    map.set(String(row.uid), { quoted_base_price: quoted, quoted_notice_ack_base: ack });
+  }
+  return map;
+}
+
+/**
  * Releases an order's price locks, returning every item to live pricing.
  *
  * Called when an order is put back to `draft` — a manual status change
@@ -217,11 +340,25 @@ export async function freezeOrderPrices(
  * called when a confirmation is reversed: that lands the order on
  * `sent`, where the customer still holds the estimate.
  *
+ * The migration-48 quoted figures go with them: a draft is a quote
+ * nobody has been sent, so there is no figure for a price-update notice
+ * to be measured against, and leaving a stale one would accuse the next
+ * live re-price of having moved a price the customer never saw.
+ *
  * Best-effort by design: the status change it accompanies has already
  * been persisted, and a stale lock only means one save too many keeps a
  * price — the next send re-freezes whatever is unlocked either way.
  */
 export async function clearOrderPriceLocks(sb: SupabaseClient, orderId: string): Promise<void> {
-  const columns: LockColumns = { locked_base_price: null, locked_inputs_fingerprint: null };
+  const columns: LockColumns & QuotedColumns = {
+    locked_base_price: null,
+    locked_inputs_fingerprint: null,
+    quoted_base_price: null,
+    quoted_notice_ack_base: null,
+  };
   await sb.from('line_items').update(columns).eq('order_id', orderId);
+  await sb
+    .from('orders')
+    .update({ quoted_total: null, quoted_notice_ack_total: null })
+    .eq('id', orderId);
 }

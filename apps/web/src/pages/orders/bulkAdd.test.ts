@@ -119,6 +119,9 @@ function rollerConfig(overrides: Partial<BlindDraft> = {}): BlindDraft {
     show_original_price: true,
     addons: [],
     lock: null,
+    previously_quoted: false,
+    quoted_base: null,
+    notice_ack_base: null,
     ...overrides,
   };
 }
