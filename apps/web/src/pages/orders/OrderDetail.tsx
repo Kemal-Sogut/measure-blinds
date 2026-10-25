@@ -6,7 +6,7 @@
  *
  * While an order is draft/sent it behaves as an estimate editor:
  * customer, dates, line items with live pricing, discount, totals, and
- * a Send Estimate / Save / PDF action set. The editor stays
+ * a Send Estimates / Save / PDF action set. The editor stays
  * live at every later stage too — customer, dates, and line items can
  * always be changed and saved; the Worker recalculates totals on every
  * save regardless of status.
@@ -275,6 +275,15 @@ function fromIso(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
+
+/**
+ * Why Send is refused on an estimate whose expiry date has passed. Kept
+ * word-for-word from the per-order `POST /orders/:id/send` route this
+ * feature replaced: it named the one field that unblocks the send, and
+ * nothing about the multi-estimate picker makes that advice less true.
+ */
+const EXPIRED_ESTIMATE_SEND_MESSAGE =
+  'This estimate has expired — update the expiry date first.';
 
 /** Converts persisted line items into editable drafts. */
 function toDrafts(order: Order): ItemDraft[] {
@@ -1250,6 +1259,27 @@ export default function OrderDetail() {
   }
 
   /**
+   * Whether this estimate's expiry date has already passed.
+   *
+   * Read from the EDITOR's `expiryDate`, not the saved row, so a consultant
+   * who has just pushed the expiry out can send straight away — and so one
+   * who has not is stopped before anything is written. `toIso` is this
+   * page's single notion of a calendar day and the comparison is
+   * lexicographic over `YYYY-MM-DD`, as everywhere else in this codebase;
+   * no `Date` arithmetic, and no second "today" introduced here.
+   *
+   * It is load-bearing for Send because a lapsed estimate does not announce
+   * itself through `status`: the API's defensive expiry sweep only flips
+   * `sent` rows, so a lapsed DRAFT still reads `draft` and still passes
+   * {@link showSend}. The picker, meanwhile, lists only estimates whose
+   * `expiry_date` is today or later — so without this guard Send would save,
+   * open an all-ticked list that silently LACKS the order the consultant is
+   * looking at, and email the wrong set.
+   */
+  const estimateLapsed =
+    !isInvoice && expiryDate !== null && toIso(expiryDate) < toIso(new Date());
+
+  /**
    * The Send button's handler. An estimate and an invoice go different ways:
    *
    * - **Estimate** — saves first, then opens the multi-estimate picker
@@ -1268,11 +1298,13 @@ export default function OrderDetail() {
    *   sends still carries the link), so it is surfaced inline rather than as
    *   a toast.
    *
-   * Both paths first block with a toast when the customer has no email.
+   * Both paths first block with a toast when the customer has no email, and
+   * the estimate path also blocks a lapsed expiry date ({@link estimateLapsed}).
    */
   async function openSend() {
     if (!customer?.email) return toast.error('This customer has no email address.');
     if (!isInvoice) {
+      if (estimateLapsed) return toast.error(EXPIRED_ESTIMATE_SEND_MESSAGE);
       const savedId = await save();
       if (!savedId) return;
       if (!id) {
@@ -2137,16 +2169,20 @@ export default function OrderDetail() {
   const sendBusy = sendInvoiceMut.isPending;
   const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
 
+  /**
+   * Send, labelled for what it actually opens.
+   *
+   * On an estimate that is "Send Estimates" at every status, matching the
+   * picker dialog's own title: the action is customer-scoped, so it offers
+   * this customer's whole live set regardless of where THIS order stands.
+   * It used to read "Resend Estimate" once the order was `sent`, which
+   * described the per-order `POST /orders/:id/send` that no longer exists
+   * and promised a single-order resend the picker does not perform.
+   */
   const sendAction: OrderNavAction = {
     key: 'send',
     icon: ICONS.send,
-    label: sendBusy
-      ? 'Sending…'
-      : isInvoice
-        ? 'Send Invoice'
-        : status === 'sent'
-          ? 'Resend Estimate'
-          : 'Send Estimate',
+    label: sendBusy ? 'Sending…' : isInvoice ? 'Send Invoice' : 'Send Estimates',
     onClick: () => void openSend(),
     disabled: sendDisabled,
     variant: 'primary',
@@ -2157,6 +2193,11 @@ export default function OrderDetail() {
    * so Send stays; an `expired` estimate loses it, because Send on an estimate
    * now opens the multi-estimate picker, which only offers live estimates.
    * Reviving the estimate through its expiry date brings the button back.
+   *
+   * Status is not the whole story: a DRAFT whose expiry date has passed is
+   * still `draft`, so it passes this test and keeps the button. That case is
+   * caught in `openSend` by {@link estimateLapsed}, which refuses with the
+   * reason rather than leaving a button that cannot explain itself.
    */
   const showSend = isInvoice || status !== 'expired';
 

@@ -93,6 +93,18 @@ export interface SendEstimatesResult {
  *   the grouped Estimates page lists (status badges change);
  * - the detail and activity-log caches of every id in `sent` only. Ids in
  *   `announced` were not written, so nothing cached for them changed.
+ *
+ * ON FAILURE it invalidates the sendable-estimates list too, which is not
+ * housekeeping but the recovery path. The server refuses a selection whose
+ * rows have moved on ("Estimate M2010-127 cannot be sent in its current
+ * status."), and that refusal is the only signal that the cached list is
+ * wrong. Without this the stale row stayed listed and ticked, and because
+ * `App.tsx` sets a five-minute `staleTime`, closing and reopening the dialog
+ * re-served the same snapshot — a full page reload was the only way out.
+ * Invalidating here both refetches the dialog that is still open and marks
+ * the entry stale for the next mount, which is why this is done in `onError`
+ * rather than by giving the query `refetchOnMount: 'always'` (that would fix
+ * only the reopen, and would pay a round trip on every open).
  */
 export function useSendEstimates(): UseMutationResult<
   SendEstimatesResult,
@@ -118,6 +130,9 @@ export function useSendEstimates(): UseMutationResult<
         void qc.invalidateQueries({ queryKey: ['orders', 'detail', id] });
         void qc.invalidateQueries({ queryKey: ['orders', 'logs', id] });
       }
+    },
+    onError: (_error, { customerId }) => {
+      void qc.invalidateQueries({ queryKey: sendableKey(customerId) });
     },
   });
 }
