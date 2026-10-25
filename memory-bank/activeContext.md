@@ -19,6 +19,10 @@ Already-`sent` rows are re-announced only (no un-share). Verified api 700 / web 
 oxlint clean; the dialog has not been exercised in a browser against a live database. Deploy the
 API before the web. See `knowledge/history/engine_features.md` 2026-10-24.
 
+**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
+Delete conversation on the Inbox thread page — app only, Titan keeps the mail
+(`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
+
 **Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
 to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the
 **Estimates** page (estimates grouped by customer, newest estimate's `created_at` first,

@@ -58,6 +58,14 @@ Verified: api 700 tests, web 532, `tsc` clean both, oxlint 0 errors (one pre-exi
 stops at the Supabase login wall): the picker, the save-first path and the partial-failure copy
 are covered by unit/route tests only, not seen end to end against a live database.
 
+## 2026-10-22 — Delete an Inbox conversation (app only, Titan untouched)
+A conversation's triage card has **Delete conversation** (asks first). `DELETE /api/inbox/:id`
+removes the `email_threads` row; its messages and its "New email" notifications cascade
+(migrations 45/46 FKs). Nothing is sent to Titan — the mail stays in the mailbox. Deleted mail
+does not come back: the sync only reads UIDs past each folder's cursor and never rescans. A later
+reply to a deleted conversation starts a new one (its References point at messages no longer
+stored). After deleting, the page returns to the list tab/status/page it was opened from.
+
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec
 `knowledge/specs/2026-10-20-customer-hub-multi-estimate-design.md`, plan
