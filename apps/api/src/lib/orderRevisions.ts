@@ -146,6 +146,48 @@ export async function readLatestRevision(
 }
 
 /**
+ * Error-aware twin of {@link readLatestRevision}: a failed read comes back
+ * as `{ error }` instead of looking like "never sent". The public page
+ * needs the distinction — treating an unreadable history as "no revision"
+ * would fall back to the live order and show the customer unsent edits.
+ *
+ * @returns `{ row }` (`null` for an order with no revision) or `{ error }`.
+ */
+export async function checkLatestRevision(
+  sb: SupabaseClient,
+  orderId: string
+): Promise<{ row: RevisionRow | null } | { error: string }> {
+  const { row, error } = await fetchLatest(sb, orderId);
+  return error ? { error: error.message } : { row };
+}
+
+/**
+ * Reads one revision of an order by its number, keeping the database
+ * error. The order filter means a customer can only reach revisions of
+ * the order their token opened.
+ *
+ * @param sb Service-role Supabase client.
+ * @param orderId The order the revision must belong to.
+ * @param revNo The revision number (1-based).
+ * @returns `{ row }` (`null` when that order has no such revision) or
+ *   `{ error }` with the database message.
+ */
+export async function readRevisionByNo(
+  sb: SupabaseClient,
+  orderId: string,
+  revNo: number
+): Promise<{ row: RevisionRow | null } | { error: string }> {
+  const { data, error } = await sb
+    .from('order_revisions')
+    .select(REVISION_COLUMNS)
+    .eq('order_id', orderId)
+    .eq('rev_no', revNo)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  return { row: (data as RevisionRow | null) ?? null };
+}
+
+/**
  * Builds the quote as it stands in the saved order right now.
  *
  * @returns The live {@link PublicQuote} (hidden items dropped, lines still

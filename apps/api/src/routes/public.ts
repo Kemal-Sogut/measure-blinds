@@ -62,6 +62,9 @@ import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
 import { buildPublicQuote, toPublicLines } from '../lib/publicQuote';
+import { readPublicRevision, resolveServedQuote } from '../lib/publicRevision';
+import { checkLatestRevision } from '../lib/orderRevisions';
+import { diffQuotes } from '../lib/quoteDiff';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -356,9 +359,14 @@ app.get('/estimate/:token', async (c) => {
   // of each receipt cross the wire; staff-only payment columns do not.
   const amountPaid = sumPayments(order.payments);
 
-  // The customer-visible quote (title, dates, money, visible lines) comes from
-  // the shared builder so the page, revision snapshots and diffs agree.
-  const quote = buildPublicQuote(order);
+  // The customer-visible quote: the latest SENT revision while the estimate
+  // waits on the customer, else the live order (lib/publicRevision.ts). An
+  // unreadable history is a 500, never a silent fall back to unsent edits.
+  const resolved = await resolveServedQuote(sb, order, status);
+  if ('error' in resolved) {
+    return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  }
+  const { quote, ...revisionFields } = resolved.served;
 
   // Sanitized payload: only what the customer page needs.
   return c.json({
@@ -366,11 +374,14 @@ app.get('/estimate/:token', async (c) => {
       status,
       order_number: order.order_number,
       ...quote,
+      ...revisionFields,
       amount_paid: amountPaid,
-      balance: Number(order.total) - amountPaid,
+      // Both follow the SERVED total, so the page's money adds up to the
+      // figures it is showing.
+      balance: quote.total - amountPaid,
       // Quoted to the customer while the order sits in awaiting_payment;
       // always served so the page never has to derive money itself.
-      deposit_due: depositDue(order.total),
+      deposit_due: depositDue(quote.total),
       payments: publicPayments(order.payments),
       confirmed_at: order.confirmed_at,
       cancel_requested_at: order.cancel_requested_at ?? null,
@@ -390,6 +401,37 @@ app.get('/estimate/:token', async (c) => {
       // Hidden items are already dropped and `uid` is staff/diff-only, so it
       // is stripped before the lines leave the Worker.
       line_items: toPublicLines(quote.line_items),
+    },
+  });
+});
+
+/**
+ * One earlier revision of the estimate, read-only — the customer page's
+ * "previous versions" view. Served at any status (history stays
+ * readable after confirmation) and only for the order the token opens.
+ * Lines pass through `toPublicLines`; the revision row's id, kind and
+ * staff copy never leave the Worker.
+ */
+app.get('/estimate/:token/revisions/:rev', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+
+  const read = await readPublicRevision(sb, order.id, c.req.param('rev'));
+  if ('error' in read) return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  if (!read.row) return c.json({ error: 'Revision not found' }, 404);
+
+  const { rev_no, sent_at, snapshot } = read.row;
+  return c.json({
+    data: {
+      rev_no,
+      sent_at,
+      ...snapshot,
+      line_items: toPublicLines(snapshot.line_items),
+      read_only: true,
     },
   });
 });
@@ -454,11 +496,23 @@ app.post('/estimate/:token/confirm', async (c) => {
     return c.json({ error: 'This estimate has already been confirmed.' }, 409);
   }
 
+  // The customer accepts the revision their page shows — the latest one.
+  // Unreadable history is a 500 so an acceptance is never recorded blind.
+  const latestRead = await checkLatestRevision(sb, order.id);
+  if ('error' in latestRead) {
+    return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  }
+  const latest = latestRead.row;
+
   // Guard the transition at the DB level too: only a 'sent' row updates,
   // so two racing confirms produce exactly one winner.
   const { data: updated, error } = await sb
     .from('orders')
-    .update({ status: 'awaiting_payment', confirmed_at: new Date().toISOString() })
+    .update({
+      status: 'awaiting_payment',
+      confirmed_at: new Date().toISOString(),
+      accepted_revision_id: latest?.id ?? null,
+    })
     .eq('id', order.id)
     .eq('status', 'sent')
     .select('id, total, order_number')
@@ -467,6 +521,15 @@ app.post('/estimate/:token/confirm', async (c) => {
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
 
   await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
+  // Staff saved edits after the last send: the customer accepted the sent
+  // revision, not those edits, and the trail has to say so.
+  if (latest && diffQuotes(latest.snapshot, buildPublicQuote(order)).length > 0) {
+    await logOrderEvent(
+      sb,
+      order.id,
+      `Customer confirmed Rev ${latest.rev_no}; later unsent changes are not part of it.`
+    );
+  }
   await recordNotification(sb, {
     kind: 'order_confirmed',
     orderId: order.id,
