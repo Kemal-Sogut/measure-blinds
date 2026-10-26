@@ -36,7 +36,9 @@ item. Each notice has a **Dismiss** button:
 `POST /api/orders/:id/dismiss-price-notice` (optional `uid`, no figure — the Worker reads the
 order's own) records the acknowledged FIGURE in `quoted_notice_ack_base` /
 `quoted_notice_ack_total`, so a further move speaks up again and a send clears it.
-Verified api 717 / web 551, `tsc` clean both sides, oxlint clean apart from the
+Sending again clears both notices, including the per-item one, which needed
+`applyServerFields` to refresh the server-owned draft fields after the refetch (drafts hydrate
+once). Verified api 736 / web 562, `tsc` clean both sides, oxlint clean apart from the
 pre-existing `public/embed/lead-form.js` warning. NOT exercised against a live database.
 **Apply migration 48 first, then deploy the API, then the web.** See
 `knowledge/history/bug_fixes.md` and `engine_features.md` 2026-10-25, spec

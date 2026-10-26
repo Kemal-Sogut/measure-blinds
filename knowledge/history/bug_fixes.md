@@ -66,8 +66,16 @@
   exempt, which is what stops a new blind being saved with no installation charge. A DUPLICATED
   line also resets the new draft fields, beside the `uid: null, lock: null` it already reset.
   New `holdsPriceLock` in `apps/web/src/lib/orderStatus.ts` is the twin of `PRICE_LOCKED`.
-- **Verified:** api 717 passing (13 new, including the self-validating pair — the same fixture
-  saves at `sent` and is refused at `draft`), web 551 passing (21 new), `tsc` clean in both,
+- **Also fixed, found while testing the notices:** sending the estimate AGAIN left the per-item
+  notice on screen until a reload. `useSendEstimates` invalidates `['orders','detail',id]`, so
+  the order-level notice cleared, but line-item drafts hydrate ONCE (rebuilding them would
+  discard unsaved edits) and their copy of the stamp stayed at the previous send's figure.
+  `applyServerFields` now refreshes the four server-owned draft fields (lock,
+  `previously_quoted`, `quoted_base`, `notice_ack_base`) from the order by `uid` whenever it
+  changes, leaving every typed field alone and returning the same array when nothing differs.
+  The optimistic dismissal set is dropped in the same pass, so a dismissal cannot outlive the
+  send that cleared its acknowledgement.
+- **Verified:** api 736 passing, web 562 passing, `tsc` clean in both,
   oxlint clean apart from the pre-existing `public/embed/lead-form.js` warning. NOT exercised
   against a live database: migration 48 has not been applied. See engine_features 2026-10-25
   for the price-update notices added in the same work, and

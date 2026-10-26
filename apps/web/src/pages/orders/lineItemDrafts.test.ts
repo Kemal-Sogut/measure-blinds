@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { getBlindType } from '../../lib/blindTypes';
 import { pricingFingerprint } from '../../lib/priceLock';
 import {
+  applyServerFields,
   applyTypeDefaults,
   blindDraftPrice,
   bulkEditSelection,
@@ -1030,6 +1031,66 @@ describe('price lock in the preview', () => {
     // column is absent, so the figure coerces to NaN rather than null.
     const stale = draft({ uid: 'u1', previously_quoted: true, quoted_base: Number.NaN });
     expect(quotedPriceChange(stale, catalogs())).toBeNull();
+  });
+
+  it('falls silent once the estimate is sent again', () => {
+    const sent = draft({ uid: 'u1', previously_quoted: true, quoted_base: 120 });
+    expect(quotedPriceChange(sent, catalogs())).toEqual({ from: 120, to: LIVE_PRICE });
+    // What a re-send leaves on the order: re-stamped at today's figure,
+    // re-locked there, any dismissal cleared. Drafts hydrate once, so
+    // without this sync the notice would keep comparing against 120.
+    const [resent] = applyServerFields(
+      [sent],
+      new Map([
+        [
+          'u1',
+          {
+            lock: lockFor(LIVE_PRICE),
+            previously_quoted: true,
+            quoted_base: LIVE_PRICE,
+            notice_ack_base: null,
+          },
+        ],
+      ])
+    );
+    expect(quotedPriceChange(resent, catalogs())).toBeNull();
+  });
+
+  it('leaves typed fields untouched while refreshing the server ones', () => {
+    const edited = draft({ uid: 'u1', room_name: 'Nursery', height_cm: '240', quantity: '3' });
+    const [synced] = applyServerFields(
+      [edited],
+      new Map([
+        ['u1', { lock: null, previously_quoted: true, quoted_base: 99, notice_ack_base: 12 }],
+      ])
+    );
+    expect(synced).toMatchObject({ room_name: 'Nursery', height_cm: '240', quantity: '3' });
+    expect(synced.previously_quoted).toBe(true);
+    expect(synced.quoted_base).toBe(99);
+    expect(synced.notice_ack_base).toBe(12);
+  });
+
+  it('returns the very same array when the server says nothing new', () => {
+    // An ordinary refetch (a window refocus, say) must cost no re-render.
+    const items = [draft({ uid: 'u1', previously_quoted: true, quoted_base: 120 })];
+    const same = applyServerFields(
+      items,
+      new Map([
+        ['u1', { lock: null, previously_quoted: true, quoted_base: 120, notice_ack_base: null }],
+      ])
+    );
+    expect(same).toBe(items);
+  });
+
+  it('leaves alone a draft with no uid and one the order does not have', () => {
+    const items = [draft(), draft({ uid: 'u9', previously_quoted: true })];
+    const out = applyServerFields(
+      items,
+      new Map([
+        ['u1', { lock: null, previously_quoted: true, quoted_base: 120, notice_ack_base: null }],
+      ])
+    );
+    expect(out).toBe(items);
   });
 
   it('reports a flat item against its own typed figure', () => {

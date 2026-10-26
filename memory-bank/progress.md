@@ -14,7 +14,10 @@ satisfy today's requirements. A line item whose price has moved since the last s
 `⚠ Price update: $200.00 → $220.00` at the top of its details form, and the order shows the
 same under its total; sending again re-stamps `quoted_base_price`/`quoted_total` and both go
 quiet. Either notice can be dismissed, which records the acknowledged figure on the order (not
-per device) — so a later move speaks up again, and the next send clears it. api 717 tests, web 551, `tsc` clean; not exercised against a live database. Apply
+per device) — so a later move speaks up again, and the next send clears it (the per-item notice
+too: `applyServerFields` refreshes the server-owned draft fields after the send's refetch,
+since drafts hydrate once). api 736 tests, web 562, `tsc` clean; not exercised against a live
+database. Apply
 migration 48 before deploying either side.
 
 **Multi-estimate send, on `feat/multi-estimate-send` (no migration, not deployed):** one
