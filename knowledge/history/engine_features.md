@@ -1,5 +1,14 @@
 # Engine Features / Feature History
 
+## 2026-10-26 — Per-item price-update notice removed from the line-item edit form
+- The amber "$X → $Y" notice no longer renders at the top of `BlindEditForm` / `FlatEditForm`
+  (their `notice` prop and OrderDetail's `priceNoticeFor` are gone). The ORDER TOTAL notice
+  under the totals is unchanged and is now the only price-update notice in the editor.
+- Server side untouched: `quoted_base_price` / `quoted_notice_ack_base` are still stamped,
+  carried across saves and returned; `quotedPriceChange` and `applyServerFields` remain (and
+  stay tested) in `lineItemDrafts.ts`, so the per-item notice can be re-added without a
+  migration.
+
 ## 2026-10-25 — Price-update notices: what the customer was last sent (MIGRATION 48)
 Shipped with the retroactive-option fix above (bug_fixes 2026-10-25); spec
 `knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`. **Migration 48 is NOT yet

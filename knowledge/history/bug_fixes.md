@@ -1,5 +1,20 @@
 # Bug Fixes History
 
+## 2026-10-26 — Dismiss on the order-total price notice undid itself
+- **Issue:** pressing Dismiss on the "Order total $X → $Y" notice hid it for a moment, then it
+  came back — immediately when there were unsaved edits, otherwise on any refetch.
+- **Cause:** the Worker acks the SAVED total (it never trusts a client figure), so with an
+  unsaved edit on screen the ack never matched the live total. The local hide was a
+  `Set` keyed `'order-total'` that OrderDetail's server-field effect wiped on EVERY change of the
+  order — including the dismissal's own response — so the notice reappeared at once.
+- **Fix:** OrderDetail keeps `dismissedTotal`, the exact `from → to` dismissed, and hides the
+  notice only while the live change equals it. An effect drops it as soon as the change differs
+  (the total moved, a re-send moved the stamp, or the Worker's ack now hides it); `save()` drops
+  it on success. The server-field effect no longer touches it. `PUT /api/orders/:id` now writes
+  `quoted_notice_ack_total: null` on every save, so a dismissal lasts only until the next save
+  (test in `orders.routes.test.ts`). The `'order-total'` key and the generic `dismissNotice` are
+  gone (per-item notices were removed from the form the same day).
+
 ## 2026-10-26 — Order-total price notice compared against the FIRST send after a re-send
 - **Issue:** after an estimate was sent, changed and sent again, the "Order total" notice still
   showed first-send → current. Switching an option back to the first send's choice then read as

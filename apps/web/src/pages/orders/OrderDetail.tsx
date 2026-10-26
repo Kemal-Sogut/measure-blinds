@@ -160,7 +160,6 @@ import {
   type QuotedPriceChange,
   type ServerItemFields,
   applyServerFields,
-  quotedPriceChange,
 } from './lineItemDrafts';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
 import { holdsPriceLock } from '../../lib/orderStatus';
@@ -443,12 +442,11 @@ function orderTotalChange(order: Order | undefined, liveTotal: number): QuotedPr
     : { from, to: liveTotal };
 }
 
-/**
- * Key standing for the ORDER total's price-update notice in the
- * dismissed-notice set, where every other key is a line-item uid. Not a
- * uuid, so it can never collide with one.
- */
-const ORDER_TOTAL_NOTICE = 'order-total';
+/** Whether two price changes name the same move; both absent counts as equal. */
+function sameChange(a: QuotedPriceChange | null, b: QuotedPriceChange | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.from === b.from && a.to === b.to;
+}
 
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
 
@@ -618,16 +616,18 @@ export default function OrderDetail() {
   const dismissNoticeMut = useDismissPriceNotice();
 
   /**
-   * Price-update notices dismissed in THIS session, by line-item uid,
-   * with {@link ORDER_TOTAL_NOTICE} standing for the order total's own.
+   * The order-total price change dismissed in THIS session — the exact
+   * `from → to` that was on screen at the click — or null.
    *
-   * The write that makes a dismissal durable lands on the order, but the
-   * line-item drafts hydrate once and are deliberately not rebuilt from
-   * a refetch (that would discard unsaved edits), so the notice would
-   * otherwise sit there until the page was reloaded. This is what hides
-   * it at the click.
+   * Needed beside the Worker's acknowledgement because that one records
+   * the SAVED total: dismissing while an unsaved edit is on screen acks
+   * a figure the editor is not showing, so without this the notice came
+   * straight back when the dismissal's response (or any refetch)
+   * replaced the order. The notice stays hidden only while the live
+   * change still equals this one: a move of the total drops it (see the
+   * pruning effect below the totals) and so does every save.
    */
-  const [dismissedNotices, setDismissedNotices] = useState<Set<string>>(new Set());
+  const [dismissedTotal, setDismissedTotal] = useState<QuotedPriceChange | null>(null);
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -832,10 +832,10 @@ export default function OrderDetail() {
    * until the page was reloaded. It also catches the acknowledgement
    * written by a dismissal, and the re-lock written by a save.
    *
-   * The optimistic dismissal set is dropped in the same pass: the order
-   * now carries whatever was acknowledged, so keeping a local override
-   * could only hide a notice the server says should be visible — exactly
-   * what a re-send after a dismissal would otherwise do.
+   * The local order-total dismissal is NOT dropped here: a refetch is not
+   * a change of the total, and dropping it was what made Dismiss undo
+   * itself. A re-send moves the stamp, which changes the notice's `from`
+   * and so unhides it through the pruning effect anyway.
    */
   useEffect(() => {
     if (!hydrated || !existing) return;
@@ -846,7 +846,6 @@ export default function OrderDetail() {
         .map((li) => [li.uid, serverFieldsOf(li, pricesFrozen)])
     );
     setItems((list) => applyServerFields(list, byUid));
-    setDismissedNotices((prev) => (prev.size === 0 ? prev : new Set()));
   }, [existing, hydrated]);
 
   // Drop the pre-filled customer in once it arrives, and only if the
@@ -943,6 +942,18 @@ export default function OrderDetail() {
       }),
     [itemPrices, items, discountType, discountValue]
   );
+
+  // The order-total notice before the local dismissal is applied.
+  const totalChange = orderTotalChange(existing, totals.total);
+  // A dismissal holds only while the total stays where it was dismissed:
+  // once the live change differs (an edit moved the total, a re-send
+  // moved the stamp, or the Worker's own ack now hides it), it is spent.
+  const totalFrom = totalChange?.from ?? null;
+  const totalTo = totalChange?.to ?? null;
+  useEffect(() => {
+    const live = totalFrom === null || totalTo === null ? null : { from: totalFrom, to: totalTo };
+    setDismissedTotal((prev) => (prev === null || sameChange(prev, live) ? prev : null));
+  }, [totalFrom, totalTo]);
 
   /**
    * Fabric usage for the Material usage dialog, computed HERE rather than
@@ -1400,6 +1411,10 @@ export default function OrderDetail() {
       const saved = id
         ? await updateMut.mutateAsync({ id, input: payload })
         : await createMut.mutateAsync(payload);
+      // A save ends any dismissal; the Worker drops its acknowledgement
+      // on the same save, so the notice speaks again if the total still
+      // differs from what the customer was sent.
+      setDismissedTotal(null);
       // Carry the open section across the new-order → saved-order URL
       // change, but not `?customer=`, which only seeds a NEW order.
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
@@ -1919,52 +1934,27 @@ export default function OrderDetail() {
   );
 
   /**
-   * Dismisses one notice: a line item's by uid, or the order total's
-   * with no uid.
+   * Dismisses the order-total notice until the total moves or the order
+   * is next saved.
    *
-   * Hides it first and writes second — the acknowledged figure is read
-   * from the order by the Worker, so there is nothing to send and
-   * nothing to be wrong about. A failed write puts the notice back and
-   * says why, rather than leaving a dismissal that will not survive the
-   * next reload.
+   * Hides it locally first (by the exact change on screen — see
+   * {@link dismissedTotal}) and writes second. The Worker records the
+   * SAVED total as acknowledged, which is what keeps the notice quiet
+   * across a reload when there is no unsaved edit; it reads that figure
+   * itself, so there is nothing to send. A failed write puts the notice
+   * back and says why.
    */
-  function dismissNotice(uid?: string) {
+  function dismissTotalNotice(change: QuotedPriceChange) {
     if (!id) return;
-    const key = uid ?? ORDER_TOTAL_NOTICE;
-    setDismissedNotices((prev) => new Set(prev).add(key));
+    setDismissedTotal(change);
     dismissNoticeMut.mutate(
-      { id, uid },
+      { id },
       {
         onError: (e) => {
-          setDismissedNotices((prev) => {
-            const next = new Set(prev);
-            next.delete(key);
-            return next;
-          });
+          setDismissedTotal(null);
           toast.error(e instanceof Error ? e.message : 'Could not dismiss the notice.');
         },
       }
-    );
-  }
-
-  /**
-   * The price-update notice for one line item, or null when its price
-   * has not moved or the notice has just been dismissed.
-   *
-   * Built here rather than inside the edit forms because the dismissal
-   * state and the mutation live here; the forms take it as a node.
-   */
-  function priceNoticeFor(draft: ItemDraft) {
-    const change = quotedPriceChange(draft, catalogs);
-    if (!change || (draft.uid !== null && dismissedNotices.has(draft.uid))) return null;
-    return (
-      <PriceUpdateNotice
-        change={change}
-        // No uid means the item has no row yet, so there is nowhere to
-        // record an acknowledgement — and no stamp either, so in
-        // practice this is unreachable.
-        onDismiss={draft.uid === null ? undefined : () => dismissNotice(draft.uid ?? undefined)}
-      />
     );
   }
 
@@ -2010,13 +2000,9 @@ export default function OrderDetail() {
         be sent now. Renders nothing otherwise.
       */}
       <PriceUpdateNotice
-        change={
-          dismissedNotices.has(ORDER_TOTAL_NOTICE)
-            ? null
-            : orderTotalChange(existing, totals.total)
-        }
+        change={sameChange(dismissedTotal, totalChange) ? null : totalChange}
         label="Order total"
-        onDismiss={() => dismissNotice()}
+        onDismiss={totalChange ? () => dismissTotalNotice(totalChange) : undefined}
       />
     </>
   );
@@ -3526,7 +3512,6 @@ export default function OrderDetail() {
                 <BlindEditForm
                   draft={editDraft as BlindDraft}
                   catalogs={catalogs}
-                  notice={priceNoticeFor(editDraft)}
                   onChange={(next) => setEditDraft(next)}
                   footer={actions}
                 />
@@ -3534,7 +3519,6 @@ export default function OrderDetail() {
                 <>
                   <FlatEditForm
                     draft={editDraft as FlatDraft}
-                    notice={priceNoticeFor(editDraft)}
                     onChange={(next) => setEditDraft(next)}
                   />
                   {actions}
