@@ -1,5 +1,37 @@
 # Bug Fixes History
 
+## 2026-10-25 — A new installation option blocked every estimate already quoted on that blind type
+- **Issue:** adding the first installation option for a blind type made "Present to customer"
+  unreachable on estimates and orders already quoted on that type. Those line items carry no
+  `installation_id`, because the slot did not exist when they were sent.
+- **Cause:** whether a type uses a hardware slot is computed LIVE from the catalog
+  (`usesSlot`/`slotsForType` — a slot exists for a type as soon as one ACTIVE option is linked
+  to it), so linking the new option flipped the slot on for every item of that type, including
+  items quoted years earlier. Two gates then fired. The web's `buildPayload` in
+  `OrderDetail.tsx` had no price-lock awareness at all and returned
+  "Item N: choose an installation option", and `handlePresent` saves before navigating — so the
+  block was CLIENT-side and the Worker was never even called. On the Worker, migration 39's
+  locked branch already skipped the slot gate (`routes/orders.ts`, "no lookup, no slot-scoping
+  gate"), but a row saved before migration 39 carries no lock, fell through to live validation
+  and was refused too.
+- **Fix:** the requirement is now enforced only on an item being QUOTED. `isAlreadyQuoted` in
+  `pages/orders/lineItemDrafts.ts` exempts an item that was already on a price-locked order and
+  either still holds its lock or never had one; `buildPayload` and `blindDraftInputs` both read
+  it, and an exempt blind is charged for whatever hardware ids it does carry, mirroring the
+  Worker. `resolveLineItems` takes a `prior` parameter (the uids the order already held, plus
+  their quoted stamps) and grandfathers the pre-migration-39 case the locked branch does not
+  cover. An item whose lock BROKE is deliberately NOT exempt — editing its pricing inputs
+  re-quotes it, so today's requirements apply — and a line added since the send is never
+  exempt, which is what stops a new blind being saved with no installation charge. A DUPLICATED
+  line also resets the new draft fields, beside the `uid: null, lock: null` it already reset.
+  New `holdsPriceLock` in `apps/web/src/lib/orderStatus.ts` is the twin of `PRICE_LOCKED`.
+- **Verified:** api 717 passing (13 new, including the self-validating pair — the same fixture
+  saves at `sent` and is refused at `draft`), web 551 passing (21 new), `tsc` clean in both,
+  oxlint clean apart from the pre-existing `public/embed/lead-form.js` warning. NOT exercised
+  against a live database: migration 48 has not been applied. See engine_features 2026-10-25
+  for the price-update notices added in the same work, and
+  `knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`.
+
 ## 2026-09-16 — Invoice email showed the full total even after a deposit was paid
 - **Issue:** the invoice email's summary card led with "Total (incl. HST)", so a customer who
   had already paid a deposit read it as still owing the full amount.

@@ -389,6 +389,42 @@ export function useSendInvoice(): UseMutationResult<Order, Error, { id: string; 
 }
 
 /**
+ * Dismisses a price-update notice: one line item's with its `uid`, or
+ * the order total's with no uid at all.
+ *
+ * Sends no figure — the Worker records the price the order itself holds
+ * (migration 48's `quoted_notice_ack_*`), so a client cannot silence a
+ * notice about a price it invented. The order comes back with the
+ * acknowledgement on it, which is what makes the dismissal survive a
+ * reload; the editor hides the notice immediately rather than waiting
+ * for it, because line-item drafts hydrate once and are not rebuilt from
+ * a refetch.
+ *
+ * The order's activity log gains an entry, so its logs are invalidated.
+ */
+export function useDismissPriceNotice(): UseMutationResult<
+  Order,
+  Error,
+  { id: string; uid?: string }
+> {
+  const qc = useQueryClient();
+  const cache = useCacheOrder();
+  return useMutation({
+    mutationFn: async ({ id, uid }) =>
+      (
+        await apiFetch<Envelope<Order>>(`/api/orders/${id}/dismiss-price-notice`, {
+          method: 'POST',
+          body: JSON.stringify(uid ? { uid } : {}),
+        })
+      ).data,
+    onSuccess: (order, { id }) => {
+      cache(order);
+      void qc.invalidateQueries({ queryKey: ['orders', 'logs', id] });
+    },
+  });
+}
+
+/**
  * Duplicates an order into a new draft and returns the COPY.
  *
  * Not built on `useLifecycleMutation` despite the identical call shape:

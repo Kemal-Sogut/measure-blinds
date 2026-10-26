@@ -38,7 +38,7 @@ import {
   type CompanyBrand,
 } from './email';
 import { logOrderEvent } from './orderLog';
-import { freezeOrderPrices } from './priceLockStore';
+import { freezeOrderPrices, stampQuotedFigures } from './priceLockStore';
 
 /** The order columns the send route reads for each candidate row. */
 export interface SendCandidateRow {
@@ -322,6 +322,12 @@ async function persistSend(
 
       const freezeError = await freezeOrderPrices(sb, row.id);
       if (freezeError) failed.push({ id: row.id, error: freezeError });
+
+      // Re-stamped on EVERY send (migration 48), which is what clears the
+      // editor's price-update notices: the customer now holds a document
+      // quoting today's figures, so there is nothing left to warn about.
+      const stampError = await stampQuotedFigures(sb, row.id, 'overwrite');
+      if (stampError) failed.push({ id: row.id, error: stampError });
 
       await logOrderEvent(sb, row.id, sendLogLine(email, index + 1, toSend.length));
       if (!freezeError) await logOrderEvent(sb, row.id, 'Item prices locked at send.');

@@ -148,6 +148,22 @@ export interface Order {
   tax_rate: number;
   tax_amount: number;
   total: number;
+  /**
+   * The grand total this order carried when its estimate was LAST SENT
+   * (migration 48), or null on an order no send has stamped.
+   *
+   * Written only by a send, never by a save, so the editor can show a
+   * price-update notice under the total for as long as today's figure
+   * differs from what the customer is holding. Sending again re-stamps
+   * it and the notice goes.
+   */
+  quoted_total: number | null;
+  /**
+   * The total staff dismissed the ORDER's price-update notice at
+   * (migration 48), or null while it has not been dismissed. Same rule
+   * as `LineItem.quoted_notice_ack_base`, one level up.
+   */
+  quoted_notice_ack_total: number | null;
   terms_snapshot: string | null;
   public_token: string | null;
   sent_at: string | null;
@@ -406,6 +422,29 @@ export interface LineItem {
    * matches, the frozen price is what the preview shows.
    */
   locked_inputs_fingerprint: string | null;
+  /**
+   * The calculated base unit price this item carried when the estimate
+   * was LAST SENT (migration 48), or `null` on an order no send has
+   * stamped.
+   *
+   * Not the same question as `locked_base_price`: a save re-locks an
+   * edited item at its new figure, so the lock cannot say what the
+   * customer last saw. This column can, because only a send writes it.
+   * The editor shows a price-update notice wherever today's calculated
+   * base differs from it, and sending again re-stamps it — which is what
+   * clears the notice.
+   */
+  quoted_base_price: number | null;
+  /**
+   * The figure staff DISMISSED this item's price-update notice at
+   * (migration 48), or null while it has not been dismissed.
+   *
+   * A figure rather than a flag: the notice is hidden only while today's
+   * calculated base still equals it, so a second price move speaks up
+   * again. Written by `POST /api/orders/:id/dismiss-price-notice` and
+   * cleared by the next send, along with `quoted_base_price`.
+   */
+  quoted_notice_ack_base: number | null;
   created_at: string;
   updated_at: string;
 }

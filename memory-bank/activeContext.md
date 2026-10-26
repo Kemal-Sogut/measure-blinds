@@ -4,9 +4,32 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-24)
+## Where things stand (as of 2026-10-25)
 
-**Newest, on branch `feat/multi-estimate-send` (from `main`, not deployed), web + api, NO
+**Newest, on branch `feat/multi-estimate-send` (on top of the multi-estimate send below, not
+deployed), web + api, MIGRATION 48 WRITTEN BUT NOT APPLIED:** sent estimates are now immune to
+hardware options added to their blind type afterwards, and say so when a price moves. Adding
+the first installation option for a type used to make **Present to customer** unreachable on
+every estimate already quoted on it — the block was the web's own `buildPayload`, which had no
+price-lock awareness, and `handlePresent` saves before navigating. The hardware requirement is
+now enforced only on an item being QUOTED (`isAlreadyQuoted` in `lineItemDrafts.ts`, `prior` in
+`resolveLineItems`); an item whose lock broke, and any line added since the send, are still
+held to today's requirements. Migration 48 adds `line_items.quoted_base_price` and
+`orders.quoted_total`, written by a SEND only (`stampQuotedFigures`, `'overwrite'` at a real
+send — that overwrite is the reset — `'fill'` at a stage reached without one), which is what
+lets the new `PriceUpdateNotice` keep showing `⚠ Price update: $200.00 → $220.00` at the top of
+a line item's details form, and once under the order total, after the save that re-locked the
+item. Each notice has a **Dismiss** button:
+`POST /api/orders/:id/dismiss-price-notice` (optional `uid`, no figure — the Worker reads the
+order's own) records the acknowledged FIGURE in `quoted_notice_ack_base` /
+`quoted_notice_ack_total`, so a further move speaks up again and a send clears it.
+Verified api 717 / web 551, `tsc` clean both sides, oxlint clean apart from the
+pre-existing `public/embed/lead-form.js` warning. NOT exercised against a live database.
+**Apply migration 48 first, then deploy the API, then the web.** See
+`knowledge/history/bug_fixes.md` and `engine_features.md` 2026-10-25, spec
+`knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`.
+
+**On branch `feat/multi-estimate-send` (from `main`, not deployed), web + api, NO
 migration:** the **multi-estimate send**. Sending is one customer-scoped action: a **Send
 estimates** dialog (opened from the customer group on the Estimates page, or from the Send
 button on an estimate's own page, which saves first) lists that customer's valid estimates

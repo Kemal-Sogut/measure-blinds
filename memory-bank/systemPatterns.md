@@ -15,6 +15,9 @@
 | Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
 | Snapshot pricing on line items | Material/cassette/control/installation prices stored on line item at creation time to prevent retroactive price changes |
 | Price lock from send onward | Sending an estimate quotes a price, so each item freezes its calculated price (`locked_base_price`) plus a fingerprint of the inputs behind it (migration 39) at the send (`POST /api/customers/:id/send-estimates`), not at confirmation. Saving re-uses the frozen figure while the fingerprint matches; only an item whose OWN pricing inputs were edited is re-priced and re-locked. `draft` is the only live-priced status, and returning an order to draft is the only thing that releases a lock |
+| Dismissal stores the figure, not a flag | A price-update notice is dismissed by recording the figure staff acknowledged (`quoted_notice_ack_*`, migration 48), on the ORDER rather than per device. Hidden while today's figure still equals it, so a SECOND move speaks up again; cleared by the next send. `POST /api/orders/:id/dismiss-price-notice` carries no figure — the Worker reads what the order holds |
+| Quoted stamp, written by a SEND only | `line_items.quoted_base_price` + `orders.quoted_total` (migration 48) record what the customer was LAST SENT, which the price lock cannot — a save re-locks an edited item at its NEW figure. A send overwrites them (the reset), a stage reached without a send fills only what is null, and a save carries them across by `uid`. The editor's price-update notices are the difference between these and today's figures |
+| Hardware requirements apply only to an item being QUOTED | A slot added to a blind type must not reach back into estimates already sent on it. An item already on a price-locked order is exempt while its lock holds, or if it never had one (pre-migration-39); an item whose lock BROKE, and any line added since the send, are held to today's rules. `isAlreadyQuoted` (web) and `prior` in `resolveLineItems` (Worker) are the twinned halves |
 | Per-option price basis | How a hardware option is charged (per m / m2 / unit / panel) lives on the catalog ROW, not in the formula; one function interprets it |
 | Catalog scoping join tables | Which hardware slots a blind type uses is DATA (`<catalog>_blind_types`), not a code constant — the shop switches a slot off per type from Settings without a deploy |
 | UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
@@ -192,6 +195,10 @@ section as the reference implementation for future collapsible UI.
     necessity; they must still agree.
   - EMPTY MEANS NONE, the OPPOSITE of `material_blind_types` (no links = every type). Both
     conventions are deliberate and both are live.
+  - The rule is LIVE, so linking a new option makes that slot required for the type at once —
+    including for items quoted before it existed, which is what broke Present to customer in
+    `bug_fixes.md` 2026-10-25. Since then the requirement is enforced only on an item being
+    QUOTED (`isAlreadyQuoted` / `prior`); a FIFTH client path to keep in step.
 - **Billed material quantity is a first-class blind-type concept (2026-08-22), alongside
   `describeUnitCosts` (2026-08-20).** `BaseBlindType.describeMaterialUsage(item)` returns
   `{ unit: 'sqm' | 'running_m'; quantity; measured }` for ONE blind, on the same minimised

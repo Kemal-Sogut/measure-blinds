@@ -34,6 +34,7 @@
  * when editing these forms.
  */
 
+import type { ReactNode } from 'react';
 import { getBlindForm } from './blindForms';
 import { INPUT, LABEL, OptionSelect, type BlindFormProps } from './blindForms/fields';
 import { PriceBlock } from './blindForms/PriceBlock';
@@ -62,10 +63,31 @@ import type { BulkEditState } from './lineItemBulk';
  *
  * The props are unchanged from when this component held the markup, so
  * hosts (OrderDetail's edit popup) are unaffected by the split.
+ *
+ * `notice` renders above whichever form is chosen — the price-update
+ * notice, in practice. It is a NODE rather than a draft flag because the
+ * host owns both the comparison and the dismissal; this component only
+ * places it. Handled here rather than in each of the eleven type forms,
+ * since the question is about the item and not about its type, and the
+ * wrapper is skipped entirely when there is nothing to show, so an
+ * unaffected form's layout is byte-for-byte what it was.
  */
-export function BlindEditForm({ draft, catalogs, onChange, footer }: BlindFormProps) {
+export function BlindEditForm({
+  draft,
+  catalogs,
+  onChange,
+  footer,
+  notice,
+}: BlindFormProps & { notice?: ReactNode }) {
   const Form = getBlindForm(draft.blinds_type);
-  return <Form draft={draft} catalogs={catalogs} onChange={onChange} footer={footer} />;
+  const form = <Form draft={draft} catalogs={catalogs} onChange={onChange} footer={footer} />;
+  if (!notice) return form;
+  return (
+    <div className="flex min-w-0 flex-col gap-3.5">
+      {notice}
+      {form}
+    </div>
+  );
 }
 
 /**
@@ -79,14 +101,18 @@ export function BlindEditForm({ draft, catalogs, onChange, footer }: BlindFormPr
 export function FlatEditForm({
   draft,
   onChange,
+  notice,
 }: {
   draft: FlatDraft;
   onChange: (next: FlatDraft) => void;
+  /** As `BlindEditForm`'s: rendered above the fields, host-owned. */
+  notice?: ReactNode;
 }) {
   const price = flatDraftPrice(draft);
   const fromCatalog = draft.item_type === 'preset' && draft.preset_id !== null;
   return (
     <div className="flex min-w-0 flex-col gap-3.5">
+      {notice}
       <label className="block min-w-0">
         <span className={LABEL}>Title</span>
         <input
