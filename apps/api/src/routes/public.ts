@@ -61,7 +61,7 @@ import publicCustomerRoutes from './publicCustomer';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
-import { toPublicLines } from '../lib/publicQuote';
+import { toPublicQuoteFields } from '../lib/publicQuote';
 import {
   publicRevisionResponse,
   resolveAcceptance,
@@ -375,7 +375,9 @@ app.get('/estimate/:token', async (c) => {
     data: {
       status,
       order_number: order.order_number,
-      ...quote,
+      // Explicit pick (never a spread of a stored snapshot); hidden items are
+      // already dropped and the staff/diff-only `uid` is stripped.
+      ...toPublicQuoteFields(quote),
       ...revisionFields,
       amount_paid: amountPaid,
       // Both follow the SERVED total, so the page's money adds up to the
@@ -400,9 +402,6 @@ app.get('/estimate/:token', async (c) => {
         shipping_postal_code: order.customer?.shipping_postal_code ?? '',
       },
       company,
-      // Hidden items are already dropped and `uid` is staff/diff-only, so it
-      // is stripped before the lines leave the Worker.
-      line_items: toPublicLines(quote.line_items),
     },
   });
 });

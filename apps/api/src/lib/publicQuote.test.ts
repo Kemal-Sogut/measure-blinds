@@ -2,14 +2,16 @@
 // Copyright (c) 2026 Blinds Nisa. All rights reserved.
 
 /**
- * Unit tests for `buildPublicQuote` / `toPublicLines` — the pure
- * customer-visible quote shape shared by the public estimate route and
- * the revision snapshot. Covers hidden-item filtering, `uid` handling,
- * the never-forward-raw-columns guarantee and numeric coercion.
+ * Unit tests for `buildPublicQuote` / `toPublicLines` /
+ * `toPublicQuoteFields` — the pure customer-visible quote shape shared by
+ * the public estimate route and the revision snapshot. Covers hidden-item
+ * filtering, `uid` handling, the never-forward-raw-columns guarantee,
+ * numeric coercion, and the explicit pick that keeps unknown keys of a
+ * stored snapshot out of a public response.
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildPublicQuote, toPublicLines } from './publicQuote';
+import { buildPublicQuote, toPublicLines, toPublicQuoteFields, type PublicQuote } from './publicQuote';
 
 /** A minimal order row as PostgREST returns it with `line_items(*)` embedded. */
 function orderRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -101,5 +103,45 @@ describe('buildPublicQuote', () => {
     const q = buildPublicQuote(orderRow({ title: undefined, line_items: undefined }));
     expect(q.title).toBeNull();
     expect(q.line_items).toEqual([]);
+  });
+});
+
+describe('toPublicQuoteFields', () => {
+  /**
+   * A quote as it may come back from a stored jsonb snapshot: typed as a
+   * PublicQuote, but carrying keys a future writer (or a bad backfill) put
+   * there, at the order level, on a line and on an add-on.
+   */
+  function storedSnapshot(): PublicQuote {
+    const q = buildPublicQuote(orderRow());
+    return {
+      ...q,
+      internal_cost: 999,
+      line_items: q.line_items.map((l) => ({
+        ...l,
+        base_unit_price: 600,
+        addons: l.addons.map((a) => ({ ...a, cost: 12 })),
+      })),
+    } as unknown as PublicQuote;
+  }
+
+  it('names exactly the customer-visible quote fields', () => {
+    const fields = toPublicQuoteFields(storedSnapshot());
+    expect(Object.keys(fields).sort()).toEqual(
+      [
+        'title', 'order_date', 'expiry_date', 'subtotal', 'discount_amount',
+        'taxable_amount', 'tax_rate', 'tax_amount', 'total', 'terms', 'line_items',
+      ].sort()
+    );
+  });
+
+  it('drops unknown keys from a stored snapshot at every level, and the uid', () => {
+    const text = JSON.stringify(toPublicQuoteFields(storedSnapshot()));
+    expect(text).not.toContain('internal_cost');
+    expect(text).not.toContain('base_unit_price');
+    expect(text).not.toContain('"cost"');
+    expect(text).not.toContain('"uid"');
+    expect(text).toContain('"room_name":"Kitchen"');
+    expect(text).toContain('"label":"Motor"');
   });
 });

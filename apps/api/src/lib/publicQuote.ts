@@ -21,7 +21,8 @@
  * field is named explicitly; raw `attributes`, `base_unit_price`, rate
  * columns and hidden items never appear. The line `uid` is carried on
  * {@link PublicQuoteLine} for diffing but must be removed with
- * {@link toPublicLines} before anything goes to a customer.
+ * {@link toPublicLines} before anything goes to a customer; a whole quote
+ * goes out only through {@link toPublicQuoteFields}.
  */
 
 import { getBlindType } from './blindTypes';
@@ -201,12 +202,77 @@ export function buildPublicQuote(order: Record<string, unknown>): PublicQuote {
 }
 
 /**
- * Strips the staff/diff-only `uid` from quote lines so the result is safe
+ * Picks the customer-visible fields of quote lines so the result is safe
  * to serve on the unauthenticated public route.
  *
+ * Every field is NAMED, never spread: a line may come from a stored
+ * revision snapshot (jsonb), and whatever extra key a past or future
+ * writer left there must not reach a customer just because it was stored.
+ * The staff/diff-only `uid` is dropped, and each add-on is reduced to its
+ * `label` and `price`.
+ *
  * @param lines Lines from {@link buildPublicQuote} (or a stored snapshot).
- * @returns New line objects without the `uid` key; the input is not mutated.
+ * @returns New line objects without `uid` or any unknown key; the input is
+ *   not mutated.
  */
 export function toPublicLines(lines: PublicQuoteLine[]): Omit<PublicQuoteLine, 'uid'>[] {
-  return lines.map(({ uid: _uid, ...rest }) => rest);
+  return lines.map((l) => ({
+    item_type: l.item_type,
+    room_name: l.room_name,
+    blinds_type: l.blinds_type,
+    panels: l.panels,
+    height_cm: l.height_cm,
+    material_name: l.material_name,
+    cassette_name: l.cassette_name,
+    bottom_rail_name: l.bottom_rail_name,
+    control_name: l.control_name,
+    installation_name: l.installation_name,
+    color: l.color,
+    title: l.title,
+    description: l.description,
+    note: l.note,
+    addons: l.addons.map((a) => ({ label: a.label, price: a.price })),
+    original_line_total: l.original_line_total,
+    attribute_lines: l.attribute_lines,
+    option_prices: l.option_prices,
+    quantity: l.quantity,
+    unit_price: l.unit_price,
+    line_total: l.line_total,
+  }));
+}
+
+/** The public-safe shape of a {@link PublicQuote}: its lines carry no `uid`. */
+export type PublicQuoteFields = Omit<PublicQuote, 'line_items'> & {
+  line_items: Omit<PublicQuoteLine, 'uid'>[];
+};
+
+/**
+ * Picks the customer-visible quote fields for a public response — the
+ * only way a quote (live, or a stored revision snapshot) may be put into
+ * a `/public/*` body.
+ *
+ * Explicit by design (AI_GUIDELINES §2): spreading a snapshot read back
+ * from jsonb would publish any key stored in it, so each order-level field
+ * is named here and the lines go through {@link toPublicLines}. Used by
+ * `GET /public/estimate/:token` and the read-only earlier-version route.
+ * Also the canonical form `quoteDiff` compares, so "what differs" and
+ * "what the customer is served" are the same set of fields.
+ *
+ * @param q A quote from {@link buildPublicQuote} or a revision snapshot.
+ * @returns A new object with exactly the {@link PublicQuoteFields} keys.
+ */
+export function toPublicQuoteFields(q: PublicQuote): PublicQuoteFields {
+  return {
+    title: q.title,
+    order_date: q.order_date,
+    expiry_date: q.expiry_date,
+    subtotal: q.subtotal,
+    discount_amount: q.discount_amount,
+    taxable_amount: q.taxable_amount,
+    tax_rate: q.tax_rate,
+    tax_amount: q.tax_amount,
+    total: q.total,
+    terms: q.terms,
+    line_items: toPublicLines(q.line_items),
+  };
 }

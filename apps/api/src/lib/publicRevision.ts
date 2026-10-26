@@ -19,13 +19,13 @@
  * and guessing would publish unsent edits.
  *
  * Everything returned here is still staff-shaped (lines carry `uid`);
- * the route passes lines through `toPublicLines` before they leave the
- * Worker. No `source`, `source_kind`, revision id or revision total is
- * ever exposed.
+ * the route passes the quote through `toPublicQuoteFields` before it
+ * leaves the Worker. No `source`, `source_kind`, revision id or revision
+ * total is ever exposed.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildPublicQuote, toPublicLines, type PublicQuote } from './publicQuote';
+import { buildPublicQuote, toPublicQuoteFields, type PublicQuote } from './publicQuote';
 import { describeChange, diffQuotes } from './quoteDiff';
 import { checkLatestRevision, listRevisions, readRevisionByNo } from './orderRevisions';
 
@@ -118,9 +118,10 @@ const READ_FAILED = 'Something went wrong. Please try again.';
  * Builds the response of `GET /public/estimate/:token/revisions/:rev`:
  * one earlier revision for the customer's read-only "previous versions"
  * view. Available at any order status (history stays readable after
- * confirmation) and only for the order the token opened. Lines pass
- * through `toPublicLines`; the row's id, kind and staff copy are never
- * part of the body.
+ * confirmation) and only for the order the token opened. The quote goes
+ * through `toPublicQuoteFields` (an explicit pick, so an unknown key
+ * stored in the snapshot never reaches the body); the row's id, kind and
+ * staff copy are never part of it.
  *
  * @param sb Service-role Supabase client.
  * @param orderId The order the token opened.
@@ -142,15 +143,8 @@ export async function publicRevisionResponse(
   const { rev_no, sent_at, snapshot } = read.row;
   return {
     status: 200,
-    body: {
-      data: {
-        rev_no,
-        sent_at,
-        ...snapshot,
-        line_items: toPublicLines(snapshot.line_items),
-        read_only: true,
-      },
-    },
+    // Explicit pick, never a spread of the stored jsonb (AI_GUIDELINES §2).
+    body: { data: { rev_no, sent_at, ...toPublicQuoteFields(snapshot), read_only: true } },
   };
 }
 

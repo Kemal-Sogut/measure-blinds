@@ -1148,6 +1148,28 @@ describe('estimate revisions on the public page', () => {
       expect(text).not.toContain('"r2"');
     }
   });
+
+  it('never forwards an unknown key stored in a snapshot', async () => {
+    const rev = revision(1, orderWith(150, 113));
+    const snapshot = rev.snapshot as Record<string, unknown> & { line_items: Record<string, unknown>[] };
+    rev.snapshot = {
+      ...snapshot,
+      internal_margin: 42,
+      line_items: snapshot.line_items.map((l) => ({ ...l, supplier_cost: 7 })),
+    };
+    db.order = orderWith(150, 113);
+    // Rev 1 as the latest (the main page serves it), then as an earlier
+    // version once Rev 2 exists.
+    db.revisions = [rev];
+    const bodies = [await (await req(`/estimate/${TOKEN}`)).text()];
+    db.revisions = [rev, revision(2, orderWith(160, 113))];
+    bodies.push(await (await req(`/estimate/${TOKEN}/revisions/1`)).text());
+    for (const text of bodies) {
+      expect(text).toContain('"height_cm":150');
+      expect(text).not.toContain('internal_margin');
+      expect(text).not.toContain('supplier_cost');
+    }
+  });
 });
 
 describe('rate limiting', () => {
