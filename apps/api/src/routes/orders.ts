@@ -1408,15 +1408,18 @@ app.put('/:id', async (c) => {
       expiry_date,
       discount_type: input.discount_type,
       discount_value: input.discount_value,
+      // Every save drops the order-total notice's dismissal: staff asked
+      // for a dismissed notice to stay quiet only until the next save,
+      // so after one it is measured against the stamp again and speaks
+      // if the total still differs from what the customer was sent.
+      quoted_notice_ack_total: null,
       // A revived estimate is a fresh quote: the lock columns and
       // the quoted stamp and its acknowledgement go null through the
       // line-item replacement
       // below (no `locks`, no `prior`), and the order's own stamp has to
       // follow them or a notice would measure against a figure nobody
       // was sent.
-      ...(reviveToDraft
-        ? { status: 'draft', quoted_total: null, quoted_notice_ack_total: null }
-        : {}),
+      ...(reviveToDraft ? { status: 'draft', quoted_total: null } : {}),
       ...totals,
     })
     .eq('id', id);
@@ -1801,7 +1804,9 @@ const dismissNoticeSchema = z.object({ uid: z.string().uuid().optional() }).stri
  * every move after it: if the price shifts again, today's figure no
  * longer matches the acknowledged one and the notice returns. Sending
  * the estimate again clears the acknowledgement along with the stamp it
- * answered.
+ * answered, and every save (`PUT /:id`) clears the ORDER-TOTAL
+ * acknowledgement, so a dismissed total notice stays quiet only until
+ * the next save.
  *
  * The acknowledged figure is the one the ORDER currently holds, not
  * whatever the editor happens to be previewing. So dismissing while an

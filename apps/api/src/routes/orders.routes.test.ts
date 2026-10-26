@@ -2553,6 +2553,16 @@ describe('per-item price lock (migration 39)', () => {
     expect(db.updatePayloads['orders']?.[0]).toMatchObject({ status: 'draft', quoted_total: null });
   });
 
+  it('drops the order-total dismissal on every save but keeps the stamp', async () => {
+    // A dismissed total notice stays quiet only until the next save.
+    seedExisting('sent', [{ ...lockedBlindRow(), quoted_base_price: 170 }]);
+    const res = await put(blindOnlyPayload().body);
+    expect(res.status).toBe(200);
+    const write = db.updatePayloads['orders']?.[0] as Record<string, unknown>;
+    expect(write).toMatchObject({ quoted_notice_ack_total: null });
+    expect('quoted_total' in write).toBe(false);
+  });
+
   /** `POST /:id/dismiss-price-notice`, with an optional uid. */
   async function dismiss(body?: Record<string, unknown>) {
     return ordersApp.request(
