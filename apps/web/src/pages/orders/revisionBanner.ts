@@ -13,20 +13,22 @@
  * beyond choosing a state, so it stays unit-testable without React.
  */
 
-import type { Order } from '../../types';
-import { holdsPriceLock } from '../../lib/orderStatus';
+import type { Order, OrderStatus } from '../../types';
+import { holdsPriceLock, isConfirmedStatus } from '../../lib/orderStatus';
 
 /**
  * What the banner shows.
  *
- * - `hidden`: nothing — a draft, a response without revision fields, or a
- *   revision read that failed (unknown is never shown as "up to date").
- * - `legacy`: a sent order that predates revision tracking; its next send
- *   creates Rev 1.
+ * - `hidden`: nothing — a draft, a response without revision fields, a
+ *   revision read that failed (unknown is never shown as "up to date"), or
+ *   a confirmed order with no revision.
+ * - `legacy`: a sent/expired order that predates revision tracking; its
+ *   next send creates Rev 1.
  * - `in_sync`: the customer holds the latest revision and nothing unsent.
- * - `unsent`: saved changes the customer has not been sent.
- * - `accepted_differs`: the customer confirmed `rev` and the saved order
- *   no longer matches it.
+ * - `unsent`: saved changes the customer has not been sent (sent/expired
+ *   only).
+ * - `accepted_differs`: a confirmed order whose saved quote no longer
+ *   matches revision `rev` (the accepted one, else the latest).
  */
 export type BannerState =
   | { kind: 'hidden' }
@@ -38,6 +40,14 @@ export type BannerState =
 /**
  * Picks the banner state for an order from its detail response.
  *
+ * Confirmed statuses (`awaiting_payment` onward) never read `unsent` or
+ * `legacy`: from confirmation the customer page serves the LIVE order, so
+ * "not sent to the customer" and "next send creates Rev 1" would be false.
+ * There, changes since the latest revision mean the order has moved away
+ * from what the customer accepted (`accepted_differs`, naming the accepted
+ * revision, or the latest when none is recorded), and an order with no
+ * revision shows nothing.
+ *
  * @param order An order as returned by the detail read. `revisions` is
  *   newest first; `revisions === null`/absent means unknown and hides the
  *   banner, as does a status that holds no price lock (drafts keep their
@@ -47,16 +57,25 @@ export type BannerState =
 export function bannerState(order: Order): BannerState {
   const { revisions, unsent_changes: changes } = order;
   if (revisions == null || !holdsPriceLock(order.status)) return { kind: 'hidden' };
+  const confirmed = isConfirmedStatus(order.status);
   const latest = revisions[0];
-  if (!latest) return { kind: 'legacy' };
+  if (!latest) return confirmed ? { kind: 'hidden' } : { kind: 'legacy' };
   if (changes == null) return { kind: 'hidden' };
 
-  if (order.accepted_revision_id && changes.length > 0) {
+  if (changes.length === 0) return { kind: 'in_sync', rev: latest.rev_no, sentAt: latest.sent_at };
+  if (confirmed) {
     const accepted = revisions.find((r) => r.id === order.accepted_revision_id) ?? latest;
     return { kind: 'accepted_differs', rev: accepted.rev_no, changes };
   }
-  if (changes.length > 0) {
-    return { kind: 'unsent', rev: latest.rev_no, sentAt: latest.sent_at, changes };
-  }
-  return { kind: 'in_sync', rev: latest.rev_no, sentAt: latest.sent_at };
+  return { kind: 'unsent', rev: latest.rev_no, sentAt: latest.sent_at, changes };
+}
+
+/**
+ * Whether the banner may offer "Send update": only while the estimate is
+ * still waiting on the customer (`sent` or `expired`), the statuses whose
+ * customer page shows the sent snapshot and so can be brought up to date
+ * by a send. The host passes `onSendUpdate` only when this is true.
+ */
+export function canSendUpdate(status: OrderStatus): boolean {
+  return status === 'sent' || status === 'expired';
 }

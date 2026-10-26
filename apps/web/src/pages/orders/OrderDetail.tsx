@@ -173,6 +173,7 @@ import {
 import { canRestoreRevision, draftsFromRevision } from './restoreRevision';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
 import { RevisionBanner } from './RevisionBannerCard';
+import { canSendUpdate } from './revisionBanner';
 import { holdsPriceLock } from '../../lib/orderStatus';
 import type { CatalogSlot } from '../../lib/blindTypes/base';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
@@ -2544,7 +2545,7 @@ export default function OrderDetail() {
       {existing && (
         <RevisionBanner
           order={existing}
-          onSendUpdate={() => void openSend()}
+          onSendUpdate={canSendUpdate(existing.status) ? () => void openSend() : undefined}
           onRestore={canRestoreRevision(existing.status) ? (r) => void handleRestore(r) : undefined}
           restoringId={restoreRequest?.id ?? null}
           restoredRev={restoreFrom && !restoreFrom.dismissed ? restoreFrom.rev_no : null}

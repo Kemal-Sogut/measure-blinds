@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { Order, OrderRevisionSummary } from '../../types';
-import { bannerState } from './revisionBanner';
+import { bannerState, canSendUpdate } from './revisionBanner';
 
 const rev = (rev_no: number): OrderRevisionSummary => ({
   id: `rev-${rev_no}`,
@@ -93,6 +93,50 @@ describe('bannerState', () => {
     expect(state).toEqual({ kind: 'accepted_differs', rev: 1, changes: ['Added: Hall'] });
   });
 
+  it('is hidden for a confirmed order with no revisions (the page is live, nothing to compare)', () => {
+    expect(
+      bannerState(order({ status: 'awaiting_payment', revisions: [], unsent_changes: null })),
+    ).toEqual({ kind: 'hidden' });
+  });
+
+  it('is accepted_differs with the latest revision when a confirmed order has no accepted revision', () => {
+    const changes = ['Added: Hall'];
+    expect(
+      bannerState(
+        order({
+          status: 'in_progress',
+          revisions: TWO_REVS,
+          accepted_revision_id: null,
+          unsent_changes: changes,
+        }),
+      ),
+    ).toEqual({ kind: 'accepted_differs', rev: 2, changes });
+  });
+
+  it.each(['awaiting_payment', 'in_progress', 'ready', 'installed'] as const)(
+    'never says unsent or legacy on %s',
+    (status) => {
+      const shapes: Partial<Order>[] = [
+        { revisions: [], unsent_changes: null },
+        { revisions: TWO_REVS, unsent_changes: ['Added: Hall'] },
+        { revisions: TWO_REVS, accepted_revision_id: 'gone', unsent_changes: ['Added: Hall'] },
+        { revisions: TWO_REVS, unsent_changes: [] },
+      ];
+      for (const shape of shapes) {
+        expect(['unsent', 'legacy']).not.toContain(bannerState(order({ status, ...shape })).kind);
+      }
+    },
+  );
+
+  it('is unsent on a sent order even if it carries an accepted revision id', () => {
+    const changes = ['Added: Hall'];
+    expect(
+      bannerState(
+        order({ status: 'sent', revisions: TWO_REVS, accepted_revision_id: 'rev-1', unsent_changes: changes }),
+      ),
+    ).toEqual({ kind: 'unsent', rev: 2, sentAt: '2026-10-02T14:00:00Z', changes });
+  });
+
   it('stays in_sync for a confirmed order that still matches', () => {
     expect(
       bannerState(
@@ -104,5 +148,15 @@ describe('bannerState', () => {
         }),
       ),
     ).toEqual({ kind: 'in_sync', rev: 2, sentAt: '2026-10-02T14:00:00Z' });
+  });
+});
+
+describe('canSendUpdate', () => {
+  it('offers Send update only while the estimate waits on the customer', () => {
+    expect(canSendUpdate('sent')).toBe(true);
+    expect(canSendUpdate('expired')).toBe(true);
+    for (const s of ['draft', 'awaiting_payment', 'in_progress', 'ready', 'installed'] as const) {
+      expect(canSendUpdate(s)).toBe(false);
+    }
   });
 });
