@@ -231,6 +231,20 @@ Replaces the alternative considered at hand-over, which was to limit the notices
   so dismissing mid-edit settles the saved price and saving that edit raises a fresh notice at
   the new one.
 
+## Part 4 — Clearing on a re-send (added 2026-10-25, during testing)
+
+Sending again must silence both notices. The Worker always did (the `'overwrite'` stamp), but
+the WEB did not, for the per-item one: `useSendEstimates` invalidates the order's detail query,
+so the order-level notice cleared, while line-item drafts hydrate once — deliberately, so a
+refetch cannot discard unsaved edits — and kept the previous send's stamp until a reload.
+
+`applyServerFields(items, byUid)` in `lineItemDrafts.ts` refreshes only the four server-owned
+draft fields (`lock`, `previously_quoted`, `quoted_base`, `notice_ack_base`) by uid, leaves
+every typed field alone, and returns the same array when nothing differs so an ordinary refetch
+costs no re-render. `OrderDetail` applies it in an effect on the order, and clears the
+optimistic dismissal set in the same pass — otherwise a dismissal made before a re-send would
+go on hiding a notice whose acknowledgement the send had just cleared.
+
 ## Verification
 
 Tests first, per workspace:

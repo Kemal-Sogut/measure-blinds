@@ -158,6 +158,8 @@ import {
   type Catalogs,
   type PriceAdjustmentDraft,
   type QuotedPriceChange,
+  type ServerItemFields,
+  applyServerFields,
   quotedPriceChange,
 } from './lineItemDrafts';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
@@ -363,17 +365,28 @@ function toAdjustmentDraft(li: LineItem, pricesFrozen: boolean): PriceAdjustment
       label: a.label,
       price: String(a.price),
     })),
-    // The price this item was confirmed at, carried into the editor so
-    // the preview shows what the save will keep. Both columns move
-    // together — half a lock is no lock.
+    ...serverFieldsOf(li, pricesFrozen),
+  };
+}
+
+/**
+ * The four fields a line item takes from the server: the price it was
+ * frozen at (both lock columns move together — half a lock is no lock),
+ * whether its order's prices are frozen at all, the figure it was last
+ * SENT at, and any dismissal of that figure's notice.
+ *
+ * Read in two places, which is why it is not inline: once when the
+ * drafts hydrate, and again whenever the order changes underneath them
+ * (`applyServerFields`) — a re-send moves the stamp without the editor
+ * being touched.
+ */
+function serverFieldsOf(li: LineItem, pricesFrozen: boolean): ServerItemFields {
+  return {
     lock:
       li.locked_base_price !== null && li.locked_inputs_fingerprint
         ? { base: Number(li.locked_base_price), fingerprint: li.locked_inputs_fingerprint }
         : null,
     previously_quoted: pricesFrozen,
-    // What the customer was last SENT for this item, which the lock
-    // cannot say once a save has re-locked an edit. Drives the form's
-    // price-update notice.
     quoted_base: finiteOrNull(li.quoted_base_price),
     notice_ack_base: finiteOrNull(li.quoted_notice_ack_base),
   };
@@ -807,6 +820,34 @@ export default function OrderDetail() {
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
+
+  /**
+   * Keeps the server-owned half of each line-item draft in step with the
+   * order, without rebuilding the drafts and losing unsaved edits.
+   *
+   * The event this exists for is SENDING the estimate again: the Worker
+   * re-stamps every item and clears every dismissal, so each price-update
+   * notice should fall silent — but the drafts hydrate once, so their
+   * copy of the stamp would otherwise still be the PREVIOUS send's figure
+   * until the page was reloaded. It also catches the acknowledgement
+   * written by a dismissal, and the re-lock written by a save.
+   *
+   * The optimistic dismissal set is dropped in the same pass: the order
+   * now carries whatever was acknowledged, so keeping a local override
+   * could only hide a notice the server says should be visible — exactly
+   * what a re-send after a dismissal would otherwise do.
+   */
+  useEffect(() => {
+    if (!hydrated || !existing) return;
+    const pricesFrozen = holdsPriceLock(existing.status);
+    const byUid = new Map<string, ServerItemFields>(
+      (existing.line_items ?? [])
+        .filter((li) => li.uid)
+        .map((li) => [li.uid, serverFieldsOf(li, pricesFrozen)])
+    );
+    setItems((list) => applyServerFields(list, byUid));
+    setDismissedNotices((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [existing, hydrated]);
 
   // Drop the pre-filled customer in once it arrives, and only if the
   // consultant hasn't already picked one — a later change or clear from
