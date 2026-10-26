@@ -323,11 +323,25 @@ export function useOrderPublicToken(): UseMutationResult<{ public_token: string 
   });
 }
 
-/** Shared onSuccess: cache the server's authoritative order. */
+/**
+ * Shared onSuccess: cache the server's authoritative order.
+ *
+ * Only the detail reads carry `revisions` / `unsent_changes`; a mutation
+ * response does not. They are carried over from the cached copy so the
+ * revision banner does not vanish on every save, and the detail is then
+ * refetched because a save changes what is unsent.
+ */
 function useCacheOrder() {
   const qc = useQueryClient();
   return (data: Order) => {
-    qc.setQueryData(['orders', 'detail', data.id], data);
+    const key = ['orders', 'detail', data.id];
+    const prev = qc.getQueryData<Order>(key);
+    qc.setQueryData(key, {
+      ...data,
+      revisions: data.revisions ?? prev?.revisions,
+      unsent_changes: data.unsent_changes ?? prev?.unsent_changes,
+    });
+    void qc.invalidateQueries({ queryKey: key });
     void qc.invalidateQueries({ queryKey: LIST_KEY });
     void qc.invalidateQueries({ queryKey: ['orders', 'logs', data.id] });
   };

@@ -92,7 +92,7 @@ import {
   type QuotedColumns,
   type StoredLock,
 } from '../lib/priceLockStore';
-import { stampSent } from '../lib/orderRevisions';
+import { revisionDetailFields, stampSent } from '../lib/orderRevisions';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -1151,6 +1151,7 @@ app.get('/by-number/:orderNumber', async (c) => {
   if (!data) return c.json({ error: 'Order not found' }, 404);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
 });
 
@@ -1271,7 +1272,10 @@ app.post('/', async (c) => {
   return c.json({ data: full ?? result.order }, 201);
 });
 
-/** Returns one order with line items + customer + payments. */
+/**
+ * Returns one order with line items + customer + payments, plus the
+ * `revisions` history and `unsent_changes` (see `revisionDetailFields`).
+ */
 app.get('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, error } = await readDetail(sb, c.req.param('id'));
@@ -1279,6 +1283,7 @@ app.get('/:id', async (c) => {
   if (!data) return c.json({ error: 'Order not found' }, 404);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
 });
 

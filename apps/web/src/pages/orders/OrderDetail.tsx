@@ -165,6 +165,7 @@ import {
   applyServerFields,
 } from './lineItemDrafts';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
+import { RevisionBanner } from './RevisionBannerCard';
 import { holdsPriceLock } from '../../lib/orderStatus';
 import type { CatalogSlot } from '../../lib/blindTypes/base';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
@@ -2581,6 +2582,7 @@ export default function OrderDetail() {
   /** The Items section: bulk toolbar + rows, then totals where the panel is hidden. */
   const itemsView = (
     <>
+      {existing && <RevisionBanner order={existing} onSendUpdate={() => void openSend()} />}
       {items.length === 0 ? (
         <section className="rounded-xl border border-dashed border-border-input bg-surface p-6 text-center">
           <p className="text-[13px] text-text-muted">No items yet.</p>

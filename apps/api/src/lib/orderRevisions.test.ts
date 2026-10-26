@@ -21,6 +21,8 @@ import {
   readLatestRevision,
   readRevisionSource,
   pendingChanges,
+  listRevisions,
+  revisionDetailFields,
   type RevisionSource,
 } from './orderRevisions';
 
@@ -309,5 +311,74 @@ describe('pendingChanges', () => {
     const { latest, changes } = await pendingChanges(fakeSb(), 'o1');
     expect(latest?.rev_no).toBe(1);
     expect(changes.length).toBeGreaterThan(0);
+  });
+});
+
+describe('listRevisions', () => {
+  it('lists summaries newest first with neither snapshot nor source', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].height_cm = 180;
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'manual');
+    const res = await listRevisions(fakeSb(), 'o1');
+    if (!('rows' in res)) throw new Error(res.error);
+    expect(res.rows.map((r) => r.rev_no)).toEqual([2, 1]);
+    expect(Object.keys(res.rows[0]).sort()).toEqual(
+      ['id', 'rev_no', 'sent_at', 'source_kind', 'total'].sort()
+    );
+    expect(res.rows[0].source_kind).toBe('manual');
+  });
+
+  it('returns an empty list for an order never sent, not an error', async () => {
+    expect(await listRevisions(fakeSb(), 'o1')).toEqual({ rows: [] });
+  });
+
+  it('returns the database error instead of an empty list', async () => {
+    failures['order_revisions.select'] = { message: 'relation does not exist' };
+    expect(await listRevisions(fakeSb(), 'o1')).toEqual({ error: 'relation does not exist' });
+  });
+});
+
+describe('revisionDetailFields', () => {
+  it('carries the history and the described unsent changes', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].height_cm = 180;
+    const out = await revisionDetailFields(fakeSb(), 'o1', true);
+    expect(out.revisions).toHaveLength(1);
+    expect(out.unsent_changes).toEqual(expect.arrayContaining([expect.stringContaining('180 cm')]));
+  });
+
+  it('reports no unsent changes as an empty list, not null', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    expect((await revisionDetailFields(fakeSb(), 'o1', true)).unsent_changes).toEqual([]);
+  });
+
+  it('nulls unsent_changes without a price lock but keeps the history', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].height_cm = 180;
+    const out = await revisionDetailFields(fakeSb(), 'o1', false);
+    expect(out.unsent_changes).toBeNull();
+    expect(out.revisions).toHaveLength(1);
+  });
+
+  it('nulls unsent_changes for an order with no revision', async () => {
+    const out = await revisionDetailFields(fakeSb(), 'o1', true);
+    expect(out).toEqual({ revisions: [], unsent_changes: null });
+  });
+
+  it('nulls both fields when the revision read fails', async () => {
+    failures['order_revisions.select'] = { message: 'boom' };
+    expect(await revisionDetailFields(fakeSb(), 'o1', true)).toEqual({
+      revisions: null,
+      unsent_changes: null,
+    });
+  });
+
+  it('nulls both fields when the live-order read fails after the history read', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    failures['orders.select'] = { message: 'boom' };
+    expect(await revisionDetailFields(fakeSb(), 'o1', true)).toEqual({
+      revisions: null,
+      unsent_changes: null,
+    });
   });
 });

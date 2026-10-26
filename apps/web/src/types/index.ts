@@ -125,6 +125,23 @@ export interface Payment {
 }
 
 /**
+ * One row of an order's revision history as the detail read returns it
+ * (migration 50 `order_revisions`, minus the snapshot and the staff-only
+ * source). A revision is a frozen copy of what the customer was sent.
+ */
+export interface OrderRevisionSummary {
+  id: string;
+  /** 1-based, per order; the customer-facing "Rev n". */
+  rev_no: number;
+  /** ISO timestamp of the send that cut this revision. */
+  sent_at: string;
+  /** What triggered it: an email send, a manual mark-sent, or a stage jump. */
+  source_kind: 'email' | 'manual' | 'stage';
+  /** The grand total the customer was quoted in this revision. */
+  total: number;
+}
+
+/**
  * Order record with full pricing breakdown, lifecycle status, and
  * payment ledger. An "estimate"/"invoice" is just the PDF/email we
  * generate about this order. All money fields are authoritative
@@ -164,6 +181,27 @@ export interface Order {
    * as `LineItem.quoted_notice_ack_base`, one level up.
    */
   quoted_notice_ack_total: number | null;
+  /**
+   * The revision the customer confirmed (migration 50), or null while
+   * the estimate is unconfirmed or was confirmed before revision
+   * tracking. Written server-side by the public confirm; the staff
+   * banner compares it with the latest revision.
+   */
+  accepted_revision_id: string | null;
+  /**
+   * Every revision cut on a send, newest first (migration 50). Present
+   * only on the order-detail reads; `null` means the server could not
+   * read the history (unknown, NOT "none" — the banner hides), and it
+   * is absent on list and mutation responses.
+   */
+  revisions?: OrderRevisionSummary[] | null;
+  /**
+   * Customer-visible changes saved since the latest revision, already
+   * described one per line (`"Kitchen: Height 150 cm → 180 cm"`); `[]`
+   * = none. `null` when the status holds no price lock, the order has
+   * no revision, or the read failed. Order-detail reads only.
+   */
+  unsent_changes?: string[] | null;
   terms_snapshot: string | null;
   public_token: string | null;
   sent_at: string | null;
