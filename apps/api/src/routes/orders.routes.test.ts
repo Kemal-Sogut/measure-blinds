@@ -119,6 +119,10 @@ function makeBuilder(table: string) {
 vi.mock('../lib/supabase', () => ({
   createSupabaseAdmin: () => ({ from: (table: string) => makeBuilder(table) }),
 }));
+// The auth test loads the real Worker entry (`../index`) to prove the
+// route sits behind `/api/*`'s JWT check. Its inbox sync imports
+// `cloudflare:sockets`, which only exists inside workerd.
+vi.mock('../lib/inbox/titanConnect', () => ({ openTitanSource: vi.fn() }));
 
 import ordersApp from './orders';
 // The lock fixtures below fingerprint their rows with the SAME functions
@@ -126,6 +130,7 @@ import ordersApp from './orders';
 // construction rather than by a hand-copied string.
 import { pricingFingerprint } from '../lib/priceLock';
 import { lockInputFromRow } from '../lib/priceLockStore';
+import { buildPublicQuote } from '../lib/publicQuote';
 
 /** Standard env bindings for app.request. */
 const ENV = {
@@ -3047,5 +3052,256 @@ describe('GET /api/orders/by-number/:orderNumber', () => {
 
   it('400s for a malformed number', async () => {
     expect((await ordersApp.request('/by-number/bad%20number!', {}, ENV)).status).toBe(400);
+  });
+});
+
+describe('restore a revision (migration 50, Design decision 8)', () => {
+  const UID_A = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+  const UID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  const REV1_ID = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
+
+  /**
+   * The blind as stored at a send, locked at the figure it was priced at
+   * from `ratePerSqm` (cassette 20/m x 1.4 m = 28 on top) and
+   * fingerprinted from its own inputs, as `freezeOrderPrices` leaves it.
+   */
+  function blindRow(heightCm: number, ratePerSqm: number) {
+    const unit = Math.round((1.4 * (heightCm / 100) * ratePerSqm + 28) * 100) / 100;
+    const row = {
+      id: 'li1',
+      uid: UID_A,
+      position: 0,
+      hidden: false,
+      item_type: 'blind',
+      room_name: 'Living Room',
+      blinds_type: 'Roller',
+      panels: [70, 70],
+      height_cm: heightCm,
+      material_id: MATERIAL.id,
+      material_name: MATERIAL.name,
+      material_price_per_sqm: ratePerSqm,
+      cassette_id: CASSETTE.id,
+      cassette_name: CASSETTE.name,
+      cassette_price_per_m: 20,
+      cassette_price_basis: 'per_m',
+      bottom_rail_id: BOTTOM_RAIL.id,
+      bottom_rail_name: BOTTOM_RAIL.name,
+      bottom_rail_price_per_m: 0,
+      bottom_rail_price_basis: 'per_m',
+      control_id: CONTROL.id,
+      control_name: CONTROL.name,
+      control_price_per_item: 0,
+      control_price_basis: 'per_panel',
+      installation_id: null,
+      installation_name: null,
+      installation_price_per_item: null,
+      installation_price_basis: null,
+      attributes: {},
+      quantity: 2,
+      unit_price: unit,
+      line_total: unit * 2,
+      base_unit_price: null,
+      addons: [],
+      preset_id: null,
+    };
+    return {
+      ...row,
+      locked_base_price: unit,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+      quoted_base_price: unit,
+    };
+  }
+
+  /** The typed-price preset, frozen at 25 at every send. */
+  function presetRow() {
+    const row = {
+      id: 'li2',
+      uid: UID_B,
+      position: 1,
+      hidden: false,
+      item_type: 'preset',
+      preset_id: null,
+      title: '',
+      description: 'Installation',
+      attributes: {},
+      quantity: 1,
+      unit_price: 25,
+      line_total: 25,
+      base_unit_price: null,
+      addons: [],
+    };
+    return {
+      ...row,
+      locked_base_price: 25,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+      quoted_base_price: 25,
+    };
+  }
+
+  /** Rev 1: sent while the fabric was $25/m², the blind at 98. */
+  const rev1Rows = () => [blindRow(200, 25), presetRow()];
+  /** Rev 2: fabric raised to $30, the blind made taller and re-sent at 120.40. */
+  const rev2Rows = () => [blindRow(220, 30), presetRow()];
+
+  /**
+   * The order as it stands after Rev 2 went out: `status`, Rev 2's rows,
+   * today's catalog at $30/m², and Rev 1 readable from `order_revisions`.
+   */
+  function seedAfterRev2(status = 'sent') {
+    db.responses['orders.select'] = [
+      { id: 'o1', status, expiry_date: '2099-01-01', line_items: rev2Rows() },
+    ];
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 30 }];
+    db.responses['order_revisions.select'] = [
+      {
+        rev_no: 1,
+        source: {
+          order: { title: null, discount_type: 'percent', discount_value: 10 },
+          line_items: rev1Rows(),
+        },
+      },
+    ];
+  }
+
+  /** Rev 1's line items as the editor sends them back after a restore. */
+  function rev1Payload(edit: Record<string, unknown> = {}) {
+    const body = payload() as unknown as Record<string, unknown> & {
+      line_items: Record<string, unknown>[];
+    };
+    body.expiry_date = '2099-01-01';
+    body.line_items[0] = { ...body.line_items[0], uid: UID_A, ...edit };
+    body.line_items[1] = { ...body.line_items[1], uid: UID_B };
+    body.restore_from_revision = REV1_ID;
+    return body;
+  }
+
+  const put = (body: unknown) =>
+    ordersApp.request(
+      '/o1',
+      { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  /** The rows the save inserted, in position order. */
+  const savedRows = () =>
+    (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, number | string | null>[];
+
+  it('restores Rev 1 prices for untouched items after a catalog price rise', async () => {
+    seedAfterRev2();
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    const [blind, preset] = savedRows();
+    // A plain save would re-price the 200 cm blind at $30: 84 + 28 = 112.
+    expect(blind.unit_price).toBe(98);
+    expect(blind.material_price_per_sqm).toBe(25);
+    expect(blind.locked_base_price).toBe(98);
+    expect(preset.unit_price).toBe(25);
+    // The customer still holds Rev 2, so the price-update notice keeps
+    // measuring against Rev 2's stamp, carried from the CURRENT rows.
+    expect(blind.quoted_base_price).toBe(120.4);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['id', REV1_ID]]);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['order_id', 'o1']]);
+  });
+
+  it('keeps the Rev 1 price for an item whose material was archived since', async () => {
+    seedAfterRev2();
+    db.responses['materials.select'] = [
+      { ...MATERIAL, price_per_sqm: 30, active: false, archived_at: '2026-10-20T00:00:00.000Z' },
+    ];
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].unit_price).toBe(98);
+    expect(savedRows()[0].material_price_per_sqm).toBe(25);
+    // The held lock never consults the catalog, archived or not.
+    expect(db.calls).not.toContain('materials.select');
+  });
+
+  it('re-prices a restored item that was edited before saving', async () => {
+    seedAfterRev2();
+    // Loaded Rev 1, then changed the height before pressing Save: that
+    // item is re-quoted at today's $30 (1.4 x 2.1 x 30 + 28 = 116.20).
+    const res = await put(rev1Payload({ height_cm: 210 }));
+    expect(res.status).toBe(200);
+    const [blind, preset] = savedRows();
+    expect(blind.unit_price).toBe(116.2);
+    expect(blind.material_price_per_sqm).toBe(30);
+    expect(blind.locked_base_price).toBe(116.2);
+    expect(preset.unit_price).toBe(25);
+  });
+
+  it('409s restore on awaiting_payment', async () => {
+    seedAfterRev2('awaiting_payment');
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "Rev 1 can't be restored once the estimate is confirmed."
+    );
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.delete');
+  });
+
+  it('404s a revision of another order', async () => {
+    seedAfterRev2();
+    // The order filter excludes it, so the read comes back empty.
+    db.responses['order_revisions.select'] = [];
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(404);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['order_id', 'o1']]);
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.delete');
+  });
+
+  it('logs the restore and leaves revisions untouched', async () => {
+    seedAfterRev2();
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+    expect(logs.map((l) => l.message)).toContain('Restored Rev 1 (not sent yet).');
+    const revisionWrites = db.calls.filter(
+      (call) => call.startsWith('order_revisions.') && call !== 'order_revisions.select'
+    );
+    expect(revisionWrites).toEqual([]);
+
+    // The detail read afterwards: the order now holds Rev 1's content and
+    // the customer still holds Rev 2, so the banner has changes to list.
+    const totals = { subtotal: 0, discount_amount: 0, taxable_amount: 0, tax_rate: 13, tax_amount: 0, total: 0 };
+    const head = { id: 'o1', status: 'sent', order_date: '2026-07-03', expiry_date: '2099-01-01', payments: [], ...totals };
+    db.responses['orders.select'] = [{ ...head, line_items: rev1Rows() }];
+    db.responses['order_revisions.select'] = [
+      {
+        id: 'rev-2',
+        rev_no: 2,
+        sent_at: '2026-10-25T00:00:00.000Z',
+        source_kind: 'email',
+        total: 0,
+        snapshot: buildPublicQuote({ ...head, line_items: rev2Rows() }),
+      },
+    ];
+    const detail = await ordersApp.request('/o1', {}, ENV);
+    const body = (await detail.json()) as { data: { revisions: unknown[]; unsent_changes: string[] } };
+    expect(body.data.revisions).toHaveLength(1);
+    expect(body.data.unsent_changes.length).toBeGreaterThan(0);
+  });
+
+  it('GET revision source requires auth', async () => {
+    const worker = (await import('../index')).default;
+    const res = await worker.fetch(
+      new Request(`http://localhost/api/orders/o1/revisions/${REV1_ID}`),
+      ENV as never,
+      { waitUntil: () => {}, passThroughOnException: () => {} } as never
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('GET revision source returns the staff copy, or 404 for another order', async () => {
+    seedAfterRev2();
+    const ok = await ordersApp.request(`/o1/revisions/${REV1_ID}`, {}, ENV);
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { data: { rev_no: number; source: { line_items: unknown[] } } };
+    expect(body.data.rev_no).toBe(1);
+    expect(body.data.source.line_items).toHaveLength(2);
+
+    db.responses['order_revisions.select'] = [];
+    expect((await ordersApp.request(`/o1/revisions/${REV1_ID}`, {}, ENV)).status).toBe(404);
   });
 });

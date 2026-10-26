@@ -93,6 +93,12 @@ import {
   type StoredLock,
 } from '../lib/priceLockStore';
 import { revisionDetailFields, stampSent } from '../lib/orderRevisions';
+import {
+  loadRevisionSource,
+  overlayRevisionLocks,
+  planRestore,
+  restoreLogLine,
+} from '../lib/orderRestore';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -308,6 +314,8 @@ const orderSchema = z
     discount_type: z.enum(['fixed', 'percent']).default('fixed'),
     discount_value: z.number().min(0).max(1_000_000).default(0),
     line_items: z.array(lineItemSchema).max(200).default([]),
+    /** PUT only: this save restores that revision (see `lib/orderRestore.ts`). */
+    restore_from_revision: z.string().uuid().optional(),
   })
   .strict();
 
@@ -1288,11 +1296,25 @@ app.get('/:id', async (c) => {
 });
 
 /**
+ * Returns one revision's staff-only restore copy, `{ rev_no, source }`,
+ * for the editor's Restore (see `lib/orderRestore.ts`); 404 when the
+ * revision is not this order's.
+ */
+app.get('/:id/revisions/:revisionId', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const res = await loadRevisionSource(sb, c.req.param('id'), c.req.param('revisionId'));
+  if ('error' in res) return c.json({ error: res.error }, res.status);
+  return c.json({ data: res.data });
+});
+
+/**
  * Updates an order — editable at ANY lifecycle stage, with full server
  * recalc. Extending an `expired` estimate's validity date back to today
  * or later revives it to `draft` (a clean re-start — deliberately NOT
  * `sent`, since nothing has been re-sent to the customer yet); every
  * other status is preserved. See the revive note at the `update` call.
+ * `restore_from_revision` makes the save a revision restore: untouched
+ * items keep that revision's locked prices (`lib/orderRestore.ts`).
  */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
@@ -1316,6 +1338,11 @@ app.put('/:id', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
+
+  const restore = input.restore_from_revision
+    ? await planRestore(sb, id, input.restore_from_revision, existing.status)
+    : null;
+  if (restore && !restore.ok) return c.json({ error: restore.error }, restore.status);
 
   const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
   const expiry_date = input.expiry_date ?? existing.expiry_date;
@@ -1368,8 +1395,10 @@ app.put('/:id', async (c) => {
   // were edited is re-priced — and re-locked at the new figure. See
   // `lib/priceLock.ts` for the fingerprint that decides this.
   const priorRows = (existing.line_items ?? []) as Record<string, unknown>[];
-  const locks =
+  const currentLocks =
     holdsPriceLock(existing.status) && !reviveToDraft ? buildLockMap(priorRows) : undefined;
+  // A restore prices untouched items at the revision's own locks.
+  const locks = restore?.ok ? overlayRevisionLocks(currentLocks, restore.source) : currentLocks;
 
   // In lockstep with `locks`, and for the same reason: both describe an
   // order whose prices are frozen. On a draft — or on the revive that
@@ -1442,6 +1471,7 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+  if (restore?.ok) await logOrderEvent(sb, id, restoreLogLine(restore.rev_no));
   if (reviveToDraft) {
     await logOrderEvent(sb, id, 'Expiry extended to today or later — estimate revived to draft.');
   }

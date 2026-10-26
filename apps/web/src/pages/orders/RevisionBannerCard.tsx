@@ -21,7 +21,9 @@
  *
  * A collapsible revision history (Rev n, date, how it was sent, total)
  * follows whenever the order has revisions, drafts included, since a
- * revert to draft keeps its history.
+ * revert to draft keeps its history. While the order is an estimate, each
+ * revision but the latest offers Restore (Design decision 8); once one is
+ * loaded into the editor a strip says so until it is saved.
  *
  * (This file is `RevisionBannerCard.tsx` because `revisionBanner.ts` sits
  * beside it: two names differing only in case and extension resolve
@@ -33,7 +35,7 @@
  * long change line must wrap or clip rather than widen the page.
  */
 
-import type { Order } from '../../types';
+import type { Order, OrderRevisionSummary } from '../../types';
 import { bannerState } from './revisionBanner';
 import { formatViewedAt } from './customerViewed';
 
@@ -63,8 +65,22 @@ function ChangeList({ changes }: { changes: string[] }) {
   );
 }
 
-/** The collapsible revision history, newest first. */
-function History({ revisions }: { revisions: NonNullable<Order['revisions']> }) {
+/**
+ * The collapsible revision history, newest first. With `onRestore`, every
+ * revision except the latest gets a Restore button (restoring the one the
+ * customer already holds would change nothing); `restoringId` disables
+ * them all while that revision's copy loads.
+ */
+function History({
+  revisions,
+  onRestore,
+  restoringId,
+}: {
+  revisions: NonNullable<Order['revisions']>;
+  onRestore?: (revision: OrderRevisionSummary) => void;
+  restoringId?: string | null;
+}) {
+  const latest = Math.max(...revisions.map((r) => r.rev_no));
   return (
     <details className="min-w-0 text-[12px] text-text-secondary">
       <summary className="cursor-pointer select-none py-1 text-[11px] font-semibold text-text-muted">
@@ -80,10 +96,47 @@ function History({ revisions }: { revisions: NonNullable<Order['revisions']> }) 
             <span className="min-w-0 text-text-muted">{formatViewedAt(r.sent_at)}</span>
             <span className="min-w-0 text-text-muted">{SOURCE_LABEL[r.source_kind]}</span>
             <span className="ml-auto font-mono text-text-primary">{money(r.total)}</span>
+            {onRestore && r.rev_no !== latest && (
+              <button
+                type="button"
+                onClick={() => onRestore(r)}
+                disabled={Boolean(restoringId)}
+                className="shrink-0 rounded-md border border-border-light px-2 py-0.5 text-[11px] font-semibold text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+              >
+                {restoringId === r.id ? 'Loading…' : 'Restore'}
+              </button>
+            )}
           </li>
         ))}
       </ul>
     </details>
+  );
+}
+
+/**
+ * The strip shown once a revision has been loaded into the editor: it is
+ * unsaved and, even once saved, not yet seen by the customer.
+ */
+function RestoredStrip({ revNo, onDismiss }: { revNo: number; onDismiss?: () => void }) {
+  return (
+    <div
+      className="flex min-w-0 items-start gap-2 rounded-xl border border-info/30 bg-info-tint px-3 py-2 text-[12px] text-info"
+      role="status"
+    >
+      <span className="min-w-0 flex-1 break-words">
+        Rev {revNo} loaded — review and Save. Not sent to the customer.
+      </span>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss"
+          className="shrink-0 rounded px-1 font-semibold leading-none hover:opacity-80"
+        >
+          ×
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -94,10 +147,21 @@ function History({ revisions }: { revisions: NonNullable<Order['revisions']> }) 
  * @param props.order The order from the detail read.
  * @param props.onSendUpdate Opens the host's send dialog from the amber
  *   banner's Send update button.
+ * @param props.onRestore Starts a restore of an earlier revision (the
+ *   host confirms, loads it and owns the editor state).
+ * @param props.restoringId The revision whose copy is loading, if any.
+ * @param props.restoredRev The revision loaded into the editor and not
+ *   yet saved, which shows the "loaded — review and Save" strip.
+ * @param props.onDismissRestored Hides that strip (the restore stays
+ *   pending until saved or discarded).
  */
 export function RevisionBanner({
   order,
   onSendUpdate,
+  onRestore,
+  restoringId,
+  restoredRev,
+  onDismissRestored,
 }: {
   /** The order as returned by the detail read. */
   order: Order;
@@ -106,10 +170,26 @@ export function RevisionBanner({
    * and the Send update button is then not rendered.
    */
   onSendUpdate?: () => void;
+  /**
+   * Restores a revision into the editor. Omitted where restoring is not
+   * allowed (a confirmed order), and the Restore buttons are then not
+   * rendered.
+   */
+  onRestore?: (revision: OrderRevisionSummary) => void;
+  /** Id of the revision being loaded; disables every Restore meanwhile. */
+  restoringId?: string | null;
+  /** `rev_no` of a restored revision awaiting Save, or null for none. */
+  restoredRev?: number | null;
+  /** Dismisses the restored strip. */
+  onDismissRestored?: () => void;
 }) {
   const state = bannerState(order);
   if (state.kind === 'hidden' && !order.revisions?.length) return null;
-  const history = order.revisions?.length ? <History revisions={order.revisions} /> : null;
+  const history = order.revisions?.length ? (
+    <History revisions={order.revisions} onRestore={onRestore} restoringId={restoringId} />
+  ) : null;
+  const strip =
+    restoredRev != null ? <RestoredStrip revNo={restoredRev} onDismiss={onDismissRestored} /> : null;
 
   let main = null;
   if (state.kind === 'in_sync') {
@@ -162,6 +242,7 @@ export function RevisionBanner({
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
+      {strip}
       {main}
       {history}
     </div>

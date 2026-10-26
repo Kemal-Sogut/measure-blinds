@@ -113,6 +113,7 @@ import {
   useResolveEditRequest,
   useOrderPublicToken,
   useDismissPriceNotice,
+  useRevisionSource,
   downloadOrderPdf,
   downloadWarrantyPdf,
   type OrderInput,
@@ -159,11 +160,14 @@ import {
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type PriceAdjustmentDraft,
   type QuotedPriceChange,
   type ServerItemFields,
   applyServerFields,
+  draftsFromLineItems,
+  finiteOrNull,
+  serverFieldsOf,
 } from './lineItemDrafts';
+import { canRestoreRevision, draftsFromRevision } from './restoreRevision';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
 import { RevisionBanner } from './RevisionBannerCard';
 import { holdsPriceLock } from '../../lib/orderStatus';
@@ -192,7 +196,7 @@ import {
 import { useCollapsedPanel } from './useCollapsedPanel';
 import { nextKey } from './draftKeys';
 import CustomerViewedEye from './CustomerViewedEye';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, OrderRevisionSummary } from '../../types';
 
 /**
  * Panel treatment shared by this screen's hand-rolled bottom sheets.
@@ -297,124 +301,12 @@ function fromIso(iso: string): Date {
 const EXPIRED_ESTIMATE_SEND_MESSAGE =
   'This estimate has expired — update the expiry date first.';
 
-/** Converts persisted line items into editable drafts. */
-function toDrafts(order: Order): ItemDraft[] {
-  // Read once from the order, not per item: every persisted row belongs
-  // to the same order, and this is the half of `isAlreadyQuoted` that
-  // cannot be derived from the row itself.
-  const pricesFrozen = holdsPriceLock(order.status);
-  return (order.line_items ?? []).map((li) => {
-    if (li.item_type === 'blind') {
-      return {
-        key: nextKey(),
-        uid: li.uid,
-        hidden: li.hidden,
-        item_type: 'blind',
-        room_name: li.room_name,
-        blinds_type: li.blinds_type,
-        panels: li.panels.map(String),
-        height_cm: String(li.height_cm ?? ''),
-        material_id: li.material_id ?? '',
-        cassette_id: li.cassette_id ?? '',
-        bottom_rail_id: li.bottom_rail_id ?? '',
-        control_id: li.control_id ?? '',
-        installation_id: li.installation_id ?? '',
-        color: li.color ?? '',
-        note: li.note ?? '',
-        // The persisted blob is typed; the draft holds strings.
-        attributes: Object.fromEntries(
-          Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
-        ),
-        quantity: String(li.quantity),
-        ...toAdjustmentDraft(li, pricesFrozen),
-      } satisfies BlindDraft;
-    }
-    return {
-      key: nextKey(),
-      uid: li.uid,
-      hidden: li.hidden,
-      item_type: li.item_type,
-      title: li.title,
-      description: li.description,
-      preset_id: li.preset_id,
-      quantity: String(li.quantity),
-      // `unit_price` is the price CHARGED, so an overridden item's draft
-      // must show the CALCULATED figure here and the charged one in the
-      // override box. Reading `unit_price` into the base would silently
-      // promote the override on every reopen and lose the original.
-      unit_price: String(li.base_unit_price ?? li.unit_price),
-      ...toAdjustmentDraft(li, pricesFrozen),
-    } satisfies FlatDraft;
-  });
-}
-
-/**
- * The three adjustment fields of a persisted item, as draft strings.
- *
- * An item is overridden exactly when `base_unit_price` is set, and the
- * charged `unit_price` is then what the consultant typed — so that is
- * what goes back into the override box.
- *
- * `pricesFrozen` is the order's own status answer (`holdsPriceLock`),
- * which every item of that order shares; it is what makes a persisted row
- * "previously quoted".
- */
-function toAdjustmentDraft(li: LineItem, pricesFrozen: boolean): PriceAdjustmentDraft {
-  return {
-    unit_price_override: li.base_unit_price === null ? '' : String(li.unit_price),
-    show_original_price: li.show_original_price,
-    addons: (li.addons ?? []).map((a) => ({
-      key: nextKey(),
-      label: a.label,
-      price: String(a.price),
-    })),
-    ...serverFieldsOf(li, pricesFrozen),
-  };
-}
-
-/**
- * The four fields a line item takes from the server: the price it was
- * frozen at (both lock columns move together — half a lock is no lock),
- * whether its order's prices are frozen at all, the figure it was last
- * SENT at, and any dismissal of that figure's notice.
- *
- * Read in two places, which is why it is not inline: once when the
- * drafts hydrate, and again whenever the order changes underneath them
- * (`applyServerFields`) — a re-send moves the stamp without the editor
- * being touched.
- */
-function serverFieldsOf(li: LineItem, pricesFrozen: boolean): ServerItemFields {
-  return {
-    lock:
-      li.locked_base_price !== null && li.locked_inputs_fingerprint
-        ? { base: Number(li.locked_base_price), fingerprint: li.locked_inputs_fingerprint }
-        : null,
-    previously_quoted: pricesFrozen,
-    quoted_base: finiteOrNull(li.quoted_base_price),
-    notice_ack_base: finiteOrNull(li.quoted_notice_ack_base),
-  };
-}
-
 /** Short label for a draft in the live-pricing rail. */
 function draftLabel(it: ItemDraft, index: number): string {
   if (it.item_type === 'blind') {
     return [it.room_name || `Blind ${index + 1}`, it.blinds_type].filter(Boolean).join(' — ');
   }
   return it.description || `Item ${index + 1}`;
-}
-
-/**
- * A nullable PostgREST numeric as a usable number, or null.
- *
- * `null` for an ABSENT column as well as a null one: an API that
- * predates migration 48 sends neither figure, and `Number(undefined)` is
- * `NaN`, which would render as a `$NaN` price update rather than as the
- * "nothing to report" it is.
- */
-function finiteOrNull(value: number | null | undefined): number | null {
-  if (value === null || value === undefined) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -664,6 +556,16 @@ export default function OrderDetail() {
    */
   const [materialUsagePicks, setMaterialUsagePicks] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
+  /**
+   * A revision Restore loaded into the editor, not yet saved: the next
+   * save sends it as `restore_from_revision` (Design decision 8). Any
+   * re-hydration discards it with the edits. `dismissed` only hides the
+   * banner's "loaded" strip.
+   */
+  const [restoreFrom, setRestoreFrom] = useState<{ id: string; rev_no: number; dismissed: boolean } | null>(null);
+  // The confirmed Restore whose revision copy is still loading.
+  const [restoreRequest, setRestoreRequest] = useState<OrderRevisionSummary | null>(null);
+  const revisionSourceQ = useRevisionSource(id, restoreRequest?.id ?? null);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
@@ -822,12 +724,34 @@ export default function OrderDetail() {
       // them is re-derived — otherwise re-opening a saved order shows an
       // empty chip row and the choice looks like it was lost.
       setExpiryPreset(presetFromDates(savedOrderDate, savedExpiry));
-      setItems(toDrafts(existing));
+      setItems(draftsFromLineItems(existing.line_items ?? [], holdsPriceLock(existing.status)));
       setDiscountType(existing.discount_type);
       setDiscountValue(existing.discount_value ? String(existing.discount_value) : '');
+      setRestoreFrom(null);
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
+
+  // Restore: once the confirmed revision's copy arrives, it replaces the
+  // title, discount and items (customer, dates and terms stay) as unsaved
+  // edits, and is remembered for the next save.
+  useEffect(() => {
+    if (!restoreRequest || !existing) return;
+    if (revisionSourceQ.isError) {
+      toast.error(revisionSourceQ.error.message);
+      setRestoreRequest(null);
+      return;
+    }
+    if (!revisionSourceQ.data) return;
+    const restored = draftsFromRevision(revisionSourceQ.data.source, holdsPriceLock(existing.status));
+    setTitle(restored.title ?? '');
+    setDiscountType(restored.discount_type);
+    setDiscountValue(restored.discount_value ? String(restored.discount_value) : '');
+    setItems(restored.items);
+    setSelected(new Set());
+    setRestoreFrom({ id: restoreRequest.id, rev_no: revisionSourceQ.data.rev_no, dismissed: false });
+    setRestoreRequest(null);
+  }, [restoreRequest, revisionSourceQ.data, revisionSourceQ.isError, revisionSourceQ.error, existing]);
 
   /**
    * Keeps the server-owned half of each line-item draft in step with the
@@ -846,7 +770,8 @@ export default function OrderDetail() {
    * and so unhides it through the pruning effect anyway.
    */
   useEffect(() => {
-    if (!hydrated || !existing) return;
+    // A pending restore carries the revision's locks; the current rows' would undo them.
+    if (!hydrated || !existing || restoreFrom) return;
     const pricesFrozen = holdsPriceLock(existing.status);
     const byUid = new Map<string, ServerItemFields>(
       (existing.line_items ?? [])
@@ -854,7 +779,7 @@ export default function OrderDetail() {
         .map((li) => [li.uid, serverFieldsOf(li, pricesFrozen)])
     );
     setItems((list) => applyServerFields(list, byUid));
-  }, [existing, hydrated]);
+  }, [existing, hydrated, restoreFrom]);
 
   // Drop the pre-filled customer in once it arrives, and only if the
   // consultant hasn't already picked one — a later change or clear from
@@ -1431,8 +1356,12 @@ export default function OrderDetail() {
     }
     try {
       const saved = id
-        ? await updateMut.mutateAsync({ id, input: payload })
+        ? await updateMut.mutateAsync({
+            id,
+            input: restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
+          })
         : await createMut.mutateAsync(payload);
+      setRestoreFrom(null);
       // A save ends any dismissal; the Worker drops its acknowledgement
       // on the same save, so the notice speaks again if the total still
       // differs from what the customer was sent.
@@ -1449,6 +1378,23 @@ export default function OrderDetail() {
 
   async function handleSaveDraft() {
     if (await save()) toast.success('Order saved.');
+  }
+
+  /**
+   * Restore on an earlier revision in the banner's history: confirms,
+   * then requests that revision's copy, which the restore effect loads
+   * into the editor. Nothing is saved or sent here.
+   */
+  async function handleRestore(revision: OrderRevisionSummary) {
+    if (!existing) return;
+    const ok = await askConfirm({
+      title: `Replace the current estimate with Rev ${revision.rev_no}?`,
+      message:
+        "Unsaved edits will be lost. The customer won't see it until you send." +
+        (holdsPriceLock(existing.status) ? '' : " Prices will use today's catalog."),
+      confirmLabel: 'Restore',
+    });
+    if (ok) setRestoreRequest(revision);
   }
 
   /**
@@ -2582,7 +2528,16 @@ export default function OrderDetail() {
   /** The Items section: bulk toolbar + rows, then totals where the panel is hidden. */
   const itemsView = (
     <>
-      {existing && <RevisionBanner order={existing} onSendUpdate={() => void openSend()} />}
+      {existing && (
+        <RevisionBanner
+          order={existing}
+          onSendUpdate={() => void openSend()}
+          onRestore={canRestoreRevision(existing.status) ? (r) => void handleRestore(r) : undefined}
+          restoringId={restoreRequest?.id ?? null}
+          restoredRev={restoreFrom && !restoreFrom.dismissed ? restoreFrom.rev_no : null}
+          onDismissRestored={() => setRestoreFrom((r) => r && { ...r, dismissed: true })}
+        />
+      )}
       {items.length === 0 ? (
         <section className="rounded-xl border border-dashed border-border-input bg-surface p-6 text-center">
           <p className="text-[13px] text-text-muted">No items yet.</p>

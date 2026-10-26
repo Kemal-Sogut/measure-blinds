@@ -109,27 +109,49 @@ async function fetchOrderWithItems(
 }
 
 /**
- * Reads the staff-only restore copy of one revision.
+ * Error-aware read of the staff-only restore copy of one revision — the
+ * only query that ever selects `source`.
  *
  * @param sb Service-role Supabase client.
  * @param orderId The order the caller is acting on.
  * @param revisionId The revision to read.
+ * @returns `{ row }` with the revision number and its
+ *   {@link RevisionSource}, `{ row: null }` when the revision does not
+ *   exist OR belongs to a different order (the order filter is what stops
+ *   one order restoring from another), or `{ error }` with the database
+ *   message — so a restore can answer 404 and 500 apart.
+ */
+export async function checkRevisionSource(
+  sb: SupabaseClient,
+  orderId: string,
+  revisionId: string
+): Promise<{ row: { rev_no: number; source: RevisionSource } | null } | { error: string }> {
+  const { data, error } = await sb
+    .from('order_revisions')
+    .select('rev_no, source')
+    .eq('id', revisionId)
+    .eq('order_id', orderId)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  return { row: (data as { rev_no: number; source: RevisionSource } | null) ?? null };
+}
+
+/**
+ * Reads the staff-only restore copy of one revision, flattening a failed
+ * read to `null`; use {@link checkRevisionSource} where "not found" and
+ * "unreadable" must be told apart.
+ *
  * @returns The revision number and its {@link RevisionSource}, or `null`
- *   when the revision does not exist OR belongs to a different order
- *   (the order filter is what stops one order restoring from another).
+ *   when the revision does not exist, belongs to a different order, or
+ *   could not be read.
  */
 export async function readRevisionSource(
   sb: SupabaseClient,
   orderId: string,
   revisionId: string
 ): Promise<{ rev_no: number; source: RevisionSource } | null> {
-  const { data } = await sb
-    .from('order_revisions')
-    .select('rev_no, source')
-    .eq('id', revisionId)
-    .eq('order_id', orderId)
-    .maybeSingle();
-  return (data as { rev_no: number; source: RevisionSource } | null) ?? null;
+  const res = await checkRevisionSource(sb, orderId, revisionId);
+  return 'error' in res ? null : res.row;
 }
 
 /**
