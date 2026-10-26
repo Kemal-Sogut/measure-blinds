@@ -10,9 +10,10 @@
 deployed):** a send records a revision (customer-view snapshot + staff restore copy) only when
 something customer-visible changed. The customer page shows the latest sent version with a
 version chip, what changed and read-only earlier versions (live money/expiry hidden while an
-earlier one is open); the staff order page has a revision banner (in sync / N changes not sent /
-sent before tracking / confirmed Rev N differs), history, Send update and Restore; the re-send
-email says "updated" and lists up to 5 changes; the public confirm stores `accepted_revision_id`.
+earlier one is open); the staff order page has a revision banner (in sync / "N changes not sent
+to the customer" / sent before tracking / "Customer confirmed Rev N — current estimate
+differs"), history, Send update and Restore; the re-send email says "updated" and lists up to 5
+changes; the public confirm stores `accepted_revision_id` and 409s a stale page.
 Migration-48 price notices are unchanged and reset together with revisions via `stampSent`.
 Not exercised against a live database or in a browser.
 

@@ -349,15 +349,28 @@ section as the reference implementation for future collapsible UI.
   `orders.quoted_total === latestRevision.total`. Email-then-persist: no revision if the email
   throws. History readers are error-aware (unreadable != empty).
 - **Diff drives the banner and the email.** `lib/publicQuote.ts` builds the customer-visible
-  quote; `lib/quoteDiff.ts` diffs two of them (hidden items count as removed/added);
-  `lib/estimateEmailChanges.ts` + `email.ts` render up to 5 change lines and an "updated"
-  heading/subject when every named estimate is an update. Web `revisionBanner.ts` /
-  `RevisionBannerCard.tsx` is the staff banner.
+  quote; `lib/quoteDiff.ts` diffs two of them (hidden items count as removed/added; named
+  fields incl. Room and Was price; any other difference of the canonical public quote, line
+  order included, is one "Other details updated", so a different snapshot is never "no
+  changes"); `lib/estimateEmailChanges.ts` + `email.ts` render up to 5 change lines and an
+  "updated" heading/subject when every named estimate is an update (sent rows, and drafts that
+  already have revision history). Web `revisionBanner.ts` / `RevisionBannerCard.tsx` is the
+  staff banner: "N changes not sent to the customer" (+ Send update) on `sent`/`expired`;
+  "Customer confirmed Rev N — current estimate differs" from `awaiting_payment` on (never
+  "not sent"/legacy there; hidden when a confirmed order has no revision).
+- **Rendered-label changes show up as unsent changes.** The diff compares formatted,
+  server-rendered values, so a code change to `describeAttributes` / `optionLineAmounts`
+  labels changes every rendered snapshot comparison — expect "changes not sent" on sent orders
+  after such a deploy (the stored snapshot keeps the old wording until the next send).
 - **Customer page source.** `lib/publicRevision.ts`: latest snapshot while `sent`/`expired`;
-  live with no revision (legacy) and from `awaiting_payment` on; status, payments, edit requests
-  and address always live; unreadable history = 500; `/public/estimate/:token/revisions/:rev`
-  for earlier versions. Public confirm stores `orders.accepted_revision_id`; a differing saved
-  order is logged, not blocked.
+  live with no revision (legacy) and from `awaiting_payment` on (version chip / "what changed"
+  withheld once that live quote differs from the latest revision); status, payments, edit
+  requests and address always live; unreadable history = 500;
+  `/public/estimate/:token/revisions/:rev` for earlier versions. Public responses pick quote
+  fields explicitly (`toPublicQuoteFields`), never spread a stored snapshot. Public confirm
+  takes optional `{ rev_no }` (stale = 409, nothing written), stores
+  `orders.accepted_revision_id`; a differing saved order is logged, not blocked, and the
+  confirm reply + staff email use the accepted revision's total with a review note.
 - **Restore is a normal save.** `PUT /api/orders/:id` + `restore_from_revision` (`lib/orderRestore.ts`)
   overlays that revision's `source` price locks (`buildLockMap`) on the current ones, so
   untouched items keep Rev N prices; edited items re-price at today's catalog. `customer_id`,

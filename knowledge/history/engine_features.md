@@ -33,7 +33,8 @@ the customer page, diffs and email; `source` is the staff restore copy (order-le
   `GET /public/estimate/:token/revisions/:rev` serves an earlier version read-only.
 - Acceptance: public confirm writes `orders.accepted_revision_id` = latest revision
   (`resolveAcceptance`). If the saved order differs at confirm time the confirm still succeeds
-  and the order log records it; the staff banner then reads "Confirmed Rev N — current differs".
+  and the order log records it; the staff banner then reads "Customer confirmed Rev N — current
+  estimate differs".
 - Email: `lib/estimateEmailChanges.ts` diffs each already-`sent` estimate against its latest
   revision BEFORE emailing (read-only) and `email.ts` lists up to 5 change lines
   (`<Item>: <Field> <from> → <to>`). When every named estimate is an update the heading and
@@ -60,8 +61,9 @@ the customer page, diffs and email; `source` is the staff restore copy (order-le
   (`holdsPriceLock(status)` gate) and the next send is Rev N+1 diffed against Rev N.
 
 **Web.** Staff: `pages/orders/RevisionBannerCard.tsx` + `revisionBanner.ts` (states: in sync /
-N changes not sent / "Sent before revision tracking — next send creates Rev 1" for legacy /
-"Confirmed Rev N — current differs"; history list, Send update, Restore),
+"N changes not sent to the customer" / "Sent before revision tracking — next send creates Rev 1"
+for legacy / "Customer confirmed Rev N — current estimate differs"; history list, Send update,
+Restore),
 `restoreRevision.ts`, and `lineItemHydration.ts` (draft hydration moved out of
 `lineItemDrafts.ts` so restore reuses it). Customer: `pages/customer-view/RevisionInfo.tsx` +
 `revisionView.ts` (version chip, what changed, previous versions read-only; live money,
@@ -71,6 +73,38 @@ payments and expiry are hidden while an earlier version is open).
 Per-task suites and typechecks passed on the branch (see the SDD task reports). NOT exercised
 against a live database or in a browser, and migration 50 has not been applied. **Order:
 apply migration 50, deploy the API, then the web.**
+
+### Final review fixes (same branch, after `d555087`)
+- **Every customer-visible change cuts a revision.** `diffQuotes` also names `Room` (labelled
+  with the live room, e.g. `Kitchen — Roller: Room Bedroom → Kitchen`) and `Was price` (the
+  show-original-price figure). When no named field differs but the canonical public quotes
+  still do (unit price, option prices, item type, subtotal, tax amount, order date, line
+  order), it reports one `Other details updated`; so a snapshot that would render differently
+  never reads as "no changes" and `stampSent` always cuts Rev N+1. A pure reorder is now a
+  change (the page renders in snapshot order). Tax rate prints as a percentage
+  (`numeric(5,4)` fraction × 100: `Tax rate 13% → 15%`).
+- **Staff banner on confirmed orders** (`revisionBanner.ts`): never "N changes not sent to the
+  customer" or "Sent before revision tracking" from `awaiting_payment` on (the page is live
+  there). Confirmed + no revision = hidden; confirmed + changes = "Customer confirmed Rev N —
+  current estimate differs" (accepted revision, else latest). Send update only on
+  `sent`/`expired` (`canSendUpdate`).
+- **Confirm.** `POST /public/estimate/:token/confirm` takes an optional `{ rev_no }` (the
+  version on screen; CustomerView sends it). Stale → 409 "This estimate was just updated.
+  Please review the latest version before confirming.", nothing written; absent/malformed →
+  confirms as before. A diverged confirm answers and emails staff the ACCEPTED revision's total,
+  and the staff notice adds "The current saved estimate differs from what the customer accepted
+  — review before taking the deposit." Once confirmed, if the live quote differs from the latest
+  revision the public payload carries `revision: null` and no `changes_since_previous` (no
+  version chip / "Current version (N)"); `revisions` stays for the earlier-versions picker.
+  Serving the accepted snapshot after a diverged confirm is still open (user decision).
+- **Public payloads pick fields explicitly** (`publicQuote.ts` `toPublicQuoteFields`, and
+  `toPublicLines` names each line field): a stored snapshot is never spread into a response.
+- **Email.** A draft re-sent with revision history (reverted, edited, re-sent) is diffed against
+  its latest revision and emails "updated" with its changes; drafts with no history stay
+  "ready". Diff read failures `console.warn` with the order id. Route test pins Review Focus 5
+  (email fails, retry cuts exactly one Rev N+1).
+- **Migration 50** no longer creates `order_revisions_order_idx` (the `unique (order_id, rev_no)`
+  index already serves those reads).
 
 ## 2026-10-26 — Every confirmation is an in-app dialog; `window.confirm` is gone
 - The browser's own confirm box (unstyled, headed with the site origin, nothing like the app
