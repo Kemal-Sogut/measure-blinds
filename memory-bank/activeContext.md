@@ -6,6 +6,19 @@
 
 ## Where things stand (as of 2026-10-25)
 
+**Legacy-data hardening, Phase 0 (same branch, uncommitted, code NOT deployed), MIGRATION 49
+APPLIED and price-lock BACKFILL RUN 2026-10-25:** catalog rows are archived, never deleted. Settings DELETE stamps
+`archived_at` + `active = false`; `line_items` FKs are `ON DELETE RESTRICT`; list endpoints still
+return archived rows and the Settings pages hide them. `price_basis` is parsed (`isPriceBasis`)
+everywhere it is read. `apps/api/scripts/backfill-price-locks.ts --apply` froze all 28 unlocked items on 6
+orders at their stored price (0 left; every lock equals `base_unit_price ?? unit_price`). Still
+to do: **deploy the API, then the web** — until the API ships, a Settings delete of a row in use
+fails with a raw FK error instead of archiving. The audit
+behind it, with Phases 1–4 (fingerprint code-drift guard, read-side adapter, stored breakdown +
+`pricing_version`, legacy fixture corpus), is `docs/legacy-data-audit.md` (local-only). Note:
+migration 48 (incl. the `quoted_notice_ack_*` columns) IS applied — verified against the live
+schema 2026-10-25. See `knowledge/history/bug_fixes.md` 2026-10-25 (Phase 0).
+
 **Newest, on branch `feat/multi-estimate-send` (on top of the multi-estimate send below, not
 deployed), web + api, MIGRATION 48 WRITTEN BUT NOT APPLIED:** sent estimates are now immune to
 hardware options added to their blind type afterwards, and say so when a price moves. Adding

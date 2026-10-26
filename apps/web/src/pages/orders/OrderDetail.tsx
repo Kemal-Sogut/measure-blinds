@@ -1241,6 +1241,8 @@ export default function OrderDetail() {
         const uses = slotsForType(catalogs, it.blinds_type);
         const quoted = isAlreadyQuoted(it);
         const needs = (slot: CatalogSlot) => !quoted && uses.has(slot);
+        const sendable = (slot: CatalogSlot, id: string) =>
+          (quoted || uses.has(slot)) && id ? id : null;
         if (!it.material_id) return `Item ${i + 1}: choose a material.`;
         if (needs('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
         if (needs('bottom_rail') && !it.bottom_rail_id)
@@ -1266,10 +1268,19 @@ export default function OrderDetail() {
           material_id: it.material_id,
           // Null, not '' — the API accepts a uuid or null for a slot the
           // type does not use, and rejects an id for one it does not.
-          cassette_id: it.cassette_id || null,
-          bottom_rail_id: it.bottom_rail_id || null,
-          control_id: it.control_id || null,
-          installation_id: it.installation_id || null,
+          //
+          // An id for a slot the type no longer uses is DROPPED, unless the
+          // item is already quoted (whose Worker branch keeps and charges
+          // whatever it carries). That happens when Settings deletes —
+          // archives, migration 49 — or deactivates a type's last option of
+          // a slot: the dropdown disappears, so the consultant could never
+          // clear the stale id, and the Worker would refuse every save of
+          // the draft. The preview already ignores it (`blindDraftInputs`),
+          // so dropping it here makes the save match what is on screen.
+          cassette_id: sendable('cassette', it.cassette_id),
+          bottom_rail_id: sendable('bottom_rail', it.bottom_rail_id),
+          control_id: sendable('control', it.control_id),
+          installation_id: sendable('installation', it.installation_id),
           color: it.color.trim(),
           note: it.note.trim(),
           attributes,

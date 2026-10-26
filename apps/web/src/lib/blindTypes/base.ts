@@ -67,10 +67,34 @@ export type CatalogSlot = 'cassette' | 'bottom_rail' | 'control' | 'installation
  * square metre, some outright and some per panel.
  *
  * Mirrored by the `price_basis` check constraint on all four catalogs.
- * Adding a member here means adding it there, and `hardwareCost`'s switch
- * is exhaustive so the compiler will point at what else needs saying.
+ * Adding a member to `PRICE_BASES` means adding it there, and
+ * `hardwareCost`'s switch is exhaustive so the compiler will point at what
+ * else needs saying. Values read at runtime go through `isPriceBasis`.
  */
-export type PriceBasis = 'per_m' | 'per_sqm' | 'per_unit' | 'per_panel';
+export type PriceBasis = (typeof PRICE_BASES)[number];
+
+/**
+ * Every {@link PriceBasis}, as a runtime list — the single source the
+ * union, the Settings write schema and {@link isPriceBasis} derive from.
+ */
+export const PRICE_BASES = ['per_m', 'per_sqm', 'per_unit', 'per_panel'] as const;
+
+/**
+ * Whether a value read from the database or an API response is a basis
+ * this code knows how to charge.
+ *
+ * The basis arrives as plain text — a catalog row, a line-item snapshot,
+ * a list response — and a cast would let an unknown member (one added to
+ * the check constraint, or reaching one twin before the other: the web
+ * and the API deploy separately) fall through `hardwareCost`'s switch as
+ * `undefined` and turn the unit price into NaN. Every boundary that reads
+ * a basis checks it with this instead, and decides for itself what an
+ * unknown one means: the Worker refuses to price with it, a document
+ * leaves that option's figure off, the editor preview shows no price.
+ */
+export function isPriceBasis(value: unknown): value is PriceBasis {
+  return typeof value === 'string' && (PRICE_BASES as readonly string[]).includes(value);
+}
 
 /**
  * The unit a blind type's `material_price_per_sqm` rate is actually
@@ -423,6 +447,10 @@ export class BaseBlindType {
         return ctx.panelCount * charge.price;
       case 'per_unit':
         return charge.price;
+      default:
+        // Unreachable for a well-typed charge. A basis that escaped
+        // `isPriceBasis` must fail loudly here rather than price as NaN.
+        throw new Error(`Unknown price basis: ${String((charge as { basis: unknown }).basis)}`);
     }
   }
 

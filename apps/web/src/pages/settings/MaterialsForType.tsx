@@ -39,6 +39,7 @@ import {
   useCreateCatalogItem,
   useUpdateCatalogItem,
   useDeleteCatalogItem,
+  liveCatalogRows,
 } from '../../hooks/useSettings';
 import type { BlindType, Material } from '../../types';
 
@@ -166,8 +167,14 @@ export default function MaterialsForType() {
   const [importing, setImporting] = useState(false);
 
   const type = (types ?? []).find((t) => t.id === blindTypeId);
-  /** Materials scoped to this blind type (linked-only). */
-  const scoped = (materials ?? []).filter((m) => m.blind_type_ids.includes(blindTypeId));
+  /**
+   * Materials scoped to this blind type (linked-only), minus archived ones:
+   * a delete archives the row (migration 49) and the list keeps returning
+   * it for the orders that still use it.
+   */
+  const scoped = (liveCatalogRows(materials) ?? []).filter((m) =>
+    m.blind_type_ids.includes(blindTypeId)
+  );
 
   /**
    * Curtains (and Sheer, which subclasses it) price fabric by the RUNNING

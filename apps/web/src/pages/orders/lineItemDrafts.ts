@@ -26,11 +26,12 @@ import { calculateBlindUnitPriceForType, type BlindInputs } from '../../lib/pric
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { lockApplies, type PriceLock, type PriceLockInput } from '../../lib/priceLock';
 import { getBlindType } from '../../lib/blindTypes';
-import type {
-  BlindAttributes,
-  CatalogResolver,
-  CatalogSlot,
-  HardwareCharge,
+import {
+  isPriceBasis,
+  type BlindAttributes,
+  type CatalogResolver,
+  type CatalogSlot,
+  type HardwareCharge,
 } from '../../lib/blindTypes/base';
 import type {
   Material,
@@ -315,11 +316,16 @@ export interface Catalogs {
  * LINKED to the selected type are offered. When no type is selected yet
  * (or the name is unknown/legacy free-text), an empty list is returned
  * so the user must pick a blind type first.
+ *
+ * ARCHIVED materials (a Settings delete, migration 49) are never offered:
+ * they exist only so the orders already priced with them keep resolving.
+ * Pricing and the item summary look materials up in the unfiltered
+ * `catalogs.materials`, so an old item carrying one still previews.
  */
 export function materialsForType(catalogs: Catalogs, blindsType: string): Material[] {
   const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
   if (!typeId) return [];
-  return catalogs.materials.filter((m) => m.blind_type_ids.includes(typeId));
+  return catalogs.materials.filter((m) => !m.archived_at && m.blind_type_ids.includes(typeId));
 }
 
 /**
@@ -830,6 +836,19 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
   // exemption drops the `uses` half here too: anything else would preview
   // one price and save another.
   const charges = (slot: CatalogSlot) => quoted || uses.has(slot);
+  // A charged option whose basis this build does not know (`isPriceBasis`
+  // — the web and the Worker deploy separately) cannot be previewed: the
+  // Worker refuses that save, so the honest preview is "no price yet",
+  // not a NaN, and not a price that silently leaves the option out.
+  const chargeable: [CatalogSlot, { price_basis: unknown } | undefined][] = [
+    ['cassette', cassette],
+    ['bottom_rail', bottomRail],
+    ['control', control],
+    ['installation', installation],
+  ];
+  if (chargeable.some(([slot, opt]) => opt && charges(slot) && !isPriceBasis(opt.price_basis))) {
+    return null;
+  }
   const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
   if (charges('cassette') && cassette) {
     hardware.cassette = { price: Number(cassette.price), basis: cassette.price_basis };

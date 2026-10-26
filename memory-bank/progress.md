@@ -274,6 +274,12 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
+- **Legacy-data Phase 0 code not deployed:** migration 49 (catalog `archived_at`, `line_items`
+  FKs → RESTRICT) IS applied and the price-lock backfill has run (28 items / 6 orders frozen,
+  2026-10-25). The archive-on-delete API and the web filters are not deployed: until the API
+  ships, a Settings delete of a row any line item uses fails with a raw FK error (safe — nothing
+  is rewritten), and an unused row is still hard-deleted. Phases 1–4 of
+  `docs/legacy-data-audit.md` are not started.
 - **Multiple estimates per customer is not deployed** (merged to local `main`, not pushed).
   Migration 47 IS applied (2026-10-22). The staff Estimates/Orders pages and the `/c/:token`
   page have not been exercised in a browser against real data yet (only the signed-out

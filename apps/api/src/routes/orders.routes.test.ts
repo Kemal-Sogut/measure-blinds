@@ -435,6 +435,23 @@ describe('POST /api/orders', () => {
     });
   });
 
+  it('refuses to price with a basis this build does not know, naming the option', async () => {
+    // Read from the catalog row as text: a cast would have priced this
+    // as NaN. Parsed, it is a readable 400 and nothing is written.
+    db.responses['cassette_options.select'] = [{ ...CASSETTE, price_basis: 'per_yard' }];
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: '"Standard" has a price basis this version cannot charge.',
+    });
+    expect(db.calls).not.toContain('line_items.insert');
+  });
+
   it('excludes hidden items from the totals but still stores them', async () => {
     db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
     const body = payload();
