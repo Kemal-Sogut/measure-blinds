@@ -9,9 +9,11 @@
  *
  *   1. PURE copy helpers ({@link isUpdateEmail}, {@link changeLinesForEmail})
  *      that `email.ts` renders from.
- *   2. {@link readAnnouncedChanges}, the READ-ONLY lookup the send runs
- *      before the email goes out. It diffs each already-`sent` estimate
- *      against its latest revision and writes nothing, so the
+ *   2. {@link readAnnouncedChanges} / {@link readRevisedDraftChanges}, the
+ *      READ-ONLY lookups the send runs before the email goes out. They
+ *      diff each already-`sent` estimate (and each draft that already has
+ *      revision history) against its latest revision and write nothing,
+ *      so the
  *      email-then-persist order (AI_GUIDELINES §2) is untouched: a revision
  *      row is only cut afterwards, by `stampSent`, once the email succeeded.
  */
@@ -71,13 +73,58 @@ export async function readAnnouncedChanges(
   rows: Array<{ id: string }>
 ): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
+  for (const row of rows) out.set(row.id, (await readChanges(sb, row.id))?.changes ?? []);
+  return out;
+}
+
+/**
+ * The draft half of {@link readAnnouncedChanges}: for each `draft` being
+ * sent that ALREADY has revision history (sent, reverted to draft, edited,
+ * now re-sent), what the customer has not yet been told since its latest
+ * revision — so the email can say "updated" and list it, exactly as for an
+ * already-`sent` row. Strictly read-only.
+ *
+ * A draft with no revision is a genuinely new estimate and gets NO entry,
+ * so its email line keeps `changes: undefined` ("ready"). A failed read
+ * also gets no entry: it must never fail the send, nor claim "updated"
+ * without evidence.
+ *
+ * @param sb Service-role Supabase client.
+ * @param rows The `toSend` (draft) rows of the selection.
+ * @returns Change descriptions per order id, only for drafts with history.
+ */
+export async function readRevisedDraftChanges(
+  sb: SupabaseClient,
+  rows: Array<{ id: string }>
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
   for (const row of rows) {
-    try {
-      const res = await checkPendingChanges(sb, row.id);
-      out.set(row.id, 'error' in res ? [] : res.changes.map(describeChange));
-    } catch {
-      out.set(row.id, []);
-    }
+    const read = await readChanges(sb, row.id);
+    if (read?.hasRevision) out.set(row.id, read.changes);
   }
   return out;
+}
+
+/**
+ * Diffs one order against its latest revision, never throwing. A failed
+ * read is logged with the order id (ops visibility: otherwise an outage
+ * here would only show up as customers getting "ready" instead of
+ * "updated" emails) and returned as `null`.
+ */
+async function readChanges(
+  sb: SupabaseClient,
+  orderId: string
+): Promise<{ hasRevision: boolean; changes: string[] } | null> {
+  try {
+    const res = await checkPendingChanges(sb, orderId);
+    if ('error' in res) {
+      console.warn(`Estimate email: could not read changes for order ${orderId}: ${res.error}`);
+      return null;
+    }
+    return { hasRevision: res.latest !== null, changes: res.changes.map(describeChange) };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn(`Estimate email: could not read changes for order ${orderId}: ${message}`);
+    return null;
+  }
 }
