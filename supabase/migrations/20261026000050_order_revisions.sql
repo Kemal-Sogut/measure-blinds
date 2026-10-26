@@ -52,11 +52,11 @@ create table if not exists public.order_revisions (
   total numeric(10,2) not null,
   snapshot jsonb not null,   -- customer view (PublicQuote)
   source jsonb not null,     -- staff copy for restore; never served publicly
+  -- Also the lookup index: "latest revision of an order" and "revision N
+  -- of an order" both read it (a btree scans backwards for rev_no desc),
+  -- so no separate (order_id, rev_no desc) index is needed.
   unique (order_id, rev_no)
 );
-
-create index if not exists order_revisions_order_idx
-  on public.order_revisions (order_id, rev_no desc);
 
 alter table public.order_revisions enable row level security;
 
