@@ -25,6 +25,7 @@ import {
   revisionDetailFields,
   type RevisionSource,
 } from './orderRevisions';
+import { describeChange } from './quoteDiff';
 
 type Row = Record<string, unknown>;
 interface Db {
@@ -226,6 +227,36 @@ describe('stampSent', () => {
     const revs = revisionsOf('o1');
     expect(revs.map((r) => r.rev_no)).toEqual([1, 2]);
     expect(revs[1].source_kind).toBe('manual');
+  });
+
+  it('creates Rev 2 for a room rename, and describes it', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].room_name = 'Den';
+    expect((await pendingChanges(fakeSb(), 'o1')).changes.map(describeChange)).toEqual([
+      'Den — roller: Room Kitchen → Den',
+    ]);
+    expect(await stampSent(fakeSb(), 'o1', 'overwrite', 'email')).toBeNull();
+    expect(revisionsOf('o1').map((r) => r.rev_no)).toEqual([1, 2]);
+  });
+
+  it('creates Rev 2 when the original price is switched on, and describes it', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].show_original_price = true;
+    expect((await pendingChanges(fakeSb(), 'o1')).changes.map(describeChange)).toEqual([
+      'Kitchen — roller: Was price — → $1,000.00',
+    ]);
+    expect(await stampSent(fakeSb(), 'o1', 'overwrite', 'email')).toBeNull();
+    expect(revisionsOf('o1').map((r) => r.rev_no)).toEqual([1, 2]);
+  });
+
+  it('creates Rev 2 when only an unnamed customer-visible figure moved', async () => {
+    await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
+    db.line_items[0].unit_price = 900;
+    expect((await pendingChanges(fakeSb(), 'o1')).changes.map(describeChange)).toEqual([
+      'Other details updated',
+    ]);
+    expect(await stampSent(fakeSb(), 'o1', 'overwrite', 'email')).toBeNull();
+    expect(revisionsOf('o1').map((r) => r.rev_no)).toEqual([1, 2]);
   });
 
   it('fill creates Rev 1 only when there is none', async () => {

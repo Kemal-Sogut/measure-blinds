@@ -44,7 +44,8 @@ function orderRow(
     subtotal: 1000,
     discount_amount: 0,
     taxable_amount: 1000,
-    tax_rate: 13,
+    // numeric(5,4): a fraction, 0.13 = 13 %.
+    tax_rate: 0.13,
     tax_amount: 130,
     total: 2140,
     terms_snapshot: 'Net 30',
@@ -134,10 +135,74 @@ describe('diffQuotes', () => {
     expect(JSON.stringify(changes)).not.toContain('Net');
   });
 
-  it('ignores a reordering of the same items', () => {
+  it('reports a reordering of the same items as other details, since the page renders in order', () => {
     const a = lineRow({ uid: 'a', room_name: 'A' });
     const b = lineRow({ uid: 'b', room_name: 'B' });
-    expect(diffQuotes(quote([a, b]), quote([b, a]))).toEqual([]);
+    const changes = diffQuotes(quote([a, b]), quote([b, a]));
+    expect(changes).toEqual([{ kind: 'order_changed', field: 'Other details', from: '', to: '' }]);
+    expect(changes.map(describeChange)).toEqual(['Other details updated']);
+  });
+
+  it('reports a room rename, labelled with the live room name', () => {
+    const live = quote([lineRow({ room_name: 'Kitchen' })]);
+    expect(diffQuotes(quote(), live).map(describeChange)).toEqual([
+      'Kitchen — Roller: Room Bedroom → Kitchen',
+    ]);
+  });
+
+  it('reports the show-original-price toggle as a Was price change', () => {
+    const shown = quote([lineRow({ show_original_price: true, base_unit_price: 400 })]);
+    expect(diffQuotes(quote(), shown).map(describeChange)).toEqual([
+      'Bedroom — Roller: Was price — → $400.00',
+    ]);
+    expect(diffQuotes(shown, quote()).map(describeChange)).toEqual([
+      'Bedroom — Roller: Was price $400.00 → —',
+    ]);
+  });
+
+  /** A per-unit control charge, so `option_prices` carries a figure. */
+  const control = (price: number) => ({
+    control_id: 'ctl',
+    control_price_basis: 'per_unit',
+    control_price_per_item: price,
+  });
+
+  it.each([
+    ['unit price', [lineRow()], [lineRow({ unit_price: 300 })], {}],
+    ['item type', [lineRow()], [lineRow({ item_type: 'custom' })], {}],
+    ['option price', [lineRow(control(25))], [lineRow(control(30))], {}],
+    ['subtotal', [lineRow()], [lineRow()], { subtotal: 999 }],
+    ['tax amount', [lineRow()], [lineRow()], { tax_amount: 1 }],
+  ])('reports an otherwise-unnamed %s change as one "Other details updated"', (_name, sentLines, liveLines, order) => {
+    const sent = quote(sentLines);
+    const live = quote(liveLines, order);
+    expect(sent).not.toEqual(live);
+    expect(diffQuotes(sent, live).map(describeChange)).toEqual(['Other details updated']);
+  });
+
+  it('adds no generic line when a named change already explains the difference', () => {
+    const live = quote([lineRow({ height_cm: 160, unit_price: 340, line_total: 340 })], {
+      subtotal: 1028,
+      tax_amount: 133.64,
+    });
+    expect(diffQuotes(quote(), live).map(describeChange)).toEqual([
+      'Bedroom — Roller: Height 150 cm → 160 cm',
+      'Bedroom — Roller: Line total $312.00 → $340.00',
+    ]);
+  });
+
+  it('treats a snapshot read back from jsonb (undefined keys dropped) as identical', () => {
+    const sent = JSON.parse(JSON.stringify(quote()));
+    expect(diffQuotes(sent, quote())).toEqual([]);
+  });
+
+  it('prints the tax rate, stored as a fraction, as a percentage', () => {
+    expect(diffQuotes(quote(), quote([lineRow()], { tax_rate: 0.15 })).map(describeChange)).toEqual([
+      'Tax rate 13% → 15%',
+    ]);
+    expect(diffQuotes(quote(), quote([lineRow()], { tax_rate: 0.135 })).map(describeChange)).toEqual([
+      'Tax rate 13% → 13.5%',
+    ]);
   });
 
   it('matches uid-less lines by position among the uid-less lines', () => {
