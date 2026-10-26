@@ -340,3 +340,21 @@ describe('describeLineBreakdown', () => {
     }
   });
 });
+
+describe('describeLineBreakdown with a basis this build does not know', () => {
+  it('names the option, charges nothing to it, and still adds up', () => {
+    const row = describeLineBreakdown(
+      lineItem({
+        control_id: 'c-1',
+        control_name: 'Motor',
+        control_price_per_item: 99,
+        control_price_basis: 'per_yard' as LineItem['control_price_basis'],
+      })
+    );
+    expect(row.cells.control).toEqual({ name: 'Motor', amount: 0 });
+    // The material cell is fitted to the stored price, so the row still
+    // reconciles to the line total instead of carrying NaN.
+    expect(row.cells.material.amount).toBe(140);
+    expect(row.lineTotal).toBe(140);
+  });
+});

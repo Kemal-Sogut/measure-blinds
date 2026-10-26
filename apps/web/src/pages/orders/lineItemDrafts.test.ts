@@ -26,6 +26,7 @@ import {
   parseDraftAttributes,
   parseOverride,
   isAlreadyQuoted,
+  materialsForType,
   pruneSelection,
   quotedPriceChange,
   slotsForType,
@@ -1034,5 +1035,64 @@ describe('price lock in the preview', () => {
   it('reports a flat item against its own typed figure', () => {
     const changed = flat({ uid: 'u2', previously_quoted: true, quoted_base: 60 });
     expect(quotedPriceChange(changed, catalogs())).toEqual({ from: 60, to: 100 });
+  });
+});
+
+describe('archived catalog rows and unknown price bases (migration 49)', () => {
+  const ROLLER = { id: 'bt-roller', name: 'Roller', active: true, sort_order: 0 };
+
+  /** A live and an ARCHIVED material, both linked to Roller. */
+  function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
+    return {
+      blindTypes: [ROLLER],
+      materials: [
+        { id: 'm1', name: 'Blackout', price_per_sqm: 50, active: true, sort_order: 0, width_cm: null, blind_type_ids: [ROLLER.id] },
+        {
+          id: 'm-old',
+          name: 'Discontinued',
+          price_per_sqm: 40,
+          active: false,
+          sort_order: 1,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+          archived_at: '2026-10-25T00:00:00Z',
+        },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      bottomRails: [
+        { id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      controls: [
+        { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      pleatTypes: [],
+      defaults: [],
+      installationOptions: [],
+      ...overrides,
+    };
+  }
+
+  it('never offers an archived material for a new pick', () => {
+    expect(materialsForType(catalogs(), 'Roller').map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('still prices an item that already carries an archived material', () => {
+    // 120cm → 1.2 m wide, 210cm drop: 1.2 × 2.1 × 40 = 100.80, plus the
+    // 20/m cassette on 1.2 m = 24.00. The archived row is in the list the
+    // preview reads, so the item previews at the price the Worker saves.
+    const price = blindDraftPrice(draft({ material_id: 'm-old' }), catalogs());
+    expect(price?.base).toBe(124.8);
+  });
+
+  it('shows no price rather than NaN when an option has an unknown basis', () => {
+    const odd = catalogs({
+      cassettes: [
+        // Cast: the point is a value the type system says cannot occur.
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_yard' as 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+    });
+    expect(blindDraftPrice(draft(), odd)).toBeNull();
   });
 });

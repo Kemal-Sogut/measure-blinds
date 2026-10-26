@@ -37,6 +37,27 @@ export interface CatalogRow {
   id: string;
   name: string;
   active: boolean;
+  /** Set by a Settings delete (migration 49); see `liveCatalogRows`. */
+  archived_at?: string | null;
+}
+
+/**
+ * The rows a Settings page should list: everything not archived.
+ *
+ * A Settings delete ARCHIVES a catalog row rather than removing it
+ * (migration 49), and the list endpoints keep returning archived rows on
+ * purpose — the order editor, the manufacturer copy and the price preview
+ * still need them to describe and price the orders that already carry
+ * them. Only the Settings pages, where an archived row is simply "gone",
+ * pass their list through this.
+ *
+ * Generic and `undefined`-tolerant so a page can wrap a query's `data`
+ * directly and keep its own loading/empty-state checks unchanged.
+ */
+export function liveCatalogRows<T extends { archived_at?: string | null }>(
+  rows: T[] | undefined
+): T[] | undefined {
+  return rows?.filter((row) => !row.archived_at);
 }
 
 /** URL segments for the catalog entities managed under /api/settings. */
@@ -177,7 +198,12 @@ export function useUpdateCatalogItem<T extends CatalogRow>(
   });
 }
 
-/** Deletes a catalog row, then refetches the list. */
+/**
+ * Deletes a catalog row, then refetches the list. The Worker ARCHIVES the
+ * row rather than removing it (migration 49), so orders that already use
+ * it keep their prices; the refetched list still carries it with
+ * `archived_at` set, and Settings hides it via `liveCatalogRows`.
+ */
 export function useDeleteCatalogItem(
   path: CatalogPath
 ): UseMutationResult<{ id: string }, Error, string> {

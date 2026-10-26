@@ -79,6 +79,7 @@ import type {
   HardwareCharge,
   PriceBasis,
 } from '../lib/blindTypes/base';
+import { isPriceBasis } from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
@@ -601,14 +602,18 @@ async function resolveLineItems(
       .in('id', [...idSet]);
     if (error) throw new Error(error.message);
     return new Map(
-      (data as unknown as Record<string, unknown>[]).map((r) => [
-        String(r.id),
-        {
-          name: String(r.name),
-          price: Number(r.price),
-          basis: String(r.price_basis) as PriceBasis,
-        },
-      ])
+      (data as unknown as Record<string, unknown>[]).map((r) => {
+        // Parsed, not cast: a basis this build cannot charge (one added to
+        // the check constraint before the Worker learned it) would price as
+        // NaN, so the save is refused with the option named instead.
+        if (!isPriceBasis(r.price_basis)) {
+          throw new Error(`"${String(r.name)}" has a price basis this version cannot charge.`);
+        }
+        return [
+          String(r.id),
+          { name: String(r.name), price: Number(r.price), basis: r.price_basis },
+        ];
+      })
     );
   }
 

@@ -36,6 +36,7 @@ import {
   useCreateCatalogItem,
   useUpdateCatalogItem,
   useDeleteCatalogItem,
+  liveCatalogRows,
   type CatalogPath,
   type CatalogRow,
 } from '../hooks/useSettings';
@@ -223,7 +224,10 @@ function parseAmount(value: string, min: number): number | null {
 
 export default function CatalogEditor({ config }: { config: CatalogEditorConfig }) {
   const hasPrice = Boolean(config.priceKey);
-  const { data: rows, isLoading, error } = useCatalogList<Row>(config.path);
+  const { data: allRows, isLoading, error } = useCatalogList<Row>(config.path);
+  // A delete ARCHIVES the row (migration 49) and the list still returns
+  // it for the order editor's sake; here it is simply gone.
+  const rows = liveCatalogRows(allRows);
   // Fetched unconditionally: hooks cannot be called conditionally, and the
   // list is already in the TanStack cache on any page that has shown it.
   const { data: blindTypes } = useCatalogList<BlindType>('blind-types');

@@ -19,6 +19,7 @@ import {
   type BlindPricingInputs,
 } from './pricing';
 import type { PriceBasis } from './blindTypes/base';
+import { isPriceBasis, PRICE_BASES } from './blindTypes/base';
 import { getBlindType, normalizeBlindType } from './blindTypes';
 import { calculateTotals } from './totals';
 import { generateOrderNumber, parseDateOnly } from './orderNumber';
@@ -675,5 +676,35 @@ describe('describeMaterialUsage agrees with the material leg it reports on', () 
     const usage = blindType.describeMaterialUsage(item);
     const leg = blindType.describeUnitCosts(item).material;
     expect(usage.quantity * item.material_price_per_sqm).toBeCloseTo(leg, 6);
+  });
+});
+
+describe('price basis read at runtime', () => {
+  /**
+   * A basis arrives as plain text from the database or an API response.
+   * These pin the guard every boundary uses instead of a cast, and the
+   * loud failure behind it — mirrored verbatim in the twin suite.
+   */
+  it('accepts exactly the four known bases', () => {
+    expect([...PRICE_BASES]).toEqual(['per_m', 'per_sqm', 'per_unit', 'per_panel']);
+    for (const basis of PRICE_BASES) expect(isPriceBasis(basis)).toBe(true);
+  });
+
+  it('rejects anything else, including a near miss and a non-string', () => {
+    for (const value of ['per_metre', 'PER_M', '', null, undefined, 3]) {
+      expect(isPriceBasis(value)).toBe(false);
+    }
+  });
+
+  it('throws instead of pricing as NaN when an unknown basis slips through', () => {
+    expect(() =>
+      calculateBlindUnitPrice({
+        panels: [100],
+        height_cm: 200,
+        material_price_per_sqm: 0,
+        hardware: { cassette: { price: 10, basis: 'per_yard' as PriceBasis } },
+        attributes: {},
+      })
+    ).toThrow('Unknown price basis: per_yard');
   });
 });

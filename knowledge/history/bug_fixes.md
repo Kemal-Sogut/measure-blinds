@@ -1,5 +1,46 @@
 # Bug Fixes History
 
+## 2026-10-25 — Deleting a catalog option re-priced or blocked sent and confirmed orders (legacy-data audit, Phase 0)
+- **Issue:** found by the legacy-data audit (`docs/legacy-data-audit.md`, local-only), latent in
+  production data (no casualties yet): deleting a material, hardware option or preset in Settings
+  could silently drop that option's charge from a confirmed invoice, make the order unsavable
+  ("a cassette option is required"; `material_id` not a uuid), or put a discounted preset line
+  back to full price. Separately, 28 line items on 6 sent+/expired/installed orders (saved before
+  migration 39) carried no price lock, so their next save re-priced them from today's catalog.
+- **Cause:** Settings HARD-deleted catalog rows and every `line_items` FK into them was
+  `ON DELETE SET NULL`. Nulling the id rewrote history: the id is an input to the price-lock
+  fingerprint, so the lock stopped matching, and the item was re-priced live — not
+  grandfathered, because it is in `locks` — against a slot that either still demanded an option
+  or (when the deleted option was the type's only one) no longer existed. A nulled `preset_id`
+  turned a preset into a "legacy" one, which `canOverride` refuses. The code comment claiming
+  "a confirmed invoice must stay savable after Settings drops an option" only held for jsonb
+  refs (pleat type). Migration 39 added locks without backfilling existing rows. Also: a
+  `price_basis` read from the DB was CAST (`as PriceBasis`), so an unknown value would have
+  priced as NaN.
+- **Fix:** migration 49 adds `archived_at` to all eight Settings catalogs and turns the six
+  `line_items` FKs into `ON DELETE RESTRICT`. Every Settings DELETE now archives
+  (`archiveCatalogRow` in `routes/settings.ts`: `archived_at = now()`, `active = false`, live rows
+  only) and PUT refuses an archived row (`refuseUnlessLive`). List endpoints still return
+  archived rows (the editor prices and describes old items from them); Settings pages hide them
+  (`liveCatalogRows` in `hooks/useSettings.ts`) and `materialsForType` never offers one. Because
+  `active = false`, every existing active filter (dropdowns, `loadSlotScoping`, defaults) drops
+  them for free. `buildPayload` now drops a hardware id for a slot the type no longer uses
+  unless the item is already quoted, matching the preview — otherwise archiving a type's last
+  option of a slot would leave drafts unsavable with no dropdown to clear it. `PRICE_BASES` +
+  `isPriceBasis` (both `blindTypes/base.ts` twins) replace the cast: the Worker refuses the save
+  naming the option, the breakdowns leave that leg off, the preview shows no price, and
+  `hardwareCost` throws instead of returning `undefined`. The Settings `priceBasis` enum is
+  built from `PRICE_BASES`. `apps/api/scripts/backfill-price-locks.ts` freezes the 28 unlocked
+  items through the Worker's own `freezeOrderPrices` (dry run by default, `--apply` to write).
+- **Verified:** api 736 / web 558 passing (new: archive + archived-edit refusal per catalog,
+  unknown basis on save / breakdowns / preview / formula, archived material not offered but still
+  priced), `tsc` clean both sides, oxlint clean apart from the pre-existing
+  `public/embed/lead-form.js` warning. Backfill DRY RUN against the live project listed exactly
+  the 28 items on 6 orders. Migration 49 applied to the live project 2026-10-25 (8 `archived_at`
+  columns, 6 FKs confirmed `confdeltype = r`); backfill run with `--apply`: 0 failures, 0 items
+  left unlocked, all 28 locks equal `base_unit_price ?? unit_price`, no price column touched.
+  NOT yet done: deploying the API, then the web.
+
 ## 2026-10-25 — A new installation option blocked every estimate already quoted on that blind type
 - **Issue:** adding the first installation option for a blind type made "Present to customer"
   unreachable on estimates and orders already quoted on that type. Those line items carry no

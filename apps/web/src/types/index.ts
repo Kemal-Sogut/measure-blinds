@@ -450,13 +450,31 @@ export interface LineItem {
 }
 
 /**
+ * Soft-delete marker shared by every Settings catalog (migration 49).
+ *
+ * Settings never removes a catalog row: its DELETE stamps `archived_at`
+ * and sets `active = false`, because historical line items name the row
+ * by id and that id is part of their price lock. The list endpoints keep
+ * returning archived rows so the order editor can still price, preview
+ * and describe the orders that carry them; the Settings pages hide them
+ * (`liveCatalogRows`), and every "active" filter already excludes them.
+ *
+ * Optional so a client talking to a Worker that predates the column —
+ * web and API deploy separately — reads every row as live.
+ */
+interface Archivable {
+  /** ISO timestamp of the Settings delete; absent/null = live. */
+  archived_at?: string | null;
+}
+
+/**
  * Material option from settings — price per square meter, plus the set
  * of blind types it appears under (`blind_type_ids`, from the
  * `material_blind_types` join). An EMPTY list means "available for all
  * blind types"; the line-item editor filters the Material dropdown by
  * the selected blind type using this list.
  */
-export interface Material {
+export interface Material extends Archivable {
   id: string;
   name: string;
   price_per_sqm: number;
@@ -481,7 +499,7 @@ export interface Material {
  * only while at least one ACTIVE option is scoped to the selected type
  * (`slotsForType`), and the Worker enforces the save on the same rule.
  */
-interface BlindTypeScoped {
+interface BlindTypeScoped extends Archivable {
   /** Blind-type ids this option is offered for; empty = offered nowhere. */
   blind_type_ids: string[];
 }
@@ -546,7 +564,7 @@ export interface ControlOption extends HardwarePriced {
  * the client only ever sends the row id and the Worker resolves the
  * ratio itself.
  */
-export interface PleatType {
+export interface PleatType extends Archivable {
   id: string;
   name: string;
   multiplier: number;
@@ -572,7 +590,7 @@ export interface InstallationOption extends HardwarePriced {
 }
 
 /** Blind type option from settings — a label only, no price. */
-export interface BlindType {
+export interface BlindType extends Archivable {
   id: string;
   name: string;
   active: boolean;
@@ -607,7 +625,7 @@ export interface BlindTypeDefaults {
 }
 
 /** Preset line item template — for commonly used add-on services. */
-export interface PresetLineItem {
+export interface PresetLineItem extends Archivable {
   id: string;
   name: string;
   description: string | null;

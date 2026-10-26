@@ -18,6 +18,13 @@
  * server-side when an order is saved (see `resolveLineItems`) and never
  * sent by a client.
  *
+ * No catalog row is ever deleted. Every DELETE here ARCHIVES the row
+ * (`archived_at` + `active = false`, migration 49) and every PUT refuses
+ * an archived one, because historical line items name these rows by id
+ * and that id is part of their price lock. List endpoints still return
+ * archived rows — the order editor needs them to price and describe old
+ * items — and the Settings pages hide them.
+ *
  * Every write is Zod-validated before touching the database. The simple
  * catalog entities share one route factory since they differ only in
  * table name, price column, ordering, and whether they are scoped.
@@ -33,6 +40,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
+import { PRICE_BASES } from '../lib/blindTypes/base';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -215,9 +223,10 @@ const sortOrder = z.number().int().min(0);
  * How a hardware option's price is charged. Mirrors the `price_basis`
  * check constraint added by migration 36 and the `PriceBasis` union the
  * pricing modules switch on — all three must list the same members, or a
- * row could be saved that the formula cannot price.
+ * row could be saved that the formula cannot price. Built from
+ * `PRICE_BASES`, so the union and this schema cannot drift apart.
  */
-const priceBasis = z.enum(['per_m', 'per_sqm', 'per_unit', 'per_panel']);
+const priceBasis = z.enum(PRICE_BASES);
 
 /**
  * The shape shared by all four hardware catalogs since migration 36:
@@ -317,6 +326,68 @@ async function syncCatalogLinks(
 }
 
 /**
+ * Archives one catalog row — what every Settings DELETE does since
+ * migration 49, for the factory catalogs and Materials alike.
+ *
+ * A catalog row is never removed: historical line items name it by id,
+ * and that id is an input to their price-lock fingerprint, so deleting
+ * it (which the old ON DELETE SET NULL turned into a rewrite of every
+ * order that used it) re-priced or blocked sent and confirmed orders.
+ * Archiving sets `archived_at` AND `active = false`; the second is what
+ * makes every existing "active" filter — the editor dropdowns, slot
+ * scoping, blind-type defaults — drop the row with no further change,
+ * while the Worker's pricing lookups (which ignore `active`) keep
+ * resolving it for the orders that already carry it.
+ *
+ * The blind-type links are left in place on purpose: an archived option
+ * is inactive, so its links no longer make a slot required, and keeping
+ * them means an old order's item still reads as scoped where it was.
+ *
+ * @returns the archived id, `null` when no LIVE row has that id (missing
+ *          or already archived — both are a 404 to the caller), or an
+ *          error message.
+ */
+async function archiveCatalogRow(
+  sb: ReturnType<typeof createSupabaseAdmin>,
+  table: string,
+  id: string
+): Promise<{ id: string } | null | string> {
+  const { data, error } = await sb
+    .from(table)
+    .update({ archived_at: new Date().toISOString(), active: false })
+    .eq('id', id)
+    .is('archived_at', null)
+    .select('id')
+    .maybeSingle();
+  if (error) return error.message;
+  return data ? { id: String(data.id) } : null;
+}
+
+/**
+ * Refuses an edit to a row that is missing or archived. An archived row
+ * is gone as far as Settings is concerned — the pages no longer list it —
+ * so a stale tab must not be able to rename it or switch it back on.
+ *
+ * @returns null when the row is live, else the response to send.
+ */
+async function refuseUnlessLive(
+  sb: ReturnType<typeof createSupabaseAdmin>,
+  table: string,
+  id: string
+): Promise<{ error: string; status: 404 | 500 } | null> {
+  const { data, error } = await sb
+    .from(table)
+    .select('id, archived_at')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) return { error: error.message, status: 500 };
+  if (!data || (data as { archived_at?: string | null }).archived_at) {
+    return { error: 'Not found', status: 404 };
+  }
+  return null;
+}
+
+/**
  * Flattens the join embed a scoped catalog is selected with into a plain
  * `blind_type_ids: string[]`, so clients never see the join table's shape.
  */
@@ -392,6 +463,8 @@ function registerCatalog(target: SettingsApp, cfg: CatalogConfig): void {
     const { blind_type_ids, ...fields } = parsed.data as Record<string, unknown> & {
       blind_type_ids?: string[];
     };
+    const refused = await refuseUnlessLive(sb, cfg.table, id);
+    if (refused) return c.json({ error: refused.error }, refused.status);
 
     // A links-only edit must not issue an empty UPDATE — PostgREST
     // rejects one, and there is nothing on the row to change.
@@ -415,17 +488,12 @@ function registerCatalog(target: SettingsApp, cfg: CatalogConfig): void {
     return c.json({ data: flattenCatalogLinks(data as unknown as Record<string, unknown>, links) });
   });
 
+  // Archives rather than deletes — see `archiveCatalogRow`.
   target.delete(`/${cfg.path}/:id`, async (c) => {
-    const sb = createSupabaseAdmin(c.env);
-    const { data, error } = await sb
-      .from(cfg.table)
-      .delete()
-      .eq('id', c.req.param('id'))
-      .select('id')
-      .maybeSingle();
-    if (error) return c.json({ error: error.message }, 500);
-    if (!data) return c.json({ error: 'Not found' }, 404);
-    return c.json({ data: { id: data.id } });
+    const result = await archiveCatalogRow(createSupabaseAdmin(c.env), cfg.table, c.req.param('id'));
+    if (typeof result === 'string') return c.json({ error: result }, 500);
+    if (!result) return c.json({ error: 'Not found' }, 404);
+    return c.json({ data: result });
   });
 }
 
@@ -652,6 +720,8 @@ app.put('/materials/:id', async (c) => {
   const id = c.req.param('id');
   const { blind_type_ids, ...fields } = parsed.data;
   const sb = createSupabaseAdmin(c.env);
+  const refused = await refuseUnlessLive(sb, 'materials', id);
+  if (refused) return c.json({ error: refused.error }, refused.status);
 
   if (Object.keys(fields).length > 0) {
     const { error } = await sb.from('materials').update(fields).eq('id', id);
@@ -672,18 +742,16 @@ app.put('/materials/:id', async (c) => {
   return c.json({ data: withBlindTypeIds(data as MaterialRow) });
 });
 
-/** Deletes a Material; its blind-type links cascade in the DB. */
+/**
+ * "Deletes" a Material by archiving it (migration 49): it leaves Settings
+ * and the line-item dropdowns, but every order already priced with it
+ * keeps resolving its id. See `archiveCatalogRow`.
+ */
 app.delete('/materials/:id', async (c) => {
-  const sb = createSupabaseAdmin(c.env);
-  const { data, error } = await sb
-    .from('materials')
-    .delete()
-    .eq('id', c.req.param('id'))
-    .select('id')
-    .maybeSingle();
-  if (error) return c.json({ error: error.message }, 500);
-  if (!data) return c.json({ error: 'Not found' }, 404);
-  return c.json({ data: { id: data.id } });
+  const result = await archiveCatalogRow(createSupabaseAdmin(c.env), 'materials', c.req.param('id'));
+  if (typeof result === 'string') return c.json({ error: result }, 500);
+  if (!result) return c.json({ error: 'Not found' }, 404);
+  return c.json({ data: result });
 });
 
 /**
