@@ -89,10 +89,10 @@ import {
   buildQuotedMap,
   clearOrderPriceLocks,
   freezeOrderPrices,
-  stampQuotedFigures,
   type QuotedColumns,
   type StoredLock,
 } from '../lib/priceLockStore';
+import { stampSent } from '../lib/orderRevisions';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -1753,7 +1753,7 @@ app.post('/:id/mark-sent', async (c) => {
   // showing has just been answered by the document the customer now has.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
-  const stampError = await stampQuotedFigures(sb, id, 'overwrite');
+  const stampError = await stampSent(sb, id, 'overwrite', 'manual');
   if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
@@ -1990,7 +1990,7 @@ app.post('/:id/confirm', async (c) => {
   // `fill`, not `overwrite`: confirming is the customer accepting a quote
   // already made, so an existing stamp stays where the send put it and
   // any price-update notice stays visible.
-  const stampError = await stampQuotedFigures(sb, id, 'fill');
+  const stampError = await stampSent(sb, id, 'fill', 'stage');
   if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
@@ -2726,7 +2726,7 @@ app.post('/:id/revert', async (c) => {
     await freezeOrderPrices(sb, id);
     // `fill`: a stage change is not a send, so a stamp an earlier send
     // left is kept and the notices it feeds stay on screen.
-    await stampQuotedFigures(sb, id, 'fill');
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
@@ -2836,7 +2836,7 @@ app.post('/:id/status', async (c) => {
     await freezeOrderPrices(sb, id);
     // `fill`, as in the revert route above: a manual stage change does
     // not re-quote the customer.
-    await stampQuotedFigures(sb, id, 'fill');
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Status manually changed from ${existing.status} to ${to}.`);

@@ -2742,6 +2742,70 @@ describe('per-item price lock (migration 39)', () => {
       quoted_notice_ack_base: null,
     });
   });
+
+  /** The `order_revisions` rows the routes inserted, in order. */
+  const revisionInserts = () =>
+    (db.insertPayloads['order_revisions'] ?? []) as Array<Record<string, unknown>>;
+
+  /** `POST /o1/status` to the given stage. */
+  const jumpTo = (to: string) =>
+    ordersApp.request(
+      '/o1/status',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) },
+      ENV
+    );
+
+  it('mark-sent records a manual revision', async () => {
+    seedSendable();
+    await withResendStubbed(async () => {
+      const res = await ordersApp.request('/o1/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    expect(revisionInserts()).toHaveLength(1);
+    expect(revisionInserts()[0]).toMatchObject({
+      order_id: 'o1',
+      rev_no: 1,
+      source_kind: 'manual',
+      total: 205.66,
+    });
+  });
+
+  it('status jump to awaiting_payment on a never-sent draft records a stage revision', async () => {
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        status: 'draft',
+        sent_at: null,
+        confirmed_at: null,
+        installed_at: null,
+        total: 205.66,
+        line_items: [],
+      },
+    ];
+    const res = await jumpTo('awaiting_payment');
+    expect(res.status).toBe(200);
+    expect(revisionInserts()).toHaveLength(1);
+    expect(revisionInserts()[0]).toMatchObject({
+      order_id: 'o1',
+      rev_no: 1,
+      source_kind: 'stage',
+    });
+  });
+
+  it('reverting to draft keeps revisions but clears quoted_total', async () => {
+    db.responses['orders.select'] = [
+      { id: 'o1', status: 'sent', sent_at: '2026-08-01T00:00:00.000Z', confirmed_at: null, installed_at: null },
+    ];
+    const res = await jumpTo('draft');
+    expect(res.status).toBe(200);
+    // History survives: nothing is deleted from, or added to, the table.
+    expect(db.calls).not.toContain('order_revisions.delete');
+    expect(revisionInserts()).toHaveLength(0);
+    expect(db.updatePayloads['orders']).toContainEqual({
+      quoted_total: null,
+      quoted_notice_ack_total: null,
+    });
+  });
 });
 
 describe('order edit requests (staff side)', () => {
