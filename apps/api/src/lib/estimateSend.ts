@@ -30,6 +30,7 @@ import {
   ensureOrderToken,
 } from './customerLink';
 import { greetingName } from './customerName';
+import { readAnnouncedChanges } from './estimateEmailChanges';
 import {
   brandFromSettings,
   buildEstimatesEmailHtml,
@@ -477,7 +478,16 @@ export async function runEstimateSend(
 
   const { brand, companyTerms } = await readSendBranding(sb);
 
-  const estimates = named.map((row) => ({ order_number: row.order_number, title: row.title }));
+  // READ-ONLY, and before the email: what each already-sent estimate
+  // changed since the customer last held it. Drafts have no entry, so
+  // their line stays `changes: undefined` (a new estimate). Revisions are
+  // written only after the email succeeds (`persistSend` / `restampAnnounced`).
+  const announcedChanges = await readAnnouncedChanges(sb, toAnnounce);
+  const estimates = named.map((row) => ({
+    order_number: row.order_number,
+    title: row.title,
+    changes: announcedChanges.get(row.id),
+  }));
   let liveCount: number;
   try {
     liveCount = (await countActiveEstimates(sb, customerId, today)) + toSend.length;
