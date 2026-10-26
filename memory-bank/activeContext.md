@@ -4,7 +4,23 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-25)
+## Where things stand (as of 2026-10-26)
+
+**Newest, on branch `estimate-revisions` (not deployed), api + web, MIGRATION 50 WRITTEN BUT
+NOT APPLIED:** estimate revisions. A send snapshots what the customer was shown
+(`order_revisions.snapshot`, plus a staff-only `source` copy used to restore); the customer page
+serves the latest snapshot while the estimate is `sent`/`expired` (live again from
+`awaiting_payment`; orders sent before this shipped have no revision and stay live), the staff
+order page shows a banner of what has NOT been sent ("Customer holds Rev 2 — 3 changes not
+sent"), and re-sending emails an "updated" message listing up to 5 changes. Revisions are cut
+on a send only when something customer-visible changed; every former `stampQuotedFigures` call
+now goes through `stampSent`, so the migration-48 price notices are unchanged and reset
+together with revisions. Staff can restore an earlier revision as an unsent edit
+(`PUT /api/orders/:id` with `restore_from_revision`, Rev N prices kept for untouched items;
+409 from `awaiting_payment` on). A customer confirm records `accepted_revision_id`. Not exercised
+against a live database or in a browser. **Apply migration 50 first, then deploy the API, then
+the web.** Details: `knowledge/history/engine_features.md` 2026-10-26; patterns in
+`systemPatterns.md` "Estimate revisions".
 
 **Legacy-data hardening, Phase 0 (same branch, uncommitted, code NOT deployed), MIGRATION 49
 APPLIED and price-lock BACKFILL RUN 2026-10-25:** catalog rows are archived, never deleted. Settings DELETE stamps
@@ -379,6 +395,10 @@ install + pull-to-refresh; the soft-dashboard UI redesign with a shared `compone
 primitive layer.
 
 ## Next steps / open work
+- **Estimate revisions need migration 50 applied** (`20261026000050_order_revisions.sql`) to
+  `lgbxxlwsdeuhdgzrjjen` before the API ships — until then every send/stage stamp and the customer
+  page's revision read would fail. Then deploy the API, then the web, and click through a real
+  send -> edit -> banner -> re-send ("updated" email) -> customer view -> restore flow.
 - **The Material usage dialog has never been seen inside the real order page.** This
   worktree has no `apps/web/.env` (only `.env.example`), so
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or

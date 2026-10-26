@@ -338,6 +338,35 @@ section as the reference implementation for future collapsible UI.
   visible order's own token, and the existing `/public/estimate/:token` routes stay the only
   place a customer acts on an order. Visibility rules live in `lib/customerPortal.ts`.
 
+## Estimate revisions (2026-10-26)
+- **Quote snapshot on send.** A send cuts `order_revisions` row Rev N (`rev_no` unique per
+  order): `snapshot` = customer view (`PublicQuote`, sanitized: no `uid`, `attributes`,
+  `base_unit_price`, hidden items), `source` = staff-only restore copy (order `title` /
+  discount + raw `line_items` rows). `source` never leaves `/api/*`. RLS on, no policies.
+- **Cut on a send, only if customer-visible content changed.** Saves never cut one; an unchanged
+  re-announce writes none. `lib/orderRevisions.ts` `stampSent` wraps `stampQuotedFigures`
+  (`'overwrite' | 'fill'`); every send/stage stamp calls it, so after a send
+  `orders.quoted_total === latestRevision.total`. Email-then-persist: no revision if the email
+  throws. History readers are error-aware (unreadable != empty).
+- **Diff drives the banner and the email.** `lib/publicQuote.ts` builds the customer-visible
+  quote; `lib/quoteDiff.ts` diffs two of them (hidden items count as removed/added);
+  `lib/estimateEmailChanges.ts` + `email.ts` render up to 5 change lines and an "updated"
+  heading/subject when every named estimate is an update. Web `revisionBanner.ts` /
+  `RevisionBannerCard.tsx` is the staff banner.
+- **Customer page source.** `lib/publicRevision.ts`: latest snapshot while `sent`/`expired`;
+  live with no revision (legacy) and from `awaiting_payment` on; status, payments, edit requests
+  and address always live; unreadable history = 500; `/public/estimate/:token/revisions/:rev`
+  for earlier versions. Public confirm stores `orders.accepted_revision_id`; a differing saved
+  order is logged, not blocked.
+- **Restore is a normal save.** `PUT /api/orders/:id` + `restore_from_revision` (`lib/orderRestore.ts`)
+  overlays that revision's `source` price locks (`buildLockMap`) on the current ones, so
+  untouched items keep Rev N prices; edited items re-price at today's catalog. `customer_id`,
+  `order_date`, `expiry_date`, terms are not restored. 409 from `awaiting_payment` on.
+- **Migration-48 notices are unchanged and reset together with revisions.** The notice is the
+  live, per-item, dismissible price signal; the banner is the saved, order-level "customer not
+  told" signal and is not hidden by a dismissal. Reverting to `draft` clears stamps but keeps
+  revisions; the banner is hidden on drafts (`holdsPriceLock` gate).
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
 2. **Send flow:** (estimate page: Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked) → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices
