@@ -11,7 +11,8 @@
  * defaults; rule position on create and reorder; re-apply only touches
  * changed, unlocked threads and skips message bodies when no rule needs
  * them; thread PUT semantics (category lock, handled_at, order → customer,
- * customer change clears order); non-UUID ids are 404.
+ * customer change clears order); thread DELETE removes only that row;
+ * non-UUID ids are 404.
  *
  * Auth is not exercised: `requireAuth` is applied in `index.ts`.
  */
@@ -261,5 +262,25 @@ describe('PUT /:threadId', () => {
     expect((await inboxApp.request(`/${T1}`, json('PUT', {}), ENV)).status).toBe(400);
     answers.email_threads = [{ data: null }];
     expect((await inboxApp.request(`/${T1}`, json('PUT', { status: 'new' }), ENV)).status).toBe(404);
+  });
+});
+
+describe('DELETE /:threadId', () => {
+  it('deletes only that conversation row', async () => {
+    answers.email_threads = [{ data: { id: T1 } }];
+    const res = await inboxApp.request(`/${T1}`, { method: 'DELETE' }, ENV);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ data: { id: T1 } });
+    const [call] = callsFor('email_threads');
+    expect(op(call, 'delete')).toEqual([]);
+    expect(call.ops).toContainEqual(['eq', ['id', T1]]);
+    expect(calls.map((c) => c.table)).toEqual(['email_threads']);
+  });
+
+  it('404 for an unknown or malformed id', async () => {
+    answers.email_threads = [{ data: null }];
+    expect((await inboxApp.request(`/${T1}`, { method: 'DELETE' }, ENV)).status).toBe(404);
+    expect((await inboxApp.request('/not-a-uuid', { method: 'DELETE' }, ENV)).status).toBe(404);
+    expect(callsFor('email_threads')).toHaveLength(1);
   });
 });
