@@ -29,6 +29,7 @@
 
 import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import { format } from 'date-fns';
 import DatePicker from '../../components/DatePicker';
 import {
@@ -89,6 +90,7 @@ export default function InstallationSection({
   onOpenSheet: () => void;
   onCloseSheet: () => void;
 }) {
+  const askConfirm = useConfirm();
   const apptQ = useOrderAppointment(orderId);
   const appt = apptQ.data ?? null;
   const createMut = useCreateAppointment();
@@ -152,7 +154,12 @@ export default function InstallationSection({
    * Asks first, since the card's other buttons sit right beside it.
    */
   async function handleMarkInstalled() {
-    if (!window.confirm('Mark this order installed?')) return;
+    const ok = await askConfirm({
+      title: 'Mark this order installed?',
+      message: 'This is the final stage. The customer is asked for a review afterwards.',
+      confirmLabel: 'Mark installed',
+    });
+    if (!ok) return;
     try {
       await installedMut.mutateAsync(orderId);
       toast.success('Order marked installed.');
@@ -163,7 +170,13 @@ export default function InstallationSection({
 
   async function handleDelete() {
     if (!appt) return;
-    if (!window.confirm('Remove the set installation time?')) return;
+    const ok = await askConfirm({
+      title: 'Remove the installation time?',
+      message: 'The set installation visit is removed from the calendar.',
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteMut.mutateAsync(appt.id);
       toast.success('Installation time removed.');

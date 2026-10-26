@@ -31,6 +31,7 @@
 
 import { useState } from 'react';
 import toast from 'react-hot-toast';
+import { useConfirm } from './ui';
 import {
   useCatalogList,
   useCreateCatalogItem,
@@ -223,6 +224,7 @@ function parseAmount(value: string, min: number): number | null {
 }
 
 export default function CatalogEditor({ config }: { config: CatalogEditorConfig }) {
+  const askConfirm = useConfirm();
   const hasPrice = Boolean(config.priceKey);
   const { data: allRows, isLoading, error } = useCatalogList<Row>(config.path);
   // A delete ARCHIVES the row (migration 49) and the list still returns
@@ -319,8 +321,14 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
   }
 
   /** Confirms then deletes a row. */
-  function handleDelete(row: Row) {
-    if (!window.confirm(`Delete "${row.name}"? Existing estimates keep their prices.`)) return;
+  async function handleDelete(row: Row) {
+    const ok = await askConfirm({
+      title: `Delete "${row.name}"?`,
+      message: 'Existing estimates keep their prices.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     remove.mutate(row.id, { onError: (e) => toast.error(e.message) });
   }
 

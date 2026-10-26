@@ -20,6 +20,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import PageHeader from '../../components/PageHeader';
 import {
   useCatalogList,
@@ -31,6 +32,7 @@ import {
 import type { BlindType, Material } from '../../types';
 
 export default function Materials() {
+  const askConfirm = useConfirm();
   const { data: allTypes, isLoading, error } = useCatalogList<BlindType>('blind-types');
   // Archived types (migration 49) are gone from Settings; the list still
   // returns them so old orders keep resolving their type.
@@ -72,13 +74,14 @@ export default function Materials() {
    * 49): it leaves Settings and the type dropdown, its links stay, and
    * orders already quoted on it are untouched.
    */
-  function handleDelete(type: BlindType) {
-    if (
-      !window.confirm(
-        `Delete blind type "${type.name}"? It is removed from Settings and new estimates; existing estimates keep it.`
-      )
-    )
-      return;
+  async function handleDelete(type: BlindType) {
+    const ok = await askConfirm({
+      title: `Delete blind type "${type.name}"?`,
+      message: 'It is removed from Settings and new estimates; existing estimates keep it.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     remove.mutate(type.id, { onError: (e) => toast.error(e.message) });
   }
 

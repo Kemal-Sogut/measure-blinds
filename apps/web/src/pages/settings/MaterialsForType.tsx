@@ -32,6 +32,7 @@
 import { useState, type ChangeEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import PageHeader from '../../components/PageHeader';
 import { CurtainsBlindType, getBlindType } from '../../lib/blindTypes';
 import {
@@ -154,6 +155,7 @@ function parseMaterialsCsv(text: string): { valid: CsvMaterial[]; skipped: numbe
 }
 
 export default function MaterialsForType() {
+  const askConfirm = useConfirm();
   const { blindTypeId = '' } = useParams<{ blindTypeId: string }>();
   const { data: types } = useCatalogList<BlindType>('blind-types');
   const { data: materials, isLoading, error } = useCatalogList<Material>('materials');
@@ -292,8 +294,14 @@ export default function MaterialsForType() {
   }
 
   /** Confirms then deletes a Material entirely. */
-  function handleDelete(material: Material) {
-    if (!window.confirm(`Delete "${material.name}"? Existing estimates keep their prices.`)) return;
+  async function handleDelete(material: Material) {
+    const ok = await askConfirm({
+      title: `Delete "${material.name}"?`,
+      message: 'Existing estimates keep their prices.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     remove.mutate(material.id, { onError: (e) => toast.error(e.message) });
   }
 

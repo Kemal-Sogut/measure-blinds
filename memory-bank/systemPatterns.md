@@ -378,6 +378,12 @@ amber=payment owed, emerald=ready/paid, rose=expired/destructive, slate=draft.
   local `INPUT_CLS` constants compose it rather than redefining it.
 - `Modal` owns Escape, backdrop dismissal, scroll lock and focus. A caller migrating onto it
   MUST delete its own equivalents or the close handler fires twice.
+- NO `window.confirm` / `alert` / `prompt` in the app. Yes/no questions go through
+  `useConfirm()` (`ui/confirmContext.ts`): `if (!(await askConfirm({ title, message,
+  confirmLabel, tone }))) return;`. `ConfirmProvider` (mounted once in `App.tsx`) renders it
+  on `Modal` inside a z-60 layer — above z-40 sheets and z-50 Modals it is raised from — and
+  swallows Escape in the window capture phase so only the confirm closes. `tone: 'danger'`
+  for deletes, discards and reversals; default `primary` for forward moves.
 - Cards carry a shadow AND a hairline border. The border is not redundant — the app is used
   on phones outdoors where a soft shadow alone can vanish in daylight.
 

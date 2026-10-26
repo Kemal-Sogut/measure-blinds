@@ -79,6 +79,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrderRouteId } from './orderRouteId';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import { format } from 'date-fns';
 import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
@@ -568,6 +569,7 @@ const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cass
 
 export default function OrderDetail() {
   const id = useOrderRouteId();
+  const askConfirm = useConfirm();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
@@ -1586,14 +1588,29 @@ export default function OrderDetail() {
     const toIdx = STAGES.findIndex((s) => s.key === to);
     const confirmIdx = STAGES.findIndex((s) => s.key === 'awaiting_payment');
     const backward = toIdx < curIdx;
-    const prompt = backward
-      ? curIdx >= confirmIdx && toIdx < confirmIdx
-        ? `Reverse the confirmation and move this order back to "${label}"? Later-stage progress is cleared.`
-        : `Move this order back to "${label}"? Later-stage progress is cleared.`
-      : curIdx < confirmIdx && toIdx >= confirmIdx
-        ? `Confirm this order and move it to "${label}"?`
-        : `Move this order to "${label}"?`;
-    if (!window.confirm(prompt)) return;
+    const reversesConfirmation = backward && curIdx >= confirmIdx && toIdx < confirmIdx;
+    const confirmsOrder = !backward && curIdx < confirmIdx && toIdx >= confirmIdx;
+    const ok = await askConfirm({
+      title: reversesConfirmation
+        ? 'Reverse the confirmation?'
+        : confirmsOrder
+          ? 'Confirm this order?'
+          : backward
+            ? `Move back to "${label}"?`
+            : `Move to "${label}"?`,
+      message: backward
+        ? `The order moves back to "${label}". Later-stage progress is cleared.`
+        : `The order moves to "${label}".`,
+      confirmLabel: reversesConfirmation
+        ? 'Reverse confirmation'
+        : confirmsOrder
+          ? 'Confirm order'
+          : backward
+            ? 'Move back'
+            : 'Move',
+      tone: backward ? 'danger' : 'primary',
+    });
+    if (!ok) return;
     if (!(await save())) return;
     try {
       await setStatusMut.mutateAsync({ id, to });
@@ -1626,13 +1643,15 @@ export default function OrderDetail() {
 
   async function handleDeleteOrder() {
     if (!id) return;
-    if (
-      !window.confirm(
-        'Delete this order permanently? Its line items, activity log, payments, ' +
-          'change requests and installation visit are removed. The customer is kept.',
-      )
-    )
-      return;
+    const ok = await askConfirm({
+      title: 'Delete this order permanently?',
+      message:
+        'Its line items, activity log, payments, change requests and installation visit ' +
+        'are removed. The customer is kept.',
+      confirmLabel: 'Delete order',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteMut.mutateAsync(id);
       toast.success('Order deleted.');
@@ -1644,7 +1663,13 @@ export default function OrderDetail() {
 
   async function handleDeletePayment(paymentId: string) {
     if (!id) return;
-    if (!window.confirm('Delete this payment? This cannot be undone.')) return;
+    const ok = await askConfirm({
+      title: 'Delete this payment?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete payment',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deletePaymentMut.mutateAsync({ orderId: id, paymentId });
       toast.success('Payment deleted.');
@@ -1793,13 +1818,14 @@ export default function OrderDetail() {
    */
   async function handleAcceptCancel() {
     if (!id) return;
-    if (
-      !window.confirm(
-        'Cancel this confirmation? The order goes back to Sent and the customer can confirm again.'
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Cancel this confirmation?',
+      message: 'The order goes back to Sent and the customer can confirm again.',
+      confirmLabel: 'Cancel confirmation',
+      cancelLabel: 'Keep it confirmed',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await resolveCancelMut.mutateAsync({ id, accept: true });
       toast.success('Cancellation accepted — order returned to Sent.');
