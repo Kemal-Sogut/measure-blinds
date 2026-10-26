@@ -319,6 +319,9 @@ const orderSchema = z
   })
   .strict();
 
+/** Payload for POST /: a new order has no revision, so a restore is a 400 (still strict). */
+const createOrderSchema = orderSchema.omit({ restore_from_revision: true });
+
 /** Payload for POST /:id/payments — a single ledger entry. */
 const paymentSchema = z
   .object({
@@ -1269,7 +1272,7 @@ async function createOrderFromInput(
 
 /** Creates an order with server-generated order number + pricing. */
 app.post('/', async (c) => {
-  const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
+  const parsed = createOrderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
   const sb = createSupabaseAdmin(c.env);
 

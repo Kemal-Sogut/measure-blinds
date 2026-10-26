@@ -3283,6 +3283,21 @@ describe('restore a revision (migration 50, Design decision 8)', () => {
     expect(body.data.unsent_changes.length).toBeGreaterThan(0);
   });
 
+  it('400s restore_from_revision on create, where there is no revision', async () => {
+    const res = await ordersApp.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({ ...payload(), restore_from_revision: REV1_ID }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      ENV
+    );
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+    expect(db.calls).not.toContain('order_revisions.select');
+  });
+
   it('GET revision source requires auth', async () => {
     const worker = (await import('../index')).default;
     const res = await worker.fetch(

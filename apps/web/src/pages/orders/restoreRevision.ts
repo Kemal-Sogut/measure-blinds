@@ -20,7 +20,8 @@
 
 import type { RevisionSource } from '../../hooks/useOrders';
 import type { DiscountType, LineItem, OrderStatus } from '../../types';
-import { draftsFromLineItems, type ItemDraft } from './lineItemDrafts';
+import type { ItemDraft } from './lineItemDrafts';
+import { draftsFromLineItems } from './lineItemHydration';
 
 /**
  * Statuses on which a revision may be restored — the estimate stages,

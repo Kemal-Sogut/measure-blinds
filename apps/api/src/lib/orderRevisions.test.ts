@@ -19,7 +19,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   stampSent,
   readLatestRevision,
-  readRevisionSource,
+  checkRevisionSource,
   pendingChanges,
   listRevisions,
   revisionDetailFields,
@@ -275,14 +275,22 @@ describe('stampSent', () => {
   });
 });
 
-describe('readRevisionSource', () => {
-  it('returns null for a revision of another order', async () => {
+describe('checkRevisionSource', () => {
+  it('returns no row for a revision of another order', async () => {
     await stampSent(fakeSb(), 'o1', 'overwrite', 'email');
     const id = revisionsOf('o1')[0].id as string;
-    expect(await readRevisionSource(fakeSb(), 'o2', id)).toBeNull();
-    const own = await readRevisionSource(fakeSb(), 'o1', id);
-    expect(own?.rev_no).toBe(1);
-    expect(own?.source.line_items).toHaveLength(2);
+    expect(await checkRevisionSource(fakeSb(), 'o2', id)).toEqual({ row: null });
+    const own = await checkRevisionSource(fakeSb(), 'o1', id);
+    if (!('row' in own)) throw new Error(own.error);
+    expect(own.row?.rev_no).toBe(1);
+    expect(own.row?.source.line_items).toHaveLength(2);
+  });
+
+  it('returns the database error instead of "not found"', async () => {
+    failures['order_revisions.select'] = { message: 'relation does not exist' };
+    expect(await checkRevisionSource(fakeSb(), 'o1', 'rev-1')).toEqual({
+      error: 'relation does not exist',
+    });
   });
 });
 

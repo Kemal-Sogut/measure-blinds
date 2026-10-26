@@ -79,6 +79,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrderRouteId } from './orderRouteId';
 import toast from 'react-hot-toast';
+import { ApiError } from '../../lib/api';
 import { useConfirm } from '../../components/ui';
 import { format } from 'date-fns';
 import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
@@ -161,12 +162,14 @@ import {
   type ItemDraft,
   type Catalogs,
   type QuotedPriceChange,
-  type ServerItemFields,
+} from './lineItemDrafts';
+import {
   applyServerFields,
   draftsFromLineItems,
   finiteOrNull,
   serverFieldsOf,
-} from './lineItemDrafts';
+  type ServerItemFields,
+} from './lineItemHydration';
 import { canRestoreRevision, draftsFromRevision } from './restoreRevision';
 import { PriceUpdateNotice } from './PriceUpdateNotice';
 import { RevisionBanner } from './RevisionBannerCard';
@@ -465,7 +468,7 @@ export default function OrderDetail() {
   const askConfirm = useConfirm();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
+  const { data: existing, isLoading: loadingExisting, error: loadError, refetch: refetchExisting } = useOrder(id);
   const { data: editRequests } = useOrderEditRequests(id);
   // Same cache entry InstallationSection reads; here only to badge the
   // Appointments section when the customer has not agreed to a time yet.
@@ -1371,6 +1374,16 @@ export default function OrderDetail() {
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
+      // A refused restore (the estimate was confirmed meanwhile) must not
+      // linger: a later Save would PUT the revision's content without its
+      // locks. Discard it with the edits, re-hydrating from the server.
+      if (restoreFrom && e instanceof ApiError && e.status === 409) {
+        setRestoreFrom(null);
+        setHydrated(false);
+        void refetchExisting();
+        toast.error(`Rev ${restoreFrom.rev_no} was discarded: the estimate's status has changed.`);
+        return null;
+      }
       toast.error(e instanceof Error ? e.message : 'Save failed.');
       return null;
     }

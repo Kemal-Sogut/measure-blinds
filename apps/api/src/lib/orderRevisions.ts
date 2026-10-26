@@ -18,7 +18,7 @@
  * `source` is the staff copy used to restore a revision; it holds raw
  * `line_items` rows (hidden items, uids and lock columns) and so is
  * deliberately NOT part of {@link RevisionRow}: only
- * {@link readRevisionSource} ever selects it, so it cannot ride into a
+ * {@link checkRevisionSource} ever selects it, so it cannot ride into a
  * response by accident.
  *
  * AI_GUIDELINES rule 1: nothing here computes money. The snapshot holds
@@ -32,7 +32,7 @@ import { stampQuotedFigures } from './priceLockStore';
 
 /**
  * Explicit column list for every revision read except
- * {@link readRevisionSource}. Never `*`: that would drag the staff-only
+ * {@link checkRevisionSource}. Never `*`: that would drag the staff-only
  * `source` copy along with it.
  */
 const REVISION_COLUMNS = 'id, order_id, rev_no, sent_at, source_kind, total, snapshot';
@@ -58,7 +58,7 @@ export interface RevisionSource {
 /**
  * One revision as it may be returned to a client. `source` is
  * intentionally absent, so a revision row can be serialized without
- * leaking raw line items; read it with {@link readRevisionSource}.
+ * leaking raw line items; read it with {@link checkRevisionSource}.
  */
 export interface RevisionRow {
   id: string;
@@ -134,24 +134,6 @@ export async function checkRevisionSource(
     .maybeSingle();
   if (error) return { error: error.message };
   return { row: (data as { rev_no: number; source: RevisionSource } | null) ?? null };
-}
-
-/**
- * Reads the staff-only restore copy of one revision, flattening a failed
- * read to `null`; use {@link checkRevisionSource} where "not found" and
- * "unreadable" must be told apart.
- *
- * @returns The revision number and its {@link RevisionSource}, or `null`
- *   when the revision does not exist, belongs to a different order, or
- *   could not be read.
- */
-export async function readRevisionSource(
-  sb: SupabaseClient,
-  orderId: string,
-  revisionId: string
-): Promise<{ rev_no: number; source: RevisionSource } | null> {
-  const res = await checkRevisionSource(sb, orderId, revisionId);
-  return 'error' in res ? null : res.row;
 }
 
 /**
