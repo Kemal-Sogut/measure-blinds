@@ -1,5 +1,20 @@
 # Bug Fixes History
 
+## 2026-10-26 — Order-total price notice compared against the FIRST send after a re-send
+- **Issue:** after an estimate was sent, changed and sent again, the "Order total" notice still
+  showed first-send → current. Switching an option back to the first send's choice then read as
+  "no change", although the customer had since been quoted the other figure.
+- **Cause:** the multi-estimate send splits the selection into `toSend` (drafts) and
+  `toAnnounce` (already `sent`). Only `persistSend` (drafts) called
+  `stampQuotedFigures(..., 'overwrite')`; announced rows were "never written", so
+  `orders.quoted_total` / `line_items.quoted_base_price` stayed at the first send forever. The web
+  hook also invalidated the detail cache for `sent` ids only, so even a fresh stamp would not
+  have reached an open editor.
+- **Fix:** `restampAnnounced` in `apps/api/src/lib/estimateSend.ts` freezes (no-op for locked
+  items) and re-stamps every announced row after `persistSend`, failures collected into `failed`
+  like the draft path; status is still not written. `useSendEstimates` now also invalidates
+  `['orders', 'detail', id]` for every `announced` id.
+
 ## 2026-10-25 — Deleting a catalog option re-priced or blocked sent and confirmed orders (legacy-data audit, Phase 0)
 - **Issue:** found by the legacy-data audit (`docs/legacy-data-audit.md`, local-only), latent in
   production data (no casualties yet): deleting a material, hardware option or preset in Settings
