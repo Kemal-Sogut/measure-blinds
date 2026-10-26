@@ -129,6 +129,22 @@ export function visibleChanges(
 }
 
 /**
+ * Whether the page may render live money: the how-to-pay box, receipts,
+ * balance due and "paid in full".
+ *
+ * Those figures belong to the CURRENT total. While an earlier version is
+ * open its superseded totals are on screen, and a customer reading a
+ * deposit or balance beside them could e-Transfer the wrong amount, so
+ * every live-money block is withheld until they return to the current one.
+ *
+ * @param viewingOld - True while an earlier version is open
+ * @returns False when payment and balance blocks must be hidden
+ */
+export function showsLiveMoney(viewingOld: boolean): boolean {
+  return !viewingOld;
+}
+
+/**
  * Builds the payload the page renders while an earlier version is open:
  * the revision's quote fields laid over the live payload, which keeps its
  * status, customer, company, balance and the rest.

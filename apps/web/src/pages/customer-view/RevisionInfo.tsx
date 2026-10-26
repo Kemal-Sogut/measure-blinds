@@ -126,7 +126,9 @@ export default function RevisionInfo({
   /** Called to return to the current version. */
   onBackToCurrent: () => void;
 }) {
-  const chip = chipLabel(revision);
+  // The banner already states which version is open; a second "version N"
+  // statement would compete with it.
+  const chip = viewing === null ? chipLabel(revision) : null;
   const earlier = previousVersions(revisions);
   // The change lines describe current-vs-previous; while an old version is
   // open they would describe the wrong page.

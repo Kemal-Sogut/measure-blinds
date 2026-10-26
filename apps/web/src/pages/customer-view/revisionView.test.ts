@@ -14,6 +14,7 @@ import {
   visibleChanges,
   overlayRevision,
   fetchRevision,
+  showsLiveMoney,
   CHANGES_PREVIEW_LIMIT,
   type RevisionPayload,
 } from './revisionView';
@@ -64,6 +65,15 @@ describe('visibleChanges', () => {
   });
   it('never hides a short list', () => {
     expect(visibleChanges(['a'], false)).toEqual({ shown: ['a'], hiddenCount: 0 });
+  });
+});
+
+describe('showsLiveMoney', () => {
+  it('shows payment and balance blocks on the current version', () => {
+    expect(showsLiveMoney(false)).toBe(true);
+  });
+  it('withholds them while an earlier version is open', () => {
+    expect(showsLiveMoney(true)).toBe(false);
   });
 });
 

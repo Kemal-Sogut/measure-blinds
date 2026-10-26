@@ -95,6 +95,7 @@ import RevisionInfo from './RevisionInfo';
 import {
   fetchRevision,
   overlayRevision,
+  showsLiveMoney,
   type RevisionPayload,
   type RevisionStamp,
 } from './revisionView';
@@ -533,6 +534,8 @@ export default function CustomerView({
   const [revError, setRevError] = useState<string | null>(null);
   const estimate = liveEstimate && viewingRev ? overlayRevision(liveEstimate, viewingRev) : liveEstimate;
   const viewingOld = viewingRev !== null;
+  // Live payment figures never sit beside a superseded version's totals.
+  const liveMoney = showsLiveMoney(viewingOld);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Set when the Worker refuses with its maintenance 503. Held apart
   // from `loadError` because it is not an error about THIS order — the
@@ -808,6 +811,7 @@ export default function CustomerView({
   // outer guard: a settled order never shows it.
   const showHowToPay =
     confirmed &&
+    liveMoney &&
     estimate.balance > 0 &&
     (!depositPaid || estimate.status === 'installed');
   // The single figure the "How to pay" box quotes, with its label — or
@@ -935,7 +939,7 @@ export default function CustomerView({
             {cust.shipping_address_line1 &&
               ` · ${cust.shipping_address_line1}, ${cust.shipping_city}`}
           </p>
-          {!confirmed && (
+          {!confirmed && !viewingOld && (
             <p className="mt-1 text-xs text-warning">Valid until {estimate.expiry_date}</p>
           )}
         </section>
@@ -986,7 +990,7 @@ export default function CustomerView({
             confirmation nothing has been paid, so a "Balance due" equal
             to the total would just restate the line above.
           */}
-          {confirmed && (
+          {confirmed && liveMoney && (
             <>
               {payments.length > 0 && (
                 <div className="mt-3 border-t border-border-light pt-2">
@@ -1013,7 +1017,7 @@ export default function CustomerView({
           )}
         </section>
 
-        {confirmed && estimate.balance <= 0 && (
+        {confirmed && liveMoney && estimate.balance <= 0 && (
           <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-center text-sm font-medium text-success">
             Paid in full — thank you!
           </section>
