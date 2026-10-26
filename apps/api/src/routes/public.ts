@@ -61,10 +61,12 @@ import publicCustomerRoutes from './publicCustomer';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
-import { buildPublicQuote, toPublicLines } from '../lib/publicQuote';
-import { readPublicRevision, resolveServedQuote } from '../lib/publicRevision';
-import { checkLatestRevision } from '../lib/orderRevisions';
-import { diffQuotes } from '../lib/quoteDiff';
+import { toPublicLines } from '../lib/publicQuote';
+import {
+  publicRevisionResponse,
+  resolveAcceptance,
+  resolveServedQuote,
+} from '../lib/publicRevision';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -405,35 +407,15 @@ app.get('/estimate/:token', async (c) => {
   });
 });
 
-/**
- * One earlier revision of the estimate, read-only — the customer page's
- * "previous versions" view. Served at any status (history stays
- * readable after confirmation) and only for the order the token opens.
- * Lines pass through `toPublicLines`; the revision row's id, kind and
- * staff copy never leave the Worker.
- */
+/** One earlier revision, read-only (see `publicRevisionResponse`). */
 app.get('/estimate/:token/revisions/:rev', async (c) => {
   const token = c.req.param('token');
   if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
-
   const sb = createSupabaseAdmin(c.env);
   const order = await loadByToken(sb, token);
   if (!order) return c.json({ error: 'Estimate not found' }, 404);
-
-  const read = await readPublicRevision(sb, order.id, c.req.param('rev'));
-  if ('error' in read) return c.json({ error: 'Something went wrong. Please try again.' }, 500);
-  if (!read.row) return c.json({ error: 'Revision not found' }, 404);
-
-  const { rev_no, sent_at, snapshot } = read.row;
-  return c.json({
-    data: {
-      rev_no,
-      sent_at,
-      ...snapshot,
-      line_items: toPublicLines(snapshot.line_items),
-      read_only: true,
-    },
-  });
+  const { status, body } = await publicRevisionResponse(sb, order.id, c.req.param('rev'));
+  return c.json(body, status);
 });
 
 /**
@@ -496,13 +478,8 @@ app.post('/estimate/:token/confirm', async (c) => {
     return c.json({ error: 'This estimate has already been confirmed.' }, 409);
   }
 
-  // The customer accepts the revision their page shows — the latest one.
-  // Unreadable history is a 500 so an acceptance is never recorded blind.
-  const latestRead = await checkLatestRevision(sb, order.id);
-  if ('error' in latestRead) {
-    return c.json({ error: 'Something went wrong. Please try again.' }, 500);
-  }
-  const latest = latestRead.row;
+  const acceptance = await resolveAcceptance(sb, order);
+  if ('error' in acceptance) return c.json({ error: 'Something went wrong. Please try again.' }, 500);
 
   // Guard the transition at the DB level too: only a 'sent' row updates,
   // so two racing confirms produce exactly one winner.
@@ -511,7 +488,7 @@ app.post('/estimate/:token/confirm', async (c) => {
     .update({
       status: 'awaiting_payment',
       confirmed_at: new Date().toISOString(),
-      accepted_revision_id: latest?.id ?? null,
+      accepted_revision_id: acceptance.acceptedRevisionId,
     })
     .eq('id', order.id)
     .eq('status', 'sent')
@@ -521,15 +498,7 @@ app.post('/estimate/:token/confirm', async (c) => {
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
 
   await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
-  // Staff saved edits after the last send: the customer accepted the sent
-  // revision, not those edits, and the trail has to say so.
-  if (latest && diffQuotes(latest.snapshot, buildPublicQuote(order)).length > 0) {
-    await logOrderEvent(
-      sb,
-      order.id,
-      `Customer confirmed Rev ${latest.rev_no}; later unsent changes are not part of it.`
-    );
-  }
+  if (acceptance.divergenceLog) await logOrderEvent(sb, order.id, acceptance.divergenceLog);
   await recordNotification(sb, {
     kind: 'order_confirmed',
     orderId: order.id,

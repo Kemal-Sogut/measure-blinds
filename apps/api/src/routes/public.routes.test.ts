@@ -85,8 +85,9 @@ const db: FakeDb = {
  * (`.eq('status', …)`, `.is('cancel_requested_at', null)`), so a fake
  * that ignored them would let guarded routes pass untested.
  *
- * Filters are enforced on UPDATE only; SELECTs keep returning the seeded
- * row so token/id lookups stay trivial.
+ * Filters are enforced on UPDATE, and on reads of the multi-row tables
+ * (`order_edit_requests`, `order_revisions`); other SELECTs keep
+ * returning the seeded row so token/id lookups stay trivial.
  */
 function makeBuilder(table: string) {
   const state = {
