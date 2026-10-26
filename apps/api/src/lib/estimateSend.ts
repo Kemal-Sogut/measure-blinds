@@ -63,7 +63,11 @@ export interface SendCandidateRow {
 export interface SelectionPlan {
   /** Rows that were `draft`: status write + freeze, in request order. */
   toSend: SendCandidateRow[];
-  /** Rows already `sent`: named in the email, never written. */
+  /**
+   * Rows already `sent`: named in the email, status left alone. Their
+   * quoted figures ARE re-stamped (see {@link restampAnnounced}), because
+   * the customer is now holding today's figures for them too.
+   */
   toAnnounce: SendCandidateRow[];
 }
 
@@ -139,8 +143,9 @@ export function planSelection(
  * `total` counts the estimates NEWLY MARKED SENT by this send — the rows
  * these log lines are attached to. It is deliberately NOT the number of
  * estimates the email names: the email also lists the customer's
- * already-`sent` estimates, and those rows are never written, so counting
- * them here would describe log lines that do not exist.
+ * already-`sent` estimates, and those rows get no log line (only their
+ * quoted figures are re-stamped), so counting them here would describe log
+ * lines that do not exist.
  *
  * @param email  the address the link was sent to
  * @param index  1-based position of this estimate among those marked sent
@@ -181,7 +186,10 @@ export interface EstimateSendInput {
 export interface EstimateSendReport {
   /** Ids actually flipped to `sent` by this request. */
   sent: string[];
-  /** Ids that were already `sent`: named in the email, never written. */
+  /**
+   * Ids that were already `sent`: named in the email, status untouched,
+   * quoted figures re-stamped to what the customer now holds.
+   */
   announced: string[];
   /** Rows the database refused, with the message it gave. */
   failed: Array<{ id: string; error: string }>;
@@ -343,6 +351,46 @@ async function persistSend(
 }
 
 /**
+ * Re-stamps the quoted figures of every ALREADY-`sent` estimate the email
+ * named, so the editor's price-update notices are measured against what
+ * the customer holds NOW rather than against the first send.
+ *
+ * Without this, a re-send left `quoted_total` / `quoted_base_price` at the
+ * first send's figures: the notice kept showing first-send → current after
+ * the re-send, and changing an option back to the first send's choice read
+ * as "no change" even though the customer had since been quoted the other
+ * figure.
+ *
+ * The status is NOT written — the row is `sent` already. The freeze is a
+ * no-op for items locked at an earlier send and catches any item that is
+ * still unlocked, since its price has now reached the customer as well.
+ *
+ * Same failure contract as {@link persistSend}: never throws, sequential,
+ * every refusal collected into `failed`, because the email has already
+ * gone out.
+ */
+async function restampAnnounced(
+  sb: SupabaseClient,
+  toAnnounce: SendCandidateRow[]
+): Promise<Array<{ id: string; error: string }>> {
+  const failed: Array<{ id: string; error: string }> = [];
+  for (const row of toAnnounce) {
+    try {
+      const freezeError = await freezeOrderPrices(sb, row.id);
+      if (freezeError) failed.push({ id: row.id, error: freezeError });
+      const stampError = await stampQuotedFigures(sb, row.id, 'overwrite');
+      if (stampError) failed.push({ id: row.id, error: stampError });
+    } catch (e) {
+      failed.push({
+        id: row.id,
+        error: e instanceof Error ? e.message : 'Could not update the sent figures.',
+      });
+    }
+  }
+  return failed;
+}
+
+/**
  * Emails a customer ONE link covering several of their estimates and
  * marks every selected draft as sent.
  *
@@ -462,6 +510,7 @@ export async function runEstimateSend(
     new Date().toISOString(),
     companyTerms
   );
+  failed.push(...(await restampAnnounced(sb, toAnnounce)));
   return {
     data: { sent, announced: toAnnounce.map((row) => row.id), failed, customer_token: customerToken },
   };

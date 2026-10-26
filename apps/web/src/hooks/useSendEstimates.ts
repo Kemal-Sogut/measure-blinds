@@ -66,8 +66,8 @@ export function useSendableEstimates(
  * Result of `POST /api/customers/:id/send-estimates`.
  *
  * - `sent`: estimates marked as sent (status written) after the email went out.
- * - `announced`: estimates named in the email whose status was already `sent`,
- *   so nothing was written for them.
+ * - `announced`: estimates named in the email whose status was already `sent`;
+ *   their status is untouched but their quoted figures were re-stamped.
  * - `failed`: estimates the email named but whose row could not be marked.
  * - `customer_token`: the token of the customer link the email carried.
  */
@@ -91,8 +91,10 @@ export interface SendEstimatesResult {
  *   is eligible;
  * - the orders list prefix `['orders', 'list']`, which covers both the flat and
  *   the grouped Estimates page lists (status badges change);
- * - the detail and activity-log caches of every id in `sent` only. Ids in
- *   `announced` were not written, so nothing cached for them changed.
+ * - the detail and activity-log caches of every id in `sent`, and the detail
+ *   cache of every id in `announced`: the Worker re-stamps their quoted
+ *   figures (`quoted_total`, `quoted_base_price`), and a stale detail would
+ *   keep the price-update notice comparing against the previous send.
  *
  * ON FAILURE it invalidates the sendable-estimates list too, which is not
  * housekeeping but the recovery path. The server refuses a selection whose
@@ -129,6 +131,9 @@ export function useSendEstimates(): UseMutationResult<
       for (const id of data.sent) {
         void qc.invalidateQueries({ queryKey: ['orders', 'detail', id] });
         void qc.invalidateQueries({ queryKey: ['orders', 'logs', id] });
+      }
+      for (const id of data.announced) {
+        void qc.invalidateQueries({ queryKey: ['orders', 'detail', id] });
       }
     },
     onError: (_error, { customerId }) => {

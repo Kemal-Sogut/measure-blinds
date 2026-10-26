@@ -476,7 +476,7 @@ describe('POST /api/customers/:id/send-estimates', () => {
     ]);
   });
 
-  it('leaves an already-sent row untouched and names it in the email', async () => {
+  it('leaves an already-sent row on its status, re-stamps it, and names it in the email', async () => {
     db.responses['orders.select'] = [
       orderRow(),
       orderRow({ id: O2, order_number: 'M2010-127', status: 'sent' }),
@@ -490,8 +490,11 @@ describe('POST /api/customers/:id/send-estimates', () => {
 
     const orderWrites = (db.updatePayloads['orders'] ?? []) as Record<string, unknown>[];
     expect(orderWrites.filter((p) => 'status' in p)).toHaveLength(1);
+    // Both rows are re-stamped: the customer now holds today's figures for
+    // the already-sent one too, so its price notice must measure from here.
+    expect(orderWrites.filter((p) => 'quoted_total' in p)).toHaveLength(2);
     expect(db.filters).toContainEqual(['line_items', 'eq', ['order_id', O1]]);
-    expect(db.filters).not.toContainEqual(['line_items', 'eq', ['order_id', O2]]);
+    expect(db.filters).toContainEqual(['line_items', 'eq', ['order_id', O2]]);
 
     expect(lastEmail().html).toContain('M2010-126');
     expect(lastEmail().html).toContain('M2010-127');
@@ -693,8 +696,11 @@ describe('POST /api/customers/:id/send-estimates', () => {
     const body = (await res.json()) as SendBody;
     expect(body.data.sent).toEqual([]);
     expect(body.data.announced).toEqual([O1, O2]);
-    expect(db.updatePayloads['orders']).toBeUndefined();
-    expect(db.updatePayloads['line_items']).toBeUndefined();
+    // No status write and no log line, but every row is re-stamped to the
+    // figures this second email quoted — the reset the price notice needs.
+    const orderWrites = (db.updatePayloads['orders'] ?? []) as Record<string, unknown>[];
+    expect(orderWrites.filter((p) => 'status' in p)).toHaveLength(0);
+    expect(orderWrites.filter((p) => 'quoted_total' in p)).toHaveLength(2);
     expect(db.insertPayloads['order_logs']).toBeUndefined();
     expect(sendEmailMock).toHaveBeenCalledTimes(1);
   });
