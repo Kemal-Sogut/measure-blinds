@@ -91,6 +91,13 @@ import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
 import EditRequestDialog from './EditRequestDialog';
+import RevisionInfo from './RevisionInfo';
+import {
+  fetchRevision,
+  overlayRevision,
+  type RevisionPayload,
+  type RevisionStamp,
+} from './revisionView';
 import { displayName } from '../../lib/customerName';
 import { maintenanceMessage } from '../../lib/maintenance';
 
@@ -211,6 +218,15 @@ interface PublicEstimate {
    * also the correct reading for every order nobody has written to.
    */
   edit_requests?: PublicEditRequest[];
+  /**
+   * The version the customer is being shown, its full history (newest
+   * first) and the server-written lines describing what moved since the
+   * previous version. All optional: a Worker predating revisions omits
+   * them and the page then renders no revision UI at all.
+   */
+  revision?: RevisionStamp | null;
+  revisions?: RevisionStamp[];
+  changes_since_previous?: string[];
   customer: {
     first_name: string;
     last_name: string;
@@ -508,7 +524,15 @@ export default function CustomerView({
   // twice in development, and the ping must not fire twice.
   const pinged = useRef(false);
 
-  const [estimate, setEstimate] = useState<PublicEstimate | null>(null);
+  const [liveEstimate, setEstimate] = useState<PublicEstimate | null>(null);
+  // An earlier version being read (null = the current one), plus the state
+  // of fetching it. While set, its quote fields are laid over the live
+  // payload and every action on the page is withheld.
+  const [viewingRev, setViewingRev] = useState<RevisionPayload<PublicLineItem> | null>(null);
+  const [revLoading, setRevLoading] = useState(false);
+  const [revError, setRevError] = useState<string | null>(null);
+  const estimate = liveEstimate && viewingRev ? overlayRevision(liveEstimate, viewingRev) : liveEstimate;
+  const viewingOld = viewingRev !== null;
   const [loadError, setLoadError] = useState<string | null>(null);
   // Set when the Worker refuses with its maintenance 503. Held apart
   // from `loadError` because it is not an error about THIS order — the
@@ -551,6 +575,17 @@ export default function CustomerView({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Opens an earlier version read-only; a failure leaves the current one showing. */
+  async function handleViewRevision(revNo: number): Promise<void> {
+    setRevLoading(true);
+    setRevError(null);
+    const r = await fetchRevision<PublicLineItem>(API_URL, token ?? '', revNo);
+    setRevLoading(false);
+    if (r.kind === 'ok') setViewingRev(r.revision);
+    else if (r.kind === 'maintenance') setMaintenance(r.message);
+    else setRevError(r.message);
+  }
 
   /**
    * Tells the Worker the customer opened this page, exactly once.
@@ -732,11 +767,11 @@ export default function CustomerView({
   // with no terms configured (or a payload from an older Worker) must not
   // end up with an un-confirmable estimate.
   const requiresTerms = Boolean(estimate.terms);
-  const canConfirm = !preview && !confirming && (!requiresTerms || termsAccepted);
+  const canConfirm = !preview && !viewingOld && !confirming && (!requiresTerms || termsAccepted);
   // Asking a question is not assent, so the change-request button is
   // deliberately NOT gated on the terms tick — only on the preview,
   // where nothing may write to a real order.
-  const canRequestEdit = !preview && !editBusy;
+  const canRequestEdit = !preview && !viewingOld && !editBusy;
   // Defaulted for the same reason as `payments`: a web app shipped ahead
   // of the Worker must degrade to "none sent", not crash a customer page.
   const editRequests = estimate.edit_requests ?? [];
@@ -805,7 +840,7 @@ export default function CustomerView({
   return (
     <div
       className={`min-h-screen bg-surface-muted ${
-        confirmed ? 'pb-8' : requiresTerms ? 'pb-40' : 'pb-28'
+        confirmed || viewingOld ? 'pb-8' : requiresTerms ? 'pb-40' : 'pb-28'
       }`}
     >
       {/*
@@ -840,6 +875,20 @@ export default function CustomerView({
             </p>
           </div>
         </header>
+
+        <RevisionInfo
+          revision={estimate.revision ?? null}
+          revisions={estimate.revisions ?? []}
+          changes={estimate.changes_since_previous ?? []}
+          viewing={viewingRev?.rev_no ?? null}
+          loading={revLoading}
+          error={revError}
+          onViewRevision={(n) => void handleViewRevision(n)}
+          onBackToCurrent={() => {
+            setViewingRev(null);
+            setRevError(null);
+          }}
+        />
 
         {/*
           How to pay — first thing after the header, in the slot the
@@ -1010,7 +1059,7 @@ export default function CustomerView({
         {actionError && <p className="mb-2 text-center text-sm text-danger">{actionError}</p>}
 
         {/* Cancellation — pending notice, or the request form */}
-        {(estimate.cancel_requested_at || canRequestCancel) && (
+        {!viewingOld && (estimate.cancel_requested_at || canRequestCancel) && (
           <CancellationRequest
             pending={Boolean(estimate.cancel_requested_at)}
             busy={cancelBusy}
@@ -1022,7 +1071,7 @@ export default function CustomerView({
       </div>
 
       {/* Terms tick + big confirm button — pre-confirmation only */}
-      {!confirmed && (
+      {!confirmed && !viewingOld && (
         <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-elevated p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <div className="mx-auto flex w-full max-w-lg flex-col gap-2.5">
             {/*
