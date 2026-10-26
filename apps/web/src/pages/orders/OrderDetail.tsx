@@ -136,6 +136,8 @@ import {
   BulkEditForm,
 } from './LineItemEditor';
 import LineItemList from './LineItemList';
+import { lineItemName } from './lineItemName';
+import DeleteItemsDialog from './DeleteItemsDialog';
 import { arrayMove } from '@dnd-kit/sortable';
 import {
   blindDraftPrice,
@@ -663,6 +665,9 @@ export default function OrderDetail() {
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Keys awaiting the delete confirmation (one from a row's Delete, or the
+  // whole selection from the toolbar); empty keeps `DeleteItemsDialog` closed.
+  const [pendingDelete, setPendingDelete] = useState<string[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ItemDraft | null>(null);
   // Key of a just-added item whose editor is open for the first time;
@@ -1171,11 +1176,25 @@ export default function OrderDetail() {
     }
   }
 
+  /** Toolbar Delete: asks `DeleteItemsDialog` to confirm the whole selection. */
   function handleBulkDelete() {
     if (selected.size === 0) return;
-    if (!window.confirm(`Delete ${selected.size} item${selected.size > 1 ? 's' : ''}?`)) return;
-    setItems((list) => list.filter((it) => !selected.has(it.key)));
-    setSelected(new Set());
+    setPendingDelete([...selected]);
+  }
+
+  /**
+   * Runs the delete the user just confirmed in `DeleteItemsDialog`, for
+   * one row or a bulk selection alike, then prunes `selected` against the
+   * surviving list for the same phantom-key reason as `removeItem`.
+   * `removeItem` itself stays unconfirmed: `cancelEdit` uses it to drop a
+   * never-saved new row, which is not a delete the user asked for.
+   */
+  function confirmPendingDelete() {
+    const doomed = new Set(pendingDelete);
+    const next = items.filter((it) => !doomed.has(it.key));
+    setItems(next);
+    setSelected((prev) => pruneSelection(prev, next));
+    setPendingDelete([]);
   }
 
   // ── Individual item edit ──────────────────────────────────────────
@@ -2634,7 +2653,7 @@ export default function OrderDetail() {
             onToggleHidden={toggleHidden}
             onEdit={openEdit}
             onDuplicate={duplicateItem}
-            onDelete={removeItem}
+            onDelete={(key) => setPendingDelete([key])}
             onMove={moveItem}
             onReorder={reorderItems}
           />
@@ -3601,6 +3620,18 @@ export default function OrderDetail() {
           }}
         />
       )}
+
+      {(() => {
+        const idx = pendingDelete.length === 1 ? items.findIndex((it) => it.key === pendingDelete[0]) : -1;
+        return (
+          <DeleteItemsDialog
+            count={pendingDelete.length}
+            itemName={idx >= 0 ? lineItemName(items[idx], idx) : undefined}
+            onConfirm={confirmPendingDelete}
+            onCancel={() => setPendingDelete([])}
+          />
+        );
+      })()}
 
     </div>
 

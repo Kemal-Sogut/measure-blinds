@@ -128,7 +128,9 @@ customer page, labels, cut sheet — while keeping it editable); price overrides
 optional "show original" strikethrough and up to 10 custom `{label, price}` add-ons; a typed
 panel-width shorthand (`118.5+118` = two panels) in both the single-item form and bulk-add
 rows. `LineItemList`/`LineItemRow` render a 3-dot menu (Show/Hide, Duplicate, Move up/down),
-an expandable detail panel, and a drag handle for reordering (`@dnd-kit`, pointer/touch only).
+an expandable detail panel, and a drag handle for reordering (`@dnd-kit`, pointer/touch only). Deleting
+items — one row's Delete or the toolbar's bulk Delete — always goes through the in-app
+`DeleteItemsDialog` confirmation (names a single item, counts a selection).
 
 **Bulk entry/edit:** `BulkAddSheet` is the only bulk-entry path — one section per blind type
 with shared per-section config, many measurement rows, one fully-specified line item per row;

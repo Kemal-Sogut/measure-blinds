@@ -1,5 +1,28 @@
 # Engine Features / Feature History
 
+## 2026-10-26 — Line-item deletes ask "are you sure?" first (single and bulk)
+- The order editor's per-row Delete used to drop the item on one tap, with no confirmation —
+  easy to hit by accident on a phone. The toolbar's bulk Delete had a browser `window.confirm`.
+  Both now open one in-app dialog, `apps/web/src/pages/orders/DeleteItemsDialog.tsx` (built on
+  `ui/Modal`, so a bottom sheet on phones and a centered dialog on desktop):
+  - one item: **Delete this item?** — "Do you want to delete "Kitchen — Roller"?", naming the
+    item exactly as its row does;
+  - several: **Delete N items?** — "N items will be deleted. Do you want to go ahead?".
+  Cancel, the close button, Escape and a backdrop tap all dismiss without deleting.
+- `OrderDetail` holds the keys awaiting confirmation in `pendingDelete`; `confirmPendingDelete`
+  removes them and prunes `selected` (same phantom-key reason as `removeItem`). `removeItem`
+  itself stays unconfirmed on purpose: `cancelEdit` uses it to drop a never-saved new row.
+- The row label moved to `lineItemName.ts` (`lineItemName(item, index)`), shared by
+  `LineItemRow` and the dialog. It is a separate file because exporting a plain function from
+  a component file breaks Fast Refresh (oxlint `only-export-components`).
+- The copy does not say "cannot be undone": a delete only edits the draft until the order is saved.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0 new warnings (the one left is the old `lead-form.js` one),
+`pnpm test` 562/562. API untouched. Rendered in a throwaway Vite harness (since removed) at
+desktop and 375px: the single-item prompt named the row, Cancel and Escape kept the item, and a
+3-item bulk delete removed exactly the three ticked rows.
+
 ## 2026-10-26 — Per-item price-update notice removed from the line-item edit form
 - The amber "$X → $Y" notice no longer renders at the top of `BlindEditForm` / `FlatEditForm`
   (their `notice` prop and OrderDetail's `priceNoticeFor` are gone). The ORDER TOTAL notice
