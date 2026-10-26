@@ -941,12 +941,17 @@ export function buildCancellationNoticeHtml(i: CancellationNoticeInputs): string
 export interface ConfirmationNoticeInputs {
   orderNumber: string;
   customerName: string;
+  /** The total the customer accepted (the accepted revision's, when one exists). */
   total: number;
+  /** Staff warning when the saved order no longer matches what was accepted; escaped. */
+  divergedNote?: string | null;
 }
 
 /**
  * Builds the short internal notification sent to the business when a
- * customer confirms an estimate. All dynamic strings are escaped.
+ * customer confirms an estimate. All dynamic strings are escaped. With
+ * `divergedNote` (the saved order moved on from the revision the customer
+ * accepted) a highlighted line asks staff to review before the deposit.
  */
 export function buildConfirmationNoticeHtml(i: ConfirmationNoticeInputs): string {
   const order = escapeHtml(i.orderNumber);
@@ -956,7 +961,8 @@ export function buildConfirmationNoticeHtml(i: ConfirmationNoticeInputs): string
   <div style="max-width:560px;margin:0 auto;padding:24px">
     <h2 style="margin:0 0 12px">✅ Estimate confirmed</h2>
     <p style="margin:0 0 8px"><strong>${name}</strong> confirmed estimate <strong>${order}</strong>.</p>
-    <p style="margin:0 0 8px">Total: <strong>$${i.total.toFixed(2)}</strong> (incl. HST)</p>
+    <p style="margin:0 0 8px">Total: <strong>$${i.total.toFixed(2)}</strong> (incl. HST)</p>${i.divergedNote ? `
+    <p style="margin:0 0 8px;color:#b45309"><strong>${escapeHtml(i.divergedNote)}</strong></p>` : ''}
     <p style="margin:0;color:#868e96">50% deposit instructions were shown to the customer.</p>
   </div>
 </body></html>`;

@@ -12,7 +12,12 @@
  * An order with no revision (sent before tracking existed) falls back to
  * the live order, as before. From confirmation on the live order is
  * served: payments run against it, and edits there are deliberate
- * fulfilment changes.
+ * fulfilment changes. Its version fields are then kept only while that
+ * live quote still equals the latest revision (see `ServedQuote.revision`).
+ *
+ * The confirm side lives here too: {@link resolveAcceptance} decides which
+ * revision a confirmation accepts, and {@link shownRevNo} /
+ * {@link isStaleConfirm} refuse a confirm made from an out-of-date page.
  *
  * A failed revision read is returned as `{ error }` and NEVER falls back
  * to live data: an unreadable history is not the same as "no history",
@@ -39,13 +44,20 @@ export interface PublicRevisionRef {
 export interface ServedQuote {
   /** Snapshot of the latest revision, or the live quote (see module doc). */
   quote: PublicQuote;
-  /** The latest revision, or `null` for an order never sent under tracking. */
+  /**
+   * The revision the served quote IS: the latest revision, or `null` for
+   * an order never sent under tracking. Also `null` once confirmed when
+   * the served (live) quote no longer equals the latest revision's
+   * snapshot — the page then shows no "version N" chip and no
+   * "Current version (N)" wording, since no revision describes it.
+   */
   revision: PublicRevisionRef | null;
-  /** Every revision, newest first. */
+  /** Every revision, newest first (kept in every case, for the earlier-versions picker). */
   revisions: PublicRevisionRef[];
   /**
    * What changed from the previous revision to the latest, as readable
-   * lines (`describeChange`); `[]` for Rev 1 or no revision.
+   * lines (`describeChange`); `[]` for Rev 1, no revision, or whenever
+   * `revision` is `null`.
    */
   changes_since_previous: string[];
 }
@@ -101,12 +113,28 @@ export async function resolveServedQuote(
     }
   }
 
+  if (SNAPSHOT_STATUSES.has(status)) {
+    return {
+      served: {
+        quote: latest.snapshot,
+        revision: ref(latest),
+        revisions: listed.rows.map(ref),
+        changes_since_previous: changes,
+      },
+    };
+  }
+
+  // Past `sent` the page is LIVE. Once that live quote has moved away from
+  // the latest revision, "version N" and its change lines would describe a
+  // page the customer is not looking at, so both are withheld.
+  const live = buildPublicQuote(order);
+  const liveIsLatest = diffQuotes(latest.snapshot, live).length === 0;
   return {
     served: {
-      quote: SNAPSHOT_STATUSES.has(status) ? latest.snapshot : buildPublicQuote(order),
-      revision: ref(latest),
+      quote: live,
+      revision: liveIsLatest ? ref(latest) : null,
       revisions: listed.rows.map(ref),
-      changes_since_previous: changes,
+      changes_since_previous: liveIsLatest ? changes : [],
     },
   };
 }
@@ -152,13 +180,31 @@ export async function publicRevisionResponse(
 export interface Acceptance {
   /** Latest revision's id, or `null` for an order never sent under tracking. */
   acceptedRevisionId: string | null;
+  /** Latest revision's number, or `null` for an order never sent under tracking. */
+  acceptedRevNo: number | null;
+  /**
+   * The total of the revision the customer accepted (what their page
+   * showed), or `null` for an order never sent under tracking. Reported
+   * back to the customer and to staff instead of the saved order's total,
+   * which may already include unsent edits.
+   */
+  acceptedTotal: number | null;
   /**
    * Trail line for staff when the saved order has moved on since that
    * revision (the customer accepted the sent revision, not the unsent
    * edits), else `null`.
    */
   divergenceLog: string | null;
+  /**
+   * Plain-text warning for the staff "confirmed" email in that same
+   * diverged case, else `null`. The template escapes it.
+   */
+  divergedNote: string | null;
 }
+
+/** The staff email line of a diverged confirm (see {@link Acceptance.divergedNote}). */
+const DIVERGED_NOTE =
+  'The current saved estimate differs from what the customer accepted — review before taking the deposit.';
 
 /**
  * Decides what a customer confirmation records: the customer accepts the
@@ -179,12 +225,58 @@ export async function resolveAcceptance(
   const read = await checkLatestRevision(sb, String(order.id));
   if ('error' in read) return { error: read.error };
   const latest = read.row;
-  if (!latest) return { acceptedRevisionId: null, divergenceLog: null };
+  if (!latest) {
+    return {
+      acceptedRevisionId: null,
+      acceptedRevNo: null,
+      acceptedTotal: null,
+      divergenceLog: null,
+      divergedNote: null,
+    };
+  }
   const diverged = diffQuotes(latest.snapshot, buildPublicQuote(order)).length > 0;
   return {
     acceptedRevisionId: latest.id,
+    acceptedRevNo: latest.rev_no,
+    acceptedTotal: Number(latest.total),
     divergenceLog: diverged
       ? `Customer confirmed Rev ${latest.rev_no}; later unsent changes are not part of it.`
       : null,
+    divergedNote: diverged ? DIVERGED_NOTE : null,
   };
+}
+
+/** The 409 wording when the page the customer confirmed from is out of date. */
+export const STALE_CONFIRM_ERROR =
+  'This estimate was just updated. Please review the latest version before confirming.';
+
+/**
+ * Reads the revision number the customer's page displayed from the
+ * optional confirm body `{ rev_no?: number }`.
+ *
+ * Lenient on purpose: pages built before this field send no body, so a
+ * missing, unparsable or malformed body (or a `rev_no` that is not a
+ * positive integer) reads as "not sent" and the confirm proceeds as it
+ * always did.
+ *
+ * @param body The parsed JSON body, or `null` when it could not be parsed.
+ * @returns The displayed revision number, or `null` when absent/invalid.
+ */
+export function shownRevNo(body: unknown): number | null {
+  if (!body || typeof body !== 'object') return null;
+  const rev = (body as { rev_no?: unknown }).rev_no;
+  return typeof rev === 'number' && Number.isInteger(rev) && rev > 0 ? rev : null;
+}
+
+/**
+ * True when the customer confirmed from a page showing an older revision
+ * than the latest: a send landed between their page load and their tap.
+ * The route then answers 409 with {@link STALE_CONFIRM_ERROR} and writes
+ * nothing, so an acceptance is only ever recorded for what was on screen.
+ *
+ * @param shown {@link shownRevNo} of the request (`null` = not sent, never stale).
+ * @param acceptance The resolved {@link Acceptance}.
+ */
+export function isStaleConfirm(shown: number | null, acceptance: Acceptance): boolean {
+  return shown !== null && shown !== acceptance.acceptedRevNo;
 }

@@ -63,9 +63,12 @@ import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
 import { toPublicQuoteFields } from '../lib/publicQuote';
 import {
+  isStaleConfirm,
   publicRevisionResponse,
   resolveAcceptance,
   resolveServedQuote,
+  shownRevNo,
+  STALE_CONFIRM_ERROR,
 } from '../lib/publicRevision';
 import {
   sendEmail,
@@ -456,8 +459,9 @@ app.post('/estimate/:token/view', async (c) => {
 
 /**
  * Customer confirm — succeeds exactly once, moving the order
- * sent → awaiting_payment.
- * 404 unknown token · 409 already confirmed · 410 expired · 400 draft.
+ * sent → awaiting_payment. Optional body `{ rev_no }`: the version the
+ * page showed; a stale one is 409 with nothing written (lib/publicRevision).
+ * 404 unknown token · 409 already confirmed / stale page · 410 expired · 400 draft.
  */
 app.post('/estimate/:token/confirm', async (c) => {
   const token = c.req.param('token');
@@ -477,8 +481,10 @@ app.post('/estimate/:token/confirm', async (c) => {
     return c.json({ error: 'This estimate has already been confirmed.' }, 409);
   }
 
+  const shown = shownRevNo(await c.req.json().catch(() => null));
   const acceptance = await resolveAcceptance(sb, order);
   if ('error' in acceptance) return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  if (isStaleConfirm(shown, acceptance)) return c.json({ error: STALE_CONFIRM_ERROR }, 409);
 
   // Guard the transition at the DB level too: only a 'sent' row updates,
   // so two racing confirms produce exactly one winner.
@@ -495,6 +501,8 @@ app.post('/estimate/:token/confirm', async (c) => {
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
+  // What the customer accepted: the revision's total, not later unsent edits.
+  const acceptedTotal = acceptance.acceptedTotal ?? Number(updated.total);
 
   await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
   if (acceptance.divergenceLog) await logOrderEvent(sb, order.id, acceptance.divergenceLog);
@@ -519,7 +527,8 @@ app.post('/estimate/:token/confirm', async (c) => {
         html: buildConfirmationNoticeHtml({
           orderNumber: updated.order_number,
           customerName: displayName(order.customer),
-          total: Number(updated.total),
+          total: acceptedTotal,
+          divergedNote: acceptance.divergedNote,
         }),
       });
     }
@@ -527,7 +536,7 @@ app.post('/estimate/:token/confirm', async (c) => {
     console.error('Confirmation notification failed:', e);
   }
 
-  return c.json({ data: { status: 'awaiting_payment', total: Number(updated.total) } });
+  return c.json({ data: { status: 'awaiting_payment', total: acceptedTotal } });
 });
 
 /* ------------------------------------------------------------------ */

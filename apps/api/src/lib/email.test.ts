@@ -215,6 +215,18 @@ describe('buildConfirmationNoticeHtml', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('F2606-1226');
     expect(html).toContain('$500.00');
+    expect(html).not.toContain('review before taking the deposit');
+  });
+
+  it('adds the escaped divergence note when the confirm diverged', () => {
+    const html = buildConfirmationNoticeHtml({
+      orderNumber: 'F2606-1226',
+      customerName: 'Ada',
+      total: 500,
+      divergedNote: 'Saved estimate differs <b>review</b> before taking the deposit.',
+    });
+    expect(html).toContain('Saved estimate differs &lt;b&gt;review&lt;/b&gt; before taking the deposit.');
+    expect(html).not.toContain('<b>review</b>');
   });
 });
 

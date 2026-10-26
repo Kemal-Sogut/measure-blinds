@@ -217,7 +217,7 @@ const TOKEN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 /**
  * Emails the routes attempted, newest last. Reset before every test.
  */
-const sentEmails: Array<{ to: string; subject: string }> = [];
+const sentEmails: Array<{ to: string; subject: string; html: string }> = [];
 
 /**
  * Resend is stubbed for the WHOLE suite, not per-test.
@@ -246,8 +246,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!href.startsWith('https://api.resend.com/')) {
     throw new Error(`Unmocked outbound fetch in tests: ${href}`);
   }
-  const body = JSON.parse(String(init?.body ?? '{}')) as { to?: string[]; subject?: string };
-  sentEmails.push({ to: body.to?.[0] ?? '', subject: body.subject ?? '' });
+  const body = JSON.parse(String(init?.body ?? '{}')) as { to?: string[]; subject?: string; html?: string };
+  sentEmails.push({ to: body.to?.[0] ?? '', subject: body.subject ?? '', html: body.html ?? '' });
   return new Response(JSON.stringify({ id: 'stub-email-id' }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -1116,6 +1116,91 @@ describe('estimate revisions on the public page', () => {
     expect(res.status).toBe(200);
     expect(db.lastUpdate?.accepted_revision_id).toBe('r2');
     expect(db.logs).toContain('Customer confirmed Rev 2; later unsent changes are not part of it.');
+  });
+
+  it('a diverged confirm reports the ACCEPTED total to the customer and to staff, with a review note', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(170, 130);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Payload).data.total).toBe(113);
+    const notice = sentEmails.find((e) => e.to === 'biz@example.com');
+    expect(notice?.html).toContain('$113.00');
+    expect(notice?.html).not.toContain('$130.00');
+    expect(notice?.html).toContain(
+      'The current saved estimate differs from what the customer accepted — review before taking the deposit.'
+    );
+  });
+
+  it('an in-sync confirm sends the plain notice with the order total', async () => {
+    db.revisions = [revision(1, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(((await res.json()) as Payload).data.total).toBe(113);
+    const notice = sentEmails.find((e) => e.to === 'biz@example.com');
+    expect(notice?.html).toContain('$113.00');
+    expect(notice?.html).not.toContain('differs from what the customer accepted');
+  });
+
+  it('confirm with the rev_no the page showed succeeds', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await postJson(`/estimate/${TOKEN}/confirm`, { rev_no: 2 });
+    expect(res.status).toBe(200);
+    expect(db.lastUpdate?.accepted_revision_id).toBe('r2');
+  });
+
+  it('confirm with a stale rev_no is 409 and writes nothing', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await postJson(`/estimate/${TOKEN}/confirm`, { rev_no: 1 });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Payload).error).toBe(
+      'This estimate was just updated. Please review the latest version before confirming.'
+    );
+    expect(db.updated).toBe(false);
+    expect(db.logs).toEqual([]);
+    expect(db.notifications).toEqual([]);
+  });
+
+  it('confirm without a rev_no, or with a malformed one, still confirms (older pages)', async () => {
+    db.revisions = [revision(1, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    expect((await req(`/estimate/${TOKEN}/confirm`, 'POST')).status).toBe(200);
+    for (const body of [{}, { rev_no: 'two' }, { rev_no: 0 }, { rev_no: 1.5 }, 'not json']) {
+      db.order = orderWith(160, 113);
+      const res =
+        typeof body === 'string'
+          ? await publicApp.request(
+            `/estimate/${TOKEN}/confirm`,
+            {
+              method: 'POST',
+              headers: { 'CF-Connecting-IP': `10.0.0.${++ipSeq}`, 'Content-Type': 'application/json' },
+              body,
+            },
+            ENV
+          )
+          : await postJson(`/estimate/${TOKEN}/confirm`, body);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('once confirmed, a live quote that left the latest revision carries no version chip or change lines', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = { ...orderWith(170, 130), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.line_items[0].height_cm).toBe(170);
+    expect(body.data.revision).toBeNull();
+    expect(body.data.changes_since_previous).toEqual([]);
+    expect(body.data.revisions).toHaveLength(2);
+  });
+
+  it('once confirmed, a live quote still equal to the latest revision keeps its version fields', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = { ...orderWith(160, 113), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.revision).toEqual({ rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' });
+    expect(body.data.changes_since_previous).toEqual(['Bedroom — Roller: Height 150 cm → 160 cm']);
   });
 
   it('confirm on an order with no revision records a null accepted revision', async () => {
