@@ -130,7 +130,9 @@ panel-width shorthand (`118.5+118` = two panels) in both the single-item form an
 rows. `LineItemList`/`LineItemRow` render a 3-dot menu (Show/Hide, Duplicate, Move up/down),
 an expandable detail panel, and a drag handle for reordering (`@dnd-kit`, pointer/touch only). Deleting
 items — one row's Delete or the toolbar's bulk Delete — always goes through the in-app
-`DeleteItemsDialog` confirmation (names a single item, counts a selection).
+`DeleteItemsDialog` confirmation (names a single item, counts a selection). Every other
+yes/no question in the staff app (deletes, discards, stage moves, mark installed) uses the
+shared in-app `useConfirm()` dialog — no browser `window.confirm` remains.
 
 **Bulk entry/edit:** `BulkAddSheet` is the only bulk-entry path — one section per blind type
 with shared per-section config, many measurement rows, one fully-specified line item per row;

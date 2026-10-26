@@ -1,5 +1,37 @@
 # Engine Features / Feature History
 
+## 2026-10-26 — Every confirmation is an in-app dialog; `window.confirm` is gone
+- The browser's own confirm box (unstyled, headed with the site origin, nothing like the app
+  on a phone) was used at 15 call sites. All now use one in-app dialog:
+  `apps/web/src/components/ui/ConfirmProvider.tsx` (mounted once in `App.tsx`) plus the
+  `useConfirm()` hook in `ui/confirmContext.ts`. `confirm(options)` returns a
+  `Promise<boolean>` — `true` only on the confirm button; Cancel, ✕, Escape and a backdrop tap
+  all resolve `false` — so each site became one `await`.
+- Options: `title` (the question), `message` (the consequence), `confirmLabel` (names the
+  action: "Delete payment", "Mark installed"), `cancelLabel`, `tone` (`danger` red for
+  deletes/discards/reversals, `primary` default for forward moves).
+- Migrated: catalog row delete (`CatalogEditor`), blind type and material delete (Settings →
+  Materials), customer delete and discard-changes (`CustomerForm`), inbox conversation delete
+  (`ThreadControls`), calendar appointment remove (`ScheduleSections`), bulk-add discard
+  (`BulkAddSheet`), mark installed and remove installation time (`InstallationSection`),
+  order delete from the list (`OrderRowActions`) and from the order page, payment delete,
+  accept-cancellation, and timeline stage moves (`OrderDetail.handleSetStatus` — the title now
+  says "Confirm this order?" / "Reverse the confirmation?" / "Move to …", red when moving back).
+- Stacking: the dialog sits in a z-60 layer, above the z-40 sheets and z-50 `Modal`s it is
+  often raised from (Discard on the bulk-add sheet). Escape is caught in the window capture
+  phase and stopped, so it closes only the confirmation, never the sheet underneath too.
+- Opening a second confirmation while one is showing answers the first `false`, so no
+  awaiting caller hangs. `useConfirm` throws outside the provider rather than defaulting to
+  "yes", which would silently un-guard every delete.
+- The line-item delete dialog from the entry below (`DeleteItemsDialog`) is unchanged.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0 new warnings (the old `lead-form.js` one remains),
+`pnpm test` 562/562; `grep window.confirm` over `apps/web/src` is empty. Rendered in a
+throwaway Vite harness (since removed): danger and primary tones, confirm resolved `true`,
+Escape resolved `false`, a confirm raised over a z-40 sheet drew on top, and Escape closed
+only the confirm while the sheet stayed open; phone width showed it as a bottom sheet.
+
 ## 2026-10-26 — Line-item deletes ask "are you sure?" first (single and bulk)
 - The order editor's per-row Delete used to drop the item on one tap, with no confirmation —
   easy to hit by accident on a phone. The toolbar's bulk Delete had a browser `window.confirm`.
