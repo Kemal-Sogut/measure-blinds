@@ -40,6 +40,7 @@ import {
   type ItemDraft,
   type Catalogs,
 } from './lineItemDrafts';
+import { lineItemName } from './lineItemName';
 
 /**
  * Builds the expanded-panel lines for a blind draft: panel widths ×
@@ -360,10 +361,7 @@ export default function LineItemRow({
   // Whether the figure beside the padlock is the confirmed one rather
   // than a live calculation — see `isPriceLocked`.
   const locked = isPriceLocked(item);
-  const name =
-    item.item_type === 'blind'
-      ? [item.room_name || `Blind ${index + 1}`, item.blinds_type].filter(Boolean).join(' — ')
-      : item.description || `Item ${index + 1}`;
+  const name = lineItemName(item, index);
   const attrLine =
     item.item_type === 'blind'
       ? getBlindType(item.blinds_type)
