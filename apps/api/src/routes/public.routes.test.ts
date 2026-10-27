@@ -40,6 +40,12 @@ interface FakeDb {
   editRequests: Array<Record<string, unknown>>;
   /** Payloads of every `notifications` INSERT (the staff Alerts feed). */
   notifications: Array<Record<string, unknown>>;
+  /** `order_revisions` rows (migration 50); filtered by the route's `eq`s. */
+  revisions: Array<Record<string, unknown>>;
+  /** When true every `order_revisions` read fails with a database error. */
+  revisionsFail: boolean;
+  /** Messages of every `order_logs` INSERT (the customer action trail). */
+  logs: string[];
 }
 
 /** Default company_settings row: shop open, brand fields populated. */
@@ -67,6 +73,9 @@ const db: FakeDb = {
   company: openCompany(),
   editRequests: [],
   notifications: [],
+  revisions: [],
+  revisionsFail: false,
+  logs: [],
 };
 
 /**
@@ -76,8 +85,9 @@ const db: FakeDb = {
  * (`.eq('status', …)`, `.is('cancel_requested_at', null)`), so a fake
  * that ignored them would let guarded routes pass untested.
  *
- * Filters are enforced on UPDATE only; SELECTs keep returning the seeded
- * row so token/id lookups stay trivial.
+ * Filters are enforced on UPDATE, and on reads of the multi-row tables
+ * (`order_edit_requests`, `order_revisions`); other SELECTs keep
+ * returning the seeded row so token/id lookups stay trivial.
  */
 function makeBuilder(table: string) {
   const state = {
@@ -86,6 +96,7 @@ function makeBuilder(table: string) {
     payload: null as Record<string, unknown> | null,
     guards: [] as Array<(row: Record<string, unknown>) => boolean>,
     counting: false,
+    single: false,
   };
   const builder: Record<string, unknown> = {};
   const chain = (name: string) =>
@@ -124,6 +135,18 @@ function makeBuilder(table: string) {
       return { data: db.company };
     }
     if (state.table === 'appointments') return { data: db.appointment };
+    if (state.table === 'order_logs' && state.op === 'insert') {
+      db.logs.push(String(state.payload?.message ?? ''));
+      return { data: null };
+    }
+    if (state.table === 'order_revisions') {
+      if (db.revisionsFail) return { data: null, error: { message: 'revisions unreadable' } };
+      // Newest first, as every route read orders them.
+      const rows = db.revisions
+        .filter((r) => state.guards.every((g) => g(r)))
+        .sort((a, b) => Number(b.rev_no) - Number(a.rev_no));
+      return { data: state.single ? (rows[0] ?? null) : rows };
+    }
     if (state.table === 'notifications' && state.op === 'insert') {
       db.notifications.push(state.payload ?? {});
       return { data: null };
@@ -160,10 +183,13 @@ function makeBuilder(table: string) {
     }
     return { data: db.order };
   };
-  builder.single = async () => ({ ...resolve(), error: null });
+  builder.single = async () => {
+    state.single = true;
+    return { error: null, ...resolve() };
+  };
   builder.maybeSingle = builder.single;
   (builder as { then: unknown }).then = (onF: (v: unknown) => unknown) =>
-    Promise.resolve(onF({ ...resolve(), error: null }));
+    Promise.resolve(onF({ error: null, ...resolve() }));
   return builder;
 }
 
@@ -172,6 +198,7 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 import publicApp, { PUBLIC_RATE_LIMIT } from './public';
+import { buildPublicQuote } from '../lib/publicQuote';
 
 const ENV = {
   SUPABASE_URL: 'https://example.supabase.co',
@@ -190,7 +217,7 @@ const TOKEN = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 /**
  * Emails the routes attempted, newest last. Reset before every test.
  */
-const sentEmails: Array<{ to: string; subject: string }> = [];
+const sentEmails: Array<{ to: string; subject: string; html: string }> = [];
 
 /**
  * Resend is stubbed for the WHOLE suite, not per-test.
@@ -219,8 +246,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!href.startsWith('https://api.resend.com/')) {
     throw new Error(`Unmocked outbound fetch in tests: ${href}`);
   }
-  const body = JSON.parse(String(init?.body ?? '{}')) as { to?: string[]; subject?: string };
-  sentEmails.push({ to: body.to?.[0] ?? '', subject: body.subject ?? '' });
+  const body = JSON.parse(String(init?.body ?? '{}')) as { to?: string[]; subject?: string; html?: string };
+  sentEmails.push({ to: body.to?.[0] ?? '', subject: body.subject ?? '', html: body.html ?? '' });
   return new Response(JSON.stringify({ id: 'stub-email-id' }), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
@@ -294,6 +321,9 @@ beforeEach(() => {
   db.company = openCompany();
   db.editRequests = [];
   db.notifications = [];
+  db.revisions = [];
+  db.revisionsFail = false;
+  db.logs = [];
   sentEmails.length = 0;
 });
 
@@ -916,6 +946,314 @@ describe('customer action logs', () => {
     const res = await req(`/estimate/${TOKEN}/cancel-withdraw`, 'POST');
     expect(res.status).toBe(200);
     expect(db.calls).toContain('order_logs.insert');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Estimate revisions (migration 50)                                   */
+/* ------------------------------------------------------------------ */
+
+/** A visible blind line as stored, with staff-only columns present. */
+function blindLine(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    uid: 'u1',
+    item_type: 'blind',
+    room_name: 'Bedroom',
+    blinds_type: 'Roller',
+    panels: [100],
+    height_cm: 150,
+    material_name: 'Linen',
+    cassette_name: null,
+    bottom_rail_name: null,
+    control_name: null,
+    installation_name: null,
+    color: '',
+    title: '',
+    description: '',
+    note: '',
+    addons: [],
+    attributes: {},
+    quantity: 1,
+    unit_price: 100,
+    line_total: 100,
+    hidden: false,
+    show_original_price: false,
+    base_unit_price: 100,
+    locked_base_price: 100,
+    locked_inputs_fingerprint: 'fp',
+    ...over,
+  };
+}
+
+/** A sent order carrying one blind line at the given height and total. */
+function orderWith(height: number, total: number, over: Record<string, unknown> = {}) {
+  return { ...sentOrder(), total, line_items: [blindLine({ height_cm: height })], ...over };
+}
+
+/**
+ * A stored revision of order `e1`, snapshotting `order`. The fake returns
+ * EVERY column regardless of the select list — `source` included — so a
+ * route that spread the row would leak it here even though the real
+ * select excludes it.
+ */
+function revision(revNo: number, order: Record<string, unknown>): Record<string, unknown> {
+  const snapshot = buildPublicQuote(order);
+  return {
+    id: `r${revNo}`,
+    order_id: 'e1',
+    rev_no: revNo,
+    sent_at: `2026-10-2${revNo}T10:00:00.000Z`,
+    source_kind: 'email',
+    total: snapshot.total,
+    snapshot,
+    source: {
+      order: { title: null, discount_type: 'fixed', discount_value: 0 },
+      line_items: order.line_items,
+    },
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Payload = { data: Record<string, any>; error?: string };
+
+describe('estimate revisions on the public page', () => {
+  it('serves the latest snapshot, not live edits, while sent', async () => {
+    db.revisions = [revision(1, orderWith(150, 113))];
+    db.order = orderWith(160, 200);
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.line_items[0].height_cm).toBe(150);
+    expect(body.data.total).toBe(113);
+    expect(body.data.revision).toEqual({ rev_no: 1, sent_at: '2026-10-21T10:00:00.000Z' });
+  });
+
+  it('serves the snapshot on an expired estimate too', async () => {
+    db.revisions = [revision(1, orderWith(150, 113))];
+    db.order = orderWith(160, 200, { expiry_date: '2000-01-01' });
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.status).toBe('expired');
+    expect(body.data.line_items[0].height_cm).toBe(150);
+  });
+
+  it('falls back to live data when the order has no revision', async () => {
+    db.order = orderWith(160, 200);
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.line_items[0].height_cm).toBe(160);
+    expect(body.data.revision).toBeNull();
+    expect(body.data.revisions).toEqual([]);
+    expect(body.data.changes_since_previous).toEqual([]);
+  });
+
+  it('serves live data once confirmed', async () => {
+    db.revisions = [revision(1, orderWith(150, 113))];
+    db.order = {
+      ...orderWith(160, 200),
+      status: 'awaiting_payment',
+      confirmed_at: '2026-10-22T10:00:00.000Z',
+    };
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.line_items[0].height_cm).toBe(160);
+    expect(body.data.total).toBe(200);
+  });
+
+  it('computes balance and deposit_due from the served total', async () => {
+    db.revisions = [revision(1, orderWith(150, 113))];
+    db.order = orderWith(160, 200, { payments: [{ amount: 50, paid_on: '2026-10-22' }] });
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.balance).toBe(63);
+    expect(body.data.deposit_due).toBe(56.5);
+  });
+
+  it('lists changes_since_previous for Rev 2', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.revision.rev_no).toBe(2);
+    expect(body.data.revisions).toEqual([
+      { rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' },
+      { rev_no: 1, sent_at: '2026-10-21T10:00:00.000Z' },
+    ]);
+    expect(body.data.changes_since_previous).toEqual(['Bedroom — Roller: Height 150 cm → 160 cm']);
+  });
+
+  it('answers 500 rather than falling back to live data when revisions are unreadable', async () => {
+    db.revisionsFail = true;
+    db.order = orderWith(160, 200);
+    const res = await req(`/estimate/${TOKEN}`);
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain('160');
+  });
+
+  it('serves an old revision read-only and 404s an unknown one', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await req(`/estimate/${TOKEN}/revisions/1`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Payload;
+    expect(body.data.rev_no).toBe(1);
+    expect(body.data.read_only).toBe(true);
+    expect(body.data.line_items[0].height_cm).toBe(150);
+    expect(body.data.total).toBe(113);
+
+    expect((await req(`/estimate/${TOKEN}/revisions/9`)).status).toBe(404);
+    expect((await req(`/estimate/${TOKEN}/revisions/0`)).status).toBe(404);
+    expect((await req(`/estimate/${TOKEN}/revisions/abc`)).status).toBe(404);
+    expect((await req('/estimate/not-a-uuid/revisions/1')).status).toBe(404);
+  });
+
+  it('confirm stores accepted_revision_id = latest revision', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.lastUpdate?.accepted_revision_id).toBe('r2');
+    expect(db.logs).not.toContain('Customer confirmed Rev 2; later unsent changes are not part of it.');
+  });
+
+  it('confirm with unsent staff edits still succeeds and logs "Customer confirmed Rev 2; later unsent changes are not part of it."', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(170, 130);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.lastUpdate?.accepted_revision_id).toBe('r2');
+    expect(db.logs).toContain('Customer confirmed Rev 2; later unsent changes are not part of it.');
+  });
+
+  it('a diverged confirm reports the ACCEPTED total to the customer and to staff, with a review note', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(170, 130);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Payload).data.total).toBe(113);
+    const notice = sentEmails.find((e) => e.to === 'biz@example.com');
+    expect(notice?.html).toContain('$113.00');
+    expect(notice?.html).not.toContain('$130.00');
+    expect(notice?.html).toContain(
+      'The current saved estimate differs from what the customer accepted — review before taking the deposit.'
+    );
+  });
+
+  it('an in-sync confirm sends the plain notice with the order total', async () => {
+    db.revisions = [revision(1, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(((await res.json()) as Payload).data.total).toBe(113);
+    const notice = sentEmails.find((e) => e.to === 'biz@example.com');
+    expect(notice?.html).toContain('$113.00');
+    expect(notice?.html).not.toContain('differs from what the customer accepted');
+  });
+
+  it('confirm with the rev_no the page showed succeeds', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await postJson(`/estimate/${TOKEN}/confirm`, { rev_no: 2 });
+    expect(res.status).toBe(200);
+    expect(db.lastUpdate?.accepted_revision_id).toBe('r2');
+  });
+
+  it('confirm with a stale rev_no is 409 and writes nothing', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await postJson(`/estimate/${TOKEN}/confirm`, { rev_no: 1 });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as Payload).error).toBe(
+      'This estimate was just updated. Please review the latest version before confirming.'
+    );
+    expect(db.updated).toBe(false);
+    expect(db.logs).toEqual([]);
+    expect(db.notifications).toEqual([]);
+  });
+
+  it('confirm without a rev_no, or with a malformed one, still confirms (older pages)', async () => {
+    db.revisions = [revision(1, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    expect((await req(`/estimate/${TOKEN}/confirm`, 'POST')).status).toBe(200);
+    for (const body of [{}, { rev_no: 'two' }, { rev_no: 0 }, { rev_no: 1.5 }, 'not json']) {
+      db.order = orderWith(160, 113);
+      const res =
+        typeof body === 'string'
+          ? await publicApp.request(
+            `/estimate/${TOKEN}/confirm`,
+            {
+              method: 'POST',
+              headers: { 'CF-Connecting-IP': `10.0.0.${++ipSeq}`, 'Content-Type': 'application/json' },
+              body,
+            },
+            ENV
+          )
+          : await postJson(`/estimate/${TOKEN}/confirm`, body);
+      expect(res.status).toBe(200);
+    }
+  });
+
+  it('once confirmed, a live quote that left the latest revision carries no version chip or change lines', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = { ...orderWith(170, 130), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.line_items[0].height_cm).toBe(170);
+    expect(body.data.revision).toBeNull();
+    expect(body.data.changes_since_previous).toEqual([]);
+    expect(body.data.revisions).toHaveLength(2);
+  });
+
+  it('once confirmed, a live quote still equal to the latest revision keeps its version fields', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = { ...orderWith(160, 113), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
+    const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
+    expect(body.data.revision).toEqual({ rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' });
+    expect(body.data.changes_since_previous).toEqual(['Bedroom — Roller: Height 150 cm → 160 cm']);
+  });
+
+  it('confirm on an order with no revision records a null accepted revision', async () => {
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(200);
+    expect(db.lastUpdate?.accepted_revision_id).toBeNull();
+  });
+
+  it('confirm answers 500 and writes nothing when revisions are unreadable', async () => {
+    db.revisionsFail = true;
+    const res = await req(`/estimate/${TOKEN}/confirm`, 'POST');
+    expect(res.status).toBe(500);
+    expect(db.updated).toBe(false);
+  });
+
+  it('never exposes uid or the staff source copy in any public payload', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const bodies = [
+      await (await req(`/estimate/${TOKEN}`)).text(),
+      await (await req(`/estimate/${TOKEN}/revisions/1`)).text(),
+      await (await req(`/estimate/${TOKEN}/confirm`, 'POST')).text(),
+    ];
+    for (const text of bodies) {
+      expect(text).not.toContain('"uid"');
+      expect(text).not.toContain('"source"');
+      expect(text).not.toContain('source_kind');
+      expect(text).not.toContain('locked_base_price');
+      expect(text).not.toContain('"r1"');
+      expect(text).not.toContain('"r2"');
+    }
+  });
+
+  it('never forwards an unknown key stored in a snapshot', async () => {
+    const rev = revision(1, orderWith(150, 113));
+    const snapshot = rev.snapshot as Record<string, unknown> & { line_items: Record<string, unknown>[] };
+    rev.snapshot = {
+      ...snapshot,
+      internal_margin: 42,
+      line_items: snapshot.line_items.map((l) => ({ ...l, supplier_cost: 7 })),
+    };
+    db.order = orderWith(150, 113);
+    // Rev 1 as the latest (the main page serves it), then as an earlier
+    // version once Rev 2 exists.
+    db.revisions = [rev];
+    const bodies = [await (await req(`/estimate/${TOKEN}`)).text()];
+    db.revisions = [rev, revision(2, orderWith(160, 113))];
+    bodies.push(await (await req(`/estimate/${TOKEN}/revisions/1`)).text());
+    for (const text of bodies) {
+      expect(text).toContain('"height_cm":150');
+      expect(text).not.toContain('internal_margin');
+      expect(text).not.toContain('supplier_cost');
+    }
   });
 });
 

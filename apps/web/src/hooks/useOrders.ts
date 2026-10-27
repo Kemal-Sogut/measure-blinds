@@ -24,7 +24,7 @@ import {
 } from '@tanstack/react-query';
 import { apiFetch, apiDownload } from '../lib/api';
 import { useDebouncedValue } from './useDebouncedValue';
-import type { Order, OrderLog, OrderEditRequest, OrderStatus, DiscountType } from '../types';
+import type { Order, OrderLog, OrderEditRequest, OrderStatus, DiscountType, LineItem } from '../types';
 
 /** API envelope: every orders endpoint returns `{ data: T }`. */
 interface Envelope<T> {
@@ -143,6 +143,23 @@ export interface OrderInput {
   discount_type: DiscountType;
   discount_value: number;
   line_items: LineItemInput[];
+  /**
+   * Update only: this save restores that revision (Design decision 8).
+   * The Worker then prices untouched items at the revision's own locks
+   * and logs the restore; the client still sends no money.
+   */
+  restore_from_revision?: string;
+}
+
+/**
+ * One revision's staff-only copy (migration 50 `order_revisions.source`):
+ * the three editable order fields and EVERY line-item row exactly as
+ * stored at that send — hidden items, `uid`s and lock columns included.
+ * Loaded into the editor on Restore; never shown to a customer.
+ */
+export interface RevisionSource {
+  order: { title: string | null; discount_type: DiscountType; discount_value: number };
+  line_items: LineItem[];
 }
 
 /** Payload for POST /api/orders/:id/payments. */
@@ -187,6 +204,28 @@ export function useOrder(id: string | undefined): UseQueryResult<Order> {
     queryKey: ['orders', 'detail', id],
     queryFn: async () => (await apiFetch<Envelope<Order>>(`/api/orders/${id}`)).data,
     enabled: Boolean(id),
+  });
+}
+
+/**
+ * One revision's staff copy (`GET /api/orders/:id/revisions/:revisionId`),
+ * fetched when Restore is confirmed. Idle until both ids are set; never
+ * stale, because a revision is immutable once written.
+ */
+export function useRevisionSource(
+  orderId: string | undefined,
+  revisionId: string | null
+): UseQueryResult<{ rev_no: number; source: RevisionSource }> {
+  return useQuery({
+    queryKey: ['orders', 'revision-source', orderId, revisionId],
+    queryFn: async () =>
+      (
+        await apiFetch<Envelope<{ rev_no: number; source: RevisionSource }>>(
+          `/api/orders/${orderId}/revisions/${revisionId}`
+        )
+      ).data,
+    enabled: Boolean(orderId && revisionId),
+    staleTime: Infinity,
   });
 }
 
@@ -323,11 +362,25 @@ export function useOrderPublicToken(): UseMutationResult<{ public_token: string 
   });
 }
 
-/** Shared onSuccess: cache the server's authoritative order. */
+/**
+ * Shared onSuccess: cache the server's authoritative order.
+ *
+ * Only the detail reads carry `revisions` / `unsent_changes`; a mutation
+ * response does not. They are carried over from the cached copy so the
+ * revision banner does not vanish on every save, and the detail is then
+ * refetched because a save changes what is unsent.
+ */
 function useCacheOrder() {
   const qc = useQueryClient();
   return (data: Order) => {
-    qc.setQueryData(['orders', 'detail', data.id], data);
+    const key = ['orders', 'detail', data.id];
+    const prev = qc.getQueryData<Order>(key);
+    qc.setQueryData(key, {
+      ...data,
+      revisions: data.revisions ?? prev?.revisions,
+      unsent_changes: data.unsent_changes ?? prev?.unsent_changes,
+    });
+    void qc.invalidateQueries({ queryKey: key });
     void qc.invalidateQueries({ queryKey: LIST_KEY });
     void qc.invalidateQueries({ queryKey: ['orders', 'logs', data.id] });
   };

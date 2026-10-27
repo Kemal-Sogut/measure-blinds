@@ -153,6 +153,7 @@ vi.mock('../lib/email', async (importOriginal) => ({
 }));
 
 import customersApp from './customers';
+import { buildPublicQuote } from '../lib/publicQuote';
 
 const ENV = {
   SUPABASE_URL: 'https://example.supabase.co',
@@ -589,6 +590,162 @@ describe('POST /api/customers/:id/send-estimates', () => {
     expect(db.updatePayloads['orders']).toBeUndefined();
     expect(db.updatePayloads['line_items']).toBeUndefined();
     expect(db.insertPayloads['order_logs']).toBeUndefined();
+  });
+
+  /**
+   * A `sent` row with real figures, so `buildPublicQuote` has numbers to
+   * compare (the default row has no subtotal, which would read as NaN).
+   */
+  const sentRow = (over: Record<string, unknown> = {}) =>
+    orderRow({
+      id: O2,
+      order_number: 'M2010-127',
+      status: 'sent',
+      order_date: '2099-01-01',
+      subtotal: 100,
+      discount_amount: 0,
+      taxable_amount: 100,
+      tax_rate: 0.13,
+      tax_amount: 13,
+      total: 113,
+      ...over,
+    });
+
+  /** A scripted latest revision of {@link sentRow}, snapshotting the given order. */
+  const revisionOf = (order: Record<string, unknown>) => ({
+    id: 'r1',
+    order_id: O2,
+    rev_no: 1,
+    sent_at: '2099-01-01T00:00:00Z',
+    source_kind: 'email',
+    total: 113,
+    snapshot: buildPublicQuote(order),
+  });
+
+  it('stamps an email revision on a draft send', async () => {
+    await post({ order_ids: [O1] });
+    const revisions = (db.insertPayloads['order_revisions'] ?? []) as Record<string, unknown>[];
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({ order_id: O1, rev_no: 1, source_kind: 'email' });
+  });
+
+  it('send: an unchanged re-announce is a plain "ready" email and cuts no revision', async () => {
+    db.responses['orders.select'] = [sentRow()];
+    db.responses['order_revisions.select'] = [revisionOf(sentRow())];
+    const res = await post({ order_ids: [O2] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().subject).toBe('Your estimate M2010-127 – Living room from Blinds Nisa');
+    expect(lastEmail().html).toContain('Your estimate is ready');
+    expect(lastEmail().html).not.toContain('>Updated<');
+    expect(db.insertPayloads['order_revisions']).toBeUndefined();
+  });
+
+  it('send: a re-announce with no revision on file is a plain "ready" email', async () => {
+    db.responses['orders.select'] = [sentRow()];
+    const res = await post({ order_ids: [O2] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().html).toContain('Your estimate is ready');
+    expect(lastEmail().html).not.toContain('>Updated<');
+  });
+
+  it('send: a re-announce whose comparison cannot be read is still sent, as a plain "ready" email', async () => {
+    vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+    db.responses['orders.select'] = [sentRow()];
+    db.opErrors['order_revisions.select'] = [{ message: 'db down' }];
+    const res = await post({ order_ids: [O2] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().html).toContain('Your estimate is ready');
+    expect(lastEmail().html).not.toContain('>Updated<');
+  });
+
+  it('send: a changed re-announce is emailed as an update, listing what changed', async () => {
+    db.responses['orders.select'] = [
+      sentRow({ total: 130, subtotal: 115, taxable_amount: 115, tax_amount: 15 }),
+    ];
+    db.responses['order_revisions.select'] = [revisionOf(sentRow())];
+    const res = await post({ order_ids: [O2] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().subject).toBe('Updated estimate M2010-127 from Blinds Nisa');
+    expect(lastEmail().html).toContain('Your estimate has been updated');
+    expect(lastEmail().html).toContain('>Updated<');
+    expect(lastEmail().html).toContain('$113.00 → $130.00');
+    // The revision is cut after the email, as before.
+    const revisions = (db.insertPayloads['order_revisions'] ?? []) as Record<string, unknown>[];
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({ rev_no: 2, source_kind: 'email' });
+  });
+
+  it('send: a re-announce whose comparison fails is logged for ops with the order id', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      db.responses['orders.select'] = [sentRow()];
+      db.opErrors['order_revisions.select'] = [{ message: 'db down' }];
+      await post({ order_ids: [O2] });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`${O2}.*db down`)));
+
+      warn.mockClear();
+      db.opErrors['order_revisions.select'] = [{ message: 'socket hang up', throws: true }];
+      await post({ order_ids: [O2] });
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`${O2}.*socket hang up`)));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('send: a reverted draft with revision history is emailed as an update, listing what changed', async () => {
+    db.responses['orders.select'] = [
+      sentRow({
+        id: O1,
+        order_number: 'M2010-126',
+        status: 'draft',
+        total: 130,
+        subtotal: 115,
+        taxable_amount: 115,
+        tax_amount: 15,
+      }),
+    ];
+    db.responses['order_revisions.select'] = [{ ...revisionOf(sentRow()), order_id: O1 }];
+    const res = await post({ order_ids: [O1] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().subject).toBe('Updated estimate M2010-126 from Blinds Nisa');
+    expect(lastEmail().html).toContain('$113.00 → $130.00');
+    const revisions = (db.insertPayloads['order_revisions'] ?? []) as Record<string, unknown>[];
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({ order_id: O1, rev_no: 2, source_kind: 'email' });
+  });
+
+  it('send: a draft with no revision history stays a plain "ready" email', async () => {
+    db.responses['orders.select'] = [sentRow({ id: O1, order_number: 'M2010-126', status: 'draft' })];
+    const res = await post({ order_ids: [O1] });
+    expect(res.status).toBe(200);
+    expect(lastEmail().html).toContain('Your estimate is ready');
+    expect(lastEmail().html).not.toContain('>Updated<');
+  });
+
+  it('send: an email that fails once, then succeeds on retry, cuts exactly one Rev N+1', async () => {
+    db.responses['orders.select'] = [
+      sentRow({ total: 130, subtotal: 115, taxable_amount: 115, tax_amount: 15 }),
+    ];
+    db.responses['order_revisions.select'] = [revisionOf(sentRow())];
+
+    sendEmailMock.mockRejectedValueOnce(new Error('Resend is down'));
+    expect((await post({ order_ids: [O2] })).status).toBe(502);
+    expect(db.insertPayloads['order_revisions']).toBeUndefined();
+
+    expect((await post({ order_ids: [O2] })).status).toBe(200);
+    const revisions = (db.insertPayloads['order_revisions'] ?? []) as Record<string, unknown>[];
+    expect(revisions).toHaveLength(1);
+    // Rev 1 is on file, so the retry is Rev 2: the failed attempt consumed no number.
+    expect(revisions[0]).toMatchObject({ order_id: O2, rev_no: 2, source_kind: 'email' });
+  });
+
+  it('send: an email throw writes no order_revisions row and no status update', async () => {
+    db.responses['orders.select'] = [orderRow(), sentRow()];
+    sendEmailMock.mockRejectedValueOnce(new Error('Resend is down'));
+    const res = await post({ order_ids: [O1, O2] });
+    expect(res.status).toBe(502);
+    expect(db.insertPayloads['order_revisions']).toBeUndefined();
+    expect(db.updatePayloads['orders']).toBeUndefined();
   });
 
   it('400s a customer with no email address before sending', async () => {

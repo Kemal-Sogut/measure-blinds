@@ -61,9 +61,15 @@ import publicCustomerRoutes from './publicCustomer';
 import { rateLimit } from '../middleware/rateLimit';
 import { displayName } from '../lib/customerName';
 import { recordNotification } from '../lib/notifications';
-import { getBlindType } from '../lib/blindTypes';
-import { originalLineTotal } from '../lib/lineItemAdjustments';
-import { optionLineAmounts, type OptionPricedItem } from '../lib/optionBreakdown';
+import { toPublicQuoteFields } from '../lib/publicQuote';
+import {
+  isStaleConfirm,
+  publicRevisionResponse,
+  resolveAcceptance,
+  resolveServedQuote,
+  shownRevNo,
+  STALE_CONFIRM_ERROR,
+} from '../lib/publicRevision';
 import {
   sendEmail,
   buildConfirmationNoticeHtml,
@@ -358,28 +364,32 @@ app.get('/estimate/:token', async (c) => {
   // of each receipt cross the wire; staff-only payment columns do not.
   const amountPaid = sumPayments(order.payments);
 
+  // The customer-visible quote: the latest SENT revision while the estimate
+  // waits on the customer, else the live order (lib/publicRevision.ts). An
+  // unreadable history is a 500, never a silent fall back to unsent edits.
+  const resolved = await resolveServedQuote(sb, order, status);
+  if ('error' in resolved) {
+    return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  }
+  const { quote, ...revisionFields } = resolved.served;
+
   // Sanitized payload: only what the customer page needs.
   return c.json({
     data: {
       status,
       order_number: order.order_number,
-      // Consultant's label for this option; null renders nothing.
-      title: order.title ?? null,
-      order_date: order.order_date,
-      expiry_date: order.expiry_date,
-      subtotal: order.subtotal,
-      discount_amount: order.discount_amount,
-      taxable_amount: order.taxable_amount,
-      tax_rate: order.tax_rate,
-      tax_amount: order.tax_amount,
-      total: order.total,
+      // Explicit pick (never a spread of a stored snapshot); hidden items are
+      // already dropped and the staff/diff-only `uid` is stripped.
+      ...toPublicQuoteFields(quote),
+      ...revisionFields,
       amount_paid: amountPaid,
-      balance: Number(order.total) - amountPaid,
+      // Both follow the SERVED total, so the page's money adds up to the
+      // figures it is showing.
+      balance: quote.total - amountPaid,
       // Quoted to the customer while the order sits in awaiting_payment;
       // always served so the page never has to derive money itself.
-      deposit_due: depositDue(order.total),
+      deposit_due: depositDue(quote.total),
       payments: publicPayments(order.payments),
-      terms: order.terms_snapshot ?? '',
       confirmed_at: order.confirmed_at,
       cancel_requested_at: order.cancel_requested_at ?? null,
       // The customer's own change requests, read back so the page can
@@ -395,87 +405,19 @@ app.get('/estimate/:token', async (c) => {
         shipping_postal_code: order.customer?.shipping_postal_code ?? '',
       },
       company,
-      // A hidden item is absent from the total the customer is quoted, so
-      // printing it here would show a line that nothing adds up to.
-      line_items: (order.line_items ?? [])
-        .filter((li: Record<string, unknown>) => !li.hidden)
-        .map((li: Record<string, unknown>) => ({
-        item_type: li.item_type,
-        room_name: li.room_name,
-        blinds_type: li.blinds_type,
-        panels: li.panels,
-        height_cm: li.height_cm,
-        material_name: li.material_name,
-        cassette_name: li.cassette_name,
-        bottom_rail_name: li.bottom_rail_name,
-        control_name: li.control_name,
-        installation_name: li.installation_name,
-        color: li.color,
-        title: li.title,
-        description: li.description,
-        note: li.note,
-        addons: ((li.addons ?? []) as Record<string, unknown>[]).map((a) => ({
-          label: String(a.label),
-          price: Number(a.price),
-        })),
-        /**
-         * The struck-through "was" figure, ALREADY computed here and sent
-         * only when the consultant chose to show it.
-         *
-         * Both decisions are made server-side on purpose: this route is
-         * unauthenticated, so a `base_unit_price` sent for the page to
-         * hide with CSS would be public the moment it left the Worker.
-         * `null` means print nothing.
-         */
-        original_line_total: li.show_original_price
-          ? originalLineTotal({
-            base_unit_price:
-              li.base_unit_price === null || li.base_unit_price === undefined
-                ? null
-                : Number(li.base_unit_price),
-            quantity: Number(li.quantity),
-            addons: ((li.addons ?? []) as Record<string, unknown>[]).map((a) => ({
-              label: String(a.label),
-              price: Number(a.price),
-            })),
-          })
-          : null,
-        /**
-         * Per-type attributes are formatted HERE, server-side, and the raw
-         * blob is deliberately NOT forwarded.
-         *
-         * This endpoint is unauthenticated — the capability token is the
-         * only gate — so anything spread into this object is public the
-         * moment it exists. Sending `attributes` wholesale would publish
-         * every future internal-only field automatically and silently,
-         * including retroactively for orders already sent. Forwarding the
-         * rendered label/value pairs instead means a new field reaches the
-         * customer only if its type's `describeAttributes` chose to return
-         * it.
-         *
-         * Do NOT replace this with a spread.
-         */
-        attribute_lines: getBlindType(String(li.blinds_type ?? ''))
-          .describeAttributes(
-            (li.attributes ?? {}) as Record<string, string | number | boolean>
-          )
-          .map((a) => `${a.label}: ${a.value}`),
-        /**
-         * What each hardware option added to this LINE, computed HERE for
-         * the same reason the money above is: the page has no catalog and
-         * may not derive money of its own (AI_GUIDELINES rule 1). Only the
-         * slots the blind actually carries appear; the page prints a name
-         * alone for anything absent or zero. The rate columns and the
-         * price bases behind these figures stay on the server — a customer
-         * is shown what a choice cost them, not the shop's price list.
-         */
-        option_prices: optionLineAmounts(li as OptionPricedItem),
-        quantity: li.quantity,
-        unit_price: li.unit_price,
-        line_total: li.line_total,
-      })),
     },
   });
+});
+
+/** One earlier revision, read-only (see `publicRevisionResponse`). */
+app.get('/estimate/:token/revisions/:rev', async (c) => {
+  const token = c.req.param('token');
+  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
+  const sb = createSupabaseAdmin(c.env);
+  const order = await loadByToken(sb, token);
+  if (!order) return c.json({ error: 'Estimate not found' }, 404);
+  const { status, body } = await publicRevisionResponse(sb, order.id, c.req.param('rev'));
+  return c.json(body, status);
 });
 
 /**
@@ -517,8 +459,9 @@ app.post('/estimate/:token/view', async (c) => {
 
 /**
  * Customer confirm — succeeds exactly once, moving the order
- * sent → awaiting_payment.
- * 404 unknown token · 409 already confirmed · 410 expired · 400 draft.
+ * sent → awaiting_payment. Optional body `{ rev_no }`: the version the
+ * page showed; a stale one is 409 with nothing written (lib/publicRevision).
+ * 404 unknown token · 409 already confirmed / stale page · 410 expired · 400 draft.
  */
 app.post('/estimate/:token/confirm', async (c) => {
   const token = c.req.param('token');
@@ -538,19 +481,31 @@ app.post('/estimate/:token/confirm', async (c) => {
     return c.json({ error: 'This estimate has already been confirmed.' }, 409);
   }
 
+  const shown = shownRevNo(await c.req.json().catch(() => null));
+  const acceptance = await resolveAcceptance(sb, order);
+  if ('error' in acceptance) return c.json({ error: 'Something went wrong. Please try again.' }, 500);
+  if (isStaleConfirm(shown, acceptance)) return c.json({ error: STALE_CONFIRM_ERROR }, 409);
+
   // Guard the transition at the DB level too: only a 'sent' row updates,
   // so two racing confirms produce exactly one winner.
   const { data: updated, error } = await sb
     .from('orders')
-    .update({ status: 'awaiting_payment', confirmed_at: new Date().toISOString() })
+    .update({
+      status: 'awaiting_payment',
+      confirmed_at: new Date().toISOString(),
+      accepted_revision_id: acceptance.acceptedRevisionId,
+    })
     .eq('id', order.id)
     .eq('status', 'sent')
     .select('id, total, order_number')
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!updated) return c.json({ error: 'This estimate has already been confirmed.' }, 409);
+  // What the customer accepted: the revision's total, not later unsent edits.
+  const acceptedTotal = acceptance.acceptedTotal ?? Number(updated.total);
 
   await logOrderEvent(sb, order.id, 'Customer confirmed the estimate.');
+  if (acceptance.divergenceLog) await logOrderEvent(sb, order.id, acceptance.divergenceLog);
   await recordNotification(sb, {
     kind: 'order_confirmed',
     orderId: order.id,
@@ -572,7 +527,8 @@ app.post('/estimate/:token/confirm', async (c) => {
         html: buildConfirmationNoticeHtml({
           orderNumber: updated.order_number,
           customerName: displayName(order.customer),
-          total: Number(updated.total),
+          total: acceptedTotal,
+          divergedNote: acceptance.divergedNote,
         }),
       });
     }
@@ -580,7 +536,7 @@ app.post('/estimate/:token/confirm', async (c) => {
     console.error('Confirmation notification failed:', e);
   }
 
-  return c.json({ data: { status: 'awaiting_payment', total: Number(updated.total) } });
+  return c.json({ data: { status: 'awaiting_payment', total: acceptedTotal } });
 });
 
 /* ------------------------------------------------------------------ */

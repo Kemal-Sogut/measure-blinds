@@ -89,10 +89,16 @@ import {
   buildQuotedMap,
   clearOrderPriceLocks,
   freezeOrderPrices,
-  stampQuotedFigures,
   type QuotedColumns,
   type StoredLock,
 } from '../lib/priceLockStore';
+import { revisionDetailFields, stampSent } from '../lib/orderRevisions';
+import {
+  loadRevisionSource,
+  overlayRevisionLocks,
+  planRestore,
+  restoreLogLine,
+} from '../lib/orderRestore';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -308,8 +314,13 @@ const orderSchema = z
     discount_type: z.enum(['fixed', 'percent']).default('fixed'),
     discount_value: z.number().min(0).max(1_000_000).default(0),
     line_items: z.array(lineItemSchema).max(200).default([]),
+    /** PUT only: this save restores that revision (see `lib/orderRestore.ts`). */
+    restore_from_revision: z.string().uuid().optional(),
   })
   .strict();
+
+/** Payload for POST /: a new order has no revision, so a restore is a 400 (still strict). */
+const createOrderSchema = orderSchema.omit({ restore_from_revision: true });
 
 /** Payload for POST /:id/payments — a single ledger entry. */
 const paymentSchema = z
@@ -1151,6 +1162,7 @@ app.get('/by-number/:orderNumber', async (c) => {
   if (!data) return c.json({ error: 'Order not found' }, 404);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
 });
 
@@ -1260,7 +1272,7 @@ async function createOrderFromInput(
 
 /** Creates an order with server-generated order number + pricing. */
 app.post('/', async (c) => {
-  const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
+  const parsed = createOrderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
   const sb = createSupabaseAdmin(c.env);
 
@@ -1271,7 +1283,10 @@ app.post('/', async (c) => {
   return c.json({ data: full ?? result.order }, 201);
 });
 
-/** Returns one order with line items + customer + payments. */
+/**
+ * Returns one order with line items + customer + payments, plus the
+ * `revisions` history and `unsent_changes` (see `revisionDetailFields`).
+ */
 app.get('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, error } = await readDetail(sb, c.req.param('id'));
@@ -1279,7 +1294,20 @@ app.get('/:id', async (c) => {
   if (!data) return c.json({ error: 'Order not found' }, 404);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
+});
+
+/**
+ * Returns one revision's staff-only restore copy, `{ rev_no, source }`,
+ * for the editor's Restore (see `lib/orderRestore.ts`); 404 when the
+ * revision is not this order's.
+ */
+app.get('/:id/revisions/:revisionId', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const res = await loadRevisionSource(sb, c.req.param('id'), c.req.param('revisionId'));
+  if ('error' in res) return c.json({ error: res.error }, res.status);
+  return c.json({ data: res.data });
 });
 
 /**
@@ -1288,6 +1316,8 @@ app.get('/:id', async (c) => {
  * or later revives it to `draft` (a clean re-start — deliberately NOT
  * `sent`, since nothing has been re-sent to the customer yet); every
  * other status is preserved. See the revive note at the `update` call.
+ * `restore_from_revision` makes the save a revision restore: untouched
+ * items keep that revision's locked prices (`lib/orderRestore.ts`).
  */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
@@ -1311,6 +1341,11 @@ app.put('/:id', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
+
+  const restore = input.restore_from_revision
+    ? await planRestore(sb, id, input.restore_from_revision, existing.status)
+    : null;
+  if (restore && !restore.ok) return c.json({ error: restore.error }, restore.status);
 
   const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
   const expiry_date = input.expiry_date ?? existing.expiry_date;
@@ -1363,8 +1398,10 @@ app.put('/:id', async (c) => {
   // were edited is re-priced — and re-locked at the new figure. See
   // `lib/priceLock.ts` for the fingerprint that decides this.
   const priorRows = (existing.line_items ?? []) as Record<string, unknown>[];
-  const locks =
+  const currentLocks =
     holdsPriceLock(existing.status) && !reviveToDraft ? buildLockMap(priorRows) : undefined;
+  // A restore prices untouched items at the revision's own locks.
+  const locks = restore?.ok ? overlayRevisionLocks(currentLocks, restore.source) : currentLocks;
 
   // In lockstep with `locks`, and for the same reason: both describe an
   // order whose prices are frozen. On a draft — or on the revive that
@@ -1437,6 +1474,7 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+  if (restore?.ok) await logOrderEvent(sb, id, restoreLogLine(restore.rev_no));
   if (reviveToDraft) {
     await logOrderEvent(sb, id, 'Expiry extended to today or later — estimate revived to draft.');
   }
@@ -1753,7 +1791,7 @@ app.post('/:id/mark-sent', async (c) => {
   // showing has just been answered by the document the customer now has.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
-  const stampError = await stampQuotedFigures(sb, id, 'overwrite');
+  const stampError = await stampSent(sb, id, 'overwrite', 'manual');
   if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
@@ -1990,7 +2028,7 @@ app.post('/:id/confirm', async (c) => {
   // `fill`, not `overwrite`: confirming is the customer accepting a quote
   // already made, so an existing stamp stays where the send put it and
   // any price-update notice stays visible.
-  const stampError = await stampQuotedFigures(sb, id, 'fill');
+  const stampError = await stampSent(sb, id, 'fill', 'stage');
   if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
@@ -2726,7 +2764,7 @@ app.post('/:id/revert', async (c) => {
     await freezeOrderPrices(sb, id);
     // `fill`: a stage change is not a send, so a stamp an earlier send
     // left is kept and the notices it feeds stay on screen.
-    await stampQuotedFigures(sb, id, 'fill');
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
@@ -2836,7 +2874,7 @@ app.post('/:id/status', async (c) => {
     await freezeOrderPrices(sb, id);
     // `fill`, as in the revert route above: a manual stage change does
     // not re-quote the customer.
-    await stampQuotedFigures(sb, id, 'fill');
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Status manually changed from ${existing.status} to ${to}.`);

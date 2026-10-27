@@ -33,6 +33,9 @@
  * force; these say what the customer was LAST SENT, which the lock
  * cannot, because a save re-locks an edited item at its new figure. The
  * editor's price-update notices are the difference between the two.
+ *
+ * {@link stampQuotedFigures} is called via `stampSent` (lib/orderRevisions.ts),
+ * which also records the revision.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -260,6 +263,8 @@ export interface QuotedColumns {
  *          freeze failure by its callers — an order that reached `sent`
  *          with no stamp would show no notice when its prices later
  *          moved, which is the bug this exists to prevent.
+ *
+ * Called via `stampSent` (lib/orderRevisions.ts), which also records the revision.
  */
 export async function stampQuotedFigures(
   sb: SupabaseClient,

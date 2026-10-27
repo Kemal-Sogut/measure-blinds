@@ -30,6 +30,7 @@ import {
   ensureOrderToken,
 } from './customerLink';
 import { greetingName } from './customerName';
+import { readAnnouncedChanges, readRevisedDraftChanges } from './estimateEmailChanges';
 import {
   brandFromSettings,
   buildEstimatesEmailHtml,
@@ -38,7 +39,8 @@ import {
   type CompanyBrand,
 } from './email';
 import { logOrderEvent } from './orderLog';
-import { freezeOrderPrices, stampQuotedFigures } from './priceLockStore';
+import { stampSent } from './orderRevisions';
+import { freezeOrderPrices } from './priceLockStore';
 
 /** The order columns the send route reads for each candidate row. */
 export interface SendCandidateRow {
@@ -334,7 +336,7 @@ async function persistSend(
       // Re-stamped on EVERY send (migration 48), which is what clears the
       // editor's price-update notices: the customer now holds a document
       // quoting today's figures, so there is nothing left to warn about.
-      const stampError = await stampQuotedFigures(sb, row.id, 'overwrite');
+      const stampError = await stampSent(sb, row.id, 'overwrite', 'email');
       if (stampError) failed.push({ id: row.id, error: stampError });
 
       await logOrderEvent(sb, row.id, sendLogLine(email, index + 1, toSend.length));
@@ -378,7 +380,7 @@ async function restampAnnounced(
     try {
       const freezeError = await freezeOrderPrices(sb, row.id);
       if (freezeError) failed.push({ id: row.id, error: freezeError });
-      const stampError = await stampQuotedFigures(sb, row.id, 'overwrite');
+      const stampError = await stampSent(sb, row.id, 'overwrite', 'email');
       if (stampError) failed.push({ id: row.id, error: stampError });
     } catch (e) {
       failed.push({
@@ -476,7 +478,20 @@ export async function runEstimateSend(
 
   const { brand, companyTerms } = await readSendBranding(sb);
 
-  const estimates = named.map((row) => ({ order_number: row.order_number, title: row.title }));
+  // READ-ONLY, and before the email: what each already-sent estimate (and
+  // each re-sent draft with revision history) changed since the customer
+  // last held it. A draft with no history has no entry, so its line stays
+  // `changes: undefined` (a new estimate). Revisions are written only after
+  // the email succeeds (`persistSend` / `restampAnnounced`).
+  const changesById = new Map([
+    ...(await readRevisedDraftChanges(sb, toSend)),
+    ...(await readAnnouncedChanges(sb, toAnnounce)),
+  ]);
+  const estimates = named.map((row) => ({
+    order_number: row.order_number,
+    title: row.title,
+    changes: changesById.get(row.id),
+  }));
   let liveCount: number;
   try {
     liveCount = (await countActiveEstimates(sb, customerId, today)) + toSend.length;

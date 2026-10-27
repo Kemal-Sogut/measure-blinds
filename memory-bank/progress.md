@@ -6,6 +6,17 @@
 
 ## What Works
 
+**Estimate revisions, on `estimate-revisions` (migration 50 written, NOT applied, not
+deployed):** a send records a revision (customer-view snapshot + staff restore copy) only when
+something customer-visible changed. The customer page shows the latest sent version with a
+version chip, what changed and read-only earlier versions (live money/expiry hidden while an
+earlier one is open); the staff order page has a revision banner (in sync / "N changes not sent
+to the customer" / sent before tracking / "Customer confirmed Rev N — current estimate
+differs"), history, Send update and Restore; the re-send email says "updated" and lists up to 5
+changes; the public confirm stores `accepted_revision_id` and 409s a stale page.
+Migration-48 price notices are unchanged and reset together with revisions via `stampSent`.
+Not exercised against a live database or in a browser.
+
 **Quoted-price immunity and price-update notices, on `feat/multi-estimate-send` (migration 48
 written, NOT applied, not deployed):** a hardware option added to a blind type no longer
 reaches back into estimates already quoted on it, so Present to customer works on them again;
@@ -281,6 +292,11 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
+- **Estimate revisions not deployed; migration 50 NOT applied.** Apply
+  `20261026000050_order_revisions.sql`, then deploy the API, then the web. Orders already `sent`
+  have no revision (no backfill): their customer page stays live and the staff banner says
+  "Sent before revision tracking — next send creates Rev 1". The send -> banner -> "updated"
+  email -> customer version view -> restore flow has not been driven end to end.
 - **Legacy-data Phase 0 code not deployed:** migration 49 (catalog `archived_at`, `line_items`
   FKs → RESTRICT) IS applied and the price-lock backfill has run (28 items / 6 orders frozen,
   2026-10-25). The archive-on-delete API and the web filters are not deployed: until the API

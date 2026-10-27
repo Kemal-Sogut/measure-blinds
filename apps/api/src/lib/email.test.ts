@@ -22,6 +22,7 @@ import {
   buildCancellationNoticeHtml,
   estimateEmailSubject,
   estimatesEmailSubject,
+  isUpdateEmail,
 } from './email';
 
 describe('escapeHtml', () => {
@@ -214,6 +215,18 @@ describe('buildConfirmationNoticeHtml', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('F2606-1226');
     expect(html).toContain('$500.00');
+    expect(html).not.toContain('review before taking the deposit');
+  });
+
+  it('adds the escaped divergence note when the confirm diverged', () => {
+    const html = buildConfirmationNoticeHtml({
+      orderNumber: 'F2606-1226',
+      customerName: 'Ada',
+      total: 500,
+      divergedNote: 'Saved estimate differs <b>review</b> before taking the deposit.',
+    });
+    expect(html).toContain('Saved estimate differs &lt;b&gt;review&lt;/b&gt; before taking the deposit.');
+    expect(html).not.toContain('<b>review</b>');
   });
 });
 
@@ -398,6 +411,133 @@ describe('buildEstimatesEmailHtml', () => {
     expect(html).toContain('(613) 699-1837');
     expect(html).toContain('mailto:info@blindsnisa.com');
     expect(html).toContain('Confidentiality notice');
+  });
+});
+
+describe('buildEstimatesEmailHtml: updated estimates', () => {
+  const base = {
+    company: { name: 'Blinds Nisa' },
+    customerFirstName: 'Jane',
+    viewUrl: 'https://app.example.com/c/abc-123',
+    estimates: [{ order_number: 'M2010-126', title: null, changes: ['Total $100.00 → $120.00'] }],
+    liveCount: 1,
+  };
+
+  it('says "Your estimate has been updated" when the only estimate changed', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html).toContain('Your estimate has been updated');
+    expect(html).not.toContain('Your estimate is ready');
+    expect(html).toContain('Total $100.00 → $120.00');
+  });
+
+  it('says "Your estimates have been updated" when every one of several changed', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: null, changes: ['a'] },
+        { order_number: 'M2010-127', title: null, changes: ['b'] },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('Your estimates have been updated');
+    expect(html).not.toContain('Your estimates are ready');
+  });
+
+  it('keeps the "ready" heading in a mixed send and tags only the updated row', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: null, changes: ['Total $100.00 → $120.00'] },
+        { order_number: 'M2010-127', title: null },
+        { order_number: 'M2010-128', title: null, changes: [] },
+      ],
+      liveCount: 3,
+    });
+    expect(html).toContain('Your estimates are ready');
+    expect(html).not.toContain('have been updated');
+    expect(html.match(/>Updated</g)).toHaveLength(1);
+    expect(html).toContain('Total $100.00 → $120.00');
+    expect(html.indexOf('>Updated<')).toBeLessThan(html.indexOf('M2010-127'));
+  });
+
+  it('prints no Updated tag for a new or unchanged estimate', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes: [] }],
+    });
+    expect(html).not.toContain('>Updated<');
+    expect(html).toContain('Your estimate is ready');
+  });
+
+  it('escapes the change lines', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes: ['<b>Lounge</b>: Colour a → b'] }],
+    });
+    expect(html).toContain('&lt;b&gt;Lounge&lt;/b&gt;');
+    expect(html).not.toContain('<b>Lounge');
+  });
+
+  it('shows at most 5 change lines, then "and {m} more"', () => {
+    const changes = Array.from({ length: 8 }, (_, n) => `Change number ${n + 1}`);
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes }],
+    });
+    expect(html).toContain('Change number 5');
+    expect(html).not.toContain('Change number 6');
+    expect(html).toContain('and 3 more');
+  });
+
+  it('shows all of exactly 5 change lines with no "more" line', () => {
+    const changes = Array.from({ length: 5 }, (_, n) => `Change number ${n + 1}`);
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes }],
+    });
+    expect(html).toContain('Change number 5');
+    expect(html).not.toContain(' more');
+  });
+});
+
+describe('isUpdateEmail', () => {
+  const line = (changes?: string[]) => ({ order_number: 'M1', title: null, changes });
+
+  it('is true only when every line has a non-empty changes list', () => {
+    expect(isUpdateEmail([line(['x']), line(['y'])])).toBe(true);
+    expect(isUpdateEmail([line(['x']), line([])])).toBe(false);
+    expect(isUpdateEmail([line(['x']), line(undefined)])).toBe(false);
+    expect(isUpdateEmail([line([])])).toBe(false);
+  });
+
+  it('is false for an empty list', () => {
+    expect(isUpdateEmail([])).toBe(false);
+  });
+});
+
+describe('estimatesEmailSubject: updated estimates', () => {
+  it('names the order number for one updated estimate, without the title', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [{ order_number: 'M2010-126', title: 'Option A', changes: ['x'] }])
+    ).toBe('Updated estimate M2010-126 from Blinds Nisa');
+  });
+
+  it('says "Your updated estimates" when several are all updates', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [
+        { order_number: 'M2010-126', title: null, changes: ['x'] },
+        { order_number: 'M2010-127', title: null, changes: ['y'] },
+      ])
+    ).toBe('Your updated estimates from Blinds Nisa');
+  });
+
+  it('keeps the plain subject in a mixed send', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [
+        { order_number: 'M2010-126', title: null, changes: ['x'] },
+        { order_number: 'M2010-127', title: null },
+      ])
+    ).toBe('Your estimates from Blinds Nisa');
   });
 });
 
