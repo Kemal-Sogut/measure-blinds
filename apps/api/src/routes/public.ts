@@ -64,7 +64,6 @@ import { recordNotification } from '../lib/notifications';
 import { toPublicQuoteFields } from '../lib/publicQuote';
 import {
   isStaleConfirm,
-  publicRevisionResponse,
   resolveAcceptance,
   resolveServedQuote,
   shownRevNo,
@@ -407,17 +406,6 @@ app.get('/estimate/:token', async (c) => {
       company,
     },
   });
-});
-
-/** One earlier revision, read-only (see `publicRevisionResponse`). */
-app.get('/estimate/:token/revisions/:rev', async (c) => {
-  const token = c.req.param('token');
-  if (!TOKEN_RE.test(token)) return c.json({ error: 'Estimate not found' }, 404);
-  const sb = createSupabaseAdmin(c.env);
-  const order = await loadByToken(sb, token);
-  if (!order) return c.json({ error: 'Estimate not found' }, 404);
-  const { status, body } = await publicRevisionResponse(sb, order.id, c.req.param('rev'));
-  return c.json(body, status);
 });
 
 /**

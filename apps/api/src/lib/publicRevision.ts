@@ -15,6 +15,11 @@
  * fulfilment changes. Its version fields are then kept only while that
  * live quote still equals the latest revision (see `ServedQuote.revision`).
  *
+ * The customer only ever sees that ONE version and its sent date: no
+ * revision list, no earlier revision and no "what changed" diff against
+ * an earlier one is served on any `/public/*` route. Revision history is
+ * staff-only (`GET /api/orders/:id`, `/api/orders/:id/revisions/:id`).
+ *
  * The confirm side lives here too: {@link resolveAcceptance} decides which
  * revision a confirmation accepts, and {@link shownRevNo} /
  * {@link isStaleConfirm} refuse a confirm made from an out-of-date page.
@@ -30,11 +35,11 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { buildPublicQuote, toPublicQuoteFields, type PublicQuote } from './publicQuote';
-import { describeChange, diffQuotes } from './quoteDiff';
+import { buildPublicQuote, type PublicQuote } from './publicQuote';
+import { diffQuotes } from './quoteDiff';
 import { checkLatestRevision, listRevisions, readRevisionByNo } from './orderRevisions';
 
-/** One revision as the customer page lists it: number and date only. */
+/** The served revision as the customer page shows it: number and date only. */
 export interface PublicRevisionRef {
   rev_no: number;
   sent_at: string;
@@ -48,18 +53,10 @@ export interface ServedQuote {
    * The revision the served quote IS: the latest revision, or `null` for
    * an order never sent under tracking. Also `null` once confirmed when
    * the served (live) quote no longer equals the latest revision's
-   * snapshot — the page then shows no "version N" chip and no
-   * "Current version (N)" wording, since no revision describes it.
+   * snapshot — the page then shows no "version N" chip, since no
+   * revision describes it.
    */
   revision: PublicRevisionRef | null;
-  /** Every revision, newest first (kept in every case, for the earlier-versions picker). */
-  revisions: PublicRevisionRef[];
-  /**
-   * What changed from the previous revision to the latest, as readable
-   * lines (`describeChange`); `[]` for Rev 1, no revision, or whenever
-   * `revision` is `null`.
-   */
-  changes_since_previous: string[];
 }
 
 /** Statuses during which the customer is shown the sent snapshot. */
@@ -87,16 +84,9 @@ export async function resolveServedQuote(
   const orderId = String(order.id);
   const listed = await listRevisions(sb, orderId);
   if ('error' in listed) return { error: listed.error };
-  const [latestRef, previousRef] = listed.rows;
+  const [latestRef] = listed.rows;
   if (!latestRef) {
-    return {
-      served: {
-        quote: buildPublicQuote(order),
-        revision: null,
-        revisions: [],
-        changes_since_previous: [],
-      },
-    };
+    return { served: { quote: buildPublicQuote(order), revision: null } };
   }
 
   const latestRead = await readRevisionByNo(sb, orderId, latestRef.rev_no);
@@ -104,76 +94,16 @@ export async function resolveServedQuote(
   const latest = latestRead.row;
   if (!latest) return { error: 'Latest revision vanished mid-read' };
 
-  let changes: string[] = [];
-  if (previousRef) {
-    const previousRead = await readRevisionByNo(sb, orderId, previousRef.rev_no);
-    if ('error' in previousRead) return { error: previousRead.error };
-    if (previousRead.row) {
-      changes = diffQuotes(previousRead.row.snapshot, latest.snapshot).map(describeChange);
-    }
-  }
-
   if (SNAPSHOT_STATUSES.has(status)) {
-    return {
-      served: {
-        quote: latest.snapshot,
-        revision: ref(latest),
-        revisions: listed.rows.map(ref),
-        changes_since_previous: changes,
-      },
-    };
+    return { served: { quote: latest.snapshot, revision: ref(latest) } };
   }
 
   // Past `sent` the page is LIVE. Once that live quote has moved away from
-  // the latest revision, "version N" and its change lines would describe a
-  // page the customer is not looking at, so both are withheld.
+  // the latest revision, "version N" would describe a page the customer is
+  // not looking at, so it is withheld.
   const live = buildPublicQuote(order);
   const liveIsLatest = diffQuotes(latest.snapshot, live).length === 0;
-  return {
-    served: {
-      quote: live,
-      revision: liveIsLatest ? ref(latest) : null,
-      revisions: listed.rows.map(ref),
-      changes_since_previous: liveIsLatest ? changes : [],
-    },
-  };
-}
-
-/** Generic customer-facing wording for a failed read; no DB detail leaks. */
-const READ_FAILED = 'Something went wrong. Please try again.';
-
-/**
- * Builds the response of `GET /public/estimate/:token/revisions/:rev`:
- * one earlier revision for the customer's read-only "previous versions"
- * view. Available at any order status (history stays readable after
- * confirmation) and only for the order the token opened. The quote goes
- * through `toPublicQuoteFields` (an explicit pick, so an unknown key
- * stored in the snapshot never reaches the body); the row's id, kind and
- * staff copy are never part of it.
- *
- * @param sb Service-role Supabase client.
- * @param orderId The order the token opened.
- * @param revParam The raw `:rev` route parameter; anything but a
- *   positive integer reads as "no such revision" (404).
- * @returns The HTTP status and JSON body for the route to send.
- */
-export async function publicRevisionResponse(
-  sb: SupabaseClient,
-  orderId: string,
-  revParam: string
-): Promise<{ status: 200 | 404 | 500; body: Record<string, unknown> }> {
-  if (!/^[1-9]\d{0,5}$/.test(revParam)) {
-    return { status: 404, body: { error: 'Revision not found' } };
-  }
-  const read = await readRevisionByNo(sb, orderId, Number(revParam));
-  if ('error' in read) return { status: 500, body: { error: READ_FAILED } };
-  if (!read.row) return { status: 404, body: { error: 'Revision not found' } };
-  const { rev_no, sent_at, snapshot } = read.row;
-  return {
-    status: 200,
-    // Explicit pick, never a spread of the stored jsonb (AI_GUIDELINES §2).
-    body: { data: { rev_no, sent_at, ...toPublicQuoteFields(snapshot), read_only: true } },
-  };
+  return { served: { quote: live, revision: liveIsLatest ? ref(latest) : null } };
 }
 
 /** What a customer confirmation records about the revision accepted. */

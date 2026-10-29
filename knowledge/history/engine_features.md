@@ -1,5 +1,23 @@
 # Engine Features / Feature History
 
+## 2026-10-29 — Customer page shows only the latest sent version (earlier versions removed)
+Branch `estimate-revisions`, api + web, not deployed. The customer now sees ONLY the latest
+sent version and its "Updated <date> · version N" chip. Everything about earlier versions is
+removed end to end, not just hidden:
+- API: `GET /public/estimate/:token/revisions/:rev` and `publicRevisionResponse`
+  (`lib/publicRevision.ts`) are deleted; `ServedQuote.revisions` (the history list) and
+  `ServedQuote.changes_since_previous` (the "what changed" lines) are gone, so
+  `GET /public/estimate/:token` carries only `revision` (`rev_no`, `sent_at`) and no longer
+  reads the previous revision at all. Revision history stays staff-only on `/api/orders/*`.
+- Web: `RevisionInfo.tsx` renders the chip only (picker, "viewing an earlier version" banner
+  and "What changed" disclosure gone); `revisionView.ts` keeps only `RevisionStamp` and
+  `chipLabel`; `CustomerView` drops the viewing-old state and its `viewingOld`/`liveMoney` gates.
+- Tests: public route tests assert the payload has no `revisions`, no `changes_since_previous`,
+  no earlier-revision values, and that the old route 404s.
+- Unchanged: the re-send EMAIL still lists up to 5 changes (`lib/estimateEmailChanges.ts`).
+Supersedes the "previous versions read-only" and customer "what changed" parts of the
+2026-10-26 entry below.
+
 ## 2026-10-26 — Estimate revisions: the customer sees what was sent, staff see what has not been
 Branch `estimate-revisions` (commits `1555f27..0882116`), api + web, **migration 50 written, NOT
 applied to the live project, not deployed**. Until now a `sent` estimate on the customer page

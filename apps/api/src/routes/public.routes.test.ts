@@ -1039,8 +1039,6 @@ describe('estimate revisions on the public page', () => {
     const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
     expect(body.data.line_items[0].height_cm).toBe(160);
     expect(body.data.revision).toBeNull();
-    expect(body.data.revisions).toEqual([]);
-    expect(body.data.changes_since_previous).toEqual([]);
   });
 
   it('serves live data once confirmed', async () => {
@@ -1063,16 +1061,27 @@ describe('estimate revisions on the public page', () => {
     expect(body.data.deposit_due).toBe(56.5);
   });
 
-  it('lists changes_since_previous for Rev 2', async () => {
+  it('serves only the latest version number and sent date for Rev 2', async () => {
     db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
     db.order = orderWith(160, 113);
     const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
-    expect(body.data.revision.rev_no).toBe(2);
-    expect(body.data.revisions).toEqual([
-      { rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' },
-      { rev_no: 1, sent_at: '2026-10-21T10:00:00.000Z' },
-    ]);
-    expect(body.data.changes_since_previous).toEqual(['Bedroom — Roller: Height 150 cm → 160 cm']);
+    expect(body.data.revision).toEqual({ rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' });
+  });
+
+  it('never serves anything about earlier versions: no list, no change lines, no earlier-revision route', async () => {
+    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
+    db.order = orderWith(160, 113);
+    const res = await req(`/estimate/${TOKEN}`);
+    const text = await res.text();
+    const body = JSON.parse(text) as Payload;
+    expect(body.data).not.toHaveProperty('revisions');
+    expect(body.data).not.toHaveProperty('changes_since_previous');
+    // Rev 1's height must not reach the customer in any form.
+    expect(text).not.toContain('"height_cm":150');
+    expect(text).not.toContain('150 cm');
+    const old = await req(`/estimate/${TOKEN}/revisions/1`);
+    expect(old.status).toBe(404);
+    expect(await old.text()).not.toContain('"height_cm":150');
   });
 
   it('answers 500 rather than falling back to live data when revisions are unreadable', async () => {
@@ -1081,23 +1090,6 @@ describe('estimate revisions on the public page', () => {
     const res = await req(`/estimate/${TOKEN}`);
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain('160');
-  });
-
-  it('serves an old revision read-only and 404s an unknown one', async () => {
-    db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
-    db.order = orderWith(160, 113);
-    const res = await req(`/estimate/${TOKEN}/revisions/1`);
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as Payload;
-    expect(body.data.rev_no).toBe(1);
-    expect(body.data.read_only).toBe(true);
-    expect(body.data.line_items[0].height_cm).toBe(150);
-    expect(body.data.total).toBe(113);
-
-    expect((await req(`/estimate/${TOKEN}/revisions/9`)).status).toBe(404);
-    expect((await req(`/estimate/${TOKEN}/revisions/0`)).status).toBe(404);
-    expect((await req(`/estimate/${TOKEN}/revisions/abc`)).status).toBe(404);
-    expect((await req('/estimate/not-a-uuid/revisions/1')).status).toBe(404);
   });
 
   it('confirm stores accepted_revision_id = latest revision', async () => {
@@ -1185,22 +1177,19 @@ describe('estimate revisions on the public page', () => {
     }
   });
 
-  it('once confirmed, a live quote that left the latest revision carries no version chip or change lines', async () => {
+  it('once confirmed, a live quote that left the latest revision carries no version chip', async () => {
     db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
     db.order = { ...orderWith(170, 130), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
     const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
     expect(body.data.line_items[0].height_cm).toBe(170);
     expect(body.data.revision).toBeNull();
-    expect(body.data.changes_since_previous).toEqual([]);
-    expect(body.data.revisions).toHaveLength(2);
   });
 
-  it('once confirmed, a live quote still equal to the latest revision keeps its version fields', async () => {
+  it('once confirmed, a live quote still equal to the latest revision keeps its version chip', async () => {
     db.revisions = [revision(1, orderWith(150, 113)), revision(2, orderWith(160, 113))];
     db.order = { ...orderWith(160, 113), status: 'awaiting_payment', confirmed_at: '2026-10-23T10:00:00.000Z' };
     const body = (await (await req(`/estimate/${TOKEN}`)).json()) as Payload;
     expect(body.data.revision).toEqual({ rev_no: 2, sent_at: '2026-10-22T10:00:00.000Z' });
-    expect(body.data.changes_since_previous).toEqual(['Bedroom — Roller: Height 150 cm → 160 cm']);
   });
 
   it('confirm on an order with no revision records a null accepted revision', async () => {
@@ -1221,7 +1210,6 @@ describe('estimate revisions on the public page', () => {
     db.order = orderWith(160, 113);
     const bodies = [
       await (await req(`/estimate/${TOKEN}`)).text(),
-      await (await req(`/estimate/${TOKEN}/revisions/1`)).text(),
       await (await req(`/estimate/${TOKEN}/confirm`, 'POST')).text(),
     ];
     for (const text of bodies) {
@@ -1243,17 +1231,11 @@ describe('estimate revisions on the public page', () => {
       line_items: snapshot.line_items.map((l) => ({ ...l, supplier_cost: 7 })),
     };
     db.order = orderWith(150, 113);
-    // Rev 1 as the latest (the main page serves it), then as an earlier
-    // version once Rev 2 exists.
     db.revisions = [rev];
-    const bodies = [await (await req(`/estimate/${TOKEN}`)).text()];
-    db.revisions = [rev, revision(2, orderWith(160, 113))];
-    bodies.push(await (await req(`/estimate/${TOKEN}/revisions/1`)).text());
-    for (const text of bodies) {
-      expect(text).toContain('"height_cm":150');
-      expect(text).not.toContain('internal_margin');
-      expect(text).not.toContain('supplier_cost');
-    }
+    const text = await (await req(`/estimate/${TOKEN}`)).text();
+    expect(text).toContain('"height_cm":150');
+    expect(text).not.toContain('internal_margin');
+    expect(text).not.toContain('supplier_cost');
   });
 });
 

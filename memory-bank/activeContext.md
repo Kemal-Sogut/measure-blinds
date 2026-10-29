@@ -19,7 +19,9 @@ now goes through `stampSent`, so the migration-48 price notices are unchanged an
 together with revisions. Staff can restore an earlier revision as an unsent edit
 (`PUT /api/orders/:id` with `restore_from_revision`, Rev N prices kept for untouched items;
 409 from `awaiting_payment` on). A customer confirm records `accepted_revision_id` and is
-refused (409) if the page showed an older version than the latest. Final-review fixes are in
+refused (409) if the page showed an older version than the latest. The customer sees ONLY the
+latest sent version and its "Updated <date> · version N" chip; nothing about earlier versions
+(history, change lines, old quotes) is served on any `/public/*` route (removed 2026-10-29). Final-review fixes are in
 (see the engine_features "Final review fixes" sub-entry). Not exercised
 against a live database or in a browser. **Apply migration 50 first, then deploy the API, then
 the web.** Details: `knowledge/history/engine_features.md` 2026-10-26; patterns in

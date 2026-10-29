@@ -363,10 +363,11 @@ section as the reference implementation for future collapsible UI.
   labels changes every rendered snapshot comparison — expect "changes not sent" on sent orders
   after such a deploy (the stored snapshot keeps the old wording until the next send).
 - **Customer page source.** `lib/publicRevision.ts`: latest snapshot while `sent`/`expired`;
-  live with no revision (legacy) and from `awaiting_payment` on (version chip / "what changed"
-  withheld once that live quote differs from the latest revision); status, payments, edit
-  requests and address always live; unreadable history = 500;
-  `/public/estimate/:token/revisions/:rev` for earlier versions. Public responses pick quote
+  live with no revision (legacy) and from `awaiting_payment` on (version chip withheld once
+  that live quote differs from the latest revision); status, payments, edit requests and
+  address always live; unreadable history = 500. The customer only ever gets the latest
+  version (`revision` = `rev_no` + `sent_at`): no revision list, no change lines, no
+  earlier-revision route on `/public/*` (history is staff-only). Public responses pick quote
   fields explicitly (`toPublicQuoteFields`), never spread a stored snapshot. Public confirm
   takes optional `{ rev_no }` (stale = 409, nothing written), stores
   `orders.accepted_revision_id`; a differing saved order is logged, not blocked, and the
