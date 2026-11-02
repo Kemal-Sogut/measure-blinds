@@ -110,8 +110,10 @@ export function toDuplicateInput(order: Record<string, unknown>): unknown {
           item_type: 'blind',
           room_name: String(li.room_name ?? ''),
           blinds_type: String(li.blinds_type ?? ''),
-          panels: ((li.panels ?? []) as unknown[]).map(Number),
-          height_cm: Number(li.height_cm),
+          // A draft may hold blank measurements (spec 2026-11-02); they
+          // copy as blanks rather than becoming 0, which the schema refuses.
+          panels: ((li.panels ?? []) as unknown[]).map((p) => (p === null ? null : Number(p))),
+          height_cm: li.height_cm === null || li.height_cm === undefined ? null : Number(li.height_cm),
           material_id: li.material_id,
           cassette_id: li.cassette_id ?? null,
           bottom_rail_id: li.bottom_rail_id ?? null,

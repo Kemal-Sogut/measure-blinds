@@ -411,16 +411,36 @@ describe('POST /api/orders', () => {
     expect(db.calls).not.toContain('line_items.insert');
   });
 
-  it('rejects a blind with no bottom rail chosen', async () => {
-    const bad = payload();
-    delete (bad.line_items[0] as Record<string, unknown>).bottom_rail_id;
+  it('saves a draft blind with no bottom rail chosen at $0', async () => {
+    db.orderInsertResults = [{ data: { id: 'br1' } }];
+    const draft = payload();
+    delete (draft.line_items[0] as Record<string, unknown>).bottom_rail_id;
     const res = await ordersApp.request('/', {
       method: 'POST',
-      body: JSON.stringify(bad),
+      body: JSON.stringify(draft),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].bottom_rail_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
+  });
+
+  it('refuses a sent order edited to have no bottom rail, and writes nothing', async () => {
+    const future = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+    db.responses['orders.select'] = [{ id: 'br2', status: 'sent', expiry_date: future, line_items: [] }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = new Date().toISOString().slice(0, 10);
+    p.expiry_date = future;
+    p.line_items[0].bottom_rail_id = null;
+    const res = await ordersApp.request('/br2', {
+      method: 'PUT',
+      body: JSON.stringify(p),
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(400);
-    expect(db.calls).not.toContain('line_items.insert');
+    expect(await res.json()).toMatchObject({ error: 'Item 1 (Living Room): choose a bottom rail.' });
+    expect(db.calls).not.toContain('line_items.delete');
   });
 
   it('fails clearly when the chosen bottom rail was deleted mid-edit', async () => {
@@ -1536,14 +1556,17 @@ describe('Curtains line items', () => {
     expect(rows[0].control_price_per_item).toBeNull();
   });
 
-  it('requires a control while one is still scoped to the type', async () => {
+  it('saves a draft blind with a scoped control left open — at $0, snapshot null', async () => {
     const p = payload() as unknown as { line_items: Record<string, unknown>[] };
     p.line_items[0].control_id = null;
     const res = await create(p);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({
-      error: 'Item 1: a control option is required.',
-    });
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].control_id).toBeNull();
+    expect(rows[0].control_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
+    // Only the 25.00 preset reaches the subtotal.
+    expect((db.insertPayloads['orders']?.[0] as Record<string, number>).subtotal).toBe(25);
   });
 
   it('accepts anything for an unknown legacy blind type', async () => {
@@ -1563,11 +1586,14 @@ describe('Curtains line items', () => {
     expect(res.status).toBe(400);
   });
 
-  it('still requires a cassette on a type that uses one', async () => {
+  it('saves a draft blind missing its cassette at $0', async () => {
     const p = payload() as unknown as { line_items: Record<string, unknown>[] };
     p.line_items[0].cassette_id = null;
     const res = await create(p);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].cassette_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
   });
 });
 
@@ -2858,5 +2884,93 @@ describe('POST /api/orders/:id/send — customer link', () => {
     expect(sent!.subject).toBe('Your estimate M2010-126 – Option A from Blinds Nisa');
     expect(String(sent!.html)).toContain('http://localhost:5173/c/cust-tok');
     expect(String(sent!.html)).toContain('You have 2 estimates to choose from');
+  });
+});
+
+describe('incomplete draft items — saving (spec 2026-11-02)', () => {
+  const json = { 'Content-Type': 'application/json' };
+  const create = (body: unknown) =>
+    ordersApp.request('/', { method: 'POST', body: JSON.stringify(body), headers: json }, ENV);
+  const put = (id: string, body: unknown) =>
+    ordersApp.request(`/${id}`, { method: 'PUT', body: JSON.stringify(body), headers: json }, ENV);
+  const future = () => new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  const today = () => new Date().toISOString().slice(0, 10);
+  /** payload() with its blind replaced by a bulk-added blank row. */
+  function blankPayload(over: Record<string, unknown> = {}) {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items[0] = {
+      item_type: 'blind', room_name: 'Kitchen', blinds_type: '', panels: [null], height_cm: null,
+      material_id: null, cassette_id: null, bottom_rail_id: null, control_id: null, quantity: 1, ...over,
+    };
+    return p;
+  }
+
+  it('creates a draft whose blind has no type, width, height or material', async () => {
+    db.orderInsertResults = [{ data: { id: 'n1' } }];
+    const res = await create(blankPayload());
+    expect(res.status).toBe(201);
+    const [row] = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(row).toMatchObject({ blinds_type: '', panels: [null], height_cm: null, material_id: null, material_name: null, material_price_per_sqm: null, line_total: 0, unit_price: 0, base_unit_price: null });
+  });
+
+  it('keeps the same column set on an incomplete row as on a priced one', async () => {
+    db.orderInsertResults = [{ data: { id: 'n2' } }];
+    const p = blankPayload();
+    p.line_items.push(payload().line_items[0] as unknown as Record<string, unknown>);
+    await create(p);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    const keys = rows.map((r) => Object.keys(r).sort().join(','));
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('keeps an override and add-ons typed on an incomplete item, charging nothing', async () => {
+    db.orderInsertResults = [{ data: { id: 'n3' } }];
+    const res = await create(blankPayload({ unit_price_override: 150, addons: [{ label: 'Motor', price: 50 }] }));
+    expect(res.status).toBe(201);
+    const [row] = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(row).toMatchObject({ unit_price: 150, base_unit_price: 0, addons: [{ label: 'Motor', price: 50 }], line_total: 0 });
+  });
+
+  it('still rejects a typed garbage measurement', async () => {
+    const res = await create(blankPayload({ panels: [-5] }));
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+  });
+
+  it('PUT on a draft accepts an incomplete item', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: future(), line_items: [] }];
+    const res = await put('d1', blankPayload());
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('line_items.insert');
+  });
+
+  it('PUT on a sent order refuses an incomplete item and writes nothing', async () => {
+    db.responses['orders.select'] = [{ id: 's1', status: 'sent', expiry_date: future(), line_items: [] }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items[0].control_id = null;
+    const res = await put('s1', p);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Item 1 (Living Room): choose a control option.' });
+    expect(db.calls).not.toContain('line_items.delete');
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('completing an overridden incomplete item logs no price-change line', async () => {
+    db.responses['orders.select'] = [{
+      id: 'd2', status: 'draft', expiry_date: future(),
+      line_items: [{ position: 0, unit_price: 150, base_unit_price: 0, addons: [] }],
+    }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items = [{ ...p.line_items[0], unit_price_override: 150 }];
+    const res = await put('d2', p);
+    expect(res.status).toBe(200);
+    const messages = ((db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>).map((l) => l.message);
+    expect(messages.filter((m) => m.includes('price override'))).toEqual([]);
   });
 });
