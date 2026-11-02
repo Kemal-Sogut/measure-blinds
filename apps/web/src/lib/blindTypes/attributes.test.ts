@@ -187,4 +187,21 @@ describe('generic extension points', () => {
     expect(new RefBlindType().inputKeys()).toEqual(['widget_id']);
     expect(new BaseBlindType().inputKeys()).toEqual([]);
   });
+
+  it('defaults to no required attributes', () => {
+    const t = new BaseBlindType();
+    expect(t.requiredAttributes).toEqual([]);
+    expect(t.missingRequiredAttribute({})).toBeNull();
+  });
+
+  it('reports the first required attribute that is absent or blank', () => {
+    class ReqBlindType extends BaseBlindType {
+      readonly blindType = 'ReqTest';
+      readonly requiredAttributes = [{ key: 'widget_id', noun: 'widget' }];
+    }
+    const t = new ReqBlindType();
+    expect(t.missingRequiredAttribute({})).toEqual({ key: 'widget_id', noun: 'widget' });
+    expect(t.missingRequiredAttribute({ widget_id: '  ' })).toEqual({ key: 'widget_id', noun: 'widget' });
+    expect(t.missingRequiredAttribute({ widget_id: 'x' })).toBeNull();
+  });
 });

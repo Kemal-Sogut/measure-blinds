@@ -19,6 +19,14 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 
 ## Global Constraints
 
+> **Superseded in part by `knowledge/plans/2026-11-02-incomplete-draft-items.md`.** If that plan
+> has landed: Task 2's `requiredAttributes` / `missingRequiredAttribute` already exist (skip their
+> steps); Task 4's hard 400 in `resolveLineItems` and Task 5's `buildPayload` guard are NOT added —
+> declaring `requiredAttributes = [{ key: 'back_material_id', noun: 'back fabric' }]` on
+> `DualShadesBlindType` is enough, because `lib/lineItemCompleteness.ts` makes a Dual line without a
+> back fabric incomplete (savable on a draft, refused at send). Task 5's preview gate in
+> `blindDraftInputs` is also already covered (it calls `draftMissingFields`).
+
 - Every new source file starts with:
   `// SPDX-License-Identifier: GPL-3.0-only` / `// Copyright (c) 2026 Blinds Nisa. All rights reserved.` (`--` in SQL).
 - Every exported symbol has a JSDoc scoring ≥ 8/10 (purpose, behaviour, constraints, integration).

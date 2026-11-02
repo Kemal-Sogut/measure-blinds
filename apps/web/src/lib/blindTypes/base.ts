@@ -179,6 +179,23 @@ export interface CatalogRef {
   readonly noun: string;
 }
 
+/**
+ * An attribute a blind type cannot be SENT without. `noun` completes the
+ * shared message "Item N: choose a <noun>." — the same wording the editor
+ * and the Worker use, produced by `lib/lineItemCompleteness.ts`.
+ *
+ * Declared here rather than by making the schema field non-optional,
+ * because `attributeSchema` must still accept `{}` (every historical row
+ * and `defaultAttributes()` parse through it) and because a draft may be
+ * SAVED without it (spec 2026-11-02, incomplete draft items).
+ */
+export interface RequiredAttribute {
+  /** Attribute key, declared in the type's `attributeSchema`. */
+  readonly key: string;
+  /** Human noun for the message, e.g. "back fabric". */
+  readonly noun: string;
+}
+
 /** One resolved catalog row: the two fields a `CatalogRef` snapshots. */
 export interface CatalogSnapshot {
   name: string;
@@ -279,6 +296,29 @@ export class BaseBlindType {
    * adding this changed no existing type's behaviour.
    */
   readonly catalogRefs: readonly CatalogRef[] = [];
+
+  /**
+   * Attributes this type cannot be sent without. Empty for every type
+   * except those that declare one (Dual Shades' back fabric). Read by
+   * `lib/lineItemCompleteness.ts`, which makes a blind missing one
+   * INCOMPLETE: savable on a draft, refused by every route that takes
+   * the order out of draft.
+   */
+  readonly requiredAttributes: readonly RequiredAttribute[] = [];
+
+  /**
+   * The first {@link requiredAttributes} entry whose value in `attrs` is
+   * absent or a blank string, or null when all are present. Accepts the
+   * raw draft map (strings) as well as a parsed blob.
+   */
+  missingRequiredAttribute(attrs: Record<string, unknown>): RequiredAttribute | null {
+    return (
+      this.requiredAttributes.find((r) => {
+        const v = attrs[r.key];
+        return typeof v !== 'string' || v.trim() === '';
+      }) ?? null
+    );
+  }
 
   /**
    * Attribute keys this type accepts FROM A CLIENT — the keys declared in
