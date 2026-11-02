@@ -83,7 +83,12 @@ import type {
 } from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
 import { incompleteMessage, missingFields, type CompletenessInput } from '../lib/lineItemCompleteness';
-import { incompleteMessageFor, loadIncompleteMessage } from '../lib/orderCompleteness';
+import {
+  annotateOrderCompleteness,
+  attachIncompleteCounts,
+  incompleteMessageFor,
+  loadIncompleteMessage,
+} from '../lib/orderCompleteness';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { lockApplies, pricingFingerprint, type PriceLockInput } from '../lib/priceLock';
@@ -970,15 +975,23 @@ function firstZodIssue(error: z.ZodError): string {
   return issue ? `${issue.path.join('.') || 'payload'}: ${issue.message}` : 'Invalid payload';
 }
 
-/** Reads one full order (items ordered, payments oldest-first). */
+/**
+ * Reads one full order (items ordered, payments oldest-first), annotated
+ * for the incomplete-item rule: `incomplete_items` on the order and
+ * `missing_fields` on each line (both empty/0 unless it is a draft).
+ * Every route that returns an order goes through here, so the editor
+ * cache and the Present view always see the annotation.
+ */
 async function readDetail(sb: SupabaseClient, id: string) {
-  return sb
+  const result = await sb
     .from('orders')
     .select(DETAIL_SELECT)
     .eq('id', id)
     .order('position', { referencedTable: 'line_items' })
     .order('paid_on', { referencedTable: 'payments' })
     .maybeSingle();
+  if (result.data) await annotateOrderCompleteness(sb, result.data as Record<string, unknown>);
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1052,6 +1065,13 @@ app.get('/', async (c) => {
     ...o,
     amount_paid: sumPayments(o.payments),
   }));
+  // Drafts carry `incomplete_items` so the list shows "Incomplete"
+  // instead of a total that silently leaves those items out.
+  try {
+    await attachIncompleteCounts(sb, rows);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not read items' }, 500);
+  }
   return c.json({ data: rows });
 });
 
@@ -1093,6 +1113,12 @@ app.get('/grouped', async (c) => {
     created_at: String(o.created_at),
     amount_paid: sumPayments(o.payments),
   }));
+  // Same badge source as the flat list (see `GET /`).
+  try {
+    await attachIncompleteCounts(sb, rows);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not read items' }, 500);
+  }
   return c.json({ data: groupOrdersByCustomer(rows) });
 });
 
@@ -1119,6 +1145,7 @@ app.get('/by-number/:orderNumber', async (c) => {
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Order not found' }, 404);
+  await annotateOrderCompleteness(sb, data as Record<string, unknown>);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
   return c.json({ data });

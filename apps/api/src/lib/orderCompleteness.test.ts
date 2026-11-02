@@ -20,12 +20,21 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const ROLLER = { id: 'bt1', name: 'Roller' };
 
 /** Fake supabase-js: every chain resolves to `rows[table]`. */
-function fakeClient(rows: Record<string, unknown[]>): SupabaseClient {
+function fakeClient(
+  rows: Record<string, unknown[]>,
+  /** Optional per-table override, called with the call's range (if any). */
+  pages?: Record<string, (range: [number, number] | null) => unknown[]>
+): SupabaseClient {
   const builder = (table: string) => {
     const b: Record<string, unknown> = {};
+    let range: [number, number] | null = null;
     for (const m of ['select', 'eq', 'in', 'order']) b[m] = () => b;
+    b.range = (from: number, to: number) => {
+      range = [from, to];
+      return b;
+    };
     (b as { then: unknown }).then = (ok: (v: unknown) => unknown) =>
-      Promise.resolve(ok({ data: rows[table] ?? [], error: null }));
+      Promise.resolve(ok({ data: pages?.[table] ? pages[table](range) : (rows[table] ?? []), error: null }));
     return b;
   };
   return { from: builder } as unknown as SupabaseClient;
@@ -78,5 +87,43 @@ describe('attachIncompleteCounts', () => {
     const orders: Record<string, unknown>[] = [{ id: 'd1', status: 'draft' }, { id: 'd2', status: 'draft' }, { id: 's1', status: 'sent' }];
     await attachIncompleteCounts(sb, orders);
     expect(orders.map((o) => o.incomplete_items)).toEqual([2, 0, 0]);
+  });
+
+  it('pages past the 1000-row response cap and counts rows from every page', async () => {
+    const ranges: Array<[number, number] | null> = [];
+    const sb = fakeClient(scoping, {
+      line_items: (range) => {
+        ranges.push(range);
+        // First page is full (1000 complete rows for d1); the second, short
+        // page holds the only open row — a count that stopped at page one
+        // would miss it.
+        return ranges.length === 1
+          ? Array.from({ length: 1000 }, () => ({ ...complete, order_id: 'd1' }))
+          : [{ ...open, order_id: 'd1' }];
+      },
+    });
+    const orders: Record<string, unknown>[] = [{ id: 'd1', status: 'draft' }];
+    await attachIncompleteCounts(sb, orders);
+    expect(ranges).toEqual([[0, 999], [1000, 1999]]);
+    expect(orders[0].incomplete_items).toBe(1);
+  });
+
+  it('chunks draft ids into groups of at most 100', async () => {
+    const calls: number[] = [];
+    const base = fakeClient({});
+    const sb = {
+      from: (table: string) => {
+        const b = (base as unknown as { from: (t: string) => Record<string, unknown> }).from(table);
+        const inFn = (_col: string, ids: unknown[]) => {
+          if (table === 'line_items') calls.push(ids.length);
+          return b;
+        };
+        b.in = inFn;
+        return b;
+      },
+    } as unknown as SupabaseClient;
+    const orders: Record<string, unknown>[] = Array.from({ length: 250 }, (_, i) => ({ id: `d${i}`, status: 'draft' }));
+    await attachIncompleteCounts(sb, orders);
+    expect(calls).toEqual([100, 100, 50]);
   });
 });

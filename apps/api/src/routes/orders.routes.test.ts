@@ -80,7 +80,7 @@ function makeBuilder(table: string) {
       if (['eq', 'neq', 'in', 'is', 'gte', 'lt'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit', 'range']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
@@ -3078,5 +3078,33 @@ describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', 
     db.responses['line_items.select'] = [OPEN_ROW];
     const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to: 'draft' }), headers: json }, ENV);
     expect(res.status).toBe(200);
+  });
+});
+
+describe('incomplete draft items — reads (spec 2026-11-02)', () => {
+  const OPEN_ROW = { order_id: 'd1', item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller', panels: [70], height_cm: 200, material_id: MATERIAL.id, cassette_id: CASSETTE.id, bottom_rail_id: BOTTOM_RAIL.id, control_id: null, installation_id: null, attributes: {} };
+
+  it('GET / attaches incomplete_items to drafts only', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', payments: [] }, { id: 's1', status: 'sent', payments: [] }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: Array<{ id: string; incomplete_items: number }> };
+    expect(data.map((o) => [o.id, o.incomplete_items])).toEqual([['d1', 1], ['s1', 0]]);
+  });
+
+  it('GET /grouped attaches incomplete_items', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', customer_id: 'c1', created_at: '2026-11-02T00:00:00Z', customer: { id: 'c1', first_name: 'A', last_name: 'B', email: '', phone: '' }, payments: [] }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/grouped?status=all', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: Array<{ orders: Array<{ incomplete_items: number }> }> };
+    expect(data[0].orders[0].incomplete_items).toBe(1);
+  });
+
+  it('GET /:id annotates each line with missing_fields', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: '2099-01-01', line_items: [OPEN_ROW], payments: [] }];
+    const res = await ordersApp.request('/d1', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: { incomplete_items: number; line_items: Array<{ missing_fields: string[] }> } };
+    expect(data.incomplete_items).toBe(1);
+    expect(data.line_items[0].missing_fields).toEqual(['control option']);
   });
 });

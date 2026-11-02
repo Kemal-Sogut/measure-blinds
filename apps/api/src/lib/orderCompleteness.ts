@@ -97,10 +97,26 @@ export async function annotateOrderCompleteness(
   order.incomplete_items = countIncomplete(items, scope);
 }
 
+/** Order ids per `line_items` read, so the `in.(...)` list never overflows the URL. */
+const ID_CHUNK = 100;
+
+/** PostgREST's default response cap; a page of exactly this many rows may have a successor. */
+const PAGE_SIZE = 1000;
+
 /**
- * Mutates list rows: each gets `incomplete_items` — counted for drafts in
- * one `line_items` read plus one scoping load, `0` for every other
+ * Mutates list rows: each gets `incomplete_items` — counted for drafts
+ * from their `line_items` plus one scoping load, `0` for every other
  * status. Hidden items count (the badge means "cannot be sent yet").
+ *
+ * The item read is bounded on both axes. Draft ids go out in chunks of
+ * {@link ID_CHUNK} (`/grouped` can list 500 orders, and a long `in.(...)`
+ * overflows the URL), and each chunk is paged with `range` in
+ * {@link PAGE_SIZE} rows (PostgREST silently truncates a response at
+ * 1000 rows, which would UNDERCOUNT). Pages use a stable
+ * `order_id, position` order so none repeats or skips a row.
+ *
+ * @throws Error when any read fails, so the list fails loudly rather
+ *         than showing a total that omits an incomplete item.
  */
 export async function attachIncompleteCounts(
   sb: SupabaseClient,
@@ -109,9 +125,23 @@ export async function attachIncompleteCounts(
   for (const o of orders) o.incomplete_items = 0;
   const draftIds = orders.filter((o) => o.status === 'draft').map((o) => String(o.id));
   if (draftIds.length === 0) return;
-  const { data, error } = await sb.from('line_items').select(LIST_COLUMNS).in('order_id', draftIds);
-  if (error) throw new Error(error.message);
-  const rows = (data ?? []) as unknown as (CompletenessInput & { order_id: string })[];
+  const rows: (CompletenessInput & { order_id: string })[] = [];
+  for (let i = 0; i < draftIds.length; i += ID_CHUNK) {
+    const chunk = draftIds.slice(i, i + ID_CHUNK);
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const { data, error } = await sb
+        .from('line_items')
+        .select(LIST_COLUMNS)
+        .in('order_id', chunk)
+        .order('order_id')
+        .order('position')
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) throw new Error(error.message);
+      const page = (data ?? []) as unknown as (CompletenessInput & { order_id: string })[];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) break;
+    }
+  }
   if (!rows.some((r) => r.item_type === 'blind')) return;
   const scope = await loadSlotScoping(sb, blindTypesOf(rows));
   const counts = new Map<string, number>();
