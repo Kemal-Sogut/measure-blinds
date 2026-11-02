@@ -117,6 +117,7 @@ import { useCustomer, useCustomerSearch } from '../../hooks/useCustomers';
 import { useOrderAppointment } from '../../hooks/useCalendar';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
+import { useLeaveGuard } from '../../hooks/useLeaveGuard';
 import {
   useBlindTypeDefaults,
   useCatalogList,
@@ -697,6 +698,37 @@ export default function OrderDetail() {
     }
   }, [id, existing, hydrated]);
 
+  /**
+   * A comparable snapshot of what Save would send — the editor's own
+   * render keys stripped — so "dirty" means an actual edit, not a
+   * re-render. Compared against `savedSnapshot`, set on hydrate and after
+   * every successful save.
+   */
+  const editorSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        customer: customer?.id ?? null,
+        orderDate: toIso(orderDate),
+        expiryDate: expiryDate ? toIso(expiryDate) : null,
+        title,
+        discountType,
+        discountValue,
+        items: items.map(({ key: _key, ...rest }) => ({
+          ...rest,
+          addons: rest.addons.map(({ key: _addonKey, ...a }) => a),
+        })),
+      }),
+    [customer, orderDate, expiryDate, title, discountType, discountValue, items]
+  );
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  // Baseline once the loaded order has hydrated (existing order) — a new
+  // order is dirty as soon as it has an item.
+  useEffect(() => {
+    if (id && hydrated && savedSnapshot === null) setSavedSnapshot(editorSnapshot);
+  }, [id, hydrated, savedSnapshot, editorSnapshot]);
+  const dirty = id ? savedSnapshot !== null && editorSnapshot !== savedSnapshot : items.length > 0;
+  useLeaveGuard(dirty);
+
   // Drop the pre-filled customer in once it arrives, and only if the
   // consultant hasn't already picked one — a later change or clear from
   // the picker is never undone. The ref keeps this to a single apply,
@@ -1081,6 +1113,7 @@ export default function OrderDetail() {
 
   /** Saves (create or update); resolves to the saved order id. */
   async function save(): Promise<string | null> {
+    const snapshotAtSave = editorSnapshot;
     const payload = buildOrderPayload({
       customer, orderDate, expiryDate, title, discountType, discountValue, items, catalogs, status,
     });
@@ -1092,6 +1125,7 @@ export default function OrderDetail() {
       const saved = id
         ? await updateMut.mutateAsync({ id, input: payload })
         : await createMut.mutateAsync(payload);
+      setSavedSnapshot(snapshotAtSave);
       // Carry the open section across the new-order → saved-order URL
       // change, but not `?customer=`, which only seeds a NEW order.
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
@@ -1260,6 +1294,7 @@ export default function OrderDetail() {
       // Hydration is keyed off the loaded order, so the editor must be
       // told to hydrate again for the copy it is about to show.
       setHydrated(false);
+      setSavedSnapshot(null);
       navigate(orderPath(copy));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
