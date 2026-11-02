@@ -39,6 +39,7 @@ import {
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
+  draftMissingFields,
 } from './lineItemDrafts';
 
 /**
@@ -360,6 +361,9 @@ export default function LineItemRow({
   // Whether the figure beside the padlock is the confirmed one rather
   // than a live calculation — see `isPriceLocked`.
   const locked = isPriceLocked(item);
+  // Open product decisions on this blind (spec 2026-11-02). Savable on a
+  // draft; Send and stage moves stay refused until this is empty.
+  const missing = draftMissingFields(item, catalogs);
   const name =
     item.item_type === 'blind'
       ? [item.room_name || `Blind ${index + 1}`, item.blinds_type].filter(Boolean).join(' — ')
@@ -459,6 +463,16 @@ export default function LineItemRow({
         {item.hidden && (
           <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
             Hidden
+          </span>
+        )}
+
+        {/* Amber, like the edit-request card: something to finish, not an error. */}
+        {missing.length > 0 && (
+          <span
+            title={`Still to decide: ${missing.join(', ')}`}
+            className="mt-0.5 max-w-[14rem] shrink-0 truncate rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 sm:mt-0"
+          >
+            Incomplete · {missing.join(', ')}
           </span>
         )}
 

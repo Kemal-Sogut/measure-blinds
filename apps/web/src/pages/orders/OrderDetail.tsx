@@ -143,6 +143,8 @@ import {
   type ItemDraft,
   type Catalogs,
   type PriceAdjustmentDraft,
+  draftMissingFields,
+  firstIncompleteDraftMessage,
 } from './lineItemDrafts';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
@@ -798,6 +800,20 @@ export default function OrderDetail() {
   const materialUsage = useMemo(() => summarizeMaterialUsage(items, catalogs), [items, catalogs]);
 
   const status = existing?.status ?? 'draft';
+  /**
+   * Visible items still incomplete — they price at $0, so the running
+   * total leaves them out and says so. Hidden ones are already outside
+   * the total; they still block Send (see `leaveDraftMessage`).
+   */
+  const incompleteVisible = useMemo(
+    () => items.filter((it) => !it.hidden && draftMissingFields(it, catalogs).length > 0).length,
+    [items, catalogs]
+  );
+  /** Why this draft cannot leave draft yet, or null. Only drafts are judged. */
+  const leaveDraftMessage = useMemo(
+    () => (status === 'draft' ? firstIncompleteDraftMessage(items, catalogs) : null),
+    [status, items, catalogs]
+  );
   // Orders are editable at every lifecycle stage — the Worker recomputes
   // totals authoritatively on every save, regardless of status.
   const readOnly = false;
@@ -1098,6 +1114,7 @@ export default function OrderDetail() {
    * it simply shows no link area.
    */
   async function openSend() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     if (!customer?.email) return toast.error('This customer has no email address.');
     setSendMessage('');
     setSendLink(null);
@@ -1200,6 +1217,12 @@ export default function OrderDetail() {
     const toIdx = STAGES.findIndex((s) => s.key === to);
     const confirmIdx = STAGES.findIndex((s) => s.key === 'awaiting_payment');
     const backward = toIdx < curIdx;
+    // Leaving draft forward is refused while anything is incomplete — say
+    // so before the confirm prompt and the save, not after.
+    if (!backward && toIdx >= STAGES.findIndex((s) => s.key === 'sent') && leaveDraftMessage) {
+      toast.error(leaveDraftMessage);
+      return;
+    }
     const prompt = backward
       ? curIdx >= confirmIdx && toIdx < confirmIdx
         ? `Reverse the confirmation and move this order back to "${label}"? Later-stage progress is cleared.`
@@ -1472,6 +1495,7 @@ export default function OrderDetail() {
   }
 
   async function handlePdf() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     const savedId = id ?? (await save());
     if (!savedId) return;
     try {
@@ -1602,6 +1626,11 @@ export default function OrderDetail() {
           ${totals.total.toFixed(2)}
         </span>
       </div>
+      {incompleteVisible > 0 && (
+        <p className="text-[12px] font-medium text-amber-700">
+          Total excludes {incompleteVisible} incomplete item{incompleteVisible === 1 ? '' : 's'}
+        </p>
+      )}
     </>
   );
 
