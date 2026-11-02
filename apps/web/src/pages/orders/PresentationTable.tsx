@@ -36,7 +36,8 @@
  * Columns for option types no visible blind carries are dropped entirely
  * rather than rendered full of dashes: an order of plain rollers should not
  * present a customer with four empty columns. That is independent of the
- * toggle — a column survives on whether any row NAMES an option, not on
+ * toggle — a column survives on whether any row NAMES an option, or has that
+ * choice still open on a draft (so the cell can say "To be decided"), not on
  * whether its price is showing. The table scrolls inside its own container
  * so the page body never scrolls sideways on a tablet.
  */
@@ -111,7 +112,8 @@ export default function PresentationTable({
   /**
    * Rows, their surviving column set, and every footer figure — recomputed
    * only when the visible items change. A column survives when at least one
-   * visible row fills it, so the table narrows as the filters narrow.
+   * visible row fills it OR has that choice still open (so the cell can read
+   * "To be decided"), so the table narrows as the filters narrow.
    *
    * `showBreakdown` is NOT a dependency here: every figure below is
    * computed either way and the toggle decides what is rendered. Folding it
@@ -120,9 +122,15 @@ export default function PresentationTable({
    */
   const { rows, columns, totals, addonsTotal, overall, quantityTotal, hasAddons, anyOpen } =
     useMemo(() => {
-      const rows = items.map((item) => ({ item, breakdown: describeLineBreakdown(item) }));
+      const rows = items.map((item) => ({
+        item,
+        breakdown: describeLineBreakdown(item),
+        missing: new Set(item.missing_fields ?? []),
+      }));
       const columns = OPTION_COLUMNS.filter((column) =>
-        rows.some((row) => row.breakdown.cells[column].name !== null)
+        rows.some(
+          (row) => row.breakdown.cells[column].name !== null || columnOpen(row.missing, column)
+        )
       );
       const totals = new Map<OptionColumn, number>();
       for (const column of columns) {
@@ -142,7 +150,7 @@ export default function PresentationTable({
         overall: Math.round(rows.reduce((sum, row) => sum + row.breakdown.lineTotal, 0) * 100) / 100,
         quantityTotal: rows.reduce((sum, row) => sum + (Number(row.item.quantity) || 0), 0),
         hasAddons: rows.some((row) => row.breakdown.addons !== 0),
-        anyOpen: rows.some((row) => (row.item.missing_fields ?? []).length > 0),
+        anyOpen: rows.some((row) => row.missing.size > 0),
       };
     }, [items]);
 
@@ -170,8 +178,7 @@ export default function PresentationTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-border-light">
-          {rows.map(({ item, breakdown }, i) => {
-            const missing = new Set(item.missing_fields ?? []);
+          {rows.map(({ item, breakdown, missing }, i) => {
             const open = missing.size > 0;
             return (
               <tr key={item.id}>
