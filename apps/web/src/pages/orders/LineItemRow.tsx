@@ -297,6 +297,10 @@ export interface LineItemRowProps {
   catalogs: Catalogs;
   /** Hides the checkbox and every action control, per `LineItemListProps.readOnly`. */
   readOnly: boolean;
+  /** True only while the order is a draft. Only a draft can hold an incomplete
+   *  item, so the "Incomplete" chip is shown for drafts alone — a sent or
+   *  confirmed order is never re-judged against today's Settings scoping. */
+  isDraft: boolean;
   /** Disables the Show/Hide menu item, per `LineItemListProps.postConfirm`. */
   postConfirm: boolean;
   /** Whether this row is checkbox-selected. */
@@ -346,6 +350,7 @@ export default function LineItemRow({
   isLast,
   catalogs,
   readOnly,
+  isDraft,
   postConfirm,
   selected,
   expanded,
@@ -363,7 +368,7 @@ export default function LineItemRow({
   const locked = isPriceLocked(item);
   // Open product decisions on this blind (spec 2026-11-02). Savable on a
   // draft; Send and stage moves stay refused until this is empty.
-  const missing = draftMissingFields(item, catalogs);
+  const missing = isDraft ? draftMissingFields(item, catalogs) : [];
   const name =
     item.item_type === 'blind'
       ? [item.room_name || `Blind ${index + 1}`, item.blinds_type].filter(Boolean).join(' — ')

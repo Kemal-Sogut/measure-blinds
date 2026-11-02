@@ -803,11 +803,16 @@ export default function OrderDetail() {
   /**
    * Visible items still incomplete — they price at $0, so the running
    * total leaves them out and says so. Hidden ones are already outside
-   * the total; they still block Send (see `leaveDraftMessage`).
+   * the total; they still block Send (see `leaveDraftMessage`). Only
+   * drafts are judged: a sent or confirmed order is never re-judged
+   * against today's Settings scoping, so this is 0 for them.
    */
   const incompleteVisible = useMemo(
-    () => items.filter((it) => !it.hidden && draftMissingFields(it, catalogs).length > 0).length,
-    [items, catalogs]
+    () =>
+      status === 'draft'
+        ? items.filter((it) => !it.hidden && draftMissingFields(it, catalogs).length > 0).length
+        : 0,
+    [status, items, catalogs]
   );
   /** Why this draft cannot leave draft yet, or null. Only drafts are judged. */
   const leaveDraftMessage = useMemo(
@@ -2235,6 +2240,7 @@ export default function OrderDetail() {
             items={items}
             catalogs={catalogs}
             readOnly={readOnly}
+            isDraft={status === 'draft'}
             postConfirm={postConfirm}
             selected={selected}
             onToggleSelect={toggleSelect}

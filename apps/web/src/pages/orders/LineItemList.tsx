@@ -58,6 +58,9 @@ export interface LineItemListProps {
   items: ItemDraft[];
   /** Material/hardware catalogs, needed to price blind drafts. */
   catalogs: Catalogs;
+  /** True only while the order is a draft; forwarded to each row so the
+   *  "Incomplete" chip never appears on a sent or confirmed order. */
+  isDraft: boolean;
   /** When true, hides the checkbox and every action control (edit,
    *  delete, and the 3-dot menu's show/hide/duplicate/move) — matches
    *  `OrderDetail.tsx`'s `const readOnly = false` (currently always
@@ -124,6 +127,7 @@ export default function LineItemList({
   items,
   catalogs,
   readOnly,
+  isDraft,
   postConfirm,
   selected,
   onToggleSelect,
@@ -198,6 +202,7 @@ export default function LineItemList({
                   isLast={i === items.length - 1}
                   catalogs={catalogs}
                   readOnly={readOnly}
+                  isDraft={isDraft}
                   postConfirm={postConfirm}
                   selected={selected.has(it.key)}
                   expanded={expanded.has(it.key)}
