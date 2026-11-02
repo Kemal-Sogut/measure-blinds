@@ -133,21 +133,26 @@ catches it — which is correct, and a stored flag would have missed.
 
 ### 3. The gates — leaving draft
 
-New helper in `apps/api/src/lib/orderCompleteness.ts`:
-`assertOrderComplete(sb, orderId): Promise<string | null>` — loads the order's line items
-and the slot scoping, returns `firstIncompleteMessage` or null.
+New helpers in `apps/api/src/lib/orderCompleteness.ts` (`incompleteMessageFor(sb, rows)`,
+`loadIncompleteMessage(sb, orderId)`) feed stored rows and today's slot scoping to
+`firstIncompleteMessage`; a route-local `leaveDraftRefusal(sb, order, rows?)` wraps them.
+
+**Every gate runs only while the order's CURRENT status is `draft`** (refined while planning).
+A sent or confirmed order is complete by the invariant and is never re-judged: otherwise a
+later Settings change (a type gaining a slot) would block the PDF, a resend or a stage move on
+an order confirmed long ago — a regression against today's behaviour.
 
 Called, before any side effect (before the email, before `freezeOrderPrices`, before the
 status write), returning `400 { error: message }`:
 
 | Route | Condition |
 |---|---|
-| `POST /:id/send` | always |
-| `POST /:id/mark-sent` | always |
-| `POST /:id/confirm` | always (accepts a draft today) |
-| `POST /:id/status` | when `to` is `sent` or later |
-| `GET /:id/pdf` | always (a PDF can be handed over, so it counts as sending) |
-| `PUT /:id` | when the order is not / does not stay `draft` (see §2) |
+| `POST /:id/send` | order is `draft` |
+| `POST /:id/mark-sent` | order is `draft` |
+| `POST /:id/confirm` | order is `draft` (it accepts a draft today) |
+| `POST /:id/status` | order is `draft` and `to` is `sent` or later |
+| `GET /:id/pdf` | order is `draft` (a PDF can be handed over, so it counts as sending) |
+| `PUT /:id` | the order is not / does not stay `draft` (see §2); judged in `resolveLineItems` only for items not held by a price lock, exactly as today's slot gate |
 
 Not gated, by the invariant: `/send-invoice`, `/payments*`, `/in-progress`, `/ready`,
 `/cut-done`, `/installed`, `/warranty*`, `/unconfirm`, `/revert`, and every `/public/*`
@@ -186,8 +191,8 @@ in place of the dollar figure. The count includes hidden items, because the badg
   "Total excludes 2 incomplete items" (counts VISIBLE items only — a hidden item is
   already excluded from the total; it still blocks Send, per the invariant). The staff editor still shows the total; staff need
   the running figure.
-- Send, Mark sent, Confirm, Progress-timeline moves to Sent or later, and Download PDF run
-  `firstIncompleteMessage` first and toast it without a request. The API remains the
+- Send, Progress-timeline moves to Sent or later (the web's only path to mark-sent/confirm),
+  and Download PDF run `firstIncompleteMessage` first, only while the order is a draft, and toast it without a request. The API remains the
   authority.
 
 ### 6. Present to Customer — `OrderPresentation.tsx`
