@@ -4,7 +4,7 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-11-02)
+## Where things stand
 
 **Current branch `feat/incomplete-draft-items` (not merged, not deployed, NO migration), web + api:**
 **incomplete draft items.** A draft estimate saves with blank blind type / material / height / panel width /
@@ -19,17 +19,11 @@ override kept). Completeness is judged only when the order tries to LEAVE draft:
 in a browser** (the local app talks to the live Supabase project). Write-up:
 `knowledge/history/engine_features.md` 2026-11-02; spec `knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
 
-## Previously (as of 2026-10-22)
-
-**Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
-to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the
-**Estimates** page (estimates grouped by customer, newest estimate's `created_at` first,
-collapsible groups); `/orders` is a confirmed-only **Orders** page; staff order URLs are
-`/<customer-slug>/<order-number>` (old `/orders/:id` links redirect); each customer has one
-link `/c/:token` listing live estimates and confirmed orders; the estimate email links it;
-estimates take an optional title. The Customers pages are unchanged. `/public` rate limit is
-now 20/min/IP. Migration 47 is live, so the deployed (old) code is unaffected and the new code
-can deploy any time. See `knowledge/history/engine_features.md` 2026-10-22.
+Also on local `main` (not pushed, not deployed; **migration 47 is applied** to
+`lgbxxlwsdeuhdgzrjjen`): multiple estimates per customer. `/` is the **Estimates** page (grouped by
+customer, newest first), `/orders` is confirmed-only, staff URLs are `/<customer-slug>/<order-number>`,
+and each customer has one link `/c/:token`; estimates take an optional title. Migration 47 is live,
+so the new code can deploy any time. See `knowledge/history/engine_features.md` 2026-10-22.
 
 **Merged to `main` (PR #54), web + api, migration 46 applied**: unread dots on
 Inbox rows, category tabs and the sidebar, plus a "New email" Notifications entry per received
