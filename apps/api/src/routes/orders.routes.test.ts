@@ -2974,3 +2974,109 @@ describe('incomplete draft items — saving (spec 2026-11-02)', () => {
     expect(messages.filter((m) => m.includes('price override'))).toEqual([]);
   });
 });
+
+describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', () => {
+  const future = () => new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  /** A Roller row with its scoped control still open. */
+  const OPEN_ROW = {
+    item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller', panels: [70], height_cm: 200,
+    material_id: MATERIAL.id, cassette_id: CASSETTE.id, bottom_rail_id: BOTTOM_RAIL.id, control_id: null,
+    installation_id: null, attributes: {}, quantity: 1, unit_price: 0, line_total: 0, base_unit_price: null,
+    material_name: 'Blackout White', cassette_name: 'Standard', bottom_rail_name: 'Regular', control_name: null,
+    addons: [], hidden: false, title: '', description: '', note: '', color: '', show_original_price: true,
+  };
+  const MESSAGE = 'Item 1 (Kitchen): choose a control option.';
+  const json = { 'Content-Type': 'application/json' };
+  const company = () => [{ company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 }];
+  /** A full order bundle, as `readDetail` returns it, for /send and /pdf. */
+  function bundle(status: string) {
+    return {
+      id: 'g1', status, order_number: 'F0307-126', order_date: new Date().toISOString().slice(0, 10), expiry_date: future(),
+      subtotal: 0, discount_amount: 0, taxable_amount: 0, tax_amount: 0, total: 0, tax_rate: 0.13,
+      public_token: 'tok', terms_snapshot: null, line_items: [OPEN_ROW], payments: [], customer_id: 'c1',
+      customer: { first_name: 'A', last_name: 'B', email: 'a@example.com', phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true, billing_address_line1: '', billing_address_line2: '', billing_city: '', billing_province: '', billing_postal_code: '' },
+    };
+  }
+  /** Asserts the transition had no side effect at all. */
+  function expectUntouched() {
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.update');
+  }
+
+  it('/send refuses a draft with an incomplete item before emailing', async () => {
+    db.responses['orders.select'] = [bundle('draft')];
+    db.responses['company_settings.select'] = company();
+    const realFetch = globalThis.fetch;
+    let resendHits = 0;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes('api.resend.com')) resendHits += 1;
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      const res = await ordersApp.request('/g1/send', { method: 'POST' }, ENV);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: MESSAGE });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(resendHits).toBe(0);
+    expectUntouched();
+  });
+
+  it('/pdf refuses a draft with an incomplete item', async () => {
+    db.responses['orders.select'] = [bundle('draft')];
+    db.responses['company_settings.select'] = company();
+    const res = await ordersApp.request('/g1/pdf', { method: 'GET' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+  });
+
+  it('/pdf is NOT re-judged once the order has left draft', async () => {
+    // A sent order is complete by the invariant; a later Settings change
+    // must never block its documents.
+    db.responses['orders.select'] = [bundle('sent')];
+    db.responses['company_settings.select'] = company();
+    const res = await ordersApp.request('/g1/pdf', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it('/mark-sent refuses', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', expiry_date: future() }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/mark-sent', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+    expectUntouched();
+  });
+
+  it('/confirm refuses a draft', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft' }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expectUntouched();
+  });
+
+  it.each(['sent', 'installed'])('/status draft → %s refuses', async (to) => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', sent_at: null, confirmed_at: null, installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to }), headers: json }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+    expectUntouched();
+  });
+
+  it('/status from a non-draft stage is never re-judged', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'in_progress', sent_at: 'x', confirmed_at: 'x', installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to: 'ready' }), headers: json }, ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it('/status sent → draft stays allowed', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'sent', sent_at: 'x', confirmed_at: null, installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to: 'draft' }), headers: json }, ENV);
+    expect(res.status).toBe(200);
+  });
+});

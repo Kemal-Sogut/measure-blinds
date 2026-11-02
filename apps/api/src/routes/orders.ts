@@ -82,7 +82,8 @@ import type {
   PriceBasis,
 } from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
-import { incompleteMessage, missingFields } from '../lib/lineItemCompleteness';
+import { incompleteMessage, missingFields, type CompletenessInput } from '../lib/lineItemCompleteness';
+import { incompleteMessageFor, loadIncompleteMessage } from '../lib/orderCompleteness';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { lockApplies, pricingFingerprint, type PriceLockInput } from '../lib/priceLock';
@@ -1620,6 +1621,23 @@ async function toPdfData(
 }
 
 /**
+ * The leave-draft gate (spec 2026-11-02): a 400 body naming the first
+ * incomplete item while the order is a DRAFT, or null to proceed. Never
+ * consulted for any other status — a sent or confirmed order is complete
+ * by the invariant, and must not be re-judged against a later Settings
+ * change. `rows` is passed when the caller already holds them.
+ */
+async function leaveDraftRefusal(
+  sb: SupabaseClient,
+  order: { id: string; status: string },
+  rows?: readonly CompletenessInput[]
+): Promise<{ error: string } | null> {
+  if (order.status !== 'draft') return null;
+  const message = rows ? await incompleteMessageFor(sb, rows) : await loadIncompleteMessage(sb, order.id);
+  return message ? { error: message } : null;
+}
+
+/**
  * Streams the order as a downloadable PDF (Estimate, or Invoice once paid).
  *
  * The document carries the customer's order-page button, so this GET
@@ -1634,6 +1652,8 @@ app.get('/:id/pdf', async (c) => {
   const id = c.req.param('id');
   const bundle = await loadOrderBundle(sb, id);
   if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const refusal = await leaveDraftRefusal(sb, bundle.order, bundle.order.line_items as CompletenessInput[]);
+  if (refusal) return c.json(refusal, 400);
   const terms = bundle.order.terms_snapshot ?? bundle.company.terms_and_conditions ?? '';
 
   const publicToken: string = bundle.order.public_token ?? crypto.randomUUID();
@@ -1692,6 +1712,8 @@ app.post('/:id/send', async (c) => {
   if (order.expiry_date < today) {
     return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
   }
+  const refusal = await leaveDraftRefusal(sb, order, order.line_items as CompletenessInput[]);
+  if (refusal) return c.json(refusal, 400);
   const email = order.customer?.email;
   if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
 
@@ -1807,6 +1829,8 @@ app.post('/:id/mark-sent', async (c) => {
   if (existing.expiry_date < today) {
     return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
   }
+  const refusal = await leaveDraftRefusal(sb, existing);
+  if (refusal) return c.json(refusal, 400);
 
   // Handed over in person is still handed over: the prices freeze here
   // exactly as they do on a real `/send`.
@@ -1961,6 +1985,8 @@ app.post('/:id/confirm', async (c) => {
   if (!EDITABLE.includes(existing.status)) {
     return c.json({ error: `Order is already ${existing.status}.` }, 409);
   }
+  const refusal = await leaveDraftRefusal(sb, existing);
+  if (refusal) return c.json(refusal, 400);
   // Normally a no-op: a `sent` order froze its prices when the estimate
   // went out. It still runs because `/confirm` also accepts a `draft`
   // order — confirmed over the phone, never formally sent — and that
@@ -2782,6 +2808,11 @@ app.post('/:id/status', async (c) => {
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
   if (existing.status === to) return c.json({ error: `Order is already ${to}.` }, 409);
+  // Moving forward OUT of draft is gated; moving back to draft never is.
+  if (STAGE_ORDER.indexOf(to) >= STAGE_ORDER.indexOf('sent')) {
+    const refusal = await leaveDraftRefusal(sb, existing);
+    if (refusal) return c.json(refusal, 400);
+  }
 
   const { error } = await sb
     .from('orders')
