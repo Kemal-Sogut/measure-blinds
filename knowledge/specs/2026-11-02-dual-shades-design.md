@@ -88,6 +88,11 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
   leg equals `usage.quantity × (front_rate + back_rate)`, so the parity table row uses the
   combined rate.
 
+- **`back_color` is display-only.** `BaseBlindType` gains `displayOnlyKeys: string[]`
+  (`[]` by default). Both `priceLock.ts` twins drop those keys from the fingerprint, the same
+  way they drop catalog snapshot keys, so editing a back colour on a confirmed order does not
+  break its price lock — exactly as editing the front `color` column never has.
+
 ### 3. Documents
 
 `describeAttributes` returns, in order: `Back fabric` (snapshot name) and, if set,
@@ -105,6 +110,11 @@ Same layout as `RollerForm`, with the Options section showing:
   `attributes.back_color`; the fabric list is `materialsForType(catalogs, 'Dual Shades')`,
   identical to the front list.
 - `HardwareRow` unchanged.
+- The back pair is a reusable `AttributeMaterialAndColor` in `fields.tsx`, also rendered by
+  the bulk-add sheet's `SectionAttributes` for a Dual section (the two are a matching pair,
+  per that component's own doc), so a bulk-added Dual window can carry its back fabric.
+- The live preview (`blindDraftInputs`) returns null while a required attribute is empty,
+  so the editor never shows a price the save would refuse.
 
 Registered in `blindForms/index.ts`. `catalogResolver` in `lineItemDrafts.ts` (the only
 table → list mapping on the client) gains a `materials` entry
@@ -113,18 +123,18 @@ preview resolves the back fabric exactly as the Worker does.
 
 ### 5. Material usage panel (`apps/web/src/pages/orders/materialUsage.ts`)
 
-For a line whose type declares a back fabric (`blindType instanceof DualShadesBlindType`
-via a small exported helper, never a name compare), push the same `describeMaterialUsage`
-quantity into a SECOND row keyed by the back material id. The back line's `key` is the line-draft key
+For every `catalogRefs` entry whose `table` is `materials` (generic — no type check, no
+name compare; today only Dual's `back_material_id`), push the same `describeMaterialUsage`
+quantity into an extra row keyed by that referenced material id. The back line's `key` is the line-draft key
 suffixed with `:back`, so per-window selection stays unique and the
 row-equals-sum-of-lines identity holds for both rows.
 
 ### 6. Tests
 
 - Both `pricing.test.ts` suites:
-  - Worked example: 1 panel, 100 × 100 cm (≥ minimums), front $20/m², back $30/m²,
-    per-unit motor $150, per-unit bottom rail $10, per-unit cassette $25
-    → material 50 + control 300 + rail 20 + cassette 25 = **$395**.
+  - Worked example: 1 panel, 100 × 200 cm (at or above both minimums), front $20/m²,
+    back $30/m², per-unit motor $150, per-unit bottom rail $10, per-unit cassette $25
+    → material 2 m² × 50 = 100 + control 300 + rail 20 + cassette 25 = **$445**.
   - Per-panel control on a 2-panel Dual is doubled; cassette and installation are not.
   - Missing back price (old/absent snapshot) prices the back leg at 0, not NaN.
   - New row in the material-leg ≈ usage × rate parity table using the combined rate.
