@@ -26,6 +26,12 @@ import { calculateBlindUnitPriceForType, type BlindInputs } from '../../lib/pric
 import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { lockApplies, type PriceLock, type PriceLockInput } from '../../lib/priceLock';
 import { getBlindType } from '../../lib/blindTypes';
+import {
+  firstIncompleteMessage,
+  missingFields,
+  type CompletenessInput,
+  type CompletenessScope,
+} from '../../lib/lineItemCompleteness';
 import type {
   BlindAttributes,
   CatalogResolver,
@@ -317,6 +323,55 @@ export function slotsForType(catalogs: Catalogs, blindsType: string): Set<Catalo
   if (has(catalogs.controls)) out.add('control');
   if (has(catalogs.installationOptions)) out.add('installation');
   return out;
+}
+
+/**
+ * The completeness scope over the editor's cached catalogs — the SAME
+ * `slotsForType` rule the form renders from, so a chip, a pre-check and
+ * the Worker's gate (which uses `loadSlotScoping`) agree.
+ */
+export function scopeFromCatalogs(catalogs: Catalogs): CompletenessScope {
+  return {
+    isKnownType: (name) => catalogs.blindTypes.some((t) => t.name === name),
+    usesSlot: (name, slot) => slotsForType(catalogs, name).has(slot),
+  };
+}
+
+/**
+ * A draft as the completeness rule reads it: typed text parsed with
+ * `parsePositive` (blank → null), blank ids → null. A TYPED garbage
+ * measurement also parses to null and so reads as missing here; it never
+ * gets that far on save, because `buildOrderPayload` rejects it first.
+ */
+export function draftCompletenessInput(draft: ItemDraft): CompletenessInput {
+  if (draft.item_type !== 'blind') return { item_type: draft.item_type };
+  return {
+    item_type: 'blind',
+    room_name: draft.room_name,
+    blinds_type: draft.blinds_type.trim(),
+    panels: draft.panels.map(parsePositive),
+    height_cm: parsePositive(draft.height_cm),
+    material_id: draft.material_id || null,
+    cassette_id: draft.cassette_id || null,
+    bottom_rail_id: draft.bottom_rail_id || null,
+    control_id: draft.control_id || null,
+    installation_id: draft.installation_id || null,
+    attributes: draft.attributes,
+  };
+}
+
+/** Open fields of one draft, in message order; `[]` when complete or flat. */
+export function draftMissingFields(draft: ItemDraft, catalogs: Catalogs): string[] {
+  return missingFields(draftCompletenessInput(draft), scopeFromCatalogs(catalogs));
+}
+
+/**
+ * The first incomplete draft's message ("Item 3 (Kitchen): choose a
+ * control option."), or null. The editor's pre-check before Send, a
+ * stage move or a PDF; the Worker refuses the same cases regardless.
+ */
+export function firstIncompleteDraftMessage(drafts: ItemDraft[], catalogs: Catalogs): string | null {
+  return firstIncompleteMessage(drafts.map(draftCompletenessInput), scopeFromCatalogs(catalogs));
 }
 
 /**
@@ -703,13 +758,20 @@ function adjustedDraftPrice(
  * report with a confident area figure, and sharing this function is what
  * guarantees that.
  *
- * Which hardware slots are REQUIRED comes from `slotsForType`, the same
- * scoping the form renders from and the Worker validates against: a slot
- * the selected type does not use contributes nothing rather than
- * blocking, because Curtains has neither a cassette nor a bottom rail
- * scoped to it and would otherwise never resolve.
+ * Completeness — which fields must be filled — is `draftMissingFields`,
+ * the twin rule the Worker gates on; the checks below remain for ids that
+ * no longer resolve in the cache. Which hardware slots are REQUIRED comes
+ * from `slotsForType`, the same scoping the form renders from and the
+ * Worker validates against: a slot the selected type does not use
+ * contributes nothing rather than blocking, because Curtains has neither
+ * a cassette nor a bottom rail scoped to it and would otherwise never
+ * resolve.
  */
 export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindInputs | null {
+  // Incomplete (spec 2026-11-02) → no price, exactly as the Worker
+  // stores it at $0. This also covers a blank type and a required
+  // attribute, which the checks below never looked at.
+  if (draftMissingFields(draft, catalogs).length > 0) return null;
   const blindType = getBlindType(draft.blinds_type);
   const uses = slotsForType(catalogs, draft.blinds_type);
   const panels = draft.panels.map(parsePositive);

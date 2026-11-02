@@ -51,6 +51,7 @@ import {
 } from '../../lib/optionBreakdown';
 import { Td, Tf, Th, UnitPrice } from './presentationCells';
 import { money } from './presentationMoney';
+import { measuredWidths } from '../../lib/lineItemCompleteness';
 import type { LineItem } from '../../types';
 
 /**
@@ -59,7 +60,7 @@ import type { LineItem } from '../../types';
  * as arithmetic with the wrong precedence.
  */
 function size(item: LineItem): string {
-  const widths = item.panels.filter((w) => w > 0);
+  const widths = measuredWidths(item.panels);
   if (widths.length === 0 || item.height_cm === null) return '—';
   const width = widths.length > 1 ? `(${widths.join(' + ')})` : `${widths[0]}`;
   return `${width} × ${item.height_cm}`;

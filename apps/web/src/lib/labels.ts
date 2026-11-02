@@ -19,13 +19,14 @@
  */
 
 import { displayName } from './customerName';
+import { measuredWidths } from './lineItemCompleteness';
 
 /** The subset of a line-item row this module reads. */
 export interface LabelLineItem {
   item_type: string;
   position: number;
   room_name: string;
-  panels: number[];
+  panels: readonly (number | null)[];
   height_cm: number | null;
   material_name: string | null;
   color: string;
@@ -130,7 +131,7 @@ function shortDate(iso: string): string {
  * half-measured blind still prints what IS known instead of nothing.
  */
 function dimensionsOf(item: LabelLineItem): string {
-  const widths = item.panels.length ? item.panels.join(' + ') : '';
+  const widths = measuredWidths(item.panels).join(' + ');
   const drop = item.height_cm === null ? '' : String(item.height_cm);
   if (widths && drop) return `${widths} x ${drop} cm`;
   if (widths) return `${widths} cm`;

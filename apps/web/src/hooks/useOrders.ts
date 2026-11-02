@@ -78,14 +78,15 @@ export interface BlindItemInput extends AdjustmentInputFields, ItemIdentityField
   item_type: 'blind';
   room_name: string;
   blinds_type: string;
-  panels: number[];
-  height_cm: number;
-  material_id: string;
+  panels: (number | null)[];
+  height_cm: number | null;
+  material_id: string | null;
   /**
    * Hardware slots, each null when the selected blind type has no option
    * of that catalog scoped to it in Settings — which is also when the
-   * form hides the dropdown. Sending an id for an unused slot is a 400,
-   * and so is omitting one for a used slot (see `resolveLineItems`).
+   * form hides the dropdown. Sending an id for an unused slot is a 400;
+   * leaving a used one empty makes the item incomplete — allowed only on
+   * a draft (spec 2026-11-02).
    */
   cassette_id: string | null;
   bottom_rail_id: string | null;

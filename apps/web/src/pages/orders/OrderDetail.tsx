@@ -111,10 +111,6 @@ import {
   useOrderPublicToken,
   downloadOrderPdf,
   downloadWarrantyPdf,
-  type OrderInput,
-  type LineItemInput,
-  type AdjustmentInputFields,
-  type ItemIdentityFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomer, useCustomerSearch } from '../../hooks/useCustomers';
@@ -137,15 +133,9 @@ import { arrayMove } from '@dnd-kit/sortable';
 import {
   blindDraftPrice,
   bulkEditSelection,
-  canOverridePrice,
   flatDraftPrice,
   newBlindDraft,
-  parseAddons,
-  parseDraftAttributes,
-  parseOverride,
-  parsePositive,
   pruneSelection,
-  slotsForType,
   NO_ADJUSTMENTS,
   type BlindDraft,
   type BlindDraftDefaults,
@@ -157,6 +147,7 @@ import {
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import { buildOrderPayload, toIso } from './orderPayload';
 import BulkAddSheet from './BulkAddSheet';
 import EditRequestsCard from './EditRequestsCard';
 import OrderActivityLog from './OrderActivityLog';
@@ -263,11 +254,6 @@ function SectionIcon({ accent, d }: { accent: CardAccent; d: string }) {
   );
 }
 
-/** Formats a Date as the API's YYYY-MM-DD. */
-function toIso(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 /** Parses YYYY-MM-DD as a local Date (no UTC shift). */
 function fromIso(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
@@ -285,7 +271,7 @@ function toDrafts(order: Order): ItemDraft[] {
         item_type: 'blind',
         room_name: li.room_name,
         blinds_type: li.blinds_type,
-        panels: li.panels.map(String),
+        panels: li.panels.map((p) => (p === null ? '' : String(p))),
         height_cm: String(li.height_cm ?? ''),
         material_id: li.material_id ?? '',
         cassette_id: li.cassette_id ?? '',
@@ -1072,155 +1058,11 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  /**
-   * Validates drafts and builds the API payload.
-   * Returns a string error message when something is incomplete.
-   */
-  function buildPayload(): OrderInput | string {
-    if (!customer) return 'Select a customer first.';
-    if (!expiryDate) return 'Pick an expiry date.';
-    const line_items: LineItemInput[] = [];
-
-    /**
-     * The three adjustment fields, validated once for any item type.
-     * Returns a message string when the override does not parse, matching
-     * this function's error convention.
-     *
-     * `unit_price_override` is left OFF the payload where the item cannot
-     * be overridden — the Worker rejects the field on a custom item.
-     */
-    function adjustmentsFor(it: ItemDraft, index: number): AdjustmentInputFields | string {
-      const override = parseOverride(it.unit_price_override);
-      if (!override.valid) return `Item ${index + 1}: enter a valid override price.`;
-      return {
-        ...(canOverridePrice(it) ? { unit_price_override: override.value } : {}),
-        show_original_price: it.show_original_price,
-        addons: parseAddons(it.addons),
-      };
-    }
-    /**
-     * Identity and visibility, as the API expects them.
-     *
-     * `uid` is OMITTED for an item that has never been saved — the
-     * Worker mints one then — and round-tripped verbatim otherwise, since
-     * it is what the Worker diffs visibility against on a confirmed
-     * order.
-     */
-    function identityFor(it: ItemDraft): ItemIdentityFields {
-      return { ...(it.uid ? { uid: it.uid } : {}), hidden: it.hidden };
-    }
-    for (const [i, it] of items.entries()) {
-      if (it.item_type === 'blind') {
-        const panels = it.panels.map(parsePositive);
-        const height = parsePositive(it.height_cm);
-        const qty = parsePositive(it.quantity);
-        if (panels.some((p) => p === null) || !panels.length)
-          return `Item ${i + 1}: enter every panel width.`;
-        if (!height) return `Item ${i + 1}: enter a height.`;
-        // Which hardware a blind needs comes from the SCOPING, the same
-        // rule the form renders from and the Worker validates against:
-        // Curtains has no cassette scoped to it, and demanding one here
-        // would make a curtain unsavable.
-        const uses = slotsForType(catalogs, it.blinds_type);
-        if (!it.material_id) return `Item ${i + 1}: choose a material.`;
-        if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
-        if (uses.has('bottom_rail') && !it.bottom_rail_id)
-          return `Item ${i + 1}: choose a bottom rail.`;
-        if (uses.has('control') && !it.control_id)
-          return `Item ${i + 1}: choose a control option.`;
-        if (uses.has('installation') && !it.installation_id)
-          return `Item ${i + 1}: choose an installation option.`;
-        if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        // Convert once, here. Failing now gives a readable message instead
-        // of a 400 from the server's own re-parse.
-        const attributes = parseDraftAttributes(it);
-        if (attributes === null)
-          return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
-        const adj = adjustmentsFor(it, i);
-        if (typeof adj === 'string') return adj;
-        line_items.push({
-          item_type: 'blind',
-          room_name: it.room_name.trim(),
-          blinds_type: it.blinds_type.trim(),
-          panels: panels as number[],
-          height_cm: height,
-          material_id: it.material_id,
-          // Null, not '' — the API accepts a uuid or null for a slot the
-          // type does not use, and rejects an id for one it does not.
-          cassette_id: it.cassette_id || null,
-          bottom_rail_id: it.bottom_rail_id || null,
-          control_id: it.control_id || null,
-          installation_id: it.installation_id || null,
-          color: it.color.trim(),
-          note: it.note.trim(),
-          attributes,
-          quantity: Math.round(qty),
-          ...adj,
-          ...identityFor(it),
-        });
-      } else {
-        const qty = parsePositive(it.quantity);
-        const unit = Number(it.unit_price);
-        if (!it.title.trim() && !it.description.trim())
-          return `Item ${i + 1}: enter a title or a description.`;
-        if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        const adj = adjustmentsFor(it, i);
-        if (typeof adj === 'string') return adj;
-        if (it.item_type === 'preset' && it.preset_id) {
-          // Priced by the Worker from the catalog. Sending a figure would
-          // be ignored, and sending one that disagreed would be a lie the
-          // consultant could read on screen.
-          line_items.push({
-            item_type: 'preset',
-            preset_id: it.preset_id,
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            ...adj,
-            ...identityFor(it),
-          });
-        } else if (it.item_type === 'preset') {
-          // Legacy preset: no provenance, so its stored price still
-          // travels and the Worker keeps honouring it.
-          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-          line_items.push({
-            item_type: 'preset',
-            preset_id: null,
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            unit_price: unit,
-            ...adj,
-            ...identityFor(it),
-          });
-        } else {
-          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-          line_items.push({
-            item_type: 'custom',
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            unit_price: unit,
-            ...adj,
-            ...identityFor(it),
-          });
-        }
-      }
-    }
-    return {
-      customer_id: customer.id,
-      order_date: toIso(orderDate),
-      expiry_date: toIso(expiryDate),
-      title: title.trim() === '' ? null : title.trim(),
-      discount_type: discountType,
-      discount_value: Number(discountValue) || 0,
-      line_items,
-    };
-  }
-
   /** Saves (create or update); resolves to the saved order id. */
   async function save(): Promise<string | null> {
-    const payload = buildPayload();
+    const payload = buildOrderPayload({
+      customer, orderDate, expiryDate, title, discountType, discountValue, items, catalogs, status,
+    });
     if (typeof payload === 'string') {
       toast.error(payload);
       return null;
