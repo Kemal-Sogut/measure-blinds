@@ -4,7 +4,22 @@
 > changes; don't append. Full change history lives in `knowledge/history/engine_features.md`
 > and `knowledge/history/bug_fixes.md`.
 
-## Where things stand (as of 2026-10-22)
+## Where things stand (as of 2026-11-02)
+
+**Current branch `feat/incomplete-draft-items` (not merged, not deployed, NO migration), web + api:**
+**incomplete draft items.** A draft estimate saves with blank blind type / material / height / panel width /
+cassette / bottom rail / control / installation / required attribute (stored at `line_total 0`, add-ons and
+override kept). Completeness is judged only when the order tries to LEAVE draft: `/send`, `/mark-sent`,
+`/confirm`, `/status` to sent-or-later and `GET /pdf` refuse with a 400 + message while the order is `draft`
+(the editor pre-checks first). Sent and confirmed orders are never re-judged. The editor shows an amber
+"Incomplete" chip per item and "Total excludes N incomplete item(s)" (drafts only); the Present view shows
+"To be decided" and hides totals; lists show an Incomplete badge instead of a draft's partial total;
+`useLeaveGuard` confirms before leaving the order page with unsaved edits. The single rule is the twinned
+`lib/lineItemCompleteness.ts`. Verified by tests and type-checks (api 703, web 543, lint clean); **never seen
+in a browser** (the local app talks to the live Supabase project). Write-up:
+`knowledge/history/engine_features.md` 2026-11-02; spec `knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
+
+## Previously (as of 2026-10-22)
 
 **Newest, merged to local `main` (not pushed, not deployed), web + api; MIGRATION 47 APPLIED
 to `lgbxxlwsdeuhdgzrjjen` on 2026-10-22:** multiple estimates per customer. `/` is now the

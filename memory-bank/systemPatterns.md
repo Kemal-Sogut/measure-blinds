@@ -314,6 +314,21 @@ section as the reference implementation for future collapsible UI.
   visible order's own token, and the existing `/public/estimate/:token` routes stay the only
   place a customer acts on an order. Visibility rules live in `lib/customerPortal.ts`.
 
+## Incomplete draft items (2026-11-02)
+- **LOCKED: incomplete items only exist on drafts.** Gates (`/send`, `/mark-sent`, `/confirm`, `/status` to
+  sent-or-later, `GET /pdf`) run ONLY while the order's CURRENT status is `draft`, before any side effect. A
+  sent or confirmed order is never re-judged against today's Settings scoping, and the editor's chip / total
+  note show on drafts only for the same reason.
+- `lib/lineItemCompleteness.ts` (api and web twins, byte-identical code and tests) is the single rule for what
+  is missing; messages are `Item N (Room): choose a <thing>.` Do not re-implement the check in a component or a
+  route. A type's required attributes come from `BaseBlindType.requiredAttributes`.
+- An incomplete blind is stored at `line_total 0` (add-ons and override kept) via
+  `resolveLineItems(..., allowIncomplete)`; it never previews a price (`blindDraftInputs` returns null) and is
+  excluded from Material usage. Every `line_items` insert row still carries the same column set.
+- Reads annotate (`incomplete_items`, per-line `missing_fields`); list counts chunk ids by 100 and page 1000 rows.
+- Money surfaces never show a partial total for an open draft: lists show `IncompleteBadge`, Present shows
+  "Total available once every item is complete."
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
 2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent

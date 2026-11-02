@@ -1,5 +1,72 @@
 # Engine Features / Feature History
 
+## 2026-11-02 — Incomplete draft items: drafts save with open choices, completeness is checked on the way out of draft
+A draft estimate can now be saved with a blind that still has a blank blind type, material, height, panel width,
+cassette, bottom rail, control or installation choice (and with a blank required type attribute). The consultant
+no longer hits a dead end on site; the order is only refused when it tries to LEAVE draft. Spec
+`knowledge/specs/2026-11-02-incomplete-draft-items-design.md`, plan
+`knowledge/plans/2026-11-02-incomplete-draft-items.md`. Branch `feat/incomplete-draft-items`
+(commits `f6d8781`..`4b37eb2`), **not merged, not deployed. No database migration.**
+
+- **One rule, two twins.** `lib/lineItemCompleteness.ts` exists byte-identical in `apps/api` and `apps/web`
+  (with byte-identical tests): `missingFields`, `firstIncompleteMessage`, `countIncomplete`, `measuredWidths`,
+  `SLOT_NOUNS`. `BaseBlindType` (both `blindTypes/base.ts` twins) gained `requiredAttributes` /
+  `missingRequiredAttribute`. Messages read `Item N (Room): choose a material.` (room omitted when blank).
+- **Save (Worker).** The blind schema accepts null `material_id` / `height_cm` / panel entries.
+  `resolveLineItems(..., allowIncomplete)` stores an incomplete blind at `line_total 0`, keeping its add-ons and
+  any manual override (`base_unit_price 0`). Allowed only when the order is, or is being revived to, `draft`.
+  Non-draft saves still refuse, and their wording changed from "a X option is required" to "choose a X option".
+  `toDuplicateInput` is null-safe, so a draft with open items duplicates.
+- **Leave-draft gates (draft only).** `lib/orderCompleteness.ts` plus the route-local `leaveDraftRefusal`:
+  `/send`, `/mark-sent`, `/confirm`, `/status` (to sent or later) and `GET /pdf` answer 400 with the first
+  message, before any side effect, and ONLY while the order's current status is `draft`. A sent / confirmed
+  order is never re-judged against today's Settings scoping.
+- **Reads.** `readDetail` and `/by-number` add `incomplete_items` and a per-line `missing_fields`; `GET /` and
+  `/grouped` attach `incomplete_items`, counted with ids chunked by 100 and rows paged 1000 at a time
+  (PostgREST's row cap would otherwise silently undercount).
+- **Editor (web).** An amber "Incomplete · …" chip per item and a pricing-panel note "Total excludes N
+  incomplete item(s)"; Send, PDF and forward stage moves pre-check and show the first message. Payload
+  building moved out of `OrderDetail.tsx` into `pages/orders/orderPayload.ts` (`buildOrderPayload`, `toIso`)
+  with tests. `LineItem.panels` is `(number|null)[]`, read through `measuredWidths`. `lineItemDrafts.ts` gained
+  `scopeFromCatalogs`, `draftCompletenessInput`, `draftMissingFields`, `firstIncompleteDraftMessage`;
+  `blindDraftInputs` returns null for an incomplete draft, so it previews no price and is left out of Material usage.
+- **Present view.** Open choices read "To be decided"; money cells are blank on open rows; the footer money and
+  the order strip are replaced by "Total available once every item is complete."
+- **Lists.** Estimates groups, the Orders list (both breakpoints) and the appointment wizard show an
+  `IncompleteBadge` instead of a draft's partial total.
+- **Leave guard.** `hooks/useLeaveGuard.ts`: `beforeunload` plus a capture-phase same-origin link-click confirm
+  ("You have unsaved changes. Leave without saving?") while the order editor differs from its saved baseline.
+  The browser Back button is not intercepted (accepted limit).
+- **Behaviour change (approved):** a BLANK blind type now counts as incomplete (it used to save as an empty
+  string and price as nothing).
+
+### Decisions made during implementation
+- The chip and the total note show on DRAFTS ONLY. Sent and confirmed orders are never re-judged, matching the
+  Worker's gates (user decision during execution).
+- The Present view keeps an option column visible whenever any row has that choice still open, so "To be
+  decided" has somewhere to show.
+- List counts are bounded: ids chunked by 100, rows paged 1000 at a time, rather than one unbounded `in()`.
+- Three existing API route tests were rewritten rather than patched, because they asserted the old save-time
+  refusal: "rejects a blind with no bottom rail chosen", "requires a control while one is still scoped" and
+  "still requires a cassette" now assert that a draft saves the blind at $0 (the sent-order bottom-rail refusal
+  is a new, separate test).
+- `bulkAdd.ts`'s doc comment (which said completeness is enforced at save) was corrected to say it is enforced
+  when the order leaves draft.
+
+### Files
+API: `lib/lineItemCompleteness.ts`(+test), `lib/orderCompleteness.ts`(+test), `lib/blindTypes/{base,index}.ts`,
+`lib/orderDuplicate.ts`, `routes/orders.ts`(+routes test). Web: `lib/lineItemCompleteness.ts`(+test),
+`lib/blindTypes/{base,index}.ts`, `hooks/useLeaveGuard.ts`(+test), `hooks/useOrders.ts`,
+`components/IncompleteBadge.tsx`, `pages/orders/{orderPayload,lineItemDrafts,OrderDetail,LineItemRow,
+LineItemList,OrderList,OrderPresentation,PresentationTable,bulkAdd}.ts(x)`, `pages/estimates/EstimateGroup.tsx`,
+`pages/calendar/AppointmentWizard.tsx`, `pages/customer-view/CustomerView.tsx`, `types/index.ts`.
+
+### Verified
+`pnpm --filter ./apps/api check` clean, `test` 703/703; `pnpm --filter ./apps/web check` clean, `test` 543/543,
+`lint` 0 errors (one existing `public/embed/lead-form.js` unused-function warning, not from this work). The two
+`lineItemCompleteness.ts` twins diff clean. **Not verified in a browser:** the local app talks to the live
+Supabase project, so no editor, Present, list or leave-guard screen has been seen rendered.
+
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec
 `knowledge/specs/2026-10-20-customer-hub-multi-estimate-design.md`, plan

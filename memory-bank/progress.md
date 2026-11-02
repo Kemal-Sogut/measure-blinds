@@ -6,6 +6,12 @@
 
 ## What Works
 
+**Incomplete draft items, on `feat/incomplete-draft-items` (no migration):** a draft saves with open blind choices
+or measurements (stored at $0); the order is only refused when it tries to leave draft (Send, Mark sent, Confirm,
+a stage move to Sent+, the PDF), by the editor first and the Worker regardless. Sent and confirmed orders keep
+today's behaviour exactly. Editor chip and total note, Present "To be decided", list badge and the unsaved-changes
+leave guard are in. Tests and type-checks pass (api 703, web 543); see the known issue below about browser checks.
+
 **Multiple estimates per customer, merged to local `main` (migration 47 applied):** estimates grouped by customer
 on the home page (newest estimate first), a confirmed-only Orders page, optional estimate
 titles, `/<customer-slug>/<order-number>` staff URLs, and one customer link (`/c/:token`) that
@@ -253,6 +259,10 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
+- **Incomplete draft items is not merged or deployed and has never been seen in a browser.** The local app
+  talks to the live Supabase project, so the editor chip, total note, Present "To be decided", list badges and
+  the leave guard are verified by tests only. The leave guard does not intercept the browser Back button
+  (accepted limit). Deploy the API before the web.
 - **Multiple estimates per customer is not deployed** (merged to local `main`, not pushed).
   Migration 47 IS applied (2026-10-22). The staff Estimates/Orders pages and the `/c/:token`
   page have not been exercised in a browser against real data yet (only the signed-out
