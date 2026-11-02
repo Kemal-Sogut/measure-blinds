@@ -36,6 +36,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import StatusBadge from '../../components/StatusBadge';
+import IncompleteBadge from '../../components/IncompleteBadge';
 import SidebarToggle from '../../components/SidebarToggle';
 import { PAGE_CONTAINER } from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
@@ -261,7 +262,11 @@ export default function OrderList() {
                   <span className="mt-2 flex items-center justify-between">
                     <span className="text-xs text-text-muted">{shortDate(order.order_date)}</span>
                     <span className="font-mono text-[15px] font-semibold text-text-primary">
-                      ${Number(order.total).toFixed(2)}
+                      {Number(order.incomplete_items ?? 0) > 0 ? (
+                        <IncompleteBadge count={Number(order.incomplete_items)} />
+                      ) : (
+                        `$${Number(order.total).toFixed(2)}`
+                      )}
                     </span>
                   </span>
                 </button>
@@ -311,7 +316,11 @@ export default function OrderList() {
                       <StatusBadge status={order.status} />
                     </span>
                     <span className="text-right font-mono text-[13px] font-semibold text-text-primary">
-                      ${Number(order.total).toFixed(2)}
+                      {Number(order.incomplete_items ?? 0) > 0 ? (
+                        <IncompleteBadge count={Number(order.incomplete_items)} />
+                      ) : (
+                        `$${Number(order.total).toFixed(2)}`
+                      )}
                     </span>
                   </button>
                     <OrderRowActions

@@ -20,6 +20,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import StatusBadge from '../../components/StatusBadge';
+import IncompleteBadge from '../../components/IncompleteBadge';
 import OrderRowActions from '../orders/OrderRowActions';
 import { useCustomerPublicLink } from '../../hooks/useCustomers';
 import type { OrderGroup } from '../../hooks/useOrders';
@@ -116,7 +117,11 @@ export default function EstimateGroup({
                   <span className="flex shrink-0 flex-col items-end gap-1">
                     <StatusBadge status={o.status} />
                     <span className="font-mono text-[13px] font-semibold text-text-primary">
-                      {money.format(Number(o.total))}
+                      {Number(o.incomplete_items ?? 0) > 0 ? (
+                        <IncompleteBadge count={Number(o.incomplete_items)} />
+                      ) : (
+                        money.format(Number(o.total))
+                      )}
                     </span>
                   </span>
                 </button>
