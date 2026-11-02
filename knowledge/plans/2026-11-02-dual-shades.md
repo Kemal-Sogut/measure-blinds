@@ -176,12 +176,11 @@ begin
 end $$;
 ```
 
-- [ ] **Step 2: Verify `blind_type_defaults` has no material column the copy must null**
+- [ ] **Step 2: Confirm the defaults copy omits `material_id`**
 
-Run: `grep -n "material" supabase/migrations/20260817000038_blind_type_defaults.sql`
-Expected: a `material_id` column exists → leave it out of the insert column list (it defaults to
-null). If the column list in the migration differs from `cassette_id, bottom_rail_id, control_id,
-installation_id`, match the real columns minus `material_id`.
+`blind_type_defaults` (migration 38) has `material_id, cassette_id, bottom_rail_id, control_id,
+installation_id`. The insert above lists every column except `material_id`, which therefore stays
+null for Dual Shades. No change needed; just check the SQL matches.
 
 - [ ] **Step 3: Add the seed row**
 
@@ -190,7 +189,7 @@ In `supabase/seed.sql` change `('Sheer',           11)` to `('Sheer',           
 
 - [ ] **Step 4: Dry-run the migration against the live project inside a rolled-back transaction**
 
-Only with the user's go-ahead, via Supabase MCP `execute_sql`:
+Only with the user's go-ahead, via Supabase MCP `execute_sql` (the whole block is rolled back, so nothing persists):
 ```sql
 begin;
 -- paste the do $$ … $$ block
@@ -748,8 +747,8 @@ describe('Dual Shades line items', () => {
   it('rejects a Dual line without a back fabric', async () => {
     const res = await create(dualPayload({ attributes: {} }));
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain('choose a back fabric');
-    expect(db.insertPayloads['line_items']).toBeUndefined();
+    expect(((await res.json()) as { error: string }).error).toContain('choose a back fabric');
+    expect(db.calls).not.toContain('orders.insert');
   });
 
   it('rejects a client-supplied back fabric price', async () => {
@@ -757,7 +756,7 @@ describe('Dual Shades line items', () => {
       dualPayload({ attributes: { back_material_id: BACK.id, back_material_price_per_sqm: 0 } })
     );
     expect(res.status).toBe(400);
-    expect(db.insertPayloads['line_items']).toBeUndefined();
+    expect(db.calls).not.toContain('orders.insert');
   });
 });
 ```
