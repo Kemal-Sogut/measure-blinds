@@ -308,14 +308,17 @@ export class BaseBlindType {
 
   /**
    * The first {@link requiredAttributes} entry whose value in `attrs` is
-   * absent or a blank string, or null when all are present. Accepts the
-   * raw draft map (strings) as well as a parsed blob.
+   * missing, or null when all are present. A value is missing when it is
+   * `null`, `undefined`, or a string that is blank after trim — the same
+   * blank rule as `lib/lineItemCompleteness.ts`, so a present non-string
+   * value (a number, say) counts as filled. Accepts the raw draft map
+   * (strings) as well as a parsed blob.
    */
   missingRequiredAttribute(attrs: Record<string, unknown>): RequiredAttribute | null {
     return (
       this.requiredAttributes.find((r) => {
         const v = attrs[r.key];
-        return typeof v !== 'string' || v.trim() === '';
+        return v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
       }) ?? null
     );
   }

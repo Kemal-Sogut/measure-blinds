@@ -203,5 +203,8 @@ describe('generic extension points', () => {
     expect(t.missingRequiredAttribute({})).toEqual({ key: 'widget_id', noun: 'widget' });
     expect(t.missingRequiredAttribute({ widget_id: '  ' })).toEqual({ key: 'widget_id', noun: 'widget' });
     expect(t.missingRequiredAttribute({ widget_id: 'x' })).toBeNull();
+    // Same blank rule as the completeness check: a present non-string is not missing.
+    expect(t.missingRequiredAttribute({ widget_id: 5 })).toBeNull();
+    expect(t.missingRequiredAttribute({ widget_id: null })).toEqual({ key: 'widget_id', noun: 'widget' });
   });
 });
