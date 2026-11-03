@@ -31,7 +31,7 @@
  */
 
 import { getBlindType } from './blindTypes/registry';
-import type { CatalogSlot, HardwareCharge, PriceBasis } from './blindTypes/base';
+import { isPriceBasis, type CatalogSlot, type HardwareCharge, type PriceBasis } from './blindTypes/base';
 
 /**
  * The subset of a stored `line_items` row this module needs.
@@ -83,29 +83,31 @@ function round2(n: number): number {
  * difference between "no cassette" and "a cassette that costs nothing". A
  * row saved before migration 36 can carry an id with a null basis; it is
  * treated as absent, because there is no way to know what basis it was
- * charged on and guessing would invent money.
+ * charged on and guessing would invent money. A basis this build does not
+ * know (`isPriceBasis`) is absent for the same reason: the leg is left off
+ * the document rather than printed as NaN.
  */
 function hardwareFromLineItem(item: OptionPricedItem): Partial<Record<CatalogSlot, HardwareCharge>> {
   const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
-  if (item.cassette_id && item.cassette_price_basis) {
+  if (item.cassette_id && isPriceBasis(item.cassette_price_basis)) {
     hardware.cassette = {
       price: Number(item.cassette_price_per_m) || 0,
       basis: item.cassette_price_basis,
     };
   }
-  if (item.bottom_rail_id && item.bottom_rail_price_basis) {
+  if (item.bottom_rail_id && isPriceBasis(item.bottom_rail_price_basis)) {
     hardware.bottom_rail = {
       price: Number(item.bottom_rail_price_per_m) || 0,
       basis: item.bottom_rail_price_basis,
     };
   }
-  if (item.control_id && item.control_price_basis) {
+  if (item.control_id && isPriceBasis(item.control_price_basis)) {
     hardware.control = {
       price: Number(item.control_price_per_item) || 0,
       basis: item.control_price_basis,
     };
   }
-  if (item.installation_id && item.installation_price_basis) {
+  if (item.installation_id && isPriceBasis(item.installation_price_basis)) {
     hardware.installation = {
       price: Number(item.installation_price_per_item) || 0,
       basis: item.installation_price_basis,

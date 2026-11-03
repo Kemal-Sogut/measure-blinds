@@ -25,6 +25,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import { format } from 'date-fns';
 import { useConfirmAppointment, useDeleteAppointment } from '../../hooks/useCalendar';
 import { displayName } from '../../lib/customerName';
@@ -98,6 +99,7 @@ export default function ScheduleSections({
   onChange: (event: CalendarEvent) => void;
 }) {
   const navigate = useNavigate();
+  const askConfirm = useConfirm();
   const deleteMut = useDeleteAppointment();
   const confirmMut = useConfirmAppointment();
 
@@ -119,8 +121,13 @@ export default function ScheduleSections({
   async function remove(event: CalendarEvent) {
     const customerName = displayName(event.customer);
     const label = event.kind === 'installation' ? event.order_number : customerName;
-    if (!window.confirm(`Remove the ${event.kind} appointment for ${label || 'this customer'}?`))
-      return;
+    const ok = await askConfirm({
+      title: `Remove this ${event.kind} appointment?`,
+      message: `The ${event.kind} appointment for ${label || 'this customer'} is removed from the calendar.`,
+      confirmLabel: 'Remove',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteMut.mutateAsync(event.id);
       toast.success('Appointment removed.');

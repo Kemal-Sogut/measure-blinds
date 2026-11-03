@@ -125,6 +125,23 @@ export interface Payment {
 }
 
 /**
+ * One row of an order's revision history as the detail read returns it
+ * (migration 50 `order_revisions`, minus the snapshot and the staff-only
+ * source). A revision is a frozen copy of what the customer was sent.
+ */
+export interface OrderRevisionSummary {
+  id: string;
+  /** 1-based, per order; the customer-facing "Rev n". */
+  rev_no: number;
+  /** ISO timestamp of the send that cut this revision. */
+  sent_at: string;
+  /** What triggered it: an email send, a manual mark-sent, or a stage jump. */
+  source_kind: 'email' | 'manual' | 'stage';
+  /** The grand total the customer was quoted in this revision. */
+  total: number;
+}
+
+/**
  * Order record with full pricing breakdown, lifecycle status, and
  * payment ledger. An "estimate"/"invoice" is just the PDF/email we
  * generate about this order. All money fields are authoritative
@@ -148,6 +165,43 @@ export interface Order {
   tax_rate: number;
   tax_amount: number;
   total: number;
+  /**
+   * The grand total this order carried when its estimate was LAST SENT
+   * (migration 48), or null on an order no send has stamped.
+   *
+   * Written only by a send, never by a save, so the editor can show a
+   * price-update notice under the total for as long as today's figure
+   * differs from what the customer is holding. Sending again re-stamps
+   * it and the notice goes.
+   */
+  quoted_total: number | null;
+  /**
+   * The total staff dismissed the ORDER's price-update notice at
+   * (migration 48), or null while it has not been dismissed. Same rule
+   * as `LineItem.quoted_notice_ack_base`, one level up.
+   */
+  quoted_notice_ack_total: number | null;
+  /**
+   * The revision the customer confirmed (migration 50), or null while
+   * the estimate is unconfirmed or was confirmed before revision
+   * tracking. Written server-side by the public confirm; the staff
+   * banner compares it with the latest revision.
+   */
+  accepted_revision_id: string | null;
+  /**
+   * Every revision cut on a send, newest first (migration 50). Present
+   * only on the order-detail reads; `null` means the server could not
+   * read the history (unknown, NOT "none" — the banner hides), and it
+   * is absent on list and mutation responses.
+   */
+  revisions?: OrderRevisionSummary[] | null;
+  /**
+   * Customer-visible changes saved since the latest revision, already
+   * described one per line (`"Kitchen: Height 150 cm → 180 cm"`); `[]`
+   * = none. `null` when the status holds no price lock, the order has
+   * no revision, or the read failed. Order-detail reads only.
+   */
+  unsent_changes?: string[] | null;
   /**
    * How many items are still incomplete — set on drafts by every list and
    * detail read, `0` otherwise. Non-zero means the order cannot be sent
@@ -420,8 +474,49 @@ export interface LineItem {
    * matches, the frozen price is what the preview shows.
    */
   locked_inputs_fingerprint: string | null;
+  /**
+   * The calculated base unit price this item carried when the estimate
+   * was LAST SENT (migration 48), or `null` on an order no send has
+   * stamped.
+   *
+   * Not the same question as `locked_base_price`: a save re-locks an
+   * edited item at its new figure, so the lock cannot say what the
+   * customer last saw. This column can, because only a send writes it.
+   * The editor shows a price-update notice wherever today's calculated
+   * base differs from it, and sending again re-stamps it — which is what
+   * clears the notice.
+   */
+  quoted_base_price: number | null;
+  /**
+   * The figure staff DISMISSED this item's price-update notice at
+   * (migration 48), or null while it has not been dismissed.
+   *
+   * A figure rather than a flag: the notice is hidden only while today's
+   * calculated base still equals it, so a second price move speaks up
+   * again. Written by `POST /api/orders/:id/dismiss-price-notice` and
+   * cleared by the next send, along with `quoted_base_price`.
+   */
+  quoted_notice_ack_base: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Soft-delete marker shared by every Settings catalog (migration 49).
+ *
+ * Settings never removes a catalog row: its DELETE stamps `archived_at`
+ * and sets `active = false`, because historical line items name the row
+ * by id and that id is part of their price lock. The list endpoints keep
+ * returning archived rows so the order editor can still price, preview
+ * and describe the orders that carry them; the Settings pages hide them
+ * (`liveCatalogRows`), and every "active" filter already excludes them.
+ *
+ * Optional so a client talking to a Worker that predates the column —
+ * web and API deploy separately — reads every row as live.
+ */
+interface Archivable {
+  /** ISO timestamp of the Settings delete; absent/null = live. */
+  archived_at?: string | null;
 }
 
 /**
@@ -431,7 +526,7 @@ export interface LineItem {
  * blind types"; the line-item editor filters the Material dropdown by
  * the selected blind type using this list.
  */
-export interface Material {
+export interface Material extends Archivable {
   id: string;
   name: string;
   price_per_sqm: number;
@@ -456,7 +551,7 @@ export interface Material {
  * only while at least one ACTIVE option is scoped to the selected type
  * (`slotsForType`), and the Worker enforces the save on the same rule.
  */
-interface BlindTypeScoped {
+interface BlindTypeScoped extends Archivable {
   /** Blind-type ids this option is offered for; empty = offered nowhere. */
   blind_type_ids: string[];
 }
@@ -521,7 +616,7 @@ export interface ControlOption extends HardwarePriced {
  * the client only ever sends the row id and the Worker resolves the
  * ratio itself.
  */
-export interface PleatType {
+export interface PleatType extends Archivable {
   id: string;
   name: string;
   multiplier: number;
@@ -547,7 +642,7 @@ export interface InstallationOption extends HardwarePriced {
 }
 
 /** Blind type option from settings — a label only, no price. */
-export interface BlindType {
+export interface BlindType extends Archivable {
   id: string;
   name: string;
   active: boolean;
@@ -582,7 +677,7 @@ export interface BlindTypeDefaults {
 }
 
 /** Preset line item template — for commonly used add-on services. */
-export interface PresetLineItem {
+export interface PresetLineItem extends Archivable {
   id: string;
   name: string;
   description: string | null;

@@ -76,6 +76,315 @@ exercised against a real backend** (Send/PDF toasts, leave guard): the local app
 Deploy the Worker (api) BEFORE the web app: a new web app against the old Worker gets 400s on null panels /
 material. Before deploying, run a read-only count of non-draft blind rows with an empty `trim(blinds_type)`; those
 orders would become unsavable from the editor until a type is chosen.
+## 2026-10-29 — Customer page shows only the latest sent version (earlier versions removed)
+Branch `estimate-revisions`, api + web, not deployed. The customer now sees ONLY the latest
+sent version and its "Updated <date> · version N" chip. Everything about earlier versions is
+removed end to end, not just hidden:
+- API: `GET /public/estimate/:token/revisions/:rev` and `publicRevisionResponse`
+  (`lib/publicRevision.ts`) are deleted; `ServedQuote.revisions` (the history list) and
+  `ServedQuote.changes_since_previous` (the "what changed" lines) are gone, so
+  `GET /public/estimate/:token` carries only `revision` (`rev_no`, `sent_at`) and no longer
+  reads the previous revision at all. Revision history stays staff-only on `/api/orders/*`.
+- Web: `RevisionInfo.tsx` renders the chip only (picker, "viewing an earlier version" banner
+  and "What changed" disclosure gone); `revisionView.ts` keeps only `RevisionStamp` and
+  `chipLabel`; `CustomerView` drops the viewing-old state and its `viewingOld`/`liveMoney` gates.
+- Tests: public route tests assert the payload has no `revisions`, no `changes_since_previous`,
+  no earlier-revision values, and that the old route 404s.
+- Unchanged: the re-send EMAIL still lists up to 5 changes (`lib/estimateEmailChanges.ts`).
+Supersedes the "previous versions read-only" and customer "what changed" parts of the
+2026-10-26 entry below.
+
+## 2026-10-26 — Estimate revisions: the customer sees what was sent, staff see what has not been
+Branch `estimate-revisions` (commits `1555f27..0882116`), api + web, **migration 50 written, NOT
+applied to the live project, not deployed**. Until now a `sent` estimate on the customer page
+was rendered from the LIVE order, so a staff edit after the send changed what the customer saw
+without telling them. A send now cuts a revision (a frozen copy of what the customer was
+shown); the customer page serves it, staff get a banner for what has not been sent yet, and a
+re-send tells the customer what changed.
+
+**Data (`supabase/migrations/20261026000050_order_revisions.sql`).** `order_revisions`
+(`rev_no` per order, `snapshot`, `source`, `source_kind` = `email | manual | stage`, `total`,
+`sent_at`, unique per `(order_id, rev_no)`) plus `orders.accepted_revision_id`. RLS enabled with NO policies (service-role
+only, no anon access). Each revision stores two copies: `snapshot` is the customer view
+(`PublicQuote`: sanitized, no `uid`, `attributes`, `base_unit_price` or hidden items), used for
+the customer page, diffs and email; `source` is the staff restore copy (order-level `title`,
+`discount_type`, `discount_value` and the raw `line_items` rows incl. `uid`, catalog ids,
+`attributes`, overrides, `hidden`, lock columns) and never leaves `/api/*`.
+
+**Rules.**
+- Revisions are cut on a SEND, not a save: ten saves between two sends make one revision, and
+  title/contact/note edits never make one alone. A send makes a new revision only if something
+  customer-visible changed; re-announcing an unchanged `sent` estimate writes none.
+- `lib/orderRevisions.ts` `stampSent` wraps `stampQuotedFigures` (same `'overwrite' | 'fill'`
+  meaning); every former caller uses it, so right after a send
+  `orders.quoted_total === latestRevision.total`. Readers there are error-aware (an unreadable
+  history is an error, never "no revisions"). Email-then-persist holds: a failed email writes no
+  revision and does not consume `rev_no`.
+- Customer page (`lib/publicRevision.ts`, `routes/public.ts`): while `sent`/`expired` with a
+  revision the quote part is the latest snapshot; no revision (sent before this shipped) falls
+  back to live data, with no backfill; from `awaiting_payment` on the quote is live; status,
+  payments, edit requests and address are always live. An unreadable history is a 500.
+  `GET /public/estimate/:token/revisions/:rev` serves an earlier version read-only.
+- Acceptance: public confirm writes `orders.accepted_revision_id` = latest revision
+  (`resolveAcceptance`). If the saved order differs at confirm time the confirm still succeeds
+  and the order log records it; the staff banner then reads "Customer confirmed Rev N — current
+  estimate differs".
+- Email: `lib/estimateEmailChanges.ts` diffs each already-`sent` estimate against its latest
+  revision BEFORE emailing (read-only) and `email.ts` lists up to 5 change lines
+  (`<Item>: <Field> <from> → <to>`). When every named estimate is an update the heading and
+  subject say "updated"; otherwise the existing "ready" copy stays with an "Updated" tag on
+  changed rows. User strings go through `escapeHtml`.
+- Diff (`lib/quoteDiff.ts` `diffQuotes`/`describeChange`, built on `lib/publicQuote.ts`
+  `buildPublicQuote`/`toPublicLines`): hiding an item after a send reads as "removed", un-hiding
+  as "added", because the snapshot excludes hidden items.
+- Restore (`lib/orderRestore.ts`) is a normal save, not a rewind: staff load a revision's
+  `source` into the editor as unsaved drafts, confirm (`ConfirmProvider`), Save sends
+  `PUT /api/orders/:id` with `restore_from_revision`. Nothing is deleted; the customer keeps
+  the latest revision until a send, which creates Rev N+1 with the old content. The server
+  overlays that revision's price locks (`buildLockMap`) on the current ones, so untouched items
+  keep their Rev N price even if the catalog changed or a material was archived since; an item
+  edited after loading breaks its lock and re-prices at today's catalog. Not restored:
+  `customer_id`, `order_date`, `expiry_date`, terms. Allowed on `draft`/`sent`/`expired`;
+  409 from `awaiting_payment` on (use edit requests). On `draft` there are no locks, so the
+  dialog warns items price at today's catalog.
+- Relationship to migration 48 price-update notices: unchanged. The notice is the live,
+  per-item, dismissible editor signal; the banner is the saved, order-level "customer has not
+  been told" signal covering every customer-visible field. Dismissing a notice does not hide
+  the banner. Both reset together through `stampSent`. Reverting to `draft`
+  (`clearOrderPriceLocks`) clears the stamps but keeps revisions; the banner is hidden on drafts
+  (`holdsPriceLock(status)` gate) and the next send is Rev N+1 diffed against Rev N.
+
+**Web.** Staff: `pages/orders/RevisionBannerCard.tsx` + `revisionBanner.ts` (states: in sync /
+"N changes not sent to the customer" / "Sent before revision tracking — next send creates Rev 1"
+for legacy / "Customer confirmed Rev N — current estimate differs"; history list, Send update,
+Restore),
+`restoreRevision.ts`, and `lineItemHydration.ts` (draft hydration moved out of
+`lineItemDrafts.ts` so restore reuses it). Customer: `pages/customer-view/RevisionInfo.tsx` +
+`revisionView.ts` (version chip, what changed, previous versions read-only; live money,
+payments and expiry are hidden while an earlier version is open).
+
+### Verified
+Per-task suites and typechecks passed on the branch (see the SDD task reports). NOT exercised
+against a live database or in a browser, and migration 50 has not been applied. **Order:
+apply migration 50, deploy the API, then the web.**
+
+### Final review fixes (same branch, after `d555087`)
+- **Every customer-visible change cuts a revision.** `diffQuotes` also names `Room` (labelled
+  with the live room, e.g. `Kitchen — Roller: Room Bedroom → Kitchen`) and `Was price` (the
+  show-original-price figure). When no named field differs but the canonical public quotes
+  still do (unit price, option prices, item type, subtotal, tax amount, order date, line
+  order), it reports one `Other details updated`; so a snapshot that would render differently
+  never reads as "no changes" and `stampSent` always cuts Rev N+1. A pure reorder is now a
+  change (the page renders in snapshot order). Tax rate prints as a percentage
+  (`numeric(5,4)` fraction × 100: `Tax rate 13% → 15%`).
+- **Staff banner on confirmed orders** (`revisionBanner.ts`): never "N changes not sent to the
+  customer" or "Sent before revision tracking" from `awaiting_payment` on (the page is live
+  there). Confirmed + no revision = hidden; confirmed + changes = "Customer confirmed Rev N —
+  current estimate differs" (accepted revision, else latest). Send update only on
+  `sent`/`expired` (`canSendUpdate`).
+- **Confirm.** `POST /public/estimate/:token/confirm` takes an optional `{ rev_no }` (the
+  version on screen; CustomerView sends it). Stale → 409 "This estimate was just updated.
+  Please review the latest version before confirming.", nothing written; absent/malformed →
+  confirms as before. A diverged confirm answers and emails staff the ACCEPTED revision's total,
+  and the staff notice adds "The current saved estimate differs from what the customer accepted
+  — review before taking the deposit." Once confirmed, if the live quote differs from the latest
+  revision the public payload carries `revision: null` and no `changes_since_previous` (no
+  version chip / "Current version (N)"); `revisions` stays for the earlier-versions picker.
+  Serving the accepted snapshot after a diverged confirm is still open (user decision).
+- **Public payloads pick fields explicitly** (`publicQuote.ts` `toPublicQuoteFields`, and
+  `toPublicLines` names each line field): a stored snapshot is never spread into a response.
+- **Email.** A draft re-sent with revision history (reverted, edited, re-sent) is diffed against
+  its latest revision and emails "updated" with its changes; drafts with no history stay
+  "ready". Diff read failures `console.warn` with the order id. Route test pins Review Focus 5
+  (email fails, retry cuts exactly one Rev N+1).
+- **Migration 50** no longer creates `order_revisions_order_idx` (the `unique (order_id, rev_no)`
+  index already serves those reads).
+
+## 2026-10-26 — Every confirmation is an in-app dialog; `window.confirm` is gone
+- The browser's own confirm box (unstyled, headed with the site origin, nothing like the app
+  on a phone) was used at 15 call sites. All now use one in-app dialog:
+  `apps/web/src/components/ui/ConfirmProvider.tsx` (mounted once in `App.tsx`) plus the
+  `useConfirm()` hook in `ui/confirmContext.ts`. `confirm(options)` returns a
+  `Promise<boolean>` — `true` only on the confirm button; Cancel, ✕, Escape and a backdrop tap
+  all resolve `false` — so each site became one `await`.
+- Options: `title` (the question), `message` (the consequence), `confirmLabel` (names the
+  action: "Delete payment", "Mark installed"), `cancelLabel`, `tone` (`danger` red for
+  deletes/discards/reversals, `primary` default for forward moves).
+- Migrated: catalog row delete (`CatalogEditor`), blind type and material delete (Settings →
+  Materials), customer delete and discard-changes (`CustomerForm`), inbox conversation delete
+  (`ThreadControls`), calendar appointment remove (`ScheduleSections`), bulk-add discard
+  (`BulkAddSheet`), mark installed and remove installation time (`InstallationSection`),
+  order delete from the list (`OrderRowActions`) and from the order page, payment delete,
+  accept-cancellation, and timeline stage moves (`OrderDetail.handleSetStatus` — the title now
+  says "Confirm this order?" / "Reverse the confirmation?" / "Move to …", red when moving back).
+- Stacking: the dialog sits in a z-60 layer, above the z-40 sheets and z-50 `Modal`s it is
+  often raised from (Discard on the bulk-add sheet). Escape is caught in the window capture
+  phase and stopped, so it closes only the confirmation, never the sheet underneath too.
+- Opening a second confirmation while one is showing answers the first `false`, so no
+  awaiting caller hangs. `useConfirm` throws outside the provider rather than defaulting to
+  "yes", which would silently un-guard every delete.
+- The line-item delete dialog from the entry below (`DeleteItemsDialog`) is unchanged.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0 new warnings (the old `lead-form.js` one remains),
+`pnpm test` 562/562; `grep window.confirm` over `apps/web/src` is empty. Rendered in a
+throwaway Vite harness (since removed): danger and primary tones, confirm resolved `true`,
+Escape resolved `false`, a confirm raised over a z-40 sheet drew on top, and Escape closed
+only the confirm while the sheet stayed open; phone width showed it as a bottom sheet.
+
+## 2026-10-26 — Line-item deletes ask "are you sure?" first (single and bulk)
+- The order editor's per-row Delete used to drop the item on one tap, with no confirmation —
+  easy to hit by accident on a phone. The toolbar's bulk Delete had a browser `window.confirm`.
+  Both now open one in-app dialog, `apps/web/src/pages/orders/DeleteItemsDialog.tsx` (built on
+  `ui/Modal`, so a bottom sheet on phones and a centered dialog on desktop):
+  - one item: **Delete this item?** — "Do you want to delete "Kitchen — Roller"?", naming the
+    item exactly as its row does;
+  - several: **Delete N items?** — "N items will be deleted. Do you want to go ahead?".
+  Cancel, the close button, Escape and a backdrop tap all dismiss without deleting.
+- `OrderDetail` holds the keys awaiting confirmation in `pendingDelete`; `confirmPendingDelete`
+  removes them and prunes `selected` (same phantom-key reason as `removeItem`). `removeItem`
+  itself stays unconfirmed on purpose: `cancelEdit` uses it to drop a never-saved new row.
+- The row label moved to `lineItemName.ts` (`lineItemName(item, index)`), shared by
+  `LineItemRow` and the dialog. It is a separate file because exporting a plain function from
+  a component file breaks Fast Refresh (oxlint `only-export-components`).
+- The copy does not say "cannot be undone": a delete only edits the draft until the order is saved.
+
+### Verified
+Web `pnpm check` clean, `oxlint` 0 new warnings (the one left is the old `lead-form.js` one),
+`pnpm test` 562/562. API untouched. Rendered in a throwaway Vite harness (since removed) at
+desktop and 375px: the single-item prompt named the row, Cancel and Escape kept the item, and a
+3-item bulk delete removed exactly the three ticked rows.
+
+## 2026-10-26 — Per-item price-update notice removed from the line-item edit form
+- The amber "$X → $Y" notice no longer renders at the top of `BlindEditForm` / `FlatEditForm`
+  (their `notice` prop and OrderDetail's `priceNoticeFor` are gone). The ORDER TOTAL notice
+  under the totals is unchanged and is now the only price-update notice in the editor.
+- Server side untouched: `quoted_base_price` / `quoted_notice_ack_base` are still stamped,
+  carried across saves and returned; `quotedPriceChange` and `applyServerFields` remain (and
+  stay tested) in `lineItemDrafts.ts`, so the per-item notice can be re-added without a
+  migration.
+
+## 2026-10-25 — Price-update notices: what the customer was last sent (MIGRATION 48)
+Shipped with the retroactive-option fix above (bug_fixes 2026-10-25); spec
+`knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`. **Migration 48 is NOT yet
+applied** to `lgbxxlwsdeuhdgzrjjen`; apply it BEFORE deploying either side, and deploy the API
+before the web.
+- **Why a second stored figure.** Migration 39's lock answers "what price is in force"; it
+  cannot answer "what did the customer last see", because a save re-locks an edited item at its
+  NEW figure (`lockColumns` in `resolveLineItems`). A notice driven by the lock would therefore
+  vanish the moment Save was pressed — exactly when staff need to know a quoted figure moved.
+- **Migration 48** (`20261025000048_quoted_price_snapshot.sql`): `line_items.quoted_base_price`
+  (the calculated base, pre-override and pre-add-on) and `orders.quoted_total` (the grand
+  total). Written by a SEND, never by a save.
+- **`stampQuotedFigures(sb, orderId, mode)`** in `lib/priceLockStore.ts`, beside
+  `freezeOrderPrices`. `'overwrite'` at the two genuine sends (`lib/estimateSend.ts` and
+  `POST /orders/:id/mark-sent`) — re-sending re-quotes the customer, so the stamp moves to
+  today's figures and every notice goes quiet. That overwrite IS the reset. `'fill'` at a stage
+  reached without a send (`/confirm` from a draft, a manual `/status` jump), mirroring the
+  freeze's rule that a later stage is not a re-quote. `clearOrderPriceLocks` clears both
+  columns, and the revive-to-draft branch of `PUT /:id` nulls `quoted_total` with them.
+  `PUT /:id` never writes the stamps: `buildQuotedMap` carries `quoted_base_price` across the
+  wholesale line-item replacement by `uid`.
+- **Per-item notice.** `quotedPriceChange(draft, catalogs)` in `lineItemDrafts.ts`, rendered by
+  the new `pages/orders/PriceUpdateNotice.tsx` at the TOP of the line-item details form —
+  `BlindEditForm` (above whichever of the eleven type forms is chosen; the wrapper is skipped
+  entirely when there is nothing to report) and `FlatEditForm`, which now takes `catalogs` for
+  this. Reads `⚠ Price update: $200.00 → $220.00`, both directions, with the delta beside it.
+  Nothing in `LineItemRow` (it has its own lock badge) and nothing customer-facing.
+- **Order-level notice.** `orderTotalChange` in `OrderDetail.tsx`, rendered under the Total row
+  inside `totalsRows`, so it appears in both hosts of that block. Measured against
+  `orders.quoted_total`, NOT summed from the per-item notices — a discount, tax, add-ons,
+  quantity and hidden items all sit between a line's base price and the total.
+- **Dismissible.** Each notice carries a **Dismiss** button, and the dismissal is recorded on
+  the order (not per device), so the colleague who confirms it does not meet a notice the
+  consultant already settled. `POST /api/orders/:id/dismiss-price-notice` takes an optional
+  `uid` — the item's notice with one, the order total's without — and carries NO figure: the
+  Worker records the price the order itself holds (`quoted_notice_ack_base` /
+  `quoted_notice_ack_total`), because a client that could name the figure could silence a
+  notice about a price it invented (`.strict()`, so a supplied figure is a 400). The FIGURE is
+  stored rather than a flag, so dismissing settles ONE move: if the price shifts again, today's
+  figure matches neither the stamp nor the acknowledgement and the notice returns. A send
+  clears the acknowledgement as it re-stamps, and `PUT /:id` carries it across the line-item
+  replacement beside the stamp. The acknowledged figure is the one the ORDER holds, not what
+  the editor is previewing — so dismissing mid-edit settles the saved price, and saving that
+  edit raises the notice again at the new one.
+  - The editor hides the notice at the click (`dismissedNotices` in `OrderDetail`, keyed by uid
+    with `ORDER_TOTAL_NOTICE` for the total) and reverts with a toast if the write fails:
+    line-item drafts hydrate ONCE and are deliberately not rebuilt from a refetch, so waiting
+    for the server would leave the notice on screen until a reload.
+  - `BlindEditForm`/`FlatEditForm` take the notice as a `notice?: ReactNode` prop rather than
+    building it: the comparison and the dismissal state both live in `OrderDetail`, and the
+    eleven type forms are untouched.
+- **Deliberately blind** to quantity, add-ons and the manual override: none is part of the
+  quoted base, all three apply live on top of whichever figure is in force, and reporting them
+  would cry wolf on every ordinary edit. Both readers also drop a non-finite stamp, so an API
+  that predates migration 48 renders no notice rather than `$NaN`.
+
+## 2026-10-24 — Send several estimates in one email (customer-scoped send)
+A customer is normally quoted several options, each its own estimate row, but the old send
+flipped ONE row to `sent` and emailed it — the other options stayed `draft`, invisible on the
+customer link, so the email promised "estimates to choose from" and the page showed one card.
+Sending is now ONE action over a chosen set of a customer's estimates, producing ONE email
+that links the customer link (`/c/:token`). Spec
+`knowledge/specs/2026-10-24-multi-estimate-send-design.md`, plan
+`knowledge/plans/2026-10-24-multi-estimate-send.md`. **No migration.** Deploy the API before
+the web (the new dialog calls routes the old API lacks); both are deployed by hand/`main` push
+as usual, neither happened as part of this work.
+- **New routes (`routes/customers.ts`):** `GET /api/customers/:id/sendable-estimates` — the
+  picker's list: that customer's `draft`/`sent` estimates, expiry today or later, at least one
+  line item, newest-created first. `POST /api/customers/:id/send-estimates` — validates the
+  selection (any bad id → 400, nothing sent), mints the customer token and each order's token,
+  sends ONE email, then writes per row. Logic lives in `lib/estimateSend.ts` (pure
+  `planSelection`/`sendLogLine`, plus `runEstimateSend`, `persistSend`, `readSendCandidates`,
+  `readSendBranding`); the route only parses and responds.
+- **Removed:** `POST /api/orders/:id/send` and the web's `useSendOrder` hook. `logOrderEvent`
+  moved from `routes/orders.ts` to `lib/orderLog.ts` so both routes share it. Estimate emails
+  **no longer attach a PDF** — `buildEstimateEmailHtml` (whose fine print promised the
+  attachment) is replaced by `buildEstimatesEmailHtml` + `estimatesEmailSubject` in
+  `lib/email.ts`: one template for N=1 and N>1, no money in the body (figures live on the
+  page), a plain list of what was sent, and a subject that is order number + title for one
+  estimate and `Your estimates from <Company>` for several. The PDF itself is still
+  downloadable from the staff order page (`GET /api/orders/:id/pdf`).
+- **The count in the email is what the customer link will SHOW after the send**
+  (`countActiveEstimates` + newly sent), not the number ticked — an already-`sent` option the
+  consultant unticked stays on the page, so a count of ticks would under-report it.
+- **Dialog (`pages/estimates/SendEstimatesDialog.tsx`, logic in `lib/estimateSelection.ts`,
+  hooks in `hooks/useSendEstimates.ts`):** every valid estimate ticked on open, untick to
+  exclude, the optional note box, a copy-the-customer-link field (carried over from the old
+  send sheet for consultants who pass the link over WhatsApp/SMS), and the count in the send
+  button ("Send 2 estimates"). Refuses an empty selection and a customer with no email.
+- **Two entry points:** a **Send estimates** action in the customer group on the Estimates
+  page (`EstimateGroup`), and the **Send** button on an estimate's own page, which **saves
+  first** (a failed save aborts and the dialog does not open) and then opens the same dialog.
+  Send stays hidden on an `expired` order.
+- **Status is written BEFORE prices are frozen** (the reverse of the old `/send`).
+  `holdsPriceLock('draft')` is false, so a row left `draft` with frozen items would be silently
+  re-priced by the next `PUT /api/orders/:id`, unfreezing figures the customer already holds by
+  email. A row left `sent` with unfrozen items is the safe half-write: `sent` holds the lock,
+  and a retry completes the freeze. Writes per selected `draft` row: `status='sent'`,
+  `sent_at`, `terms_snapshot`, then `freezeOrderPrices`, then the activity-log lines.
+- **Partial failure is a 200, not a rollback:** `{ sent, announced, failed }`. The customer
+  already holds the email, so the database is pushed toward matching it, not away. Per-row
+  writes run sequentially so a failure leaves a known prefix. A failed EMAIL is a 502 with no
+  write at all (email-then-persist, AI_GUIDELINES §2).
+- **Already-`sent` rows are re-announced only:** no write, no re-freeze, original `sent_at`
+  kept. There is **no un-share**: a sent, unexpired estimate stays on the customer link until
+  its expiry; unticking it only stops it being named again in the email, and the dialog
+  labels such rows so the tick cannot be read as doing more.
+- Stale `/send` comments in `priceLock.ts` (api + web), `priceLockStore.ts`, `pdf.ts` and
+  `customerLink.ts` were repointed to the new route (comments only).
+Verified: api 700 tests, web 532, `tsc` clean both, oxlint 0 errors (one pre-existing warning in
+`public/embed/lead-form.js`). **The dialog has NOT been exercised in a browser** (the dev server
+stops at the Supabase login wall): the picker, the save-first path and the partial-failure copy
+are covered by unit/route tests only, not seen end to end against a live database.
+
+## 2026-10-22 — Delete an Inbox conversation (app only, Titan untouched)
+A conversation's triage card has **Delete conversation** (asks first). `DELETE /api/inbox/:id`
+removes the `email_threads` row; its messages and its "New email" notifications cascade
+(migrations 45/46 FKs). Nothing is sent to Titan — the mail stays in the mailbox. Deleted mail
+does not come back: the sync only reads UIDs past each folder's cursor and never rescans. A later
+reply to a deleted conversation starts a new one (its References point at messages no longer
+stored). After deleting, the page returns to the list tab/status/page it was opened from.
 
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec

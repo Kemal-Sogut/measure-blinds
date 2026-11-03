@@ -6,7 +6,7 @@
  *
  * While an order is draft/sent it behaves as an estimate editor:
  * customer, dates, line items with live pricing, discount, totals, and
- * a Send Estimate / Save / PDF action set. The editor stays
+ * a Send Estimates / Save / PDF action set. The editor stays
  * live at every later stage too — customer, dates, and line items can
  * always be changed and saved; the Worker recalculates totals on every
  * save regardless of status.
@@ -65,9 +65,11 @@
  * after which it is an Invoice.
  *
  * Email invariant: the Send action (section rail / header menu) is the ONLY control that
- * emails the customer their "Estimate Ready" mail. The Progress
- * timeline's advance arrows are bookkeeping only — advancing to "Sent"
- * calls the status-only `mark-sent` route, never `send`.
+ * emails the customer. On an estimate it saves, then opens the multi-estimate
+ * picker (`SendEstimatesDialog`) that emails one customer link; on a confirmed
+ * order it sends the invoice. It is hidden for an `expired` estimate. The
+ * Progress timeline's advance arrows are bookkeeping only — advancing to
+ * "Sent" calls the status-only `mark-sent` route and emails nobody.
  *
  * All client-side money is a live preview from lib/pricing +
  * lib/totals; the Worker recomputes authoritatively on save.
@@ -77,6 +79,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrderRouteId } from './orderRouteId';
 import toast from 'react-hot-toast';
+import { ApiError } from '../../lib/api';
+import { useConfirm } from '../../components/ui';
 import { format } from 'date-fns';
 import PageHeader, { PAGE_CONTAINER } from '../../components/PageHeader';
 import DatePicker from '../../components/DatePicker';
@@ -84,6 +88,7 @@ import StatusBadge from '../../components/StatusBadge';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
 import CustomerEditModal from '../../components/CustomerEditModal';
 import CopyLinkField from '../../components/CopyLinkField';
+import SendEstimatesDialog from '../estimates/SendEstimatesDialog';
 import { CustomerCard, OrderDatesCard } from './OrderHeaderCards';
 import OrderTitleCard from './OrderTitleCard';
 import { orderPath } from '../../lib/orderPath';
@@ -94,7 +99,6 @@ import {
   useOrder,
   useCreateOrder,
   useUpdateOrder,
-  useSendOrder,
   useSendInvoice,
   useResolveCancelRequest,
   useSetOrderStatus,
@@ -109,6 +113,8 @@ import {
   useOrderEditRequests,
   useResolveEditRequest,
   useOrderPublicToken,
+  useDismissPriceNotice,
+  useRevisionSource,
   downloadOrderPdf,
   downloadWarrantyPdf,
   type PendingEtransfer,
@@ -130,6 +136,8 @@ import {
   BulkEditForm,
 } from './LineItemEditor';
 import LineItemList from './LineItemList';
+import { lineItemName } from './lineItemName';
+import DeleteItemsDialog from './DeleteItemsDialog';
 import { arrayMove } from '@dnd-kit/sortable';
 import {
   blindDraftPrice,
@@ -143,10 +151,22 @@ import {
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
-  type PriceAdjustmentDraft,
+  type QuotedPriceChange,
   draftMissingFields,
   firstIncompleteDraftMessage,
 } from './lineItemDrafts';
+import {
+  applyServerFields,
+  draftsFromLineItems,
+  finiteOrNull,
+  serverFieldsOf,
+  type ServerItemFields,
+} from './lineItemHydration';
+import { canRestoreRevision, draftsFromRevision } from './restoreRevision';
+import { PriceUpdateNotice } from './PriceUpdateNotice';
+import { RevisionBanner } from './RevisionBannerCard';
+import { canSendUpdate } from './revisionBanner';
+import { holdsPriceLock } from '../../lib/orderStatus';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
@@ -172,7 +192,7 @@ import {
 import { useCollapsedPanel } from './useCollapsedPanel';
 import { nextKey } from './draftKeys';
 import CustomerViewedEye from './CustomerViewedEye';
-import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, LineItem } from '../../types';
+import type { Customer, Order, OrderStatus, Material, CassetteOption, BottomRailOption, ControlOption, PleatType, InstallationOption, BlindType, PresetLineItem, DiscountType, Payment, OrderRevisionSummary } from '../../types';
 
 /**
  * Panel treatment shared by this screen's hand-rolled bottom sheets.
@@ -263,78 +283,14 @@ function fromIso(iso: string): Date {
   return new Date(y, m - 1, d);
 }
 
-/** Converts persisted line items into editable drafts. */
-function toDrafts(order: Order): ItemDraft[] {
-  return (order.line_items ?? []).map((li) => {
-    if (li.item_type === 'blind') {
-      return {
-        key: nextKey(),
-        uid: li.uid,
-        hidden: li.hidden,
-        item_type: 'blind',
-        room_name: li.room_name,
-        blinds_type: li.blinds_type,
-        panels: li.panels.map((p) => (p === null ? '' : String(p))),
-        height_cm: String(li.height_cm ?? ''),
-        material_id: li.material_id ?? '',
-        cassette_id: li.cassette_id ?? '',
-        bottom_rail_id: li.bottom_rail_id ?? '',
-        control_id: li.control_id ?? '',
-        installation_id: li.installation_id ?? '',
-        color: li.color ?? '',
-        note: li.note ?? '',
-        // The persisted blob is typed; the draft holds strings.
-        attributes: Object.fromEntries(
-          Object.entries(li.attributes ?? {}).map(([k, v]) => [k, String(v)])
-        ),
-        quantity: String(li.quantity),
-        ...toAdjustmentDraft(li),
-      } satisfies BlindDraft;
-    }
-    return {
-      key: nextKey(),
-      uid: li.uid,
-      hidden: li.hidden,
-      item_type: li.item_type,
-      title: li.title,
-      description: li.description,
-      preset_id: li.preset_id,
-      quantity: String(li.quantity),
-      // `unit_price` is the price CHARGED, so an overridden item's draft
-      // must show the CALCULATED figure here and the charged one in the
-      // override box. Reading `unit_price` into the base would silently
-      // promote the override on every reopen and lose the original.
-      unit_price: String(li.base_unit_price ?? li.unit_price),
-      ...toAdjustmentDraft(li),
-    } satisfies FlatDraft;
-  });
-}
-
 /**
- * The three adjustment fields of a persisted item, as draft strings.
- *
- * An item is overridden exactly when `base_unit_price` is set, and the
- * charged `unit_price` is then what the consultant typed — so that is
- * what goes back into the override box.
+ * Why Send is refused on an estimate whose expiry date has passed. Kept
+ * word-for-word from the per-order `POST /orders/:id/send` route this
+ * feature replaced: it named the one field that unblocks the send, and
+ * nothing about the multi-estimate picker makes that advice less true.
  */
-function toAdjustmentDraft(li: LineItem): PriceAdjustmentDraft {
-  return {
-    unit_price_override: li.base_unit_price === null ? '' : String(li.unit_price),
-    show_original_price: li.show_original_price,
-    addons: (li.addons ?? []).map((a) => ({
-      key: nextKey(),
-      label: a.label,
-      price: String(a.price),
-    })),
-    // The price this item was confirmed at, carried into the editor so
-    // the preview shows what the save will keep. Both columns move
-    // together — half a lock is no lock.
-    lock:
-      li.locked_base_price !== null && li.locked_inputs_fingerprint
-        ? { base: Number(li.locked_base_price), fingerprint: li.locked_inputs_fingerprint }
-        : null,
-  };
-}
+const EXPIRED_ESTIMATE_SEND_MESSAGE =
+  'This estimate has expired — update the expiry date first.';
 
 /** Short label for a draft in the live-pricing rail. */
 function draftLabel(it: ItemDraft, index: number): string {
@@ -342,6 +298,41 @@ function draftLabel(it: ItemDraft, index: number): string {
     return [it.room_name || `Blind ${index + 1}`, it.blinds_type].filter(Boolean).join(' — ');
   }
   return it.description || `Item ${index + 1}`;
+}
+
+/**
+ * How the order's grand total has moved since the estimate was last
+ * SENT, or null when it has not moved — or when no send has stamped
+ * `orders.quoted_total` (migration 48).
+ *
+ * Compared against the LIVE total the editor is showing, unsaved edits
+ * included, so the notice appears as the change is made rather than one
+ * save later. Deliberately not a sum of the per-item notices: a discount,
+ * tax, add-ons, quantity and hidden items all sit between a line's base
+ * price and this figure.
+ *
+ * The status guard is belt-and-braces — a draft's stamp is cleared when
+ * it is released — but it keeps a stale figure from ever being quoted
+ * back at the consultant on an order nobody has been sent.
+ */
+function orderTotalChange(order: Order | undefined, liveTotal: number): QuotedPriceChange | null {
+  if (!order || order.quoted_total === null || !holdsPriceLock(order.status)) return null;
+  const quoted = finiteOrNull(order.quoted_total);
+  if (quoted === null) return null;
+  const from = Math.round(quoted * 100) / 100;
+  if (from === liveTotal) return null;
+  // Dismissed at exactly this total, so staff have seen it. A further
+  // move is a figure nobody has acknowledged, and speaks up again.
+  const acked = finiteOrNull(order.quoted_notice_ack_total);
+  return acked !== null && Math.round(acked * 100) / 100 === liveTotal
+    ? null
+    : { from, to: liveTotal };
+}
+
+/** Whether two price changes name the same move; both absent counts as equal. */
+function sameChange(a: QuotedPriceChange | null, b: QuotedPriceChange | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.from === b.from && a.to === b.to;
 }
 
 const POST_CONFIRM = ['awaiting_payment', 'in_progress', 'ready', 'installed'] as const;
@@ -462,9 +453,10 @@ const EMPTY_BULK_STATE: BulkEditState = { blinds_type: '', material_id: '', cass
 
 export default function OrderDetail() {
   const id = useOrderRouteId();
+  const askConfirm = useConfirm();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { data: existing, isLoading: loadingExisting, error: loadError } = useOrder(id);
+  const { data: existing, isLoading: loadingExisting, error: loadError, refetch: refetchExisting } = useOrder(id);
   const { data: editRequests } = useOrderEditRequests(id);
   // Same cache entry InstallationSection reads; here only to badge the
   // Appointments section when the customer has not agreed to a time yet.
@@ -496,7 +488,6 @@ export default function OrderDetail() {
 
   const createMut = useCreateOrder();
   const updateMut = useUpdateOrder();
-  const sendMut = useSendOrder();
   const sendInvoiceMut = useSendInvoice();
   const resolveCancelMut = useResolveCancelRequest();
   const resolveEditMut = useResolveEditRequest();
@@ -510,6 +501,21 @@ export default function OrderDetail() {
   const pendingEtransfersQ = useUnmatchedEtransfers();
   const dismissEtransferMut = useDismissEtransfer();
   const publicTokenMut = useOrderPublicToken();
+  const dismissNoticeMut = useDismissPriceNotice();
+
+  /**
+   * The order-total price change dismissed in THIS session — the exact
+   * `from → to` that was on screen at the click — or null.
+   *
+   * Needed beside the Worker's acknowledgement because that one records
+   * the SAVED total: dismissing while an unsaved edit is on screen acks
+   * a figure the editor is not showing, so without this the notice came
+   * straight back when the dismissal's response (or any refetch)
+   * replaced the order. The notice stays hidden only while the live
+   * change still equals this one: a move of the total drops it (see the
+   * pruning effect below the totals) and so does every save.
+   */
+  const [dismissedTotal, setDismissedTotal] = useState<QuotedPriceChange | null>(null);
 
   // ── Editor state ────────────────────────────────────────────────
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -541,10 +547,23 @@ export default function OrderDetail() {
    */
   const [materialUsagePicks, setMaterialUsagePicks] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
+  /**
+   * A revision Restore loaded into the editor, not yet saved: the next
+   * save sends it as `restore_from_revision` (Design decision 8). Any
+   * re-hydration discards it with the edits. `dismissed` only hides the
+   * banner's "loaded" strip.
+   */
+  const [restoreFrom, setRestoreFrom] = useState<{ id: string; rev_no: number; dismissed: boolean } | null>(null);
+  // The confirmed Restore whose revision copy is still loading.
+  const [restoreRequest, setRestoreRequest] = useState<OrderRevisionSummary | null>(null);
+  const revisionSourceQ = useRevisionSource(id, restoreRequest?.id ?? null);
   const [sheet, setSheet] = useState<'none' | 'customer' | 'preset' | 'payment' | 'send' | 'receipt' | 'warranty' | 'editItem' | 'bulkEdit' | 'bulkAdd' | 'cancelDeny'>('none');
 
   // ── Line item selection / edit state ────────────────────────────
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Keys awaiting the delete confirmation (one from a row's Delete, or the
+  // whole selection from the toolbar); empty keeps `DeleteItemsDialog` closed.
+  const [pendingDelete, setPendingDelete] = useState<string[]>([]);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<ItemDraft | null>(null);
   // Key of a just-added item whose editor is open for the first time;
@@ -617,11 +636,16 @@ export default function OrderDetail() {
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
 
-  // Send estimate/invoice sheet — optional note included in the email.
+  // Send-invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
 
-  // The customer-facing URL shown (with a Copy button) inside the send
-  // sheet, so the consultant can pass the page along over WhatsApp/SMS
+  // The multi-estimate send picker (`SendEstimatesDialog`), opened by Send on
+  // an estimate once the page has saved. Rendered from this page's own state;
+  // it has no route of its own.
+  const [estimatePickerOpen, setEstimatePickerOpen] = useState(false);
+
+  // The customer-facing URL shown (with a Copy button) inside the invoice
+  // send sheet, so the consultant can pass the page along over WhatsApp/SMS
   // instead of emailing it. `null` while the capability token is still
   // being minted; the error string replaces the field if minting fails,
   // which must NOT block the email itself.
@@ -691,9 +715,10 @@ export default function OrderDetail() {
       // them is re-derived — otherwise re-opening a saved order shows an
       // empty chip row and the choice looks like it was lost.
       setExpiryPreset(presetFromDates(savedOrderDate, savedExpiry));
-      setItems(toDrafts(existing));
+      setItems(draftsFromLineItems(existing.line_items ?? [], holdsPriceLock(existing.status)));
       setDiscountType(existing.discount_type);
       setDiscountValue(existing.discount_value ? String(existing.discount_value) : '');
+      setRestoreFrom(null);
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
@@ -728,6 +753,55 @@ export default function OrderDetail() {
   }, [id, hydrated, savedSnapshot, editorSnapshot]);
   const dirty = id ? savedSnapshot !== null && editorSnapshot !== savedSnapshot : items.length > 0;
   useLeaveGuard(dirty);
+
+  // Restore: once the confirmed revision's copy arrives, it replaces the
+  // title, discount and items (customer, dates and terms stay) as unsaved
+  // edits, and is remembered for the next save.
+  useEffect(() => {
+    if (!restoreRequest || !existing) return;
+    if (revisionSourceQ.isError) {
+      toast.error(revisionSourceQ.error.message);
+      setRestoreRequest(null);
+      return;
+    }
+    if (!revisionSourceQ.data) return;
+    const restored = draftsFromRevision(revisionSourceQ.data.source, holdsPriceLock(existing.status));
+    setTitle(restored.title ?? '');
+    setDiscountType(restored.discount_type);
+    setDiscountValue(restored.discount_value ? String(restored.discount_value) : '');
+    setItems(restored.items);
+    setSelected(new Set());
+    setRestoreFrom({ id: restoreRequest.id, rev_no: revisionSourceQ.data.rev_no, dismissed: false });
+    setRestoreRequest(null);
+  }, [restoreRequest, revisionSourceQ.data, revisionSourceQ.isError, revisionSourceQ.error, existing]);
+
+  /**
+   * Keeps the server-owned half of each line-item draft in step with the
+   * order, without rebuilding the drafts and losing unsaved edits.
+   *
+   * The event this exists for is SENDING the estimate again: the Worker
+   * re-stamps every item and clears every dismissal, so each price-update
+   * notice should fall silent — but the drafts hydrate once, so their
+   * copy of the stamp would otherwise still be the PREVIOUS send's figure
+   * until the page was reloaded. It also catches the acknowledgement
+   * written by a dismissal, and the re-lock written by a save.
+   *
+   * The local order-total dismissal is NOT dropped here: a refetch is not
+   * a change of the total, and dropping it was what made Dismiss undo
+   * itself. A re-send moves the stamp, which changes the notice's `from`
+   * and so unhides it through the pruning effect anyway.
+   */
+  useEffect(() => {
+    // A pending restore carries the revision's locks; the current rows' would undo them.
+    if (!hydrated || !existing || restoreFrom) return;
+    const pricesFrozen = holdsPriceLock(existing.status);
+    const byUid = new Map<string, ServerItemFields>(
+      (existing.line_items ?? [])
+        .filter((li) => li.uid)
+        .map((li) => [li.uid, serverFieldsOf(li, pricesFrozen)])
+    );
+    setItems((list) => applyServerFields(list, byUid));
+  }, [existing, hydrated, restoreFrom]);
 
   // Drop the pre-filled customer in once it arrives, and only if the
   // consultant hasn't already picked one — a later change or clear from
@@ -824,6 +898,18 @@ export default function OrderDetail() {
     [itemPrices, items, discountType, discountValue]
   );
 
+  // The order-total notice before the local dismissal is applied.
+  const totalChange = orderTotalChange(existing, totals.total);
+  // A dismissal holds only while the total stays where it was dismissed:
+  // once the live change differs (an edit moved the total, a re-send
+  // moved the stamp, or the Worker's own ack now hides it), it is spent.
+  const totalFrom = totalChange?.from ?? null;
+  const totalTo = totalChange?.to ?? null;
+  useEffect(() => {
+    const live = totalFrom === null || totalTo === null ? null : { from: totalFrom, to: totalTo };
+    setDismissedTotal((prev) => (prev === null || sameChange(prev, live) ? prev : null));
+  }, [totalFrom, totalTo]);
+
   /**
    * Fabric usage for the Material usage dialog, computed HERE rather than
    * inside it because both the dialog and its trigger read it, and the
@@ -901,11 +987,22 @@ export default function OrderDetail() {
       // `lock: null` for the same reason as `uid: null`: the copy is a
       // NEW item that no confirmation has ever priced, so it is quoted
       // from today's catalog rather than inheriting a frozen price it was
-      // never given.
+      // never given. `previously_quoted` and `quoted_base` go with them:
+      // a copy was never sent to anyone, so it must satisfy today's
+      // hardware requirements and has no earlier figure to be compared
+      // against.
+      const fresh = {
+        key: nextKey(),
+        uid: null,
+        lock: null,
+        previously_quoted: false,
+        quoted_base: null,
+        notice_ack_base: null,
+      } as const;
       const copy: ItemDraft =
         src.item_type === 'blind'
-          ? { ...src, key: nextKey(), uid: null, lock: null, panels: [...src.panels] }
-          : { ...src, key: nextKey(), uid: null, lock: null };
+          ? { ...src, ...fresh, panels: [...src.panels] }
+          : { ...src, ...fresh };
       const next = list.slice();
       next.splice(idx + 1, 0, copy);
       return next;
@@ -1048,11 +1145,25 @@ export default function OrderDetail() {
     }
   }
 
+  /** Toolbar Delete: asks `DeleteItemsDialog` to confirm the whole selection. */
   function handleBulkDelete() {
     if (selected.size === 0) return;
-    if (!window.confirm(`Delete ${selected.size} item${selected.size > 1 ? 's' : ''}?`)) return;
-    setItems((list) => list.filter((it) => !selected.has(it.key)));
-    setSelected(new Set());
+    setPendingDelete([...selected]);
+  }
+
+  /**
+   * Runs the delete the user just confirmed in `DeleteItemsDialog`, for
+   * one row or a bulk selection alike, then prunes `selected` against the
+   * surviving list for the same phantom-key reason as `removeItem`.
+   * `removeItem` itself stays unconfirmed: `cancelEdit` uses it to drop a
+   * never-saved new row, which is not a delete the user asked for.
+   */
+  function confirmPendingDelete() {
+    const doomed = new Set(pendingDelete);
+    const next = items.filter((it) => !doomed.has(it.key));
+    setItems(next);
+    setSelected((prev) => pruneSelection(prev, next));
+    setPendingDelete([]);
   }
 
   // ── Individual item edit ──────────────────────────────────────────
@@ -1123,14 +1234,32 @@ export default function OrderDetail() {
     }
     try {
       const saved = id
-        ? await updateMut.mutateAsync({ id, input: payload })
+        ? await updateMut.mutateAsync({
+            id,
+            input: restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
+          })
         : await createMut.mutateAsync(payload);
       setSavedSnapshot(snapshotAtSave);
+      setRestoreFrom(null);
+      // A save ends any dismissal; the Worker drops its acknowledgement
+      // on the same save, so the notice speaks again if the total still
+      // differs from what the customer was sent.
+      setDismissedTotal(null);
       // Carry the open section across the new-order → saved-order URL
       // change, but not `?customer=`, which only seeds a NEW order.
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
+      // A refused restore (the estimate was confirmed meanwhile) must not
+      // linger: a later Save would PUT the revision's content without its
+      // locks. Discard it with the edits, re-hydrating from the server.
+      if (restoreFrom && e instanceof ApiError && e.status === 409) {
+        setRestoreFrom(null);
+        setHydrated(false);
+        void refetchExisting();
+        toast.error(`Rev ${restoreFrom.rev_no} was discarded: the estimate's status has changed.`);
+        return null;
+      }
       toast.error(e instanceof Error ? e.message : 'Save failed.');
       return null;
     }
@@ -1141,20 +1270,78 @@ export default function OrderDetail() {
   }
 
   /**
-   * Opens the send sheet (message box) for the current mode, and — for
-   * an already-saved order — resolves the customer-facing link shown
-   * beside the Copy button.
+   * Restore on an earlier revision in the banner's history: confirms,
+   * then requests that revision's copy, which the restore effect loads
+   * into the editor. Nothing is saved or sent here.
+   */
+  async function handleRestore(revision: OrderRevisionSummary) {
+    if (!existing) return;
+    const ok = await askConfirm({
+      title: `Replace the current estimate with Rev ${revision.rev_no}?`,
+      message:
+        "Unsaved edits will be lost. The customer won't see it until you send." +
+        (holdsPriceLock(existing.status) ? '' : " Prices will use today's catalog."),
+      confirmLabel: 'Restore',
+    });
+    if (ok) setRestoreRequest(revision);
+  }
+
+  /**
+   * Whether this estimate's expiry date has already passed.
    *
-   * The sheet opens FIRST and the token is minted afterwards: the mint
-   * is a network round trip, and the message box must not wait on it.
-   * A failure only degrades the copy field (the same email the button
-   * sends still carries the link), so it is surfaced inline rather than
-   * as a toast. An unsaved draft has no id and therefore no token yet;
-   * it simply shows no link area.
+   * Read from the EDITOR's `expiryDate`, not the saved row, so a consultant
+   * who has just pushed the expiry out can send straight away — and so one
+   * who has not is stopped before anything is written. `toIso` is this
+   * page's single notion of a calendar day and the comparison is
+   * lexicographic over `YYYY-MM-DD`, as everywhere else in this codebase;
+   * no `Date` arithmetic, and no second "today" introduced here.
+   *
+   * It is load-bearing for Send because a lapsed estimate does not announce
+   * itself through `status`: the API's defensive expiry sweep only flips
+   * `sent` rows, so a lapsed DRAFT still reads `draft` and still passes
+   * {@link showSend}. The picker, meanwhile, lists only estimates whose
+   * `expiry_date` is today or later — so without this guard Send would save,
+   * open an all-ticked list that silently LACKS the order the consultant is
+   * looking at, and email the wrong set.
+   */
+  const estimateLapsed =
+    !isInvoice && expiryDate !== null && toIso(expiryDate) < toIso(new Date());
+
+  /**
+   * The Send button's handler. An estimate and an invoice go different ways:
+   *
+   * - **Estimate** — saves first, then opens the multi-estimate picker
+   *   (`SendEstimatesDialog`) for this order's customer. The picker reads the
+   *   customer's estimates from the database, so without the save an unsaved
+   *   edit would be emailed, and frozen, at its OLD figures; a failed save
+   *   (validation or network, already toasted by `save`) opens nothing.
+   *   A brand-new order is the one exception to "then opens": `save` moves it
+   *   onto its saved URL, which remounts this page and would discard the
+   *   dialog's state, so it only reports the save and asks for a second tap.
+   * - **Invoice** — opens the send sheet (message box) and, for an
+   *   already-saved order, resolves the customer-facing link shown beside the
+   *   Copy button. The sheet opens FIRST and the token is minted afterwards:
+   *   the mint is a network round trip, and the message box must not wait on
+   *   it. A failure only degrades the copy field (the same email the button
+   *   sends still carries the link), so it is surfaced inline rather than as
+   *   a toast.
+   *
+   * Both paths first block with a toast when the customer has no email, and
+   * the estimate path also blocks a lapsed expiry date ({@link estimateLapsed}).
    */
   async function openSend() {
     if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     if (!customer?.email) return toast.error('This customer has no email address.');
+    if (!isInvoice) {
+      if (estimateLapsed) return toast.error(EXPIRED_ESTIMATE_SEND_MESSAGE);
+      const savedId = await save();
+      if (!savedId) return;
+      if (!id) {
+        return toast.success('Estimate saved. Press Send again to choose what to email.');
+      }
+      setEstimatePickerOpen(true);
+      return;
+    }
     setSendMessage('');
     setSendLink(null);
     setSendLinkError(null);
@@ -1168,27 +1355,9 @@ export default function OrderDetail() {
     }
   }
 
-  /** Submits the send sheet — estimate or invoice depending on mode. */
+  /** Submits the invoice send sheet. */
   async function submitSend() {
-    const message = sendMessage.trim() || undefined;
-    if (isInvoice) {
-      await handleSendInvoice(message);
-    } else {
-      await handleSendEstimate(message);
-    }
-  }
-
-  async function handleSendEstimate(message?: string) {
-    if (!customer?.email) return toast.error('This customer has no email address.');
-    const savedId = await save();
-    if (!savedId) return;
-    try {
-      await sendMut.mutateAsync({ id: savedId, message });
-      toast.success(`Estimate sent to ${customer.email}.`);
-      setSheet('none');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Send failed.');
-    }
+    await handleSendInvoice(sendMessage.trim() || undefined);
   }
 
   async function handleSendInvoice(message?: string) {
@@ -1236,7 +1405,7 @@ export default function OrderDetail() {
    *
    * This is a bookkeeping action and NEVER emails the customer: sending
    * the estimate is the exclusive job of the Send button in the top bar
-   * (see `handleSendEstimate`). A backward move is destructive enough to
+   * (see `openSend`). A backward move is destructive enough to
    * name its consequence in the prompt — an order dropping below Ready
    * loses its installation appointment.
    *
@@ -1262,14 +1431,29 @@ export default function OrderDetail() {
       toast.error(leaveDraftMessage);
       return;
     }
-    const prompt = backward
-      ? curIdx >= confirmIdx && toIdx < confirmIdx
-        ? `Reverse the confirmation and move this order back to "${label}"? Later-stage progress is cleared.`
-        : `Move this order back to "${label}"? Later-stage progress is cleared.`
-      : curIdx < confirmIdx && toIdx >= confirmIdx
-        ? `Confirm this order and move it to "${label}"?`
-        : `Move this order to "${label}"?`;
-    if (!window.confirm(prompt)) return;
+    const reversesConfirmation = backward && curIdx >= confirmIdx && toIdx < confirmIdx;
+    const confirmsOrder = !backward && curIdx < confirmIdx && toIdx >= confirmIdx;
+    const ok = await askConfirm({
+      title: reversesConfirmation
+        ? 'Reverse the confirmation?'
+        : confirmsOrder
+          ? 'Confirm this order?'
+          : backward
+            ? `Move back to "${label}"?`
+            : `Move to "${label}"?`,
+      message: backward
+        ? `The order moves back to "${label}". Later-stage progress is cleared.`
+        : `The order moves to "${label}".`,
+      confirmLabel: reversesConfirmation
+        ? 'Reverse confirmation'
+        : confirmsOrder
+          ? 'Confirm order'
+          : backward
+            ? 'Move back'
+            : 'Move',
+      tone: backward ? 'danger' : 'primary',
+    });
+    if (!ok) return;
     if (!(await save())) return;
     try {
       await setStatusMut.mutateAsync({ id, to });
@@ -1303,13 +1487,15 @@ export default function OrderDetail() {
 
   async function handleDeleteOrder() {
     if (!id) return;
-    if (
-      !window.confirm(
-        'Delete this order permanently? Its line items, activity log, payments, ' +
-          'change requests and installation visit are removed. The customer is kept.',
-      )
-    )
-      return;
+    const ok = await askConfirm({
+      title: 'Delete this order permanently?',
+      message:
+        'Its line items, activity log, payments, change requests and installation visit ' +
+        'are removed. The customer is kept.',
+      confirmLabel: 'Delete order',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteMut.mutateAsync(id);
       toast.success('Order deleted.');
@@ -1321,7 +1507,13 @@ export default function OrderDetail() {
 
   async function handleDeletePayment(paymentId: string) {
     if (!id) return;
-    if (!window.confirm('Delete this payment? This cannot be undone.')) return;
+    const ok = await askConfirm({
+      title: 'Delete this payment?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete payment',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await deletePaymentMut.mutateAsync({ orderId: id, paymentId });
       toast.success('Payment deleted.');
@@ -1470,13 +1662,14 @@ export default function OrderDetail() {
    */
   async function handleAcceptCancel() {
     if (!id) return;
-    if (
-      !window.confirm(
-        'Cancel this confirmation? The order goes back to Sent and the customer can confirm again.'
-      )
-    ) {
-      return;
-    }
+    const ok = await askConfirm({
+      title: 'Cancel this confirmation?',
+      message: 'The order goes back to Sent and the customer can confirm again.',
+      confirmLabel: 'Cancel confirmation',
+      cancelLabel: 'Keep it confirmed',
+      tone: 'danger',
+    });
+    if (!ok) return;
     try {
       await resolveCancelMut.mutateAsync({ id, accept: true });
       toast.success('Cancellation accepted — order returned to Sent.');
@@ -1635,6 +1828,31 @@ export default function OrderDetail() {
     <MaterialUsageTrigger summary={materialUsage} onOpen={() => setMaterialUsageOpen(true)} />
   );
 
+  /**
+   * Dismisses the order-total notice until the total moves or the order
+   * is next saved.
+   *
+   * Hides it locally first (by the exact change on screen — see
+   * {@link dismissedTotal}) and writes second. The Worker records the
+   * SAVED total as acknowledged, which is what keeps the notice quiet
+   * across a reload when there is no unsaved edit; it reads that figure
+   * itself, so there is nothing to send. A failed write puts the notice
+   * back and says why.
+   */
+  function dismissTotalNotice(change: QuotedPriceChange) {
+    if (!id) return;
+    setDismissedTotal(change);
+    dismissNoticeMut.mutate(
+      { id },
+      {
+        onError: (e) => {
+          setDismissedTotal(null);
+          toast.error(e instanceof Error ? e.message : 'Could not dismiss the notice.');
+        },
+      }
+    );
+  }
+
   /** Shared totals rows (subtotal → discount → taxable → HST → total). */
   const totalsRows = (
     <>
@@ -1676,6 +1894,16 @@ export default function OrderDetail() {
           Total excludes {incompleteVisible} incomplete item{incompleteVisible === 1 ? '' : 's'}
         </p>
       )}
+      {/*
+        Under the total, in both hosts that render these rows: what the
+        customer was last sent, whenever it is no longer what they would
+        be sent now. Renders nothing otherwise.
+      */}
+      <PriceUpdateNotice
+        change={sameChange(dismissedTotal, totalChange) ? null : totalChange}
+        label="Order total"
+        onDismiss={totalChange ? () => dismissTotalNotice(totalChange) : undefined}
+      />
     </>
   );
 
@@ -2044,30 +2272,50 @@ export default function OrderDetail() {
     </div>
   );
 
-  const sendBusy = sendMut.isPending || sendInvoiceMut.isPending;
+  const sendBusy = sendInvoiceMut.isPending;
   const sendDisabled = sendBusy || saving || !customer || (!isInvoice && items.length === 0);
 
   /**
+   * Send, labelled for what it actually opens.
+   *
+   * On an estimate that is "Send Estimates" at every status, matching the
+   * picker dialog's own title: the action is customer-scoped, so it offers
+   * this customer's whole live set regardless of where THIS order stands.
+   * It used to read "Resend Estimate" once the order was `sent`, which
+   * described the per-order `POST /orders/:id/send` that no longer exists
+   * and promised a single-order resend the picker does not perform.
+   */
+  const sendAction: OrderNavAction = {
+    key: 'send',
+    icon: ICONS.send,
+    label: sendBusy ? 'Sending…' : isInvoice ? 'Send Invoice' : 'Send Estimates',
+    onClick: () => void openSend(),
+    disabled: sendDisabled,
+    variant: 'primary',
+  };
+
+  /**
+   * Whether the Send action is offered. A confirmed order sends its invoice,
+   * so Send stays; an `expired` estimate loses it, because Send on an estimate
+   * now opens the multi-estimate picker, which only offers live estimates.
+   * Reviving the estimate through its expiry date brings the button back.
+   *
+   * Status is not the whole story: a DRAFT whose expiry date has passed is
+   * still `draft`, so it passes this test and keeps the button. That case is
+   * caught in `openSend` by {@link estimateLapsed}, which refuses with the
+   * reason rather than leaving a button that cannot explain itself.
+   */
+  const showSend = isInvoice || status !== 'expired';
+
+  /**
    * Document actions above the section list: Send (the one filled
-   * button), Download and Customer View. Customer View needs a saved row
-   * to mint its capability token against, so it is disabled until then.
-   * The same list feeds the rail (xl+) and the header menu (below xl).
+   * button, absent per {@link showSend}), Download and Customer View.
+   * Customer View needs a saved row to mint its capability token against,
+   * so it is disabled until then. The same list feeds the rail (xl+) and
+   * the header menu (below xl).
    */
   const topNavActions: OrderNavAction[] = [
-    {
-      key: 'send',
-      icon: ICONS.send,
-      label: sendBusy
-        ? 'Sending…'
-        : isInvoice
-          ? 'Send Invoice'
-          : status === 'sent'
-            ? 'Resend Estimate'
-            : 'Send Estimate',
-      onClick: () => void openSend(),
-      disabled: sendDisabled,
-      variant: 'primary',
-    },
+    ...(showSend ? [sendAction] : []),
     {
       key: 'download',
       icon: ICONS.download,
@@ -2188,6 +2436,16 @@ export default function OrderDetail() {
   /** The Items section: bulk toolbar + rows, then totals where the panel is hidden. */
   const itemsView = (
     <>
+      {existing && (
+        <RevisionBanner
+          order={existing}
+          onSendUpdate={canSendUpdate(existing.status) ? () => void openSend() : undefined}
+          onRestore={canRestoreRevision(existing.status) ? (r) => void handleRestore(r) : undefined}
+          restoringId={restoreRequest?.id ?? null}
+          restoredRev={restoreFrom && !restoreFrom.dismissed ? restoreFrom.rev_no : null}
+          onDismissRestored={() => setRestoreFrom((r) => r && { ...r, dismissed: true })}
+        />
+      )}
       {items.length === 0 ? (
         <section className="rounded-xl border border-dashed border-border-input bg-surface p-6 text-center">
           <p className="text-[13px] text-text-muted">No items yet.</p>
@@ -2287,7 +2545,7 @@ export default function OrderDetail() {
             onToggleHidden={toggleHidden}
             onEdit={openEdit}
             onDuplicate={duplicateItem}
-            onDelete={removeItem}
+            onDelete={(key) => setPendingDelete([key])}
             onMove={moveItem}
             onReorder={reorderItems}
           />
@@ -2953,7 +3211,7 @@ export default function OrderDetail() {
         </div>
       )}
 
-      {/* Send estimate/invoice bottom sheet (with optional message) */}
+      {/* Send invoice bottom sheet (with optional message). Estimates go through SendEstimatesDialog instead. */}
       {sheet === 'send' && (
         <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 lg:items-center" onClick={() => setSheet('none')}>
           <div
@@ -2961,11 +3219,10 @@ export default function OrderDetail() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
-              Send {docLabel.toLowerCase()}
+              Send invoice
             </h2>
             <p className="mb-3 text-[13px] text-text-muted">
-              We&apos;ll email {customer?.email ?? 'the customer'} the {docLabel.toLowerCase()} PDF
-              {isInvoice ? ' and a link to view the order online.' : ' and a link to review and confirm online.'}
+              We&apos;ll email {customer?.email ?? 'the customer'} the invoice PDF and a link to view the order online.
             </p>
             <div className="flex flex-col gap-3">
               <label className="block">
@@ -2989,7 +3246,7 @@ export default function OrderDetail() {
               */}
               {id && (
                 <CopyLinkField
-                  label={`${docLabel} link for the customer`}
+                  label="Invoice link for the customer"
                   value={sendLink}
                   error={sendLinkError}
                   hint="Opens the same page the email links to — anyone with this link can view it."
@@ -3004,17 +3261,28 @@ export default function OrderDetail() {
                 </button>
                 <button
                   onClick={submitSend}
-                  disabled={sendMut.isPending || sendInvoiceMut.isPending}
+                  disabled={sendInvoiceMut.isPending}
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >
-                  {sendMut.isPending || sendInvoiceMut.isPending
-                    ? 'Sending…'
-                    : `Send ${docLabel}`}
+                  {sendInvoiceMut.isPending ? 'Sending…' : 'Send Invoice'}
                 </button>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/*
+        Multi-estimate send picker, opened by Send on an estimate after the page
+        has saved. Customer-scoped: it lists this customer's sendable estimates,
+        and its own hooks refresh this order's detail and log caches after a send.
+      */}
+      {estimatePickerOpen && customer && (
+        <SendEstimatesDialog
+          customerId={customer.id}
+          customerEmail={customer.email}
+          onClose={() => setEstimatePickerOpen(false)}
+        />
       )}
 
       {/* Send receipt bottom sheet (per payment, with optional message) */}
@@ -3244,6 +3512,18 @@ export default function OrderDetail() {
           }}
         />
       )}
+
+      {(() => {
+        const idx = pendingDelete.length === 1 ? items.findIndex((it) => it.key === pendingDelete[0]) : -1;
+        return (
+          <DeleteItemsDialog
+            count={pendingDelete.length}
+            itemName={idx >= 0 ? lineItemName(items[idx], idx) : undefined}
+            onConfirm={confirmPendingDelete}
+            onCancel={() => setPendingDelete([])}
+          />
+        );
+      })()}
 
     </div>
 

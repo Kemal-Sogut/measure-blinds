@@ -12,6 +12,41 @@ a stage move to Sent+, the PDF), by the editor first and the Worker regardless. 
 today's behaviour exactly. Editor chip and total note, Present "To be decided", list badge and the unsaved-changes
 leave guard are in. Tests and type-checks pass (api 703, web 543); see the known issue below about browser checks.
 
+**Estimate revisions, on `estimate-revisions` (migration 50 written, NOT applied, not
+deployed):** a send records a revision (customer-view snapshot + staff restore copy) only when
+something customer-visible changed. The customer page shows only the latest sent version with
+its "Updated <date> · version N" chip (no earlier versions, no "what changed"; the public
+payload carries nothing about earlier versions); the staff order page has a revision banner (in sync / "N changes not sent
+to the customer" / sent before tracking / "Customer confirmed Rev N — current estimate
+differs"), history, Send update and Restore; the re-send email says "updated" and lists up to 5
+changes; the public confirm stores `accepted_revision_id` and 409s a stale page.
+Migration-48 price notices are unchanged and reset together with revisions via `stampSent`.
+Not exercised against a live database or in a browser.
+
+**Quoted-price immunity and price-update notices, on `feat/multi-estimate-send` (migration 48
+written, NOT applied, not deployed):** a hardware option added to a blind type no longer
+reaches back into estimates already quoted on it, so Present to customer works on them again;
+only an item being quoted — new, or one whose own pricing inputs were just edited — must
+satisfy today's requirements. A line item whose price has moved since the last send shows
+`⚠ Price update: $200.00 → $220.00` at the top of its details form, and the order shows the
+same under its total; sending again re-stamps `quoted_base_price`/`quoted_total` and both go
+quiet. Either notice can be dismissed, which records the acknowledged figure on the order (not
+per device) — so a later move speaks up again, and the next send clears it (the per-item notice
+too: `applyServerFields` refreshes the server-owned draft fields after the send's refetch,
+since drafts hydrate once). api 736 tests, web 562, `tsc` clean; not exercised against a live
+database. Apply
+migration 48 before deploying either side.
+
+**Multi-estimate send, on `feat/multi-estimate-send` (no migration, not deployed):** one
+customer-scoped **Send estimates** dialog (from the customer group on the Estimates page, or
+the Send button on an estimate's page, which saves first and is hidden for `expired`) emails
+ONE customer link covering the ticked estimates, no PDF attached.
+`POST /api/customers/:id/send-estimates` and `GET /api/customers/:id/sendable-estimates`
+replace the deleted `POST /api/orders/:id/send`. A send marks drafts `sent` before freezing
+prices; a partial write failure is a 200 `{ sent, announced, failed }`; a failed email writes
+nothing. api 700 tests, web 532, `tsc` and oxlint clean; the dialog has not been exercised in a
+browser against a live database.
+
 **Multiple estimates per customer, merged to local `main` (migration 47 applied):** estimates grouped by customer
 on the home page (newest estimate first), a confirmed-only Orders page, optional estimate
 titles, `/<customer-slug>/<order-number>` staff URLs, and one customer link (`/c/:token`) that
@@ -29,10 +64,10 @@ on `feat/inbox-unread` (migration 46).
 
 **Order lifecycle:** draft → sent → awaiting_payment → in_progress → ready → installed
 (+ expired), auto-expiry on sent (only `sent` orders lapse). Editing an `expired` estimate's
-expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh `/send`
+expiry date to today-or-later revives it to `draft` (never straight to `sent` — a fresh send
 is the only path back) inside `PUT /api/orders/:id`, mirroring the `< today` rule that expired
 it; a still-past date leaves it expired, and no non-expired status is ever rewritten there.
-Confirmation is reversible by staff only, and only pre-payment. On the staff order page, stage moves (confirming, reversing a confirmation, marking ready) happen ONLY on the Progress timeline, which saves first; the stage-action slot always leads with Save, and Mark Installed lives in the Installation card. SENDING the estimate (`/send` or `/mark-sent`) FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a price the customer was quoted, and only an item whose own pricing inputs are edited is re-priced and re-locked. Confirming, and any manual stage move to `sent` or beyond, freezes whatever is not frozen yet. `draft` is the only live-priced status — returning an order to draft (manual status change, or reviving a lapsed estimate) is the only thing that releases the locks; unconfirming does not, since the order lands back on `sent`. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
+Confirmation is reversible by staff only, and only pre-payment. On the staff order page, stage moves (confirming, reversing a confirmation, marking ready) happen ONLY on the Progress timeline, which saves first; the stage-action slot always leads with Save, and Mark Installed lives in the Installation card. SENDING the estimate (the multi-estimate send or `/mark-sent`) FREEZES every line item's calculated price (`line_items.locked_base_price` + an inputs fingerprint, migration 39): a later formula or catalog change cannot move a price the customer was quoted, and only an item whose own pricing inputs are edited is re-priced and re-locked. Confirming, and any manual stage move to `sent` or beyond, freezes whatever is not frozen yet. `draft` is the only live-priced status — returning an order to draft (manual status change, or reviving a lapsed estimate) is the only thing that releases the locks; unconfirming does not, since the order lands back on `sent`. Payments ledger with a derived balance (never stored); the PDF is an Estimate until
 the first payment, then an Invoice. Production starts automatically only when the ledger
 reaches the 50% deposit (`recordOrderPayment` gates awaiting_payment → in_progress on
 `round2(total/2)`; shared by the staff route and the e-Transfer webhook) — a sub-deposit
@@ -110,7 +145,11 @@ customer page, labels, cut sheet — while keeping it editable); price overrides
 optional "show original" strikethrough and up to 10 custom `{label, price}` add-ons; a typed
 panel-width shorthand (`118.5+118` = two panels) in both the single-item form and bulk-add
 rows. `LineItemList`/`LineItemRow` render a 3-dot menu (Show/Hide, Duplicate, Move up/down),
-an expandable detail panel, and a drag handle for reordering (`@dnd-kit`, pointer/touch only).
+an expandable detail panel, and a drag handle for reordering (`@dnd-kit`, pointer/touch only). Deleting
+items — one row's Delete or the toolbar's bulk Delete — always goes through the in-app
+`DeleteItemsDialog` confirmation (names a single item, counts a selection). Every other
+yes/no question in the staff app (deletes, discards, stage moves, mark installed) uses the
+shared in-app `useConfirm()` dialog — no browser `window.confirm` remains.
 
 **Bulk entry/edit:** `BulkAddSheet` is the only bulk-entry path — one section per blind type
 with shared per-section config, many measurement rows, one fully-specified line item per row;
@@ -140,7 +179,7 @@ colour and blind-type attributes carry no figure. The amounts come from
 `describeUnitCosts`, × quantity, rounded — and reach the unauthenticated page as
 `option_prices` on the public payload, never as rates or price bases. Warranty certificates issue automatically on paid-in-full
 (one template: 10y products, parts-only — no workmanship cover; motorization-related products excluded by a footer note), resendable, staff-
-downloadable. Payment receipt emails per payment. 13 responsive HTML email templates. The Send estimate/invoice sheet also shows the customer-facing URL (`/customer/<public_token>`, no `?preview=1`) in a read-only field with a Copy button (`components/CopyLinkField.tsx`), so the page can be handed over WhatsApp/SMS instead of the app's own email; the token is minted through the existing `useOrderPublicToken` mutation after the sheet opens, and a mint failure degrades only that field.
+downloadable. Payment receipt emails per payment. 13 responsive HTML email templates. The Send estimates dialog shows the CUSTOMER link (`/c/:token`) in a read-only field with a Copy button (`components/CopyLinkField.tsx`), so the page can be handed over WhatsApp/SMS instead of the app's own email; the token is minted through the existing public-link mutation, and a mint failure degrades only that field. The invoice send sheet still shows the order's customer-facing URL (`/customer/<public_token>`, no `?preview=1`) the same way, minted through `useOrderPublicToken` after the sheet opens.
 Production labels (browser `window.print()`, one 3x1.5in label per unit of quantity, shop-code
 hardware line). Manufacturer Copy cut sheet (aluminium 1-D bin packing, fabric 2-D shelf
 packing, both keyed off live Material catalog data, overridable stock length as a what-if).
@@ -263,6 +302,17 @@ Table `notifications`, migration 43. No read/unread state.
   talks to the live Supabase project, so the editor chip, total note, Present "To be decided", list badges and
   the leave guard are verified by tests only. The leave guard does not intercept the browser Back button
   (accepted limit). Deploy the API before the web.
+- **Estimate revisions not deployed; migration 50 NOT applied.** Apply
+  `20261026000050_order_revisions.sql`, then deploy the API, then the web. Orders already `sent`
+  have no revision (no backfill): their customer page stays live and the staff banner says
+  "Sent before revision tracking — next send creates Rev 1". The send -> banner -> "updated"
+  email -> customer version view -> restore flow has not been driven end to end.
+- **Legacy-data Phase 0 code not deployed:** migration 49 (catalog `archived_at`, `line_items`
+  FKs → RESTRICT) IS applied and the price-lock backfill has run (28 items / 6 orders frozen,
+  2026-10-25). The archive-on-delete API and the web filters are not deployed: until the API
+  ships, a Settings delete of a row any line item uses fails with a raw FK error (safe — nothing
+  is rewritten), and an unused row is still hard-deleted. Phases 1–4 of
+  `docs/legacy-data-audit.md` are not started.
 - **Multiple estimates per customer is not deployed** (merged to local `main`, not pushed).
   Migration 47 IS applied (2026-10-22). The staff Estimates/Orders pages and the `/c/:token`
   page have not been exercised in a browser against real data yet (only the signed-out
@@ -332,5 +382,6 @@ Table `notifications`, migration 43. No read/unread state.
 | pdf-lib, not @react-pdf | @react-pdf's WASM cannot run in workerd. |
 | UNIQUE order_number + retry | Count-based generation can race under concurrent saves. |
 | Email-then-persist | Any status change that announces something by email persists only after the send succeeds, so a bounced email never leaves the record claiming it went out. |
+| Status before freeze | A send marks a draft `sent` before freezing its prices, so a half-written row is locked, never an unlocked `draft` holding figures the customer has already been emailed. |
 | Twin api/web modules | `pricing.ts`/`totals.ts`/`blindTypes/*`/etc. are mirrored files with mirrored test suites — the shared-package refactor was deliberately deferred; the mirrored suites are the drift alarm. |
 | Catalog seeds must be identities | Pricing recomputes server-side on every save, so a newly seeded value (multiplier/price) applies retroactively to old orders on their next save — seed 0/1, let the shop set real values. |

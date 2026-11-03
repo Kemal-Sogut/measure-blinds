@@ -9,8 +9,6 @@
  *   - POST retries the order number on a 23505 unique violation
  *   - client-supplied prices on blind items are rejected (strict schema)
  *   - bulk line-item inserts use a uniform column set (PostgREST rule)
- *   - /send returns 502 when the email service fails and performs NO
- *     database write afterwards (order left untouched)
  *   - /payments/:paymentId/receipt guards (404 foreign payment, 400 no
  *     email) and stamps receipt_sent_at ONLY after a successful send
  *   - the warranty certificate is emailed automatically when a payment
@@ -121,6 +119,10 @@ function makeBuilder(table: string) {
 vi.mock('../lib/supabase', () => ({
   createSupabaseAdmin: () => ({ from: (table: string) => makeBuilder(table) }),
 }));
+// The auth test loads the real Worker entry (`../index`) to prove the
+// route sits behind `/api/*`'s JWT check. Its inbox sync imports
+// `cloudflare:sockets`, which only exists inside workerd.
+vi.mock('../lib/inbox/titanConnect', () => ({ openTitanSource: vi.fn() }));
 
 import ordersApp from './orders';
 // The lock fixtures below fingerprint their rows with the SAME functions
@@ -128,6 +130,7 @@ import ordersApp from './orders';
 // construction rather than by a hand-copied string.
 import { pricingFingerprint } from '../lib/priceLock';
 import { lockInputFromRow } from '../lib/priceLockStore';
+import { buildPublicQuote } from '../lib/publicQuote';
 
 /** Standard env bindings for app.request. */
 const ENV = {
@@ -457,6 +460,23 @@ describe('POST /api/orders', () => {
     });
   });
 
+  it('refuses to price with a basis this build does not know, naming the option', async () => {
+    // Read from the catalog row as text: a cast would have priced this
+    // as NaN. Parsed, it is a readable 400 and nothing is written.
+    db.responses['cassette_options.select'] = [{ ...CASSETTE, price_basis: 'per_yard' }];
+    db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
+    const res = await ordersApp.request('/', {
+      method: 'POST',
+      body: JSON.stringify(payload()),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({
+      error: '"Standard" has a price basis this version cannot charge.',
+    });
+    expect(db.calls).not.toContain('line_items.insert');
+  });
+
   it('excludes hidden items from the totals but still stores them', async () => {
     db.orderInsertResults = [{ data: { id: 'e1', subtotal: 0 } }];
     const body = payload();
@@ -498,62 +518,16 @@ describe('POST /api/orders', () => {
   });
 });
 
-describe('POST /api/orders/:id/send', () => {
-  it('returns 502 on email failure and never writes to the DB after', async () => {
-    const order = {
-      id: 'e9',
-      status: 'draft',
-      order_number: 'F0307-126',
-      order_date: new Date().toISOString().slice(0, 10),
-      // Relative, not hardcoded: the send route 400s on a lapsed
-      // expiry_date, so a fixed date turns this test into a time bomb
-      // (it did fail once the calendar passed the original 2026-07-17).
-      expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
-      subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
-      public_token: null,
-      terms_snapshot: null,
-      line_items: [],
-      payments: [],
-      customer: { first_name: 'A', last_name: 'B', email: 'a@example.com',
-        phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '',
-        shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true,
-        billing_address_line1: '', billing_address_line2: '', billing_city: '',
-        billing_province: '', billing_postal_code: '' },
-    };
-    db.responses['orders.select'] = [order];
-    // `/send` resolves the customer link before emailing (spec 2026-10-20).
-    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
-    db.responses['company_settings.select'] = [
-      { company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 },
-    ];
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (String(url).includes('api.resend.com')) {
-        return new Response(JSON.stringify({ message: 'API key is invalid' }), { status: 401 });
-      }
-      return realFetch(url as never, init as never);
-    }) as typeof fetch;
-
-    try {
-      const res = await ordersApp.request('/e9/send', { method: 'POST' }, ENV);
-      expect(res.status).toBe(502);
-      expect(db.calls.filter((c) => c === 'orders.update')).toHaveLength(0);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-  });
-});
-
 describe('POST /api/orders/:id/mark-sent', () => {
   /**
    * Status-only draft → sent. The whole point of this route is that it
    * NEVER emails, so every case asserts Resend was not called: the
-   * "Estimate Ready" email belongs to /send alone.
+   * "Estimate Ready" email belongs to the customer-scoped send alone.
    */
   const markSentOrder = (over: Record<string, unknown> = {}) => ({
     id: 'e7',
     status: 'draft',
-    // Relative, not hardcoded — same time-bomb lesson as the /send test.
+    // Relative, not hardcoded — a fixed date would turn this into a time bomb.
     expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
     ...over,
   });
@@ -858,8 +832,8 @@ describe('POST /api/orders/:id/payments/:paymentId/receipt', () => {
 
   /**
    * Intercepts Resend for the duration of `run`, capturing request
-   * bodies; `status`/`reply` script the API's answer (same fetch-level
-   * mock the /send failure test uses — sendEmail is exercised for real).
+   * bodies; `status`/`reply` script the API's answer (a fetch-level
+   * mock, so sendEmail is exercised for real).
    */
   async function withResend(
     status: number,
@@ -2461,8 +2435,14 @@ describe('per-item price lock (migration 39)', () => {
     const res = await ordersApp.request('/o1/confirm', { method: 'POST' }, ENV);
     expect(res.status).toBe(200);
     const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
-    expect(writes.map((w) => w.locked_base_price)).toEqual([182, 25]);
-    expect(writes.every((w) => typeof w.locked_inputs_fingerprint === 'string')).toBe(true);
+    // Confirming writes two kinds of row: the freeze, and the
+    // migration-48 quoted stamp beside it. Each assertion names its own.
+    const locks = writes.filter((w) => 'locked_base_price' in w);
+    expect(locks.map((w) => w.locked_base_price)).toEqual([182, 25]);
+    expect(locks.every((w) => typeof w.locked_inputs_fingerprint === 'string')).toBe(true);
+    expect(
+      writes.filter((w) => 'quoted_base_price' in w).map((w) => w.quoted_base_price)
+    ).toEqual([182, 25]);
   });
 
   it('keeps a catalog-priced preset at its confirmed figure', async () => {
@@ -2517,13 +2497,216 @@ describe('per-item price lock (migration 39)', () => {
     expect(writes).not.toContainEqual({
       locked_base_price: null,
       locked_inputs_fingerprint: null,
+      quoted_base_price: null,
+      quoted_notice_ack_base: null,
+    });
+  });
+
+  /**
+   * A blind type that has just been given its FIRST installation option.
+   * Every estimate already quoted on that type carries no installation
+   * id, so the live scoping rule would refuse to save them — which is
+   * what `prior` grandfathering exists to prevent.
+   */
+  function requireInstallationOnRoller() {
+    db.responses['installation_option_blind_types.select'] = [
+      { installation_option_id: INSTALL.id, blind_type_id: TYPE_ROLLER.id },
+    ];
+  }
+
+  /** `lockedBlindRow` as a row saved BEFORE migration 39: no lock at all. */
+  function preLockBlindRow(overrides: Record<string, unknown> = {}) {
+    return {
+      ...lockedBlindRow(overrides),
+      locked_base_price: null,
+      locked_inputs_fingerprint: null,
+    };
+  }
+
+  /** `editPayload()` reduced to its blind, as a mutable row list. */
+  function blindOnlyPayload() {
+    const body = editPayload();
+    const items = body.line_items as unknown as Record<string, unknown>[];
+    items.length = 1;
+    return { body, items };
+  }
+
+  it('saves a pre-lock row whose type has since gained an installation option', async () => {
+    requireInstallationOnRoller();
+    seedExisting('sent', [preLockBlindRow()]);
+    const { body } = blindOnlyPayload();
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    // Saved as it was quoted: no installation id, and so no installation
+    // charge in the price it was sent at.
+    const [blind] = savedRows();
+    expect(blind.installation_id).toBeNull();
+    expect(blind.unit_price).toBe(182);
+  });
+
+  it('still demands the new option on an item added since the send', async () => {
+    requireInstallationOnRoller();
+    seedExisting('sent', [lockedBlindRow()]);
+    const { body, items } = blindOnlyPayload();
+    // No uid: this line was never quoted, so it is quoted now and the
+    // formula would otherwise price it with no installation charge.
+    const fresh = { ...(payload().line_items[0] as Record<string, unknown>) };
+    delete fresh.uid;
+    items.push(fresh);
+    const res = await put(body);
+    expect(res.status).toBe(400);
+    // The completeness rule's wording (spec 2026-11-02), which now owns
+    // "a used slot left empty".
+    expect(((await res.json()) as { error: string }).error).toContain(
+      'choose an installation option'
+    );
+  });
+
+  it('demands the new option on a sent item whose lock the edit broke', async () => {
+    requireInstallationOnRoller();
+    seedExisting('sent', [lockedBlindRow()]);
+    const { body, items } = blindOnlyPayload();
+    // Editing a pricing input re-quotes this one item, so it has to
+    // satisfy today's requirements — the documented door in priceLock.ts.
+    items[0].height_cm = 240;
+    const res = await put(body);
+    expect(res.status).toBe(400);
+  });
+
+  it('demands the new option on a draft, however long it has existed', async () => {
+    // A draft is never grandfathered. Since spec 2026-11-02 a draft may
+    // SAVE an item with a used slot left open, so "demanded" means the
+    // item is stored INCOMPLETE — at $0, and gated out of draft — rather
+    // than priced as it was quoted, which a pre-lock row on a sent order
+    // would be (see the test above).
+    requireInstallationOnRoller();
+    seedExisting('draft', [preLockBlindRow()]);
+    const { body } = blindOnlyPayload();
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    expect(blind.installation_id).toBeNull();
+    expect(blind.line_total).toBe(0);
+  });
+
+  it('carries quoted_base_price across the save, by uid', async () => {
+    seedExisting('sent', [
+      { ...lockedBlindRow(), quoted_base_price: 170 },
+      { ...lockedPresetRow(), quoted_base_price: 25 },
+    ]);
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    expect(savedRows().map((r) => r.quoted_base_price)).toEqual([170, 25]);
+  });
+
+  it('leaves the quoted stamp null for an item the order has never seen', async () => {
+    seedExisting('sent', [{ ...lockedBlindRow(), quoted_base_price: 170 }]);
+    const { body, items } = blindOnlyPayload();
+    items.push({ item_type: 'preset', description: 'Extra', quantity: 1, unit_price: 40 });
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(savedRows().map((r) => r.quoted_base_price)).toEqual([170, null]);
+  });
+
+  it('drops the quoted stamp when a lapsed estimate is revived to draft', async () => {
+    db.responses['orders.select'] = [
+      { id: 'o1', status: 'expired', expiry_date: '2026-07-17', line_items: [lockedBlindRow()] },
+    ];
+    const { body } = blindOnlyPayload();
+    body.expiry_date = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+    body.order_date = new Date().toISOString().slice(0, 10);
+    const res = await put(body);
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].quoted_base_price).toBeNull();
+    expect(db.updatePayloads['orders']?.[0]).toMatchObject({ status: 'draft', quoted_total: null });
+  });
+
+  it('drops the order-total dismissal on every save but keeps the stamp', async () => {
+    // A dismissed total notice stays quiet only until the next save.
+    seedExisting('sent', [{ ...lockedBlindRow(), quoted_base_price: 170 }]);
+    const res = await put(blindOnlyPayload().body);
+    expect(res.status).toBe(200);
+    const write = db.updatePayloads['orders']?.[0] as Record<string, unknown>;
+    expect(write).toMatchObject({ quoted_notice_ack_total: null });
+    expect('quoted_total' in write).toBe(false);
+  });
+
+  /** `POST /:id/dismiss-price-notice`, with an optional uid. */
+  async function dismiss(body?: Record<string, unknown>) {
+    return ordersApp.request(
+      '/o1/dismiss-price-notice',
+      body === undefined
+        ? { method: 'POST' }
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+      ENV
+    );
+  }
+
+  it("dismisses one item's notice at the figure the ORDER holds", async () => {
+    seedExisting('sent', [{ ...lockedBlindRow(), quoted_base_price: 170 }]);
+    const res = await dismiss({ uid: UID_A });
+    expect(res.status).toBe(200);
+    // 182 is the row's own calculated price, not anything the client sent.
+    expect(db.updatePayloads['line_items']).toEqual([{ quoted_notice_ack_base: 182 }]);
+  });
+
+  it("dismisses the order total's notice when no uid is given", async () => {
+    db.responses['orders.select'] = [
+      { id: 'o1', status: 'sent', total: 205.66, line_items: [lockedBlindRow()] },
+    ];
+    const res = await dismiss();
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads['orders']).toEqual([{ quoted_notice_ack_total: 205.66 }]);
+    expect(db.updatePayloads['line_items']).toBeUndefined();
+  });
+
+  it('refuses a client-supplied figure', async () => {
+    // AI_GUIDELINES §1: a client that could name the figure could
+    // silence a notice about a price it had made up.
+    seedExisting('sent', [lockedBlindRow()]);
+    const res = await dismiss({ uid: UID_A, base: 1 });
+    expect(res.status).toBe(400);
+    expect(db.updatePayloads['line_items']).toBeUndefined();
+  });
+
+  it('404s on a uid the order does not have', async () => {
+    seedExisting('sent', [lockedBlindRow()]);
+    const res = await dismiss({ uid: UID_B });
+    expect(res.status).toBe(404);
+  });
+
+  it('carries the acknowledgement across the save with the stamp', async () => {
+    seedExisting('sent', [
+      { ...lockedBlindRow(), quoted_base_price: 170, quoted_notice_ack_base: 182 },
+      { ...lockedPresetRow(), quoted_base_price: 25 },
+    ]);
+    const res = await put(editPayload());
+    expect(res.status).toBe(200);
+    expect(savedRows().map((r) => r.quoted_notice_ack_base)).toEqual([182, null]);
+  });
+
+  it('clears the acknowledgement when the estimate is sent again', async () => {
+    seedSendable();
+    await withResendStubbed(async () => {
+      const res = await ordersApp.request('/o1/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    const items = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
+    expect(items.filter((w) => 'quoted_base_price' in w)).toEqual([
+      { quoted_base_price: 182, quoted_notice_ack_base: null },
+    ]);
+    expect((db.updatePayloads['orders'] ?? []) as unknown[]).toContainEqual({
+      quoted_total: 205.66,
+      quoted_notice_ack_total: null,
     });
   });
 
   /** A draft order ready to be sent, with one unlocked blind on it. */
   function seedSendable() {
-    // `/send` resolves the customer link before emailing (spec 2026-10-20).
-    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
     db.responses['orders.select'] = [
       {
         id: 'o1',
@@ -2585,18 +2768,6 @@ describe('per-item price lock (migration 39)', () => {
     }
   }
 
-  it('freezes the prices when the estimate is emailed', async () => {
-    seedSendable();
-    await withResendStubbed(async () => {
-      const res = await ordersApp.request('/o1/send', { method: 'POST' }, ENV);
-      expect(res.status).toBe(200);
-    });
-    const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
-    expect(writes.map((w) => w.locked_base_price)).toEqual([182]);
-    const logs = (db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>;
-    expect(logs.map((l) => l.message)).toContain('Item prices locked at send.');
-  });
-
   it('freezes the prices when the estimate is marked sent without an email', async () => {
     seedSendable();
     await withResendStubbed(async () => {
@@ -2604,7 +2775,9 @@ describe('per-item price lock (migration 39)', () => {
       expect(res.status).toBe(200);
     });
     const writes = (db.updatePayloads['line_items'] ?? []) as Record<string, unknown>[];
-    expect(writes.map((w) => w.locked_base_price)).toEqual([182]);
+    expect(
+      writes.filter((w) => 'locked_base_price' in w).map((w) => w.locked_base_price)
+    ).toEqual([182]);
   });
 
   it('releases the locks only on a revert all the way to draft', async () => {
@@ -2618,6 +2791,8 @@ describe('per-item price lock (migration 39)', () => {
     expect((db.updatePayloads['line_items'] ?? []) as unknown[]).not.toContainEqual({
       locked_base_price: null,
       locked_inputs_fingerprint: null,
+      quoted_base_price: null,
+      quoted_notice_ack_base: null,
     });
 
     db.updatePayloads = {};
@@ -2631,6 +2806,72 @@ describe('per-item price lock (migration 39)', () => {
     expect((db.updatePayloads['line_items'] ?? []) as unknown[]).toContainEqual({
       locked_base_price: null,
       locked_inputs_fingerprint: null,
+      quoted_base_price: null,
+      quoted_notice_ack_base: null,
+    });
+  });
+
+  /** The `order_revisions` rows the routes inserted, in order. */
+  const revisionInserts = () =>
+    (db.insertPayloads['order_revisions'] ?? []) as Array<Record<string, unknown>>;
+
+  /** `POST /o1/status` to the given stage. */
+  const jumpTo = (to: string) =>
+    ordersApp.request(
+      '/o1/status',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) },
+      ENV
+    );
+
+  it('mark-sent records a manual revision', async () => {
+    seedSendable();
+    await withResendStubbed(async () => {
+      const res = await ordersApp.request('/o1/mark-sent', { method: 'POST' }, ENV);
+      expect(res.status).toBe(200);
+    });
+    expect(revisionInserts()).toHaveLength(1);
+    expect(revisionInserts()[0]).toMatchObject({
+      order_id: 'o1',
+      rev_no: 1,
+      source_kind: 'manual',
+      total: 205.66,
+    });
+  });
+
+  it('status jump to awaiting_payment on a never-sent draft records a stage revision', async () => {
+    db.responses['orders.select'] = [
+      {
+        id: 'o1',
+        status: 'draft',
+        sent_at: null,
+        confirmed_at: null,
+        installed_at: null,
+        total: 205.66,
+        line_items: [],
+      },
+    ];
+    const res = await jumpTo('awaiting_payment');
+    expect(res.status).toBe(200);
+    expect(revisionInserts()).toHaveLength(1);
+    expect(revisionInserts()[0]).toMatchObject({
+      order_id: 'o1',
+      rev_no: 1,
+      source_kind: 'stage',
+    });
+  });
+
+  it('reverting to draft keeps revisions but clears quoted_total', async () => {
+    db.responses['orders.select'] = [
+      { id: 'o1', status: 'sent', sent_at: '2026-08-01T00:00:00.000Z', confirmed_at: null, installed_at: null },
+    ];
+    const res = await jumpTo('draft');
+    expect(res.status).toBe(200);
+    // History survives: nothing is deleted from, or added to, the table.
+    expect(db.calls).not.toContain('order_revisions.delete');
+    expect(revisionInserts()).toHaveLength(0);
+    expect(db.updatePayloads['orders']).toContainEqual({
+      quoted_total: null,
+      quoted_notice_ack_total: null,
     });
   });
 });
@@ -2877,40 +3118,269 @@ describe('GET /api/orders/by-number/:orderNumber', () => {
   });
 });
 
-describe('POST /api/orders/:id/send — customer link', () => {
-  it('emails the customer link, titled subject, and the choice line', async () => {
-    db.responses['orders.select'] = [{
-      id: 'e9', status: 'draft', customer_id: 'c1', order_number: 'M2010-126', title: 'Option A',
-      order_date: '2026-10-20', expiry_date: new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10),
-      subtotal: 100, discount_amount: 0, taxable_amount: 100, tax_amount: 13, total: 113,
-      public_token: null, terms_snapshot: null, line_items: [], payments: [],
-      customer: { first_name: 'Jane', last_name: 'B', email: 'jane@example.com', phone: '',
-        shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '',
-        shipping_postal_code: '', billing_same_as_shipping: true, billing_address_line1: '',
-        billing_address_line2: '', billing_city: '', billing_province: '', billing_postal_code: '' },
-    }];
-    db.responses['company_settings.select'] = [{ company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C' }];
-    db.responses['customers.select'] = [{ id: 'c1', public_token: 'cust-tok' }];
-    db.responses['orders.count'] = [1];
+describe('restore a revision (migration 50, Design decision 8)', () => {
+  const UID_A = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1';
+  const UID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+  const REV1_ID = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
 
-    let sent: Record<string, unknown> | null = null;
-    const realFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (String(url).includes('api.resend.com')) {
-        sent = JSON.parse(String(init?.body));
-        return new Response(JSON.stringify({ id: 'email_1' }), { status: 200 });
-      }
-      return realFetch(url as never, init as never);
-    }) as typeof fetch;
-    try {
-      const res = await ordersApp.request('/e9/send', { method: 'POST' }, ENV);
-      expect(res.status).toBe(200);
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-    expect(sent!.subject).toBe('Your estimate M2010-126 – Option A from Blinds Nisa');
-    expect(String(sent!.html)).toContain('http://localhost:5173/c/cust-tok');
-    expect(String(sent!.html)).toContain('You have 2 estimates to choose from');
+  /**
+   * The blind as stored at a send, locked at the figure it was priced at
+   * from `ratePerSqm` (cassette 20/m x 1.4 m = 28 on top) and
+   * fingerprinted from its own inputs, as `freezeOrderPrices` leaves it.
+   */
+  function blindRow(heightCm: number, ratePerSqm: number) {
+    const unit = Math.round((1.4 * (heightCm / 100) * ratePerSqm + 28) * 100) / 100;
+    const row = {
+      id: 'li1',
+      uid: UID_A,
+      position: 0,
+      hidden: false,
+      item_type: 'blind',
+      room_name: 'Living Room',
+      blinds_type: 'Roller',
+      panels: [70, 70],
+      height_cm: heightCm,
+      material_id: MATERIAL.id,
+      material_name: MATERIAL.name,
+      material_price_per_sqm: ratePerSqm,
+      cassette_id: CASSETTE.id,
+      cassette_name: CASSETTE.name,
+      cassette_price_per_m: 20,
+      cassette_price_basis: 'per_m',
+      bottom_rail_id: BOTTOM_RAIL.id,
+      bottom_rail_name: BOTTOM_RAIL.name,
+      bottom_rail_price_per_m: 0,
+      bottom_rail_price_basis: 'per_m',
+      control_id: CONTROL.id,
+      control_name: CONTROL.name,
+      control_price_per_item: 0,
+      control_price_basis: 'per_panel',
+      installation_id: null,
+      installation_name: null,
+      installation_price_per_item: null,
+      installation_price_basis: null,
+      attributes: {},
+      quantity: 2,
+      unit_price: unit,
+      line_total: unit * 2,
+      base_unit_price: null,
+      addons: [],
+      preset_id: null,
+    };
+    return {
+      ...row,
+      locked_base_price: unit,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+      quoted_base_price: unit,
+    };
+  }
+
+  /** The typed-price preset, frozen at 25 at every send. */
+  function presetRow() {
+    const row = {
+      id: 'li2',
+      uid: UID_B,
+      position: 1,
+      hidden: false,
+      item_type: 'preset',
+      preset_id: null,
+      title: '',
+      description: 'Installation',
+      attributes: {},
+      quantity: 1,
+      unit_price: 25,
+      line_total: 25,
+      base_unit_price: null,
+      addons: [],
+    };
+    return {
+      ...row,
+      locked_base_price: 25,
+      locked_inputs_fingerprint: pricingFingerprint(lockInputFromRow(row)),
+      quoted_base_price: 25,
+    };
+  }
+
+  /** Rev 1: sent while the fabric was $25/m², the blind at 98. */
+  const rev1Rows = () => [blindRow(200, 25), presetRow()];
+  /** Rev 2: fabric raised to $30, the blind made taller and re-sent at 120.40. */
+  const rev2Rows = () => [blindRow(220, 30), presetRow()];
+
+  /**
+   * The order as it stands after Rev 2 went out: `status`, Rev 2's rows,
+   * today's catalog at $30/m², and Rev 1 readable from `order_revisions`.
+   */
+  function seedAfterRev2(status = 'sent') {
+    db.responses['orders.select'] = [
+      { id: 'o1', status, expiry_date: '2099-01-01', line_items: rev2Rows() },
+    ];
+    db.responses['materials.select'] = [{ ...MATERIAL, price_per_sqm: 30 }];
+    db.responses['order_revisions.select'] = [
+      {
+        rev_no: 1,
+        source: {
+          order: { title: null, discount_type: 'percent', discount_value: 10 },
+          line_items: rev1Rows(),
+        },
+      },
+    ];
+  }
+
+  /** Rev 1's line items as the editor sends them back after a restore. */
+  function rev1Payload(edit: Record<string, unknown> = {}) {
+    const body = payload() as unknown as Record<string, unknown> & {
+      line_items: Record<string, unknown>[];
+    };
+    body.expiry_date = '2099-01-01';
+    body.line_items[0] = { ...body.line_items[0], uid: UID_A, ...edit };
+    body.line_items[1] = { ...body.line_items[1], uid: UID_B };
+    body.restore_from_revision = REV1_ID;
+    return body;
+  }
+
+  const put = (body: unknown) =>
+    ordersApp.request(
+      '/o1',
+      { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } },
+      ENV
+    );
+
+  /** The rows the save inserted, in position order. */
+  const savedRows = () =>
+    (db.insertPayloads['line_items']?.[0] ?? []) as Record<string, number | string | null>[];
+
+  it('restores Rev 1 prices for untouched items after a catalog price rise', async () => {
+    seedAfterRev2();
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    const [blind, preset] = savedRows();
+    // A plain save would re-price the 200 cm blind at $30: 84 + 28 = 112.
+    expect(blind.unit_price).toBe(98);
+    expect(blind.material_price_per_sqm).toBe(25);
+    expect(blind.locked_base_price).toBe(98);
+    expect(preset.unit_price).toBe(25);
+    // The customer still holds Rev 2, so the price-update notice keeps
+    // measuring against Rev 2's stamp, carried from the CURRENT rows.
+    expect(blind.quoted_base_price).toBe(120.4);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['id', REV1_ID]]);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['order_id', 'o1']]);
+  });
+
+  it('keeps the Rev 1 price for an item whose material was archived since', async () => {
+    seedAfterRev2();
+    db.responses['materials.select'] = [
+      { ...MATERIAL, price_per_sqm: 30, active: false, archived_at: '2026-10-20T00:00:00.000Z' },
+    ];
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    expect(savedRows()[0].unit_price).toBe(98);
+    expect(savedRows()[0].material_price_per_sqm).toBe(25);
+    // The held lock never consults the catalog, archived or not.
+    expect(db.calls).not.toContain('materials.select');
+  });
+
+  it('re-prices a restored item that was edited before saving', async () => {
+    seedAfterRev2();
+    // Loaded Rev 1, then changed the height before pressing Save: that
+    // item is re-quoted at today's $30 (1.4 x 2.1 x 30 + 28 = 116.20).
+    const res = await put(rev1Payload({ height_cm: 210 }));
+    expect(res.status).toBe(200);
+    const [blind, preset] = savedRows();
+    expect(blind.unit_price).toBe(116.2);
+    expect(blind.material_price_per_sqm).toBe(30);
+    expect(blind.locked_base_price).toBe(116.2);
+    expect(preset.unit_price).toBe(25);
+  });
+
+  it('409s restore on awaiting_payment', async () => {
+    seedAfterRev2('awaiting_payment');
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      "Rev 1 can't be restored once the estimate is confirmed."
+    );
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.delete');
+  });
+
+  it('404s a revision of another order', async () => {
+    seedAfterRev2();
+    // The order filter excludes it, so the read comes back empty.
+    db.responses['order_revisions.select'] = [];
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(404);
+    expect(db.filters).toContainEqual(['order_revisions', 'eq', ['order_id', 'o1']]);
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.delete');
+  });
+
+  it('logs the restore and leaves revisions untouched', async () => {
+    seedAfterRev2();
+    const res = await put(rev1Payload());
+    expect(res.status).toBe(200);
+    const logs = db.insertPayloads['order_logs'] as Array<{ message: string }>;
+    expect(logs.map((l) => l.message)).toContain('Restored Rev 1 (not sent yet).');
+    const revisionWrites = db.calls.filter(
+      (call) => call.startsWith('order_revisions.') && call !== 'order_revisions.select'
+    );
+    expect(revisionWrites).toEqual([]);
+
+    // The detail read afterwards: the order now holds Rev 1's content and
+    // the customer still holds Rev 2, so the banner has changes to list.
+    const totals = { subtotal: 0, discount_amount: 0, taxable_amount: 0, tax_rate: 13, tax_amount: 0, total: 0 };
+    const head = { id: 'o1', status: 'sent', order_date: '2026-07-03', expiry_date: '2099-01-01', payments: [], ...totals };
+    db.responses['orders.select'] = [{ ...head, line_items: rev1Rows() }];
+    db.responses['order_revisions.select'] = [
+      {
+        id: 'rev-2',
+        rev_no: 2,
+        sent_at: '2026-10-25T00:00:00.000Z',
+        source_kind: 'email',
+        total: 0,
+        snapshot: buildPublicQuote({ ...head, line_items: rev2Rows() }),
+      },
+    ];
+    const detail = await ordersApp.request('/o1', {}, ENV);
+    const body = (await detail.json()) as { data: { revisions: unknown[]; unsent_changes: string[] } };
+    expect(body.data.revisions).toHaveLength(1);
+    expect(body.data.unsent_changes.length).toBeGreaterThan(0);
+  });
+
+  it('400s restore_from_revision on create, where there is no revision', async () => {
+    const res = await ordersApp.request(
+      '/',
+      {
+        method: 'POST',
+        body: JSON.stringify({ ...payload(), restore_from_revision: REV1_ID }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+      ENV
+    );
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+    expect(db.calls).not.toContain('order_revisions.select');
+  });
+
+  it('GET revision source requires auth', async () => {
+    const worker = (await import('../index')).default;
+    const res = await worker.fetch(
+      new Request(`http://localhost/api/orders/o1/revisions/${REV1_ID}`),
+      ENV as never,
+      { waitUntil: () => {}, passThroughOnException: () => {} } as never
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('GET revision source returns the staff copy, or 404 for another order', async () => {
+    seedAfterRev2();
+    const ok = await ordersApp.request(`/o1/revisions/${REV1_ID}`, {}, ENV);
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { data: { rev_no: number; source: { line_items: unknown[] } } };
+    expect(body.data.rev_no).toBe(1);
+    expect(body.data.source.line_items).toHaveLength(2);
+
+    db.responses['order_revisions.select'] = [];
+    expect((await ordersApp.request(`/o1/revisions/${REV1_ID}`, {}, ENV)).status).toBe(404);
   });
 });
 
@@ -3029,26 +3499,6 @@ describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', 
     expect(db.calls).not.toContain('orders.update');
     expect(db.calls).not.toContain('line_items.update');
   }
-
-  it('/send refuses a draft with an incomplete item before emailing', async () => {
-    db.responses['orders.select'] = [bundle('draft')];
-    db.responses['company_settings.select'] = company();
-    const realFetch = globalThis.fetch;
-    let resendHits = 0;
-    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (String(url).includes('api.resend.com')) resendHits += 1;
-      return realFetch(url as never, init as never);
-    }) as typeof fetch;
-    try {
-      const res = await ordersApp.request('/g1/send', { method: 'POST' }, ENV);
-      expect(res.status).toBe(400);
-      expect(await res.json()).toMatchObject({ error: MESSAGE });
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-    expect(resendHits).toBe(0);
-    expectUntouched();
-  });
 
   it('/pdf refuses a draft with an incomplete item', async () => {
     db.responses['orders.select'] = [bundle('draft')];

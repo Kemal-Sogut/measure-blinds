@@ -96,7 +96,7 @@ export async function ensureOrderToken(
 /**
  * Counts a customer's ACTIVE estimates: `sent` and not past expiry (the
  * same rule as the Worker's defensive expiry). `excludeOrderId` lets
- * `/send` count "the others" before the order being sent flips to `sent`.
+ * a caller count "the others" before the order in question flips to `sent`.
  */
 export async function countActiveEstimates(
   sb: SupabaseClient,

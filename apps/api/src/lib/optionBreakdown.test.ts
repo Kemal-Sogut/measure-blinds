@@ -116,3 +116,13 @@ describe('optionLineAmounts', () => {
     expect(optionLineAmounts(strings).cassette).toBe(28);
   });
 });
+
+describe('optionLineAmounts with a basis this build does not know', () => {
+  it('leaves that option off rather than printing NaN', () => {
+    const odd = { ...blind, control_price_basis: 'per_yard' } as unknown as OptionPricedItem;
+    const amounts = optionLineAmounts(odd);
+    expect(amounts.control).toBeUndefined();
+    // The other options are unaffected.
+    expect(amounts).toEqual({ cassette: 28, bottom_rail: 28, installation: 60 });
+  });
+});

@@ -18,13 +18,16 @@
 import {
   canOverridePrice,
   firstIncompleteDraftMessage,
+  isAlreadyQuoted,
   parseAddons,
   parseDraftAttributes,
   parseOverride,
   parsePositive,
+  slotsForType,
   type Catalogs,
   type ItemDraft,
 } from './lineItemDrafts';
+import type { CatalogSlot } from '../../lib/blindTypes/base';
 import type {
   AdjustmentInputFields,
   ItemIdentityFields,
@@ -124,6 +127,12 @@ export function buildOrderPayload(state: OrderPayloadState): OrderInput | string
       if (attributes === null) return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
       const adj = adjustmentsFor(it, i);
       if (typeof adj === 'string') return adj;
+      // An ALREADY-QUOTED item keeps whatever hardware ids it carries
+      // (the Worker charges them); any other item drops an id for a slot
+      // its type no longer uses — see the hardware ids below.
+      const uses = slotsForType(state.catalogs, it.blinds_type);
+      const quoted = isAlreadyQuoted(it);
+      const sendable = (slot: CatalogSlot, id: string) => ((quoted || uses.has(slot)) && id ? id : null);
       line_items.push({
         item_type: 'blind',
         room_name: it.room_name.trim(),
@@ -134,10 +143,19 @@ export function buildOrderPayload(state: OrderPayloadState): OrderInput | string
         material_id: it.material_id || null,
         // Null, not '' — the API accepts a uuid or null for a slot the
         // type does not use, and rejects an id for one it does not.
-        cassette_id: it.cassette_id || null,
-        bottom_rail_id: it.bottom_rail_id || null,
-        control_id: it.control_id || null,
-        installation_id: it.installation_id || null,
+        //
+        // An id for a slot the type no longer uses is DROPPED, unless the
+        // item is already quoted (whose Worker branch keeps and charges
+        // whatever it carries). That happens when Settings deletes —
+        // archives, migration 49 — or deactivates a type's last option of
+        // a slot: the dropdown disappears, so the consultant could never
+        // clear the stale id, and the Worker would refuse every save of
+        // the draft. The preview already ignores it (`blindDraftInputs`),
+        // so dropping it here makes the save match what is on screen.
+        cassette_id: sendable('cassette', it.cassette_id),
+        bottom_rail_id: sendable('bottom_rail', it.bottom_rail_id),
+        control_id: sendable('control', it.control_id),
+        installation_id: sendable('installation', it.installation_id),
         color: it.color.trim(),
         note: it.note.trim(),
         attributes,

@@ -9,7 +9,8 @@
  * migration 39 reopening an estimate and pressing Save was enough to
  * re-price it. The lock freezes each item's calculated base price
  * (`line_items.locked_base_price`) the moment the estimate reaches the
- * customer — `POST /:id/send` or `/mark-sent`, not confirmation, because
+ * customer — the multi-estimate send (`POST /api/customers/:id/send-estimates`)
+ * or `/mark-sent`, not confirmation, because
  * quoting the figure is the commitment and confirming only accepts one
  * already made — next to a FINGERPRINT of the inputs that produced it
  * (`line_items.locked_inputs_fingerprint`). Every later save compares

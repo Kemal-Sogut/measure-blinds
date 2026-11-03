@@ -14,8 +14,11 @@ Custom blinds consultants visit customer homes to measure windows and create est
 2. Selects or creates a customer
 3. Creates an ORDER with blind line items (room name, dimensions, fabric, cassette, control)
 4. App calculates pricing live as they enter measurements
-5. Consultant reviews totals, applies any discount, and sends the ESTIMATE via email
-6. Customer receives a branded Estimate PDF and a link to view/confirm online
+5. Consultant reviews totals, applies any discount, and sends the customer's estimates via
+   email: one action per CUSTOMER, over the estimates they tick (the unit of work for sending
+   is the customer, not the estimate row)
+6. Customer receives ONE branded email with a link to view and confirm online (no PDF
+   attached; the page lists every estimate they were sent)
 7. Customer confirms → order moves to "awaiting payment" → consultant notified (deposit
    instructions shown to the customer). The consultant can REVERSE the confirmation (back
    to sent) while no payment has been recorded — customers cannot.

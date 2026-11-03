@@ -18,10 +18,20 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-/** Scripted rows keyed `<table>.<op>`, plus captured insert payloads. */
-const db: { responses: Record<string, unknown[]>; inserts: Record<string, unknown[]> } = {
+/**
+ * Scripted rows keyed `<table>.<op>`, plus captured insert/update
+ * payloads and every `is(column, value)` filter an update chain applied.
+ */
+const db: {
+  responses: Record<string, unknown[]>;
+  inserts: Record<string, unknown[]>;
+  updates: Record<string, unknown[]>;
+  filters: Record<string, unknown[][]>;
+} = {
   responses: {},
   inserts: {},
+  updates: {},
+  filters: {},
 };
 
 /**
@@ -36,9 +46,11 @@ function makeBuilder(table: string) {
     ((...args: unknown[]) => {
       if (['insert', 'update', 'delete'].includes(name)) state.op = name;
       if (name === 'insert') (db.inserts[table] ??= []).push(args[0]);
+      if (name === 'update') (db.updates[table] ??= []).push(args[0]);
+      if (name === 'is') (db.filters[`${table}.${state.op}`] ??= []).push(args);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'is', 'in', 'order', 'limit']) {
     builder[m] = chain(m);
   }
   const resolve = () => ({ data: db.responses[`${state.table}.${state.op}`] ?? [], error: null });
@@ -79,6 +91,78 @@ function post(path: string, body: unknown) {
 beforeEach(() => {
   db.responses = {};
   db.inserts = {};
+  db.updates = {};
+  db.filters = {};
+});
+
+/** PUTs a JSON body to one catalog row. */
+function putRow(path: string, body: unknown) {
+  return settingsApp.request(
+    path,
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    ENV
+  );
+}
+
+describe('catalog deletes archive the row (migration 49)', () => {
+  /** DELETEs one catalog row. */
+  function del(path: string) {
+    return settingsApp.request(path, { method: 'DELETE' }, ENV);
+  }
+
+  it.each([
+    ['/cassette-options/cas-1', 'cassette_options'],
+    ['/bottom-rail-options/cas-1', 'bottom_rail_options'],
+    ['/control-options/cas-1', 'control_options'],
+    ['/installation-options/cas-1', 'installation_options'],
+    ['/pleat-types/cas-1', 'pleat_types'],
+    ['/presets/cas-1', 'preset_line_items'],
+    ['/blind-types/cas-1', 'blind_types'],
+    ['/materials/cas-1', 'materials'],
+  ])('DELETE %s updates %s instead of deleting it', async (path, table) => {
+    db.responses[`${table}.update`] = [{ id: 'cas-1' }];
+    const res = await del(path);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: { id: string } }).data).toEqual({ id: 'cas-1' });
+    // Archived AND deactivated: the second is what every existing
+    // "active" filter keys off, so dropdowns and scoping drop it for free.
+    const patch = db.updates[table]?.[0] as Record<string, unknown>;
+    expect(patch.active).toBe(false);
+    expect(typeof patch.archived_at).toBe('string');
+    // Only a LIVE row is archived — a second delete is a 404, not a
+    // silent re-stamp of the archive date.
+    expect(db.filters[`${table}.update`]).toEqual([['archived_at', null]]);
+  });
+
+  it('answers 404 when no live row has that id', async () => {
+    const res = await del('/control-options/missing');
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses to edit an archived option', async () => {
+    db.responses['cassette_options.select'] = [
+      { id: 'cas-1', name: 'Old', archived_at: '2026-10-25T00:00:00Z' },
+    ];
+    const res = await putRow('/cassette-options/cas-1', { active: true });
+    expect(res.status).toBe(404);
+    expect(db.updates['cassette_options']).toBeUndefined();
+  });
+
+  it('refuses to edit an archived material', async () => {
+    db.responses['materials.select'] = [
+      { id: 'mat-1', name: 'Old', archived_at: '2026-10-25T00:00:00Z' },
+    ];
+    const res = await putRow('/materials/mat-1', { name: 'Renamed' });
+    expect(res.status).toBe(404);
+    expect(db.updates['materials']).toBeUndefined();
+  });
+
+  it('still edits a live material', async () => {
+    db.responses['materials.select'] = [{ id: 'mat-1', name: 'Linen', archived_at: null }];
+    const res = await putRow('/materials/mat-1', { name: 'Linen II' });
+    expect(res.status).toBe(200);
+    expect(db.updates['materials']?.[0]).toEqual({ name: 'Linen II' });
+  });
 });
 
 describe('blind-type scoped catalogs', () => {

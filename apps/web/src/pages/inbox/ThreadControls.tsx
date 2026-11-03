@@ -5,7 +5,8 @@
  * Triage card at the top of a conversation: category select, Mark
  * handled / Mark as new, customer link (search existing customers, or
  * open / unlink the linked one), and — once a customer is linked — an
- * order select listing that customer's orders.
+ * order select listing that customer's orders, and Delete conversation
+ * (app only — Titan keeps the mail; asks first, then `onDeleted`).
  *
  * Every change is one `PUT /api/inbox/:id`; the server applies the link
  * rules (an order brings its customer; changing the customer clears the
@@ -16,17 +17,19 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Button, Card, CardBody, Field, inputClass } from '../../components/ui';
+import { Button, Card, CardBody, Field, inputClass, useConfirm } from '../../components/ui';
 import { useCustomerSearch } from '../../hooks/useCustomers';
-import { useUpdateInboxThread, type ThreadUpdate } from '../../hooks/useInbox';
+import { useDeleteInboxThread, useUpdateInboxThread, type ThreadUpdate } from '../../hooks/useInbox';
 import { displayName } from '../../lib/customerName';
 import { statusLabel } from '../../lib/statusStyles';
 import type { EmailCategory, EmailThreadDetail } from '../../types';
 import { CATEGORY_LABELS, CATEGORY_ORDER } from './inboxText';
 
-/** Triage controls for one conversation. */
-export default function ThreadControls({ thread }: { thread: EmailThreadDetail }) {
+/** Triage controls for one conversation; `onDeleted` runs after a successful delete. */
+export default function ThreadControls({ thread, onDeleted }: { thread: EmailThreadDetail; onDeleted: () => void }) {
   const update = useUpdateInboxThread();
+  const askConfirm = useConfirm();
+  const remove = useDeleteInboxThread();
   const [term, setTerm] = useState('');
   const search = useCustomerSearch(term);
   const results = term.trim() ? (search.data ?? []).slice(0, 5) : [];
@@ -41,6 +44,24 @@ export default function ThreadControls({ thread }: { thread: EmailThreadDetail }
         onError: (e) => toast.error(e.message),
       }
     );
+  }
+
+  async function handleDelete() {
+    const ok = await askConfirm({
+      title: 'Delete this conversation?',
+      message:
+        'It is removed from the app but stays in Titan. A new reply will start a new conversation.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    remove.mutate(thread.id, {
+      onSuccess: () => {
+        toast.success('Conversation deleted');
+        onDeleted();
+      },
+      onError: (e) => toast.error(e.message),
+    });
   }
 
   return (
@@ -138,6 +159,12 @@ export default function ThreadControls({ thread }: { thread: EmailThreadDetail }
             </div>
           </Field>
         )}
+
+        <div className="flex justify-end border-t border-border-light pt-3">
+          <Button size="sm" variant="ghost" loading={remove.isPending} onClick={handleDelete}>
+            Delete conversation
+          </Button>
+        </div>
       </CardBody>
     </Card>
   );

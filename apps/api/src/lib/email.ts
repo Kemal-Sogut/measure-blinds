@@ -22,6 +22,10 @@
  * state untouched when a send fails.
  */
 
+import { changeLinesForEmail, isUpdateEmail } from './estimateEmailChanges';
+
+export { isUpdateEmail };
+
 /** Escapes the five HTML-significant characters in user content. */
 export function escapeHtml(value: string): string {
   return value
@@ -305,37 +309,79 @@ export function checklistHtml(heading: string, items: string[]): string {
 /* Customer templates                                                  */
 /* ------------------------------------------------------------------ */
 
-/** Inputs for the customer-facing estimate email template. */
-export interface EstimateEmailInputs {
+/** One estimate named in the estimates email — no money, the page holds the figures. */
+export interface EstimateEmailLine {
+  /** The estimate's order number, e.g. `M2010-126`. */
+  order_number: string;
+  /** The estimate's optional title (migration 47); null prints nothing after the number. */
+  title: string | null;
+  /**
+   * What changed since the customer last held this estimate, as described
+   * lines (`describeChange`). `undefined` = a new estimate (first send);
+   * `[]` = re-announced unchanged; non-empty = updated, and the lines are
+   * listed under the row (at most five, then "and {m} more").
+   */
+  changes?: string[];
+}
+
+/** Inputs for the customer-facing estimates email template. */
+export interface EstimatesEmailInputs {
+  /** Same shape `brandFromSettings` returns. */
   company: CompanyBrand;
   customerFirstName: string;
-  viewUrl: string;
   /** Optional personal note from the consultant, shown above the CTA. */
   message?: string;
-  /** The estimate's optional title (migration 47); null/absent prints nothing. */
-  title?: string | null;
+  /** The customer link, `/c/:token`, which lists every live estimate. */
+  viewUrl: string;
+  /** Estimates named in this email, in send order. */
+  estimates: EstimateEmailLine[];
   /**
-   * How many live estimates the customer holds counting this one. Above
-   * one, the email says there is a choice to make — the link opens the
-   * customer's list rather than a single estimate.
+   * How many LIVE ESTIMATES the customer will hold after this send — the
+   * unconfirmed options the link offers them to choose between.
+   *
+   * Computed by the route — it is NOT `estimates.length`, because the
+   * customer may hold live estimates that this email does not name. It is
+   * also NOT the number of cards the link renders: the customer page also
+   * shows confirmed orders, which are no longer estimates to choose from,
+   * so a customer with past orders sees more cards than this names.
    */
-  activeEstimateCount?: number;
+  liveCount: number;
 }
 
 /**
- * Builds the branded customer estimate email ("03 — Estimate proposal"
- * in the design doc): a short greeting that sends the customer to the
- * CTA button, the consultant's optional note, the button itself, and
- * fine print. All dynamic strings are HTML-escaped.
+ * One checklist row of the estimates email: order number and title, then
+ * - when the estimate is an update - an "Updated" tag and its change
+ * lines (capped, escaped). Rows with `changes` undefined or empty render
+ * exactly as before.
+ */
+function estimateRowHtml(e: EstimateEmailLine): string {
+  const head = `<strong>${escapeHtml(e.order_number)}</strong>${e.title ? ` &mdash; ${escapeHtml(e.title)}` : ''}`;
+  if (!e.changes?.length) return head;
+  const tag = ` <span style="display:inline-block;margin-left:6px;padding:1px 8px;border-radius:10px;background:${C.tintBg};font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:${C.accent};">Updated</span>`;
+  const lines = changeLinesForEmail(e.changes)
+    .map((l) => `<div style="font-size:13px;line-height:1.5;color:${C.faint};">${escapeHtml(l)}</div>`)
+    .join('');
+  return `${head}${tag}<div style="margin-top:4px;">${lines}</div>`;
+}
+
+/**
+ * Builds the branded customer estimates email ("03 — Estimate proposal"
+ * in the design doc). One count-aware template serves both a single
+ * estimate and several: the heading, the intro and the CTA button label all
+ * switch between singular and plural on `estimates.length`, and a "choose"
+ * line appears when `liveCount` is above one. A singular button under a
+ * plural heading read as if only one of the listed estimates were
+ * reviewable, so the three agree by construction rather than by habit. The
+ * body is a short greeting, the consultant's
+ * optional note, the list of estimates named in this email (order number
+ * plus title when set), the CTA button, and fine print. All dynamic
+ * strings are HTML-escaped.
  *
- * DELIBERATELY DETAIL-FREE: no summary card, order number, expiry date
- * or total. The email's one job is to get the customer onto the public
- * view page, where the live figures are; the subject line still names
- * the order and the PDF attachment carries the full breakdown. Two
- * exceptions (2026-10-22): the estimate's title, when set, is named in
- * the intro so two options can be told apart, and when the customer holds
- * more than one live estimate a line says there is a choice to make —
- * `viewUrl` is then the customer link (`/c/:token`), which lists them all.
+ * DELIBERATELY DETAIL-FREE: no summary card, expiry date or total, and
+ * no money anywhere. The email's one job is to get the customer onto the
+ * customer link (`viewUrl`, `/c/:token`), where the live figures are. The
+ * only detail beyond that is the list of order numbers and titles, so two
+ * options can be told apart.
  *
  * CONFIRMATION IS EXPLICIT: nothing is ordered until the customer opens
  * the page, ticks the Terms & Conditions box and presses "Confirm
@@ -344,17 +390,44 @@ export interface EstimateEmailInputs {
  * intro and the button label spell that out. Keep the wording in sync
  * with the customer page's labels and with the estimate PDF's CTA
  * (`pdf.ts`).
+ *
+ * UPDATES: an estimate with non-empty `changes` is an update the customer
+ * already held. When EVERY named estimate is one ({@link isUpdateEmail})
+ * the heading and intro say "updated"; in a mixed send the "ready" copy
+ * stays and only the changed rows get an "Updated" tag plus their change
+ * lines (at most five each, then "and {m} more", all escaped).
+ *
+ * NO ATTACHMENT: this email carries no PDF and must never promise one —
+ * the customer link is the single place the estimates are read.
  */
-export function buildEstimateEmailHtml(i: EstimateEmailInputs): string {
+export function buildEstimatesEmailHtml(i: EstimatesEmailInputs): string {
   const company = escapeHtml(i.company.name);
   const name = escapeHtml(i.customerFirstName);
   const url = escapeHtml(i.viewUrl);
-  const body = `${headingHtml('Your estimate is ready')}
-    ${introHtml(`Hi ${name} &mdash; thank you for choosing ${company}. Your estimate${i.title ? ` <strong>${escapeHtml(i.title)}</strong>` : ''} is ready. Tap the button below to review it and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`)}
-    ${(i.activeEstimateCount ?? 1) > 1 ? introHtml(`You have ${i.activeEstimateCount} estimates to choose from &mdash; open each one and confirm the one that suits you.`) : ''}
+  const several = i.estimates.length > 1;
+  const updated = isUpdateEmail(i.estimates);
+  const items = i.estimates.map(estimateRowHtml);
+  const intro = updated
+    ? several
+      ? `Hi ${name} &mdash; we&#39;ve made changes to your estimates from ${company}. Tap the button below to review the latest versions and, when you&#39;re happy, <strong>confirm the one you&#39;d like to go ahead with</strong>.`
+      : `Hi ${name} &mdash; we&#39;ve made changes to your estimate from ${company}. Tap the button below to review the latest version and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`
+    : several
+    ? `Hi ${name} &mdash; thank you for choosing ${company}. Your estimates are ready. Tap the button below to review them and, when you&#39;re happy, <strong>confirm the one you&#39;d like to go ahead with</strong>.`
+    : `Hi ${name} &mdash; thank you for choosing ${company}. Your estimate is ready. Tap the button below to review it and, when you&#39;re happy, <strong>confirm it to go ahead with your order</strong>.`;
+  const heading = updated
+    ? several
+      ? 'Your estimates have been updated'
+      : 'Your estimate has been updated'
+    : several
+      ? 'Your estimates are ready'
+      : 'Your estimate is ready';
+  const body = `${headingHtml(heading)}
+    ${introHtml(intro)}
+    ${checklistHtml('In this email', items)}
+    ${i.liveCount > 1 ? introHtml(`You have ${i.liveCount} estimates to choose from &mdash; open each one and confirm the one that suits you.`) : ''}
     ${messageBlockHtml(i.message)}
-    <div style="margin:0 0 24px;">${primaryButtonHtml(url, 'Review &amp; confirm your estimate')}</div>
-    ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email. The full estimate is also attached as a PDF.`)}
+    <div style="margin:0 0 24px;">${primaryButtonHtml(url, several ? 'Review &amp; confirm your estimates' : 'Review &amp; confirm your estimate')}</div>
+    ${finePrintHtml(`Your order isn&#39;t placed until you confirm it online. Need changes first? Use <strong>Request Edit</strong> on the same page or reply to this email.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);
 }
@@ -370,6 +443,26 @@ export function estimateEmailSubject(
   title: string | null | undefined
 ): string {
   return `Your estimate ${orderNumber}${title ? ` – ${title}` : ''} from ${companyName}`;
+}
+
+/**
+ * Subject line for the estimates email. One estimate keeps the specific
+ * `estimateEmailSubject` form (order number, title when set); any other
+ * count — several, or none — falls back to the plain "Your estimates from
+ * <company>" so no single order number is singled out. When EVERY named
+ * estimate is an update ({@link isUpdateEmail}) the subject says so:
+ * "Updated estimate <number> from <company>" for one, "Your updated
+ * estimates from <company>" for several.
+ */
+export function estimatesEmailSubject(companyName: string, estimates: EstimateEmailLine[]): string {
+  if (isUpdateEmail(estimates)) {
+    return estimates.length === 1
+      ? `Updated estimate ${estimates[0].order_number} from ${companyName}`
+      : `Your updated estimates from ${companyName}`;
+  }
+  return estimates.length === 1
+    ? estimateEmailSubject(estimates[0].order_number, companyName, estimates[0].title)
+    : `Your estimates from ${companyName}`;
 }
 
 /** Inputs for the customer-facing invoice email template. */
@@ -848,12 +941,17 @@ export function buildCancellationNoticeHtml(i: CancellationNoticeInputs): string
 export interface ConfirmationNoticeInputs {
   orderNumber: string;
   customerName: string;
+  /** The total the customer accepted (the accepted revision's, when one exists). */
   total: number;
+  /** Staff warning when the saved order no longer matches what was accepted; escaped. */
+  divergedNote?: string | null;
 }
 
 /**
  * Builds the short internal notification sent to the business when a
- * customer confirms an estimate. All dynamic strings are escaped.
+ * customer confirms an estimate. All dynamic strings are escaped. With
+ * `divergedNote` (the saved order moved on from the revision the customer
+ * accepted) a highlighted line asks staff to review before the deposit.
  */
 export function buildConfirmationNoticeHtml(i: ConfirmationNoticeInputs): string {
   const order = escapeHtml(i.orderNumber);
@@ -863,7 +961,8 @@ export function buildConfirmationNoticeHtml(i: ConfirmationNoticeInputs): string
   <div style="max-width:560px;margin:0 auto;padding:24px">
     <h2 style="margin:0 0 12px">✅ Estimate confirmed</h2>
     <p style="margin:0 0 8px"><strong>${name}</strong> confirmed estimate <strong>${order}</strong>.</p>
-    <p style="margin:0 0 8px">Total: <strong>$${i.total.toFixed(2)}</strong> (incl. HST)</p>
+    <p style="margin:0 0 8px">Total: <strong>$${i.total.toFixed(2)}</strong> (incl. HST)</p>${i.divergedNote ? `
+    <p style="margin:0 0 8px;color:#b45309"><strong>${escapeHtml(i.divergedNote)}</strong></p>` : ''}
     <p style="margin:0;color:#868e96">50% deposit instructions were shown to the customer.</p>
   </div>
 </body></html>`;

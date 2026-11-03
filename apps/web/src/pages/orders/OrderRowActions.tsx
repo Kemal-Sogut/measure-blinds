@@ -13,6 +13,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import { useDuplicateOrder, useDeleteOrder } from '../../hooks/useOrders';
 import { orderPath } from '../../lib/orderPath';
 import type { Order } from '../../types';
@@ -78,15 +79,20 @@ function DuplicateButton({ order, className }: { order: Order; className: string
  */
 function DeleteButton({ order, className }: { order: Order; className: string }) {
   const deleteMut = useDeleteOrder();
+  const askConfirm = useConfirm();
   return (
     <button
       type="button"
       disabled={deleteMut.isPending}
       onClick={async () => {
-        const ok = window.confirm(
-          `Delete ${order.order_number} permanently? Its line items, activity log, payments, ` +
-            'change requests and installation visit are removed. The customer is kept.',
-        );
+        const ok = await askConfirm({
+          title: `Delete ${order.order_number} permanently?`,
+          message:
+            'Its line items, activity log, payments, change requests and installation visit ' +
+            'are removed. The customer is kept.',
+          confirmLabel: 'Delete order',
+          tone: 'danger',
+        });
         if (!ok) return;
         try {
           await deleteMut.mutateAsync(order.id);

@@ -128,6 +128,24 @@ export function useUpdateInboxThread(): UseMutationResult<{ id: string }, Error,
   });
 }
 
+/**
+ * Deletes a conversation from the app (Titan keeps the mail). Drops the
+ * cached thread so nothing refetches a 404, then refreshes the lists,
+ * dots and Notifications (its "New email" entries are gone too).
+ */
+export function useDeleteInboxThread(): UseMutationResult<{ id: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<Envelope<{ id: string }>>(`/api/inbox/${id}`, { method: 'DELETE' })).data,
+    onSuccess: ({ id }) => {
+      qc.removeQueries({ queryKey: [...INBOX_KEY, 'thread', id] });
+      void qc.invalidateQueries({ queryKey: INBOX_KEY });
+      void qc.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
 /** All rules in first-match order. */
 export function useEmailRules(): UseQueryResult<EmailRule[]> {
   return useQuery({

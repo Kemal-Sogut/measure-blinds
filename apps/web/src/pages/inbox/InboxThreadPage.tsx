@@ -7,7 +7,8 @@
  * other party on the left, the shop (info@blindsnisa.com, read from
  * Titan's Sent folder) on the right. Back returns to the list tab, status
  * and page it was opened from (router state from the Inbox list), else
- * to the All tab (e.g. when opened from a notification). Opening an unread conversation marks it read, which
+ * to the All tab (e.g. when opened from a notification); so does deleting
+ * the conversation (app only, Titan keeps it). Opening an unread conversation marks it read, which
  * clears its dot, its tab's dot and (when it was the last one) the
  * sidebar's. Replies are written in Titan; they appear here after
  * the next sync (every minute 8 AM–10 PM, every 10 minutes overnight); an
@@ -15,7 +16,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
 import { useInboxThread, useMarkInboxThreadRead } from '../../hooks/useInbox';
@@ -26,7 +27,9 @@ import { threadTitle } from './inboxText';
 /** The bubble view of one conversation. */
 export default function InboxThreadPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const inboxSearch = (useLocation().state as { inboxSearch?: string } | null)?.inboxSearch;
+  const listPath = inboxSearch ? `/inbox?${inboxSearch}` : '/inbox';
   const { data: thread, isLoading, error } = useInboxThread(id);
   const markRead = useMarkInboxThreadRead();
   const endRef = useRef<HTMLDivElement>(null);
@@ -50,14 +53,14 @@ export default function InboxThreadPage() {
         eyebrow="Inbox"
         title={thread ? threadTitle(thread) : 'Conversation'}
         subtitle={thread?.subject || undefined}
-        backTo={inboxSearch ? `/inbox?${inboxSearch}` : '/inbox'}
+        backTo={listPath}
       />
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 [--page-max:56rem]">
         {isLoading && <ListSkeleton />}
         {error && !thread && <p className="text-danger">{error.message}</p>}
         {thread && (
           <>
-            <ThreadControls thread={thread} />
+            <ThreadControls thread={thread} onDeleted={() => navigate(listPath, { replace: true })} />
             <div className="flex flex-col gap-4">
               {thread.messages.map((m) => (
                 <MessageBubble key={m.id} message={m} />

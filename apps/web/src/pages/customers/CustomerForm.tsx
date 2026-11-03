@@ -27,6 +27,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import PageHeader from '../../components/PageHeader';
 import CustomerFields from '../../components/CustomerFields';
 import CustomerDetailView from './CustomerDetailView';
@@ -71,6 +72,7 @@ export default function CustomerForm() {
   /** True on `/customers/:id` — the route addresses a saved record. */
   const isExisting = Boolean(id);
   const navigate = useNavigate();
+  const askConfirm = useConfirm();
 
   const { data: existing, isLoading, error } = useCustomer(id);
   const create = useCreateCustomer();
@@ -96,10 +98,17 @@ export default function CustomerForm() {
    * lose. A new customer has no view to fall back to, so Cancel there
    * returns to the list instead.
    */
-  function cancelEditing() {
+  async function cancelEditing() {
     if (!isExisting) return navigate('/customers');
     if (existing && isCustomerFormDirty(form, existing)) {
-      if (!window.confirm('Discard changes?')) return;
+      const ok = await askConfirm({
+        title: 'Discard changes?',
+        message: 'Your edits to this customer are not saved.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        tone: 'danger',
+      });
+      if (!ok) return;
     }
     setEditing(false);
   }
@@ -142,9 +151,15 @@ export default function CustomerForm() {
   }
 
   /** Confirms then soft-deletes the customer. */
-  function handleDelete() {
+  async function handleDelete() {
     if (!id) return;
-    if (!window.confirm('Delete this customer? Their existing orders are kept.')) return;
+    const ok = await askConfirm({
+      title: 'Delete this customer?',
+      message: 'Their existing orders are kept.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     remove.mutate(id, {
       onSuccess: () => {
         toast.success('Customer deleted.');

@@ -91,6 +91,8 @@ import PaymentSection from '../../components/PaymentSection';
 import OrderProgress from './OrderProgress';
 import CancellationRequest from './CancellationRequest';
 import EditRequestDialog from './EditRequestDialog';
+import RevisionInfo from './RevisionInfo';
+import type { RevisionStamp } from './revisionView';
 import { displayName } from '../../lib/customerName';
 import { maintenanceMessage } from '../../lib/maintenance';
 import { measuredWidths } from '../../lib/lineItemCompleteness';
@@ -212,6 +214,13 @@ interface PublicEstimate {
    * also the correct reading for every order nobody has written to.
    */
   edit_requests?: PublicEditRequest[];
+  /**
+   * The latest sent version the customer is being shown (number and sent
+   * date). The payload carries nothing about earlier versions — no
+   * history, no change lines. Optional: a Worker predating revisions
+   * omits it and the page then renders no version chip.
+   */
+  revision?: RevisionStamp | null;
   customer: {
     first_name: string;
     last_name: string;
@@ -585,7 +594,10 @@ export default function CustomerView({
    * POSTs the one-shot confirm. Success and 409 ("already confirmed")
    * are treated identically — both mean the confirmation exists, so the
    * page simply re-reads the server's version of the truth and the
-   * reload flips it into the confirmed layout. There is no success
+   * reload flips it into the confirmed layout. (A 409 for a stale version
+   * — staff sent an update after this page loaded — takes the same
+   * reload, which brings up the new version for the customer to review
+   * before confirming again.) There is no success
    * banner: the payment instructions now occupy that slot, which is
    * what the customer needs next.
    */
@@ -596,7 +608,12 @@ export default function CustomerView({
     setConfirming(true);
     setActionError(null);
     try {
-      const res = await fetch(`${API_URL}/public/estimate/${token}/confirm`, { method: 'POST' });
+      // The version on screen: a send that landed since this page loaded makes the confirm 409.
+      const res = await fetch(`${API_URL}/public/estimate/${token}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rev_no: estimate?.revision?.rev_no }),
+      });
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
       const closed = maintenanceMessage(res, body);
       if (closed) return setMaintenance(closed);
@@ -842,6 +859,8 @@ export default function CustomerView({
             </p>
           </div>
         </header>
+
+        <RevisionInfo revision={estimate.revision ?? null} />
 
         {/*
           How to pay — first thing after the header, in the slot the

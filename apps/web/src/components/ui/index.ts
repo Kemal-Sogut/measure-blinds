@@ -14,4 +14,7 @@ export type { CardAccent } from './Card';
 export { default as Button } from './Button';
 export { default as Field, inputClass } from './Field';
 export { default as Modal } from './Modal';
+export { default as ConfirmProvider } from './ConfirmProvider';
+export { useConfirm } from './confirmContext';
+export type { ConfirmOptions, ConfirmFn } from './confirmContext';
 export { default as StatTile } from './StatTile';

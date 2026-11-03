@@ -7,7 +7,7 @@ A field-facing web application for custom blinds consultants. Consultants log in
 1. **Mobile-first design** — Primary usage is on tablets/phones in the field
 2. **Custom pricing engine** — Formula-based pricing with width/height minimums, panel splitting
 3. **PDF generation** — Branded estimates generated server-side
-4. **Email delivery** — Estimates sent to customers with PDF attachments via Resend
+4. **Email delivery** — Estimates sent to customers as one customer-link email via Resend (no PDF attached)
 5. **Customer confirmation flow** — Public token-gated view with confirm button (reversible by the user, never the customer)
 6. **Settings management** — Fabrics, cassette options, control options, preset items, company info, T&C
 7. **Order lifecycle** — Draft → Sent → Awaiting Payment → In Progress → Ready → Installed (+ Expired for lapsed estimates), auto-expiry on sent

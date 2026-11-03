@@ -27,16 +27,17 @@ import { applyPriceAdjustments } from '../../lib/lineItemAdjustments';
 import { lockApplies, type PriceLock, type PriceLockInput } from '../../lib/priceLock';
 import { getBlindType } from '../../lib/blindTypes';
 import {
-  firstIncompleteMessage,
+  incompleteMessage,
   missingFields,
   type CompletenessInput,
   type CompletenessScope,
 } from '../../lib/lineItemCompleteness';
-import type {
-  BlindAttributes,
-  CatalogResolver,
-  CatalogSlot,
-  HardwareCharge,
+import {
+  isPriceBasis,
+  type BlindAttributes,
+  type CatalogResolver,
+  type CatalogSlot,
+  type HardwareCharge,
 } from '../../lib/blindTypes/base';
 import type {
   Material,
@@ -90,6 +91,42 @@ export interface PriceAdjustmentDraft {
    * schema is `.strict()` and the lock is server-owned.
    */
   lock: PriceLock | null;
+  /**
+   * True when this item was ALREADY on an order whose prices are frozen
+   * (`holdsPriceLock`) when the editor loaded it — so it carries a price
+   * the customer has been quoted.
+   *
+   * Set once per load from the order's status, never as the consultant
+   * types; it is the draft-local half of the rule in
+   * {@link isAlreadyQuoted}, whose live half is the lock. False for every
+   * item created in this session, including one added to a sent order:
+   * a brand-new line is being quoted now and must satisfy today's
+   * requirements.
+   */
+  previously_quoted: boolean;
+  /**
+   * The calculated base unit price this item carried at the LAST SEND
+   * (`line_items.quoted_base_price`, migration 48), or null on an order
+   * no send has stamped.
+   *
+   * Distinct from {@link lock}, which a save re-writes at the new figure
+   * for an edited item. This one only a send writes, which is what lets
+   * {@link quotedPriceChange} keep showing a price-update notice after
+   * the edit has been saved, until the estimate goes out again.
+   */
+  quoted_base: number | null;
+  /**
+   * The figure staff dismissed this item's price-update notice at
+   * (`line_items.quoted_notice_ack_base`), or null while the notice has
+   * not been dismissed.
+   *
+   * Server-owned like {@link lock} and {@link quoted_base}: it is
+   * written by `POST /api/orders/:id/dismiss-price-notice`, never sent
+   * back, and cleared by the next send. {@link quotedPriceChange} stays
+   * silent while today's base still matches it, so dismissing settles
+   * ONE move rather than muting the item for good.
+   */
+  notice_ack_base: number | null;
 }
 
 /**
@@ -109,8 +146,14 @@ export const NO_ADJUSTMENTS: PriceAdjustmentDraft = {
   addons: [],
   // A new item was never quoted, so it is live-priced — even when it is
   // being added to an order whose other items are frozen. The Worker
-  // prices it from today's catalog and locks it on that save.
+  // prices it from today's catalog and locks it on that save. For the
+  // same reason it is neither previously quoted nor stamped: it must
+  // satisfy today's hardware requirements, and there is no earlier figure
+  // for a price-update notice to measure against.
   lock: null,
+  previously_quoted: false,
+  quoted_base: null,
+  notice_ack_base: null,
 };
 
 /** Editable state of one blind line item (strings for free typing). */
@@ -279,11 +322,16 @@ export interface Catalogs {
  * LINKED to the selected type are offered. When no type is selected yet
  * (or the name is unknown/legacy free-text), an empty list is returned
  * so the user must pick a blind type first.
+ *
+ * ARCHIVED materials (a Settings delete, migration 49) are never offered:
+ * they exist only so the orders already priced with them keep resolving.
+ * Pricing and the item summary look materials up in the unfiltered
+ * `catalogs.materials`, so an old item carrying one still previews.
  */
 export function materialsForType(catalogs: Catalogs, blindsType: string): Material[] {
   const typeId = catalogs.blindTypes.find((t) => t.name === blindsType)?.id;
   if (!typeId) return [];
-  return catalogs.materials.filter((m) => m.blind_type_ids.includes(typeId));
+  return catalogs.materials.filter((m) => !m.archived_at && m.blind_type_ids.includes(typeId));
 }
 
 /**
@@ -360,18 +408,42 @@ export function draftCompletenessInput(draft: ItemDraft): CompletenessInput {
   };
 }
 
+/**
+ * The scope ONE draft is judged against. An already-quoted item
+ * ({@link isAlreadyQuoted}) is judged as an unknown type is — no hardware
+ * slot is required of it — because a slot its blind type gained after
+ * the estimate went out must not be demanded of a price the customer is
+ * already holding. The Worker exempts the same rows (`grandfathered` in
+ * `resolveLineItems`); measurements, material and required attributes
+ * are still judged. Only a price-locked order has such items, so a
+ * draft is always judged in full.
+ */
+function draftScope(draft: ItemDraft, scope: CompletenessScope): CompletenessScope {
+  if (!isAlreadyQuoted(draft)) return scope;
+  return { isKnownType: () => false, usesSlot: () => false };
+}
+
 /** Open fields of one draft, in message order; `[]` when complete or flat. */
 export function draftMissingFields(draft: ItemDraft, catalogs: Catalogs): string[] {
-  return missingFields(draftCompletenessInput(draft), scopeFromCatalogs(catalogs));
+  return missingFields(draftCompletenessInput(draft), draftScope(draft, scopeFromCatalogs(catalogs)));
 }
 
 /**
  * The first incomplete draft's message ("Item 3 (Kitchen): choose a
  * control option."), or null. The editor's pre-check before Send, a
- * stage move or a PDF; the Worker refuses the same cases regardless.
+ * stage move or a PDF, and the save guard on a non-draft order; the
+ * Worker refuses the same cases regardless. Each draft is judged with
+ * {@link draftScope}, so an already-quoted item is not asked for a slot
+ * added since its send.
  */
 export function firstIncompleteDraftMessage(drafts: ItemDraft[], catalogs: Catalogs): string | null {
-  return firstIncompleteMessage(drafts.map(draftCompletenessInput), scopeFromCatalogs(catalogs));
+  const scope = scopeFromCatalogs(catalogs);
+  for (const [index, draft] of drafts.entries()) {
+    const input = draftCompletenessInput(draft);
+    const missing = missingFields(input, draftScope(draft, scope));
+    if (missing.length > 0) return incompleteMessage(index, input, missing);
+  }
+  return null;
 }
 
 /**
@@ -705,6 +777,37 @@ export function isPriceLocked(draft: ItemDraft): boolean {
 }
 
 /**
+ * Whether this item is EXEMPT from the hardware requirements of its blind
+ * type — because it is not being quoted now, it already was.
+ *
+ * Adding an installation (or cassette, bottom rail, control) option to a
+ * blind type makes that slot required for the type from that moment on
+ * (`slotsForType`). Without this exemption the new rule would reach back
+ * into every estimate already quoted on that type: those items carry no
+ * id for the slot, so the form would refuse to build a payload and
+ * `Present to customer` — which saves first — would be unreachable.
+ *
+ * True when the item was already on a price-locked order AND either:
+ *   - its lock still holds, so nothing about its pricing has been
+ *     touched; or
+ *   - it never had a lock, which means a row saved before migration 39.
+ *
+ * An item whose lock BROKE is excluded on purpose: editing its pricing
+ * inputs re-quotes it, so it has to satisfy today's requirements. This is
+ * the exact rule `resolveLineItems` enforces on the Worker (`prior` +
+ * the locked branch's early return), and the two MUST agree — the form
+ * decides what it will send, the Worker decides what it will accept.
+ */
+export function isAlreadyQuoted(draft: ItemDraft): boolean {
+  // The uid is checked as well as the flag, exactly as the Worker checks
+  // `prior.uids`: a DUPLICATED line inherits the flag from the row it was
+  // copied from but is given no uid, and it is a new line being quoted
+  // now — one the Worker will hold to today's requirements.
+  if (!draft.previously_quoted || draft.uid === null) return false;
+  return draft.lock === null || isPriceLocked(draft);
+}
+
+/**
  * The four figures a price readout shows.
  *
  * `base` is what the formula or catalog produced and is displayed even
@@ -766,6 +869,12 @@ function adjustedDraftPrice(
  * contributes nothing rather than blocking, because Curtains has neither
  * a cassette nor a bottom rail scoped to it and would otherwise never
  * resolve.
+ *
+ * An ALREADY-QUOTED item ({@link isAlreadyQuoted}) is exempt from those
+ * requirements (in `draftMissingFields` as well as below), and is charged
+ * for whatever hardware ids it does carry — both halves mirroring what
+ * the Worker does with such a row, so the preview and the save cannot
+ * disagree.
  */
 export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindInputs | null {
   // Incomplete (spec 2026-11-02) → no price, exactly as the Worker
@@ -774,6 +883,7 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
   if (draftMissingFields(draft, catalogs).length > 0) return null;
   const blindType = getBlindType(draft.blinds_type);
   const uses = slotsForType(catalogs, draft.blinds_type);
+  const quoted = isAlreadyQuoted(draft);
   const panels = draft.panels.map(parsePositive);
   const height = parsePositive(draft.height_cm);
   const qty = parsePositive(draft.quantity);
@@ -784,10 +894,15 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
   const installation = catalogs.installationOptions.find((x) => x.id === draft.installation_id);
   if (panels.some((p) => p === null) || panels.length === 0) return null;
   if (!height || !qty || !material) return null;
-  if (uses.has('cassette') && !cassette) return null;
-  if (uses.has('bottom_rail') && !bottomRail) return null;
-  if (uses.has('control') && !control) return null;
-  if (uses.has('installation') && !installation) return null;
+  // An already-quoted item is exempt from a slot its type has only
+  // required since it was quoted (`isAlreadyQuoted`), so it must still
+  // RESOLVE here or the editor would show no price and the Material usage
+  // report would drop the row — while the Worker saves it quite happily.
+  const needs = (slot: CatalogSlot) => !quoted && uses.has(slot);
+  if (needs('cassette') && !cassette) return null;
+  if (needs('bottom_rail') && !bottomRail) return null;
+  if (needs('control') && !control) return null;
+  if (needs('installation') && !installation) return null;
 
   // The type's own inputs must parse too, or the preview would show a
   // price the server is about to reject.
@@ -802,17 +917,36 @@ export function blindDraftInputs(draft: BlindDraft, catalogs: Catalogs): BlindIn
   // id the PREVIOUS blind type left behind. The Worker rejects an id for a
   // slot the type does not use, so a preview that charged one would quote
   // a price the save refuses.
+  //
+  // That rejection is exactly what an already-quoted item is exempt from,
+  // and the Worker then charges whatever ids the row carries. So the
+  // exemption drops the `uses` half here too: anything else would preview
+  // one price and save another.
+  const charges = (slot: CatalogSlot) => quoted || uses.has(slot);
+  // A charged option whose basis this build does not know (`isPriceBasis`
+  // — the web and the Worker deploy separately) cannot be previewed: the
+  // Worker refuses that save, so the honest preview is "no price yet",
+  // not a NaN, and not a price that silently leaves the option out.
+  const chargeable: [CatalogSlot, { price_basis: unknown } | undefined][] = [
+    ['cassette', cassette],
+    ['bottom_rail', bottomRail],
+    ['control', control],
+    ['installation', installation],
+  ];
+  if (chargeable.some(([slot, opt]) => opt && charges(slot) && !isPriceBasis(opt.price_basis))) {
+    return null;
+  }
   const hardware: Partial<Record<CatalogSlot, HardwareCharge>> = {};
-  if (uses.has('cassette') && cassette) {
+  if (charges('cassette') && cassette) {
     hardware.cassette = { price: Number(cassette.price), basis: cassette.price_basis };
   }
-  if (uses.has('bottom_rail') && bottomRail) {
+  if (charges('bottom_rail') && bottomRail) {
     hardware.bottom_rail = { price: Number(bottomRail.price), basis: bottomRail.price_basis };
   }
-  if (uses.has('control') && control) {
+  if (charges('control') && control) {
     hardware.control = { price: Number(control.price), basis: control.price_basis };
   }
-  if (uses.has('installation') && installation) {
+  if (charges('installation') && installation) {
     hardware.installation = { price: Number(installation.price), basis: installation.price_basis };
   }
 
@@ -876,4 +1010,53 @@ export function flatDraftPrice(draft: FlatDraft): DraftPrice | null {
   const base = frozen ?? Number(draft.unit_price);
   if (!qty || !Number.isFinite(base) || base < 0) return null;
   return adjustedDraftPrice(base, qty, draft, canOverridePrice(draft));
+}
+
+/** A price that has moved since the last send, oldest figure first. */
+export interface QuotedPriceChange {
+  /** The calculated base the customer was last sent. */
+  from: number;
+  /** The calculated base in force now. */
+  to: number;
+}
+
+/**
+ * How this item's calculated base price has moved since the estimate was
+ * last SENT, or null when it has not moved — or when there is nothing to
+ * compare against.
+ *
+ * What the line-item details form's price-update notice renders. The
+ * comparison is `quoted_base` (written only by a send, migration 48)
+ * against the figure in force now, which is the frozen one while the lock
+ * holds and a live calculation once it has been broken. So the notice
+ * appears the moment a pricing input is edited, SURVIVES the save that
+ * re-locks the item at its new price, and disappears when the estimate
+ * goes out again and the stamp moves.
+ *
+ * Deliberately blind to quantity, add-ons and the manual override: none
+ * of them is part of the quoted base, they apply live on top of whichever
+ * figure is in force, and reporting them as a price update would cry wolf
+ * on every ordinary edit.
+ *
+ * Null while the draft is not priceable, so a half-typed measurement
+ * shows nothing rather than flickering a bogus figure.
+ */
+export function quotedPriceChange(
+  draft: ItemDraft,
+  catalogs: Catalogs
+): QuotedPriceChange | null {
+  // `isFinite` as well as the null check: an API that predates migration
+  // 48 sends no such column at all, and a NaN would render as a `$NaN`
+  // price update rather than as the "nothing to report" it is.
+  if (draft.quoted_base === null || !Number.isFinite(draft.quoted_base)) return null;
+  const price = draft.item_type === 'blind' ? blindDraftPrice(draft, catalogs) : flatDraftPrice(draft);
+  if (!price) return null;
+  const from = Math.round(draft.quoted_base * 100) / 100;
+  if (from === price.base) return null;
+  // Dismissed — but only for the figure that was dismissed. A further
+  // move puts a price on screen nobody has acknowledged, so it speaks.
+  if (draft.notice_ack_base !== null && Math.round(draft.notice_ack_base * 100) / 100 === price.base) {
+    return null;
+  }
+  return { from, to: price.base };
 }

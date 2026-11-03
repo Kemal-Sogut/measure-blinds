@@ -6,6 +6,86 @@
 
 ## Where things stand
 
+**Newest, on branch `estimate-revisions` (not deployed), api + web, MIGRATION 50 WRITTEN BUT
+NOT APPLIED:** estimate revisions. A send snapshots what the customer was shown
+(`order_revisions.snapshot`, plus a staff-only `source` copy used to restore); the customer page
+serves the latest snapshot while the estimate is `sent`/`expired` (live again from
+`awaiting_payment`; orders sent before this shipped have no revision and stay live), the staff
+order page shows a banner of what has NOT been sent ("3 changes not sent to the customer";
+on confirmed orders "Customer confirmed Rev N — current estimate differs"), and re-sending
+emails an "updated" message listing up to 5 changes. Revisions are cut
+on a send only when something customer-visible changed; every former `stampQuotedFigures` call
+now goes through `stampSent`, so the migration-48 price notices are unchanged and reset
+together with revisions. Staff can restore an earlier revision as an unsent edit
+(`PUT /api/orders/:id` with `restore_from_revision`, Rev N prices kept for untouched items;
+409 from `awaiting_payment` on). A customer confirm records `accepted_revision_id` and is
+refused (409) if the page showed an older version than the latest. The customer sees ONLY the
+latest sent version and its "Updated <date> · version N" chip; nothing about earlier versions
+(history, change lines, old quotes) is served on any `/public/*` route (removed 2026-10-29). Final-review fixes are in
+(see the engine_features "Final review fixes" sub-entry). Not exercised
+against a live database or in a browser. **Apply migration 50 first, then deploy the API, then
+the web.** Details: `knowledge/history/engine_features.md` 2026-10-26; patterns in
+`systemPatterns.md` "Estimate revisions".
+
+**Legacy-data hardening, Phase 0 (same branch, uncommitted, code NOT deployed), MIGRATION 49
+APPLIED and price-lock BACKFILL RUN 2026-10-25:** catalog rows are archived, never deleted. Settings DELETE stamps
+`archived_at` + `active = false`; `line_items` FKs are `ON DELETE RESTRICT`; list endpoints still
+return archived rows and the Settings pages hide them. `price_basis` is parsed (`isPriceBasis`)
+everywhere it is read. `apps/api/scripts/backfill-price-locks.ts --apply` froze all 28 unlocked items on 6
+orders at their stored price (0 left; every lock equals `base_unit_price ?? unit_price`). Still
+to do: **deploy the API, then the web** — until the API ships, a Settings delete of a row in use
+fails with a raw FK error instead of archiving. The audit
+behind it, with Phases 1–4 (fingerprint code-drift guard, read-side adapter, stored breakdown +
+`pricing_version`, legacy fixture corpus), is `docs/legacy-data-audit.md` (local-only). Note:
+migration 48 (incl. the `quoted_notice_ack_*` columns) IS applied — verified against the live
+schema 2026-10-25. See `knowledge/history/bug_fixes.md` 2026-10-25 (Phase 0).
+
+**Newest, on branch `feat/multi-estimate-send` (on top of the multi-estimate send below, not
+deployed), web + api, MIGRATION 48 WRITTEN BUT NOT APPLIED:** sent estimates are now immune to
+hardware options added to their blind type afterwards, and say so when a price moves. Adding
+the first installation option for a type used to make **Present to customer** unreachable on
+every estimate already quoted on it — the block was the web's own `buildPayload`, which had no
+price-lock awareness, and `handlePresent` saves before navigating. The hardware requirement is
+now enforced only on an item being QUOTED (`isAlreadyQuoted` in `lineItemDrafts.ts`, `prior` in
+`resolveLineItems`); an item whose lock broke, and any line added since the send, are still
+held to today's requirements. Migration 48 adds `line_items.quoted_base_price` and
+`orders.quoted_total`, written by a SEND only (`stampQuotedFigures`, `'overwrite'` at a real
+send — that overwrite is the reset — `'fill'` at a stage reached without one), which is what
+lets the new `PriceUpdateNotice` keep showing `⚠ Price update: $200.00 → $220.00` at the top of
+a line item's details form, and once under the order total, after the save that re-locked the
+item. Each notice has a **Dismiss** button:
+`POST /api/orders/:id/dismiss-price-notice` (optional `uid`, no figure — the Worker reads the
+order's own) records the acknowledged FIGURE in `quoted_notice_ack_base` /
+`quoted_notice_ack_total`, so a further move speaks up again and a send clears it.
+Sending again clears both notices, including the per-item one, which needed
+`applyServerFields` to refresh the server-owned draft fields after the refetch (drafts hydrate
+once). Verified api 736 / web 562, `tsc` clean both sides, oxlint clean apart from the
+pre-existing `public/embed/lead-form.js` warning. NOT exercised against a live database.
+**Apply migration 48 first, then deploy the API, then the web.** See
+`knowledge/history/bug_fixes.md` and `engine_features.md` 2026-10-25, spec
+`knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`.
+
+**On branch `feat/multi-estimate-send` (from `main`, not deployed), web + api, NO
+migration:** the **multi-estimate send**. Sending is one customer-scoped action: a **Send
+estimates** dialog (opened from the customer group on the Estimates page, or from the Send
+button on an estimate's own page, which saves first) lists that customer's valid estimates
+(`draft`/`sent`, unexpired, with items; all ticked, untick to exclude) and emails ONE link
+(`/c/:token`) with an optional note and NO PDF attached. `POST /api/customers/:id/send-estimates`
+(+ `GET /api/customers/:id/sendable-estimates`, logic in `apps/api/src/lib/estimateSend.ts`)
+replaces the deleted `POST /api/orders/:id/send`. A send writes `sent` BEFORE freezing prices;
+partial failure is a 200 `{ sent, announced, failed }`; a failed email is a 502 with no write.
+Already-`sent` rows are re-announced only (no un-share). Verified api 700 / web 532, `tsc` +
+oxlint clean; the dialog has not been exercised in a browser against a live database. Deploy the
+API before the web. See `knowledge/history/engine_features.md` 2026-10-24.
+
+**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
+Delete conversation on the Inbox thread page — app only, Titan keeps the mail
+(`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
+
+**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
+Delete conversation on the Inbox thread page — app only, Titan keeps the mail
+(`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
+
 **Current branch `feat/incomplete-draft-items` (not merged, not deployed, NO migration), web + api:**
 **incomplete draft items.** A draft estimate saves with blank blind type / material / height / panel width /
 cassette / bottom rail / control / installation / required attribute (stored at `line_total 0`, add-ons and
@@ -89,14 +169,13 @@ balance due, not the full total**. `send-invoice` derives paid-to-date and balan
 ledger; the card lists Order total + Paid to date, then "Balance due" (or "Paid in full"). PDF
 unchanged. See `knowledge/history/bug_fixes.md`, 2026-09-16.
 
-**Newest, on `main`, api-only, no migration:** the **estimate email and estimate PDF now tell
-the customer to confirm**. Customers saw only "View your estimate" and didn't know a
-confirmation was expected. Email (`buildEstimateEmailHtml`): bold "to go ahead… confirm it"
-intro line, a "How to go ahead" checklist ending in "Press Confirm Estimate", button renamed
-"Review & confirm your estimate". PDF: new `customerCta(docType)` — estimates print a bold
-instruction above a "Review & confirm online" button; invoices unchanged. Verified: api
-`pnpm check` clean, tests pass; both rendered and inspected. See
-`knowledge/history/engine_features.md`, 2026-09-12.
+**On `main`, api-only: the estimate email and estimate PDF tell the customer to confirm.**
+Customers saw only "View your estimate" and didn't know a confirmation was expected. The
+email (`buildEstimatesEmailHtml` in `lib/email.ts`; one template for any number of estimates,
+no PDF attached since 2026-10-24) carries a "How to go ahead" checklist ending in "Press Confirm
+Estimate" and a "Review & confirm your estimate" button. The PDF (`customerCta(docType)`)
+prints a bold instruction above a "Review & confirm online" button on estimates; invoices are
+unchanged. See `knowledge/history/engine_features.md`, 2026-09-12 and 2026-10-24.
 
 **Newest, uncommitted, web-only, no migration:** the **Material usage panel is now a read-only
 fabric report**. Every per-m² give-back went away — the per-material rate boxes, the
@@ -182,23 +261,14 @@ See `knowledge/history/bug_fixes.md` 2026-09-02.
 (`supabase/migrations/20260826000041_order_edit_requests.sql`). The customer edit-request
 routes 500 until it is. Details in `knowledge/history/engine_features.md`, 2026-08-26.
 
-**Also on `main` now — the send sheet carries a copy-the-link area** (committed as
-`a179243`; the paragraph below was written while it was still uncommitted):
-
-Uncommitted in the worktree, web-only, no API/hook/schema change: **the Send estimate/invoice
-sheet now carries a copy-the-link area**. New `apps/web/src/components/CopyLinkField.tsx`
+**The send dialog carries a copy-the-link area.** `apps/web/src/components/CopyLinkField.tsx`
 (read-only URL input + Copy button, with `navigator.clipboard` → `document.execCommand` →
-"press Ctrl/Cmd+C" degradation) is rendered under the optional-message box in
-`OrderDetail`'s send sheet, showing `${window.location.origin}/customer/<public_token>` — the
-LIVE customer page, deliberately without the staff-only `?preview=1` flag. `openSend` became
-`async`: it opens the sheet first, then mints the token through the existing
-`useOrderPublicToken` mutation, so the message box never waits on the network and a mint
-failure degrades only the copy field (`sendLinkError`), never the email path. An unsaved draft
-has no id, so the area is not rendered at all. Purpose: hand the customer page over
-WhatsApp/SMS without being forced through the app's own email. Detail in
-`knowledge/history/engine_features.md`, 2026-09-01. Verified: web `pnpm check` clean,
-`pnpm lint` 0/0, `pnpm test` 425/425; NOT seen in a browser (dev server stops at the Supabase
-login wall).
+"press Ctrl/Cmd+C" degradation) sits under the note box in `SendEstimatesDialog` and shows the
+CUSTOMER link (`/c/:token`), so a consultant can hand the page over WhatsApp/SMS without being
+forced through the app's own email. The dialog mints the customer token through the existing
+public-link mutation; a mint failure degrades only the copy field, never the email path. (It
+replaced the per-order send sheet on `OrderDetail`, which showed `/customer/<public_token>`.)
+See `knowledge/history/engine_features.md`, 2026-09-01 and 2026-10-24.
 
 **Also on `main` now — ONE order view** (merged via PR #44; the paragraph below was
 written while `feat/unified-order-view` was still a separate branch):
@@ -310,8 +380,8 @@ both sides; NOT seen in a browser (needs the migration applied). Detail in
 **Also uncommitted, and the one other change here that needs a DATABASE migration applied
 before deploy:** the per-item price lock, in force from SEND onward (migration 39,
 `supabase/migrations/20260825000039_line_items_price_lock.sql`). `line_items` gains
-`locked_base_price` + `locked_inputs_fingerprint`; `POST /:id/send` and `/mark-sent` freeze
-every item at its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of
+`locked_base_price` + `locked_inputs_fingerprint`; the multi-estimate send (`POST /api/customers/:id/send-estimates`) and
+`/mark-sent` freeze every item at its calculated price, `PUT /:id` re-uses the frozen figure while a fingerprint of
 that item's pricing inputs still matches, and `/confirm` plus any manual stage move to `sent`
 or beyond freeze whatever is not frozen yet. `draft` is the only live-priced status: only
 returning an order to draft (manual status change, or reviving a lapsed estimate) releases a
@@ -348,6 +418,10 @@ install + pull-to-refresh; the soft-dashboard UI redesign with a shared `compone
 primitive layer.
 
 ## Next steps / open work
+- **Estimate revisions need migration 50 applied** (`20261026000050_order_revisions.sql`) to
+  `lgbxxlwsdeuhdgzrjjen` before the API ships — until then every send/stage stamp and the customer
+  page's revision read would fail. Then deploy the API, then the web, and click through a real
+  send -> edit -> banner -> re-send ("updated" email) -> customer view -> restore flow.
 - **The Material usage dialog has never been seen inside the real order page.** This
   worktree has no `apps/web/.env` (only `.env.example`), so
   `apps/web/src/lib/supabaseClient.ts` throws `Missing VITE_SUPABASE_URL or

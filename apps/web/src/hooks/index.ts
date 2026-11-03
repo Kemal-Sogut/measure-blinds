@@ -15,6 +15,7 @@ export {
   useCreateCatalogItem,
   useUpdateCatalogItem,
   useDeleteCatalogItem,
+  liveCatalogRows,
   useBlindTypeDefaults,
   useUpdateBlindTypeDefaults,
   type CatalogPath,

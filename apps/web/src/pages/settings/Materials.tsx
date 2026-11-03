@@ -20,17 +20,23 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
+import { useConfirm } from '../../components/ui';
 import PageHeader from '../../components/PageHeader';
 import {
   useCatalogList,
   useCreateCatalogItem,
   useUpdateCatalogItem,
   useDeleteCatalogItem,
+  liveCatalogRows,
 } from '../../hooks/useSettings';
 import type { BlindType, Material } from '../../types';
 
 export default function Materials() {
-  const { data: types, isLoading, error } = useCatalogList<BlindType>('blind-types');
+  const askConfirm = useConfirm();
+  const { data: allTypes, isLoading, error } = useCatalogList<BlindType>('blind-types');
+  // Archived types (migration 49) are gone from Settings; the list still
+  // returns them so old orders keep resolving their type.
+  const types = liveCatalogRows(allTypes);
   const { data: materials } = useCatalogList<Material>('materials');
   const create = useCreateCatalogItem<BlindType>('blind-types');
   const update = useUpdateCatalogItem<BlindType>('blind-types');
@@ -42,7 +48,7 @@ export default function Materials() {
 
   /** Number of Materials linked to a given blind type. */
   function materialCount(typeId: string): number {
-    return (materials ?? []).filter((m) => m.blind_type_ids.includes(typeId)).length;
+    return (liveCatalogRows(materials) ?? []).filter((m) => m.blind_type_ids.includes(typeId)).length;
   }
 
   /** Validates and creates a new blind type. */
@@ -63,14 +69,19 @@ export default function Materials() {
     );
   }
 
-  /** Confirms then deletes a blind type (its Material links cascade). */
-  function handleDelete(type: BlindType) {
-    if (
-      !window.confirm(
-        `Delete blind type "${type.name}"? Its Material links are removed; the Materials themselves stay in the system.`
-      )
-    )
-      return;
+  /**
+   * Confirms then deletes a blind type. The Worker archives it (migration
+   * 49): it leaves Settings and the type dropdown, its links stay, and
+   * orders already quoted on it are untouched.
+   */
+  async function handleDelete(type: BlindType) {
+    const ok = await askConfirm({
+      title: `Delete blind type "${type.name}"?`,
+      message: 'It is removed from Settings and new estimates; existing estimates keep it.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
     remove.mutate(type.id, { onError: (e) => toast.error(e.message) });
   }
 

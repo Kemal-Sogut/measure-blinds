@@ -36,6 +36,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useConfirm } from '../../components/ui';
 import {
   bulkAddHasContent,
   bulkRowHasContent,
@@ -114,6 +115,7 @@ interface BulkAddSheetProps {
  * silently.
  */
 export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAddSheetProps) {
+  const askConfirm = useConfirm();
   const [sections, setSections] = useState<BulkSection[]>(() => [newBulkSection()]);
   const [openKey, setOpenKey] = useState<string | null>(() => sections[0]?.key ?? null);
   const [error, setError] = useState<string | null>(null);
@@ -169,8 +171,18 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
    * and the Cancel button (see the component doc) so neither can discard
    * a measuring pass without the same guard the other one gets.
    */
-  function handleCancel() {
-    if (bulkAddHasContent(sections) && !window.confirm('Discard this bulk add?')) return;
+  async function handleCancel() {
+    if (
+      bulkAddHasContent(sections) &&
+      !(await askConfirm({
+        title: 'Discard this bulk add?',
+        message: 'The measurements entered here are not added to the order.',
+        confirmLabel: 'Discard',
+        cancelLabel: 'Keep editing',
+        tone: 'danger',
+      }))
+    )
+      return;
     onCancel();
   }
 

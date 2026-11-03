@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import { getBlindType } from '../../lib/blindTypes';
 import { pricingFingerprint } from '../../lib/priceLock';
+import { applyServerFields } from './lineItemHydration';
 import {
   applyTypeDefaults,
   blindDraftPrice,
@@ -27,7 +28,10 @@ import {
   parseAddons,
   parseDraftAttributes,
   parseOverride,
+  isAlreadyQuoted,
+  materialsForType,
   pruneSelection,
+  quotedPriceChange,
   slotsForType,
   type BlindDraft,
   type Catalogs,
@@ -47,6 +51,9 @@ function draft(overrides: Partial<BlindDraft> = {}): BlindDraft {
     show_original_price: true,
     addons: [],
     lock: null,
+    previously_quoted: false,
+    quoted_base: null,
+    notice_ack_base: null,
     key: 'd1',
     uid: null,
     hidden: false,
@@ -317,6 +324,9 @@ function flat(overrides: Partial<FlatDraft> = {}): FlatDraft {
     show_original_price: true,
     addons: [],
     lock: null,
+    previously_quoted: false,
+    quoted_base: null,
+    notice_ack_base: null,
     ...overrides,
   };
 }
@@ -913,5 +923,220 @@ describe('price lock in the preview', () => {
     const retyped = { ...locked, unit_price: '120' };
     expect(flatDraftPrice(retyped)!.base).toBe(120);
     expect(isPriceLocked(retyped)).toBe(false);
+  });
+
+  /** Catalogs where Roller has JUST gained its first installation option. */
+  function withInstallationOnRoller(): Catalogs {
+    return catalogs({
+      installationOptions: [
+        {
+          id: 'ins-1',
+          name: 'Rod',
+          price: 45,
+          price_basis: 'per_unit',
+          active: true,
+          sort_order: 0,
+          blind_type_ids: [ROLLER.id],
+        },
+      ],
+    });
+  }
+
+  it('refuses to price a row missing an option its type has just started requiring', () => {
+    // The baseline the exemption is measured against: nothing exempts
+    // this draft, so the new slot is required and the row will not price.
+    expect(blindDraftPrice(draft(), withInstallationOnRoller())).toBeNull();
+  });
+
+  it('prices an already-quoted row that was never given one', () => {
+    // A row saved before migration 39: on a frozen order, with no lock.
+    const quoted = draft({ uid: 'u1', previously_quoted: true });
+    expect(isAlreadyQuoted(quoted)).toBe(true);
+    // Priced with no installation charge — which is what it was sent at.
+    expect(blindDraftPrice(quoted, withInstallationOnRoller())!.base).toBe(LIVE_PRICE);
+  });
+
+  it('exempts an intact lock and withdraws the exemption when it breaks', () => {
+    const intact = draft({ uid: 'u1', previously_quoted: true, lock: lockFor(999) });
+    expect(isAlreadyQuoted(intact)).toBe(true);
+    // Editing a measurement re-quotes the item, so today's rules apply
+    // again — and the preview stops pricing it, as the save would refuse.
+    const edited = { ...intact, height_cm: '240' };
+    expect(isAlreadyQuoted(edited)).toBe(false);
+    expect(blindDraftPrice(edited, withInstallationOnRoller())).toBeNull();
+  });
+
+  it('exempts nothing on an order whose prices are not frozen', () => {
+    expect(isAlreadyQuoted(draft({ uid: 'u1' }))).toBe(false);
+  });
+
+  it('exempts nothing for a line added in this session, copy included', () => {
+    // A duplicated line inherits the flag but never the uid.
+    expect(isAlreadyQuoted(draft({ previously_quoted: true }))).toBe(false);
+  });
+
+  it('reports a price that has moved since the last send, in both directions', () => {
+    const up = draft({ uid: 'u1', previously_quoted: true, quoted_base: 120 });
+    expect(quotedPriceChange(up, catalogs())).toEqual({ from: 120, to: LIVE_PRICE });
+    const down = draft({ uid: 'u1', previously_quoted: true, quoted_base: 200 });
+    expect(quotedPriceChange(down, catalogs())).toEqual({ from: 200, to: LIVE_PRICE });
+  });
+
+  it('reports nothing when the price has not moved, or was never sent', () => {
+    const same = draft({ uid: 'u1', previously_quoted: true, quoted_base: LIVE_PRICE });
+    expect(quotedPriceChange(same, catalogs())).toBeNull();
+    expect(quotedPriceChange(draft(), catalogs())).toBeNull();
+  });
+
+  it('keeps reporting a moved price after the save that re-locked it', () => {
+    // The state a save leaves behind: lock re-written at the new figure,
+    // the quoted stamp still at what the customer was sent. The notice
+    // has to survive this or it would vanish the moment it was earned.
+    const saved = draft({
+      uid: 'u1',
+      previously_quoted: true,
+      quoted_base: 120,
+      height_cm: '240',
+      lock: lockFor(168, { height_cm: '240' }),
+    });
+    expect(isPriceLocked(saved)).toBe(true);
+    expect(quotedPriceChange(saved, catalogs())).toEqual({ from: 120, to: 168 });
+  });
+
+  it('ignores quantity, add-ons and the override, which are not the quoted base', () => {
+    const base = { uid: 'u1', previously_quoted: true, quoted_base: LIVE_PRICE };
+    expect(quotedPriceChange(draft({ ...base, quantity: '4' }), catalogs())).toBeNull();
+    expect(
+      quotedPriceChange(draft({ ...base, unit_price_override: '900' }), catalogs())
+    ).toBeNull();
+    expect(
+      quotedPriceChange(
+        draft({ ...base, addons: [{ key: 'a1', label: 'Rush', price: '40' }] }),
+        catalogs()
+      )
+    ).toBeNull();
+  });
+
+  it('reports nothing while the draft is not priceable', () => {
+    const half = draft({ uid: 'u1', previously_quoted: true, quoted_base: 120, height_cm: '' });
+    expect(quotedPriceChange(half, catalogs())).toBeNull();
+  });
+
+  it('stays quiet at the figure it was dismissed at', () => {
+    const dismissed = draft({
+      uid: 'u1',
+      previously_quoted: true,
+      quoted_base: 120,
+      notice_ack_base: LIVE_PRICE,
+    });
+    expect(quotedPriceChange(dismissed, catalogs())).toBeNull();
+  });
+
+  it('speaks up again when the price moves past a dismissal', () => {
+    // The acknowledgement was about 150. 1.2 × 2.4 × 50 + 24 = 168 is a
+    // figure nobody has seen, so dismissing one move must not mute the
+    // next — which is why the column stores the figure, not a flag.
+    const dismissed = draft({
+      uid: 'u1',
+      previously_quoted: true,
+      quoted_base: 120,
+      notice_ack_base: LIVE_PRICE,
+      height_cm: '240',
+    });
+    expect(quotedPriceChange(dismissed, catalogs())).toEqual({ from: 120, to: 168 });
+  });
+
+  it('reports nothing when the stamp is not a number at all', () => {
+    // What an API that predates migration 48 leaves on the draft: the
+    // column is absent, so the figure coerces to NaN rather than null.
+    const stale = draft({ uid: 'u1', previously_quoted: true, quoted_base: Number.NaN });
+    expect(quotedPriceChange(stale, catalogs())).toBeNull();
+  });
+
+  it('falls silent once the estimate is sent again', () => {
+    const sent = draft({ uid: 'u1', previously_quoted: true, quoted_base: 120 });
+    expect(quotedPriceChange(sent, catalogs())).toEqual({ from: 120, to: LIVE_PRICE });
+    // What a re-send leaves on the order: re-stamped at today's figure,
+    // re-locked there, any dismissal cleared. Drafts hydrate once, so
+    // without this sync the notice would keep comparing against 120.
+    const [resent] = applyServerFields(
+      [sent],
+      new Map([
+        [
+          'u1',
+          {
+            lock: lockFor(LIVE_PRICE),
+            previously_quoted: true,
+            quoted_base: LIVE_PRICE,
+            notice_ack_base: null,
+          },
+        ],
+      ])
+    );
+    expect(quotedPriceChange(resent, catalogs())).toBeNull();
+  });
+
+  it('reports a flat item against its own typed figure', () => {
+    const changed = flat({ uid: 'u2', previously_quoted: true, quoted_base: 60 });
+    expect(quotedPriceChange(changed, catalogs())).toEqual({ from: 60, to: 100 });
+  });
+});
+
+describe('archived catalog rows and unknown price bases (migration 49)', () => {
+  const ROLLER = { id: 'bt-roller', name: 'Roller', active: true, sort_order: 0 };
+
+  /** A live and an ARCHIVED material, both linked to Roller. */
+  function catalogs(overrides: Partial<Catalogs> = {}): Catalogs {
+    return {
+      blindTypes: [ROLLER],
+      materials: [
+        { id: 'm1', name: 'Blackout', price_per_sqm: 50, active: true, sort_order: 0, width_cm: null, blind_type_ids: [ROLLER.id] },
+        {
+          id: 'm-old',
+          name: 'Discontinued',
+          price_per_sqm: 40,
+          active: false,
+          sort_order: 1,
+          width_cm: null,
+          blind_type_ids: [ROLLER.id],
+          archived_at: '2026-10-25T00:00:00Z',
+        },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      bottomRails: [
+        { id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      controls: [
+        { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+      pleatTypes: [],
+      defaults: [],
+      installationOptions: [],
+      ...overrides,
+    };
+  }
+
+  it('never offers an archived material for a new pick', () => {
+    expect(materialsForType(catalogs(), 'Roller').map((m) => m.id)).toEqual(['m1']);
+  });
+
+  it('still prices an item that already carries an archived material', () => {
+    // 120cm → 1.2 m wide, 210cm drop: 1.2 × 2.1 × 40 = 100.80, plus the
+    // 20/m cassette on 1.2 m = 24.00. The archived row is in the list the
+    // preview reads, so the item previews at the price the Worker saves.
+    const price = blindDraftPrice(draft({ material_id: 'm-old' }), catalogs());
+    expect(price?.base).toBe(124.8);
+  });
+
+  it('shows no price rather than NaN when an option has an unknown basis', () => {
+    const odd = catalogs({
+      cassettes: [
+        // Cast: the point is a value the type system says cannot occur.
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_yard' as 'per_m', active: true, sort_order: 0, blind_type_ids: [ROLLER.id] },
+      ],
+    });
+    expect(blindDraftPrice(draft(), odd)).toBeNull();
   });
 });

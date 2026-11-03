@@ -1,5 +1,116 @@
 # Bug Fixes History
 
+## 2026-10-26 — Dismiss on the order-total price notice undid itself
+- **Issue:** pressing Dismiss on the "Order total $X → $Y" notice hid it for a moment, then it
+  came back — immediately when there were unsaved edits, otherwise on any refetch.
+- **Cause:** the Worker acks the SAVED total (it never trusts a client figure), so with an
+  unsaved edit on screen the ack never matched the live total. The local hide was a
+  `Set` keyed `'order-total'` that OrderDetail's server-field effect wiped on EVERY change of the
+  order — including the dismissal's own response — so the notice reappeared at once.
+- **Fix:** OrderDetail keeps `dismissedTotal`, the exact `from → to` dismissed, and hides the
+  notice only while the live change equals it. An effect drops it as soon as the change differs
+  (the total moved, a re-send moved the stamp, or the Worker's ack now hides it); `save()` drops
+  it on success. The server-field effect no longer touches it. `PUT /api/orders/:id` now writes
+  `quoted_notice_ack_total: null` on every save, so a dismissal lasts only until the next save
+  (test in `orders.routes.test.ts`). The `'order-total'` key and the generic `dismissNotice` are
+  gone (per-item notices were removed from the form the same day).
+
+## 2026-10-26 — Order-total price notice compared against the FIRST send after a re-send
+- **Issue:** after an estimate was sent, changed and sent again, the "Order total" notice still
+  showed first-send → current. Switching an option back to the first send's choice then read as
+  "no change", although the customer had since been quoted the other figure.
+- **Cause:** the multi-estimate send splits the selection into `toSend` (drafts) and
+  `toAnnounce` (already `sent`). Only `persistSend` (drafts) called
+  `stampQuotedFigures(..., 'overwrite')`; announced rows were "never written", so
+  `orders.quoted_total` / `line_items.quoted_base_price` stayed at the first send forever. The web
+  hook also invalidated the detail cache for `sent` ids only, so even a fresh stamp would not
+  have reached an open editor.
+- **Fix:** `restampAnnounced` in `apps/api/src/lib/estimateSend.ts` freezes (no-op for locked
+  items) and re-stamps every announced row after `persistSend`, failures collected into `failed`
+  like the draft path; status is still not written. `useSendEstimates` now also invalidates
+  `['orders', 'detail', id]` for every `announced` id.
+
+## 2026-10-25 — Deleting a catalog option re-priced or blocked sent and confirmed orders (legacy-data audit, Phase 0)
+- **Issue:** found by the legacy-data audit (`docs/legacy-data-audit.md`, local-only), latent in
+  production data (no casualties yet): deleting a material, hardware option or preset in Settings
+  could silently drop that option's charge from a confirmed invoice, make the order unsavable
+  ("a cassette option is required"; `material_id` not a uuid), or put a discounted preset line
+  back to full price. Separately, 28 line items on 6 sent+/expired/installed orders (saved before
+  migration 39) carried no price lock, so their next save re-priced them from today's catalog.
+- **Cause:** Settings HARD-deleted catalog rows and every `line_items` FK into them was
+  `ON DELETE SET NULL`. Nulling the id rewrote history: the id is an input to the price-lock
+  fingerprint, so the lock stopped matching, and the item was re-priced live — not
+  grandfathered, because it is in `locks` — against a slot that either still demanded an option
+  or (when the deleted option was the type's only one) no longer existed. A nulled `preset_id`
+  turned a preset into a "legacy" one, which `canOverride` refuses. The code comment claiming
+  "a confirmed invoice must stay savable after Settings drops an option" only held for jsonb
+  refs (pleat type). Migration 39 added locks without backfilling existing rows. Also: a
+  `price_basis` read from the DB was CAST (`as PriceBasis`), so an unknown value would have
+  priced as NaN.
+- **Fix:** migration 49 adds `archived_at` to all eight Settings catalogs and turns the six
+  `line_items` FKs into `ON DELETE RESTRICT`. Every Settings DELETE now archives
+  (`archiveCatalogRow` in `routes/settings.ts`: `archived_at = now()`, `active = false`, live rows
+  only) and PUT refuses an archived row (`refuseUnlessLive`). List endpoints still return
+  archived rows (the editor prices and describes old items from them); Settings pages hide them
+  (`liveCatalogRows` in `hooks/useSettings.ts`) and `materialsForType` never offers one. Because
+  `active = false`, every existing active filter (dropdowns, `loadSlotScoping`, defaults) drops
+  them for free. `buildPayload` now drops a hardware id for a slot the type no longer uses
+  unless the item is already quoted, matching the preview — otherwise archiving a type's last
+  option of a slot would leave drafts unsavable with no dropdown to clear it. `PRICE_BASES` +
+  `isPriceBasis` (both `blindTypes/base.ts` twins) replace the cast: the Worker refuses the save
+  naming the option, the breakdowns leave that leg off, the preview shows no price, and
+  `hardwareCost` throws instead of returning `undefined`. The Settings `priceBasis` enum is
+  built from `PRICE_BASES`. `apps/api/scripts/backfill-price-locks.ts` freezes the 28 unlocked
+  items through the Worker's own `freezeOrderPrices` (dry run by default, `--apply` to write).
+- **Verified:** api 736 / web 558 passing (new: archive + archived-edit refusal per catalog,
+  unknown basis on save / breakdowns / preview / formula, archived material not offered but still
+  priced), `tsc` clean both sides, oxlint clean apart from the pre-existing
+  `public/embed/lead-form.js` warning. Backfill DRY RUN against the live project listed exactly
+  the 28 items on 6 orders. Migration 49 applied to the live project 2026-10-25 (8 `archived_at`
+  columns, 6 FKs confirmed `confdeltype = r`); backfill run with `--apply`: 0 failures, 0 items
+  left unlocked, all 28 locks equal `base_unit_price ?? unit_price`, no price column touched.
+  NOT yet done: deploying the API, then the web.
+
+## 2026-10-25 — A new installation option blocked every estimate already quoted on that blind type
+- **Issue:** adding the first installation option for a blind type made "Present to customer"
+  unreachable on estimates and orders already quoted on that type. Those line items carry no
+  `installation_id`, because the slot did not exist when they were sent.
+- **Cause:** whether a type uses a hardware slot is computed LIVE from the catalog
+  (`usesSlot`/`slotsForType` — a slot exists for a type as soon as one ACTIVE option is linked
+  to it), so linking the new option flipped the slot on for every item of that type, including
+  items quoted years earlier. Two gates then fired. The web's `buildPayload` in
+  `OrderDetail.tsx` had no price-lock awareness at all and returned
+  "Item N: choose an installation option", and `handlePresent` saves before navigating — so the
+  block was CLIENT-side and the Worker was never even called. On the Worker, migration 39's
+  locked branch already skipped the slot gate (`routes/orders.ts`, "no lookup, no slot-scoping
+  gate"), but a row saved before migration 39 carries no lock, fell through to live validation
+  and was refused too.
+- **Fix:** the requirement is now enforced only on an item being QUOTED. `isAlreadyQuoted` in
+  `pages/orders/lineItemDrafts.ts` exempts an item that was already on a price-locked order and
+  either still holds its lock or never had one; `buildPayload` and `blindDraftInputs` both read
+  it, and an exempt blind is charged for whatever hardware ids it does carry, mirroring the
+  Worker. `resolveLineItems` takes a `prior` parameter (the uids the order already held, plus
+  their quoted stamps) and grandfathers the pre-migration-39 case the locked branch does not
+  cover. An item whose lock BROKE is deliberately NOT exempt — editing its pricing inputs
+  re-quotes it, so today's requirements apply — and a line added since the send is never
+  exempt, which is what stops a new blind being saved with no installation charge. A DUPLICATED
+  line also resets the new draft fields, beside the `uid: null, lock: null` it already reset.
+  New `holdsPriceLock` in `apps/web/src/lib/orderStatus.ts` is the twin of `PRICE_LOCKED`.
+- **Also fixed, found while testing the notices:** sending the estimate AGAIN left the per-item
+  notice on screen until a reload. `useSendEstimates` invalidates `['orders','detail',id]`, so
+  the order-level notice cleared, but line-item drafts hydrate ONCE (rebuilding them would
+  discard unsaved edits) and their copy of the stamp stayed at the previous send's figure.
+  `applyServerFields` now refreshes the four server-owned draft fields (lock,
+  `previously_quoted`, `quoted_base`, `notice_ack_base`) from the order by `uid` whenever it
+  changes, leaving every typed field alone and returning the same array when nothing differs.
+  The optimistic dismissal set is dropped in the same pass, so a dismissal cannot outlive the
+  send that cleared its acknowledgement.
+- **Verified:** api 736 passing, web 562 passing, `tsc` clean in both,
+  oxlint clean apart from the pre-existing `public/embed/lead-form.js` warning. NOT exercised
+  against a live database: migration 48 has not been applied. See engine_features 2026-10-25
+  for the price-update notices added in the same work, and
+  `knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`.
+
 ## 2026-09-16 — Invoice email showed the full total even after a deposit was paid
 - **Issue:** the invoice email's summary card led with "Total (incl. HST)", so a customer who
   had already paid a deposit read it as still owing the full amount.

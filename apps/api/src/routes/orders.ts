@@ -27,7 +27,6 @@
  *   POST   /:id/edit-requests/:requestId/resolve
  *                         mark one change request handled
  *   GET    /:id/pdf       stream the Estimate (or Invoice once paid) PDF
- *   POST   /:id/send      email the estimate to the customer (→ sent)
  *   POST   /:id/mark-sent mark as sent WITHOUT emailing (draft → sent)
  *   POST   /:id/public-token
  *                         return the customer-facing capability token,
@@ -72,7 +71,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTitle';
 import { groupOrdersByCustomer } from '../lib/orderGroups';
-import { ensureCustomerToken, customerLinkUrl, countActiveEstimates } from '../lib/customerLink';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
 import type {
@@ -81,6 +79,7 @@ import type {
   HardwareCharge,
   PriceBasis,
 } from '../lib/blindTypes/base';
+import { isPriceBasis } from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
 import { incompleteMessage, missingFields, type CompletenessInput } from '../lib/lineItemCompleteness';
 import {
@@ -94,10 +93,19 @@ import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { lockApplies, pricingFingerprint, type PriceLockInput } from '../lib/priceLock';
 import {
   buildLockMap,
+  buildQuotedMap,
   clearOrderPriceLocks,
   freezeOrderPrices,
+  type QuotedColumns,
   type StoredLock,
 } from '../lib/priceLockStore';
+import { revisionDetailFields, stampSent } from '../lib/orderRevisions';
+import {
+  loadRevisionSource,
+  overlayRevisionLocks,
+  planRestore,
+  restoreLogLine,
+} from '../lib/orderRestore';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
 import { recordOrderPayment } from '../lib/payments';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
@@ -109,11 +117,10 @@ import { toDuplicateInput } from '../lib/orderDuplicate';
 import { deleteOrderCascade } from '../lib/orderDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
+import { logOrderEvent } from '../lib/orderLog';
 import {
   sendEmail,
   brandFromSettings,
-  buildEstimateEmailHtml,
-  estimateEmailSubject,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildCancellationDeniedHtml,
@@ -321,8 +328,13 @@ const orderSchema = z
     discount_type: z.enum(['fixed', 'percent']).default('fixed'),
     discount_value: z.number().min(0).max(1_000_000).default(0),
     line_items: z.array(lineItemSchema).max(200).default([]),
+    /** PUT only: this save restores that revision (see `lib/orderRestore.ts`). */
+    restore_from_revision: z.string().uuid().optional(),
   })
   .strict();
+
+/** Payload for POST /: a new order has no revision, so a restore is a 400 (still strict). */
+const createOrderSchema = orderSchema.omit({ restore_from_revision: true });
 
 /** Payload for POST /:id/payments — a single ledger entry. */
 const paymentSchema = z
@@ -397,6 +409,25 @@ type LineItemRow = Record<string, unknown> & {
   hidden: boolean;
   uid: string;
 };
+
+/**
+ * What an order already held before the save that is replacing it,
+ * indexed by line-item `uid` — the only identity that survives the
+ * wholesale delete/insert.
+ *
+ * Built in `PUT /:id` for a price-locked order and consumed by
+ * {@link resolveLineItems}; see its `prior` parameter for what each half
+ * decides.
+ */
+interface PriorItems {
+  /** Every uid the order carried, whether or not it was locked. */
+  uids: Set<string>;
+  /**
+   * The quoted stamp and any notice acknowledgement, by uid, for the
+   * items a send has stamped — carried across the save untouched.
+   */
+  quoted: Map<string, QuotedColumns>;
+}
 
 /**
  * The blind-only columns a preset/custom row must still carry.
@@ -486,6 +517,18 @@ function lockInputFromPayload(it: z.infer<typeof lineItemSchema>): PriceLockInpu
  * Omit `locks` for a draft/sent estimate and every row comes back
  * live-priced, with both lock columns null.
  *
+ * `prior` describes what this order already held before the save, and is
+ * passed under the same condition as `locks`. It does two things:
+ *   - carries each item's migration-48 `quoted_base_price` across the
+ *     wholesale line-item replacement, by `uid`;
+ *   - GRANDFATHERS the hardware-slot requirement for an item that was
+ *     already on the order and never carried a lock — a row saved before
+ *     migration 39. Without this, adding an option to a blind type makes
+ *     every estimate already quoted on that type unsavable, and so
+ *     unpresentable. An item whose lock is intact never reaches the gate
+ *     at all (see the locked branch below), and one whose lock BROKE is
+ *     being re-quoted, so it must satisfy today's requirements.
+ *
  * `allowIncomplete` is true only when the order is (or, in this save,
  * becomes) a `draft`. Then a blind the completeness rule reports open is
  * stored with null snapshots for what is missing and `line_total: 0`;
@@ -498,6 +541,7 @@ async function resolveLineItems(
   sb: SupabaseClient,
   items: z.infer<typeof lineItemSchema>[],
   locks?: Map<string, StoredLock>,
+  prior?: PriorItems,
   allowIncomplete = false
 ): Promise<LineItemRow[]> {
   /**
@@ -591,14 +635,18 @@ async function resolveLineItems(
       .in('id', [...idSet]);
     if (error) throw new Error(error.message);
     return new Map(
-      (data as unknown as Record<string, unknown>[]).map((r) => [
-        String(r.id),
-        {
-          name: String(r.name),
-          price: Number(r.price),
-          basis: String(r.price_basis) as PriceBasis,
-        },
-      ])
+      (data as unknown as Record<string, unknown>[]).map((r) => {
+        // Parsed, not cast: a basis this build cannot charge (one added to
+        // the check constraint before the Worker learned it) would price as
+        // NaN, so the save is refused with the option named instead.
+        if (!isPriceBasis(r.price_basis)) {
+          throw new Error(`"${String(r.name)}" has a price basis this version cannot charge.`);
+        }
+        return [
+          String(r.id),
+          { name: String(r.name), price: Number(r.price), basis: r.price_basis },
+        ];
+      })
     );
   }
 
@@ -654,6 +702,26 @@ async function resolveLineItems(
           }
         : { locked_base_price: null, locked_inputs_fingerprint: null };
 
+    /**
+     * The migration-48 stamp this row keeps: what the customer was last
+     * SENT for it. Carried across, never recomputed — a save is not a
+     * send, and the editor's price-update notice is this figure against
+     * the one being written now. Null for an item no send has stamped,
+     * which is every item of a draft order and every item added since.
+     */
+    const quotedColumns: QuotedColumns = (it.uid ? prior?.quoted.get(it.uid) : undefined) ?? {
+      quoted_base_price: null,
+      quoted_notice_ack_base: null,
+    };
+
+    /**
+     * True when this item's hardware requirement is NOT enforced: it was
+     * already on the order, the order's prices are frozen, and it never
+     * carried a lock — a row from before migration 39, quoted under
+     * whatever the catalog required then. See `prior` on this function.
+     */
+    const grandfathered = Boolean(it.uid && prior?.uids.has(it.uid) && !locks?.has(it.uid));
+
     if (it.item_type !== 'blind') {
       // A preset with provenance is priced by the SERVER from the
       // catalog; any unit_price the client sent is ignored, exactly as a
@@ -703,6 +771,7 @@ async function resolveLineItems(
         addons: adjusted.addons,
         line_total: adjusted.line_total,
         ...lockColumns(base),
+        ...quotedColumns,
       };
     }
     // A locked blind is written back exactly as it was priced: the frozen
@@ -761,6 +830,7 @@ async function resolveLineItems(
         addons: adjusted.addons,
         line_total: adjusted.line_total,
         ...lockColumns(lock.base),
+        ...quotedColumns,
       };
     }
 
@@ -768,8 +838,15 @@ async function resolveLineItems(
     const label = it.blinds_type || 'this blind type';
     // Open fields are judged FIRST: on a non-draft order an incomplete
     // item is refused with the shared message before anything is looked
-    // up; on a draft it is priced at $0 below.
-    const missing = missingFields(it, scoping);
+    // up; on a draft it is priced at $0 below. A GRANDFATHERED row (see
+    // `prior`) is judged as an unknown type is — no hardware slot is
+    // required of it — so a slot its type gained since the estimate was
+    // quoted cannot block the save; the web's `draftMissingFields` exempts
+    // the same rows through `isAlreadyQuoted`.
+    const missing = missingFields(
+      it,
+      grandfathered ? { isKnownType: () => false, usesSlot: () => false } : scoping
+    );
     if (missing.length > 0 && !allowIncomplete) {
       throw new Error(incompleteMessage(position, it, missing));
     }
@@ -803,8 +880,10 @@ async function resolveLineItems(
     // An UNKNOWN blind type — legacy free text, or one since deleted from
     // Settings — has no scoping rows to consult and is left unconstrained:
     // demanding ids it never carried would make every pre-dropdown order
-    // permanently unsavable.
-    const enforced = scoping.isKnownType(it.blinds_type);
+    // permanently unsavable. A GRANDFATHERED row is unconstrained for the
+    // same reason one stage later: adding an option to a blind type must
+    // not reach back into estimates already quoted on it.
+    const enforced = scoping.isKnownType(it.blinds_type) && !grandfathered;
     const uses = (slot: CatalogSlot) => scoping.usesSlot(it.blinds_type, slot);
     // An id for a slot the type does not use would name an option on
     // every document while pricing nothing. The OTHER half — a used slot
@@ -915,6 +994,7 @@ async function resolveLineItems(
       addons: adjusted.addons,
       line_total: complete ? adjusted.line_total : 0,
       ...lockColumns(base),
+      ...quotedColumns,
     };
   });
 }
@@ -926,29 +1006,6 @@ const DETAIL_SELECT = '*, line_items(*), customer:customers(*), payments(*)';
 function sumPayments(payments: Array<{ amount: number | string }> | null | undefined): number {
   const total = (payments ?? []).reduce((acc, p) => acc + Number(p.amount), 0);
   return Math.round(total * 100) / 100;
-}
-
-/**
- * Appends one row to the order's activity trail. Best-effort: a logging
- * failure must never fail the request it is describing, so errors are
- * swallowed (mirrors the "best-effort cleanup" pattern used elsewhere).
- *
- * `source` marks who caused the entry: 'staff' (the default, so all
- * existing call sites are unchanged) or 'customer' for anything driven
- * from the token'd public page. The web trail renders customer rows on
- * a light-blue background.
- */
-async function logOrderEvent(
-  sb: SupabaseClient,
-  orderId: string,
-  message: string,
-  source: 'staff' | 'customer' = 'staff'
-): Promise<void> {
-  try {
-    await sb.from('order_logs').insert({ order_id: orderId, message, source });
-  } catch {
-    // Logging is diagnostic only — never block the caller's mutation.
-  }
 }
 
 /**
@@ -967,6 +1024,15 @@ export async function applyDefensiveExpiry(
     return 'expired';
   }
   return order.status;
+}
+
+/**
+ * Number-or-null coercion for a PostgREST numeric column, which arrives
+ * as a string. The twin of `n` in `lib/priceLockStore.ts`, kept local
+ * because that one is private to the lock store.
+ */
+function numberOrNull(value: unknown): number | null {
+  return value === null || value === undefined ? null : Number(value);
 }
 
 /** Extracts the first user-relevant message from a ZodError. */
@@ -1163,6 +1229,7 @@ app.get('/by-number/:orderNumber', async (c) => {
   await annotateOrderCompleteness(sb, data as Record<string, unknown>);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
 });
 
@@ -1208,7 +1275,7 @@ async function createOrderFromInput(
   let rows: LineItemRow[];
   try {
     // Every create — POST / and /duplicate — makes a draft.
-    rows = await resolveLineItems(sb, input.line_items, undefined, true);
+    rows = await resolveLineItems(sb, input.line_items, undefined, undefined, true);
   } catch (e) {
     return {
       error: e instanceof Error ? e.message : 'Invalid line items',
@@ -1273,7 +1340,7 @@ async function createOrderFromInput(
 
 /** Creates an order with server-generated order number + pricing. */
 app.post('/', async (c) => {
-  const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
+  const parsed = createOrderSchema.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
   const sb = createSupabaseAdmin(c.env);
 
@@ -1284,7 +1351,10 @@ app.post('/', async (c) => {
   return c.json({ data: full ?? result.order }, 201);
 });
 
-/** Returns one order with line items + customer + payments. */
+/**
+ * Returns one order with line items + customer + payments, plus the
+ * `revisions` history and `unsent_changes` (see `revisionDetailFields`).
+ */
 app.get('/:id', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, error } = await readDetail(sb, c.req.param('id'));
@@ -1292,7 +1362,20 @@ app.get('/:id', async (c) => {
   if (!data) return c.json({ error: 'Order not found' }, 404);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
+  Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
   return c.json({ data });
+});
+
+/**
+ * Returns one revision's staff-only restore copy, `{ rev_no, source }`,
+ * for the editor's Restore (see `lib/orderRestore.ts`); 404 when the
+ * revision is not this order's.
+ */
+app.get('/:id/revisions/:revisionId', async (c) => {
+  const sb = createSupabaseAdmin(c.env);
+  const res = await loadRevisionSource(sb, c.req.param('id'), c.req.param('revisionId'));
+  if ('error' in res) return c.json({ error: res.error }, res.status);
+  return c.json({ data: res.data });
 });
 
 /**
@@ -1301,6 +1384,8 @@ app.get('/:id', async (c) => {
  * or later revives it to `draft` (a clean re-start — deliberately NOT
  * `sent`, since nothing has been re-sent to the customer yet); every
  * other status is preserved. See the revive note at the `update` call.
+ * `restore_from_revision` makes the save a revision restore: untouched
+ * items keep that revision's locked prices (`lib/orderRestore.ts`).
  */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
@@ -1324,6 +1409,11 @@ app.put('/:id', async (c) => {
     .eq('id', id)
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
+
+  const restore = input.restore_from_revision
+    ? await planRestore(sb, id, input.restore_from_revision, existing.status)
+    : null;
+  if (restore && !restore.ok) return c.json({ error: restore.error }, restore.status);
 
   const order_date = input.order_date ?? new Date().toISOString().slice(0, 10);
   const expiry_date = input.expiry_date ?? existing.expiry_date;
@@ -1375,17 +1465,30 @@ app.put('/:id', async (c) => {
   // what the customer was shown. Only an item whose OWN pricing inputs
   // were edited is re-priced — and re-locked at the new figure. See
   // `lib/priceLock.ts` for the fingerprint that decides this.
-  const locks =
-    holdsPriceLock(existing.status) && !reviveToDraft
-      ? buildLockMap((existing.line_items ?? []) as Record<string, unknown>[])
-      : undefined;
+  const priorRows = (existing.line_items ?? []) as Record<string, unknown>[];
+  const currentLocks =
+    holdsPriceLock(existing.status) && !reviveToDraft ? buildLockMap(priorRows) : undefined;
+  // A restore prices untouched items at the revision's own locks.
+  const locks = restore?.ok ? overlayRevisionLocks(currentLocks, restore.source) : currentLocks;
+
+  // In lockstep with `locks`, and for the same reason: both describe an
+  // order whose prices are frozen. On a draft — or on the revive that
+  // turns one back into a draft — there is nothing to carry forward and
+  // nothing to grandfather, because the locks and the quoted stamps have
+  // been released.
+  const prior: PriorItems | undefined = locks
+    ? {
+        uids: new Set(priorRows.filter((li) => li.uid).map((li) => String(li.uid))),
+        quoted: buildQuotedMap(priorRows),
+      }
+    : undefined;
 
   let rows: LineItemRow[];
   try {
     // Incomplete items may live only on a draft (spec 2026-11-02): a
     // draft stays one, and so does an expired estimate revived here.
     const allowIncomplete = existing.status === 'draft' || reviveToDraft;
-    rows = await resolveLineItems(sb, input.line_items, locks, allowIncomplete);
+    rows = await resolveLineItems(sb, input.line_items, locks, prior, allowIncomplete);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
   }
@@ -1399,11 +1502,11 @@ app.put('/:id', async (c) => {
   );
 
   // Draft, not `sent`, on purpose — no fresh estimate has reached the
-  // customer yet, so a new `/send` is the only path back to `sent`. This
-  // is the exact inverse of the `expiry_date < today` rule that expired
-  // it in `applyDefensiveExpiry`; a still-past date leaves the order
-  // expired (and its prices frozen), and no non-expired status is ever
-  // rewritten here.
+  // customer yet, so sending the estimate by email is the only path back to
+  // `sent`. This is the exact inverse of the `expiry_date < today` rule
+  // that expired it in `applyDefensiveExpiry`; a still-past date leaves
+  // the order expired (and its prices frozen), and no non-expired status
+  // is ever rewritten here.
   const { error: upError } = await sb
     .from('orders')
     .update({
@@ -1413,7 +1516,18 @@ app.put('/:id', async (c) => {
       expiry_date,
       discount_type: input.discount_type,
       discount_value: input.discount_value,
-      ...(reviveToDraft ? { status: 'draft' } : {}),
+      // Every save drops the order-total notice's dismissal: staff asked
+      // for a dismissed notice to stay quiet only until the next save,
+      // so after one it is measured against the stamp again and speaks
+      // if the total still differs from what the customer was sent.
+      quoted_notice_ack_total: null,
+      // A revived estimate is a fresh quote: the lock columns and
+      // the quoted stamp and its acknowledgement go null through the
+      // line-item replacement
+      // below (no `locks`, no `prior`), and the order's own stamp has to
+      // follow them or a notice would measure against a figure nobody
+      // was sent.
+      ...(reviveToDraft ? { status: 'draft', quoted_total: null } : {}),
       ...totals,
     })
     .eq('id', id);
@@ -1431,6 +1545,7 @@ app.put('/:id', async (c) => {
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);
+  if (restore?.ok) await logOrderEvent(sb, id, restoreLogLine(restore.rev_no));
   if (reviveToDraft) {
     await logOrderEvent(sb, id, 'Expiry extended to today or later — estimate revived to draft.');
   }
@@ -1723,137 +1838,25 @@ app.get('/:id/pdf', async (c) => {
 });
 
 /**
- * Sends the estimate to the customer by email with the PDF attached.
- *
- * Ordering (stability improvement from the plan review): the email is
- * sent FIRST; only after Resend confirms success do we persist
- * status='sent', sent_at, the public token, and the T&C snapshot. A
- * failed send leaves the order exactly as it was. Resends reuse the
- * existing public_token so previously emailed links keep working.
- *
- * The email button and the PDF's CTA link to the CUSTOMER link
- * (`/c/:token`, minted on first send), which lists every live estimate,
- * and the email says how many there are to choose from (spec 2026-10-20).
- * The order's own public_token is still persisted: the customer link
- * hands it to the detail view, and older emails link to it directly.
- */
-app.post('/:id/send', async (c) => {
-  const parsed = sendMessageSchema.safeParse(await c.req.json().catch(() => ({})));
-  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
-  const message = parsed.data.message;
-  const sb = createSupabaseAdmin(c.env);
-  const id = c.req.param('id');
-  const bundle = await loadOrderBundle(sb, id);
-  if (!bundle) return c.json({ error: 'Order not found' }, 404);
-  const { order, company } = bundle;
-
-  if (!EDITABLE.includes(order.status)) {
-    return c.json({ error: `A ${order.status} order's estimate cannot be re-sent.` }, 409);
-  }
-  const today = new Date().toISOString().slice(0, 10);
-  if (order.expiry_date < today) {
-    return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
-  }
-  const refusal = await leaveDraftRefusal(sb, order, order.line_items as CompletenessInput[]);
-  if (refusal) return c.json(refusal, 400);
-  const email = order.customer?.email;
-  if (!email) return c.json({ error: 'This customer has no email address.' }, 400);
-
-  const publicToken: string = order.public_token ?? crypto.randomUUID();
-  const terms: string = order.terms_snapshot ?? company.terms_and_conditions ?? '';
-
-  // The email and the PDF point at the customer's ONE link, which lists
-  // every live estimate (spec 2026-10-20). The order keeps its own token
-  // too — the link hands it to the detail view, and older emails use it.
-  let customerToken: string | null;
-  let activeEstimateCount: number;
-  try {
-    customerToken = await ensureCustomerToken(sb, order.customer_id);
-    // Counted before this order flips to `sent`, so add it back.
-    activeEstimateCount = (await countActiveEstimates(sb, order.customer_id, today, id)) + 1;
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'Could not prepare the link' }, 500);
-  }
-  if (!customerToken) return c.json({ error: 'Customer not found' }, 404);
-  const viewUrl = customerLinkUrl(c.env.APP_URL, customerToken);
-
-  let pdf: Uint8Array;
-  try {
-    // An unsent order has no payments yet, so this is always an Estimate.
-    pdf = await buildDocumentPdf(await toPdfData(order, company, terms, viewUrl));
-  } catch (e) {
-    return c.json({ error: e instanceof Error ? e.message : 'PDF generation failed' }, 500);
-  }
-
-  try {
-    await sendEmail(c.env, {
-      to: email,
-      subject: estimateEmailSubject(order.order_number, company.company_name || 'Blinds Nisa', order.title),
-      html: buildEstimateEmailHtml({
-        company: brandFromSettings(company),
-        customerFirstName: greetingName(order.customer),
-        message,
-        viewUrl,
-        title: order.title ?? null,
-        activeEstimateCount,
-      }),
-      attachments: [
-        {
-          filename: `${order.order_number}-estimate.pdf`,
-          content: toBase64(pdf),
-        },
-      ],
-    });
-  } catch (e) {
-    // Send failed → order stays untouched (still draft / previous state).
-    return c.json({ error: e instanceof Error ? e.message : 'Email send failed' }, 502);
-  }
-
-  // The customer now holds a document quoting these figures, so they
-  // stop being a calculation (migration 39). Frozen before the status
-  // write for the same reason as at `/confirm`: an order that reached
-  // `sent` unlocked would re-price itself on the next save.
-  const freezeError = await freezeOrderPrices(sb, id);
-  if (freezeError) return c.json({ error: freezeError }, 500);
-
-  const { error } = await sb
-    .from('orders')
-    .update({
-      status: 'sent',
-      sent_at: new Date().toISOString(),
-      public_token: publicToken,
-      terms_snapshot: terms,
-    })
-    .eq('id', id);
-  if (error) return c.json({ error: error.message }, 500);
-
-  await logOrderEvent(sb, id, `Estimate emailed to ${email}.`);
-  await logOrderEvent(sb, id, 'Item prices locked at send.');
-
-  const { data: updated } = await readDetail(sb, id);
-  if (updated) updated.amount_paid = sumPayments(updated.payments);
-  return c.json({ data: updated });
-});
-
-/**
  * Marks the estimate as sent WITHOUT emailing anything — a status-only
  * `draft → sent` transition.
  *
  * This backs the Progress-timeline advance control, for estimates handed
  * over in person, printed, or delivered through some other channel. The
- * "Estimate Ready" email belongs exclusively to `POST /:id/send`:
+ * "Estimate Ready" email belongs exclusively to the customer-scoped send
+ * (`POST /api/customers/:id/send-estimates`):
  * advancing the lifecycle stage must never put mail in a customer's
  * inbox, otherwise a consultant tidying up the pipeline silently emails
  * people.
  *
- * Differences from `/send`, all deliberate: no customer email address is
- * required (nothing is delivered), and neither `public_token` nor
- * `terms_snapshot` is written — there is no customer-facing link to keep
- * alive and no terms to freeze until a document actually goes out. A
- * later real `/send` mints both lazily, so nothing is lost. The lapsed-
- * expiry guard mirrors `/send` because `applyDefensiveExpiry` flips a
- * `sent` order whose validity date has passed straight to `expired` on
- * the next read, which would make this action look broken.
+ * Differences from the emailed send, all deliberate: no customer email
+ * address is required (nothing is delivered), and neither `public_token`
+ * nor `terms_snapshot` is written — there is no customer-facing link to
+ * keep alive and no terms to freeze until a document actually goes out.
+ * A later real send mints both lazily, so nothing is lost. The lapsed-
+ * expiry guard mirrors the emailed send because `applyDefensiveExpiry`
+ * flips a `sent` order whose validity date has passed straight to
+ * `expired` on the next read, which would make this action look broken.
  */
 app.post('/:id/mark-sent', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -1875,9 +1878,13 @@ app.post('/:id/mark-sent', async (c) => {
   if (refusal) return c.json(refusal, 400);
 
   // Handed over in person is still handed over: the prices freeze here
-  // exactly as they do on a real `/send`.
+  // exactly as they do on a real emailed send, and the quoted figures are
+  // re-stamped — this IS a send, so any price-update notice the editor was
+  // showing has just been answered by the document the customer now has.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
+  const stampError = await stampSent(sb, id, 'overwrite', 'manual');
+  if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
     .from('orders')
@@ -1906,6 +1913,83 @@ app.post('/:id/mark-sent', async (c) => {
  * logged, once, because it brings a customer-reachable URL into
  * existence and that is worth a line in the trail.
  */
+/**
+ * Which notice is being dismissed: one line item's, by `uid`, or — with
+ * no `uid` at all — the order total's.
+ *
+ * `.strict()`, and it carries NO figure: the acknowledged price is read
+ * from the order's own rows, exactly as every other money decision is
+ * (AI_GUIDELINES §1). A client that could name the figure could silence
+ * a notice about a price it had made up.
+ */
+const dismissNoticeSchema = z.object({ uid: z.string().uuid().optional() }).strict();
+
+/**
+ * Dismisses a price-update notice — the amber "$200.00 → $220.00" line
+ * in the editor — by recording the figure staff acknowledged
+ * (`quoted_notice_ack_base` on the item, `quoted_notice_ack_total` on
+ * the order; migration 48).
+ *
+ * A figure rather than a flag, so dismissing settles THIS move and not
+ * every move after it: if the price shifts again, today's figure no
+ * longer matches the acknowledged one and the notice returns. Sending
+ * the estimate again clears the acknowledgement along with the stamp it
+ * answered, and every save (`PUT /:id`) clears the ORDER-TOTAL
+ * acknowledgement, so a dismissed total notice stays quiet only until
+ * the next save.
+ *
+ * The acknowledged figure is the one the ORDER currently holds, not
+ * whatever the editor happens to be previewing. So dismissing while an
+ * unsaved edit is on screen settles the saved price, and saving that
+ * edit raises the notice again at the new figure — which is right: it is
+ * a different price from the one that was dismissed.
+ *
+ * Idempotent, and permitted at any status: a draft carries no stamp, so
+ * it has no notice to dismiss and the write is inert — and it is cleared
+ * when the locks are released either way.
+ *
+ * 404 on an unknown order, or on a `uid` this order does not have.
+ */
+app.post('/:id/dismiss-price-notice', async (c) => {
+  const parsed = dismissNoticeSchema.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ error: firstZodIssue(parsed.error) }, 400);
+  const sb = createSupabaseAdmin(c.env);
+  const id = c.req.param('id');
+
+  const { data: existing } = await sb
+    .from('orders')
+    .select('id, total, line_items(id, uid, base_unit_price, unit_price)')
+    .eq('id', id)
+    .maybeSingle();
+  if (!existing) return c.json({ error: 'Order not found' }, 404);
+
+  const { uid } = parsed.data;
+  if (uid) {
+    const rows = (existing.line_items ?? []) as Record<string, unknown>[];
+    const row = rows.find((li) => String(li.uid) === uid);
+    if (!row) return c.json({ error: 'Line item not found' }, 404);
+    const ack = numberOrNull(row.base_unit_price) ?? numberOrNull(row.unit_price) ?? 0;
+    const { error } = await sb
+      .from('line_items')
+      .update({ quoted_notice_ack_base: ack })
+      .eq('id', row.id as string);
+    if (error) return c.json({ error: error.message }, 500);
+    await logOrderEvent(sb, id, `Price-update notice dismissed for an item at $${ack}.`);
+  } else {
+    const ack = numberOrNull(existing.total) ?? 0;
+    const { error } = await sb
+      .from('orders')
+      .update({ quoted_notice_ack_total: ack })
+      .eq('id', id);
+    if (error) return c.json({ error: error.message }, 500);
+    await logOrderEvent(sb, id, `Order total price-update notice dismissed at $${ack}.`);
+  }
+
+  const { data } = await readDetail(sb, id);
+  if (data) data.amount_paid = sumPayments(data.payments);
+  return c.json({ data });
+});
+
 app.post('/:id/public-token', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const id = c.req.param('id');
@@ -2035,6 +2119,11 @@ app.post('/:id/confirm', async (c) => {
   // order must not reach awaiting_payment live-priced.
   const freezeError = await freezeOrderPrices(sb, id);
   if (freezeError) return c.json({ error: freezeError }, 500);
+  // `fill`, not `overwrite`: confirming is the customer accepting a quote
+  // already made, so an existing stamp stays where the send put it and
+  // any price-update notice stays visible.
+  const stampError = await stampSent(sb, id, 'fill', 'stage');
+  if (stampError) return c.json({ error: stampError }, 500);
 
   const { error } = await sb
     .from('orders')
@@ -2760,12 +2849,16 @@ app.post('/:id/revert', async (c) => {
   // Prices follow the same rule this route's stamps do (migration 39):
   // `draft` is the only stage where an item is live-priced, so a revert
   // all the way down releases the locks, and any other target freezes
-  // whatever is not frozen yet — a manual jump can skip `/send`
-  // entirely, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — a manual jump can skip the emailed
+  // send entirely, and no stage from `sent` up may be reached
+  // live-priced.
   if (toIdx < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {
     await freezeOrderPrices(sb, id);
+    // `fill`: a stage change is not a send, so a stamp an earlier send
+    // left is kept and the notices it feeds stay on screen.
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Order reverted from ${existing.status} to ${to}.`);
@@ -2871,12 +2964,16 @@ app.post('/:id/status', async (c) => {
   // Prices follow the stage the same way the stamps above do (migration
   // 39): `draft` is the only stage where an item is live-priced, so
   // landing there releases the locks, and any other target freezes
-  // whatever is not frozen yet — this route can jump straight past
-  // `/send`, and no stage from `sent` up may be reached live-priced.
+  // whatever is not frozen yet — this route can jump straight past the
+  // emailed send, and no stage from `sent` up may be reached
+  // live-priced.
   if (STAGE_ORDER.indexOf(to) < STAGE_ORDER.indexOf('sent')) {
     await clearOrderPriceLocks(sb, id);
   } else {
     await freezeOrderPrices(sb, id);
+    // `fill`, as in the revert route above: a manual stage change does
+    // not re-quote the customer.
+    await stampSent(sb, id, 'fill', 'stage');
   }
 
   await logOrderEvent(sb, id, `Status manually changed from ${existing.status} to ${to}.`);

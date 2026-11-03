@@ -66,6 +66,8 @@ function lineItem(overrides: Partial<LineItem> = {}): LineItem {
     addons: [],
     locked_base_price: null,
     locked_inputs_fingerprint: null,
+    quoted_base_price: null,
+    quoted_notice_ack_base: null,
     created_at: '2026-08-20T00:00:00Z',
     updated_at: '2026-08-20T00:00:00Z',
     ...overrides,
@@ -336,5 +338,23 @@ describe('describeLineBreakdown', () => {
       const summed = Object.values(cells).reduce((s, c) => s + (c.amount ?? 0), 0);
       expect(Math.round((summed + addons) * 100) / 100).toBe(lineTotal);
     }
+  });
+});
+
+describe('describeLineBreakdown with a basis this build does not know', () => {
+  it('names the option, charges nothing to it, and still adds up', () => {
+    const row = describeLineBreakdown(
+      lineItem({
+        control_id: 'c-1',
+        control_name: 'Motor',
+        control_price_per_item: 99,
+        control_price_basis: 'per_yard' as LineItem['control_price_basis'],
+      })
+    );
+    expect(row.cells.control).toEqual({ name: 'Motor', amount: 0 });
+    // The material cell is fitted to the stored price, so the row still
+    // reconciles to the line total instead of carrying NaN.
+    expect(row.cells.material.amount).toBe(140);
+    expect(row.lineTotal).toBe(140);
   });
 });

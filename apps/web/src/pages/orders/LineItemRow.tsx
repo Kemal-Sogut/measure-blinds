@@ -41,6 +41,7 @@ import {
   type Catalogs,
   draftMissingFields,
 } from './lineItemDrafts';
+import { lineItemName } from './lineItemName';
 
 /**
  * Builds the expanded-panel lines for a blind draft: panel widths ×
@@ -369,10 +370,7 @@ export default function LineItemRow({
   // Open product decisions on this blind (spec 2026-11-02). Savable on a
   // draft; Send and stage moves stay refused until this is empty.
   const missing = isDraft ? draftMissingFields(item, catalogs) : [];
-  const name =
-    item.item_type === 'blind'
-      ? [item.room_name || `Blind ${index + 1}`, item.blinds_type].filter(Boolean).join(' — ')
-      : item.description || `Item ${index + 1}`;
+  const name = lineItemName(item, index);
   const attrLine =
     item.item_type === 'blind'
       ? getBlindType(item.blinds_type)

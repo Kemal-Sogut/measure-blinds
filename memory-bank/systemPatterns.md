@@ -14,7 +14,12 @@
 | RLS on every table | Defense-in-depth; even if Worker is bypassed somehow, RLS blocks unauthorized access |
 | Client-side live pricing | Immediate feedback on keystroke; Worker recalculates authoritatively on save |
 | Snapshot pricing on line items | Material/cassette/control/installation prices stored on line item at creation time to prevent retroactive price changes |
-| Price lock from send onward | Sending an estimate quotes a price, so each item freezes its calculated price (`locked_base_price`) plus a fingerprint of the inputs behind it (migration 39) at `/send`, not at confirmation. Saving re-uses the frozen figure while the fingerprint matches; only an item whose OWN pricing inputs were edited is re-priced and re-locked. `draft` is the only live-priced status, and returning an order to draft is the only thing that releases a lock |
+| Price lock from send onward | Sending an estimate quotes a price, so each item freezes its calculated price (`locked_base_price`) plus a fingerprint of the inputs behind it (migration 39) at the send (`POST /api/customers/:id/send-estimates`), not at confirmation. Saving re-uses the frozen figure while the fingerprint matches; only an item whose OWN pricing inputs were edited is re-priced and re-locked. `draft` is the only live-priced status, and returning an order to draft is the only thing that releases a lock |
+| Dismissal stores the figure, not a flag | A price-update notice is dismissed by recording the figure staff acknowledged (`quoted_notice_ack_*`, migration 48), on the ORDER rather than per device. Hidden while today's figure still equals it, so a SECOND move speaks up again; cleared by the next send. `POST /api/orders/:id/dismiss-price-notice` carries no figure — the Worker reads what the order holds |
+| Quoted stamp, written by a SEND only | `line_items.quoted_base_price` + `orders.quoted_total` (migration 48) record what the customer was LAST SENT, which the price lock cannot — a save re-locks an edited item at its NEW figure. A send overwrites them (the reset), a stage reached without a send fills only what is null, and a save carries them across by `uid`. The editor's price-update notices are the difference between these and today's figures |
+| Hardware requirements apply only to an item being QUOTED | A slot added to a blind type must not reach back into estimates already sent on it. An item already on a price-locked order is exempt while its lock holds, or if it never had one (pre-migration-39); an item whose lock BROKE, and any line added since the send, are held to today's rules. `isAlreadyQuoted` (web) and `prior` in `resolveLineItems` (Worker) are the twinned halves |
+| Catalog rows are archived, never deleted | Historical line items name catalog rows by id and that id feeds the price-lock fingerprint, so a delete (formerly `ON DELETE SET NULL`) rewrote quoted orders. Since migration 49 a Settings DELETE sets `archived_at` + `active = false`, `line_items` FKs are RESTRICT, list endpoints keep returning archived rows (the editor prices old items from them) and the Settings pages hide them (`liveCatalogRows`) |
+| Enum-like DB values are parsed, not cast | `price_basis` goes through `isPriceBasis` (`PRICE_BASES` in both `blindTypes/base.ts` twins) at every read: the Worker refuses the save, documents leave the leg off, the preview shows no price. A cast would have priced an unknown basis as NaN |
 | Per-option price basis | How a hardware option is charged (per m / m2 / unit / panel) lives on the catalog ROW, not in the formula; one function interprets it |
 | Catalog scoping join tables | Which hardware slots a blind type uses is DATA (`<catalog>_blind_types`), not a code constant — the shop switches a slot off per type from Settings without a deploy |
 | UUID public tokens | Unguessable tokens for customer view URLs — no auth required, token acts as capability |
@@ -192,6 +197,10 @@ section as the reference implementation for future collapsible UI.
     necessity; they must still agree.
   - EMPTY MEANS NONE, the OPPOSITE of `material_blind_types` (no links = every type). Both
     conventions are deliberate and both are live.
+  - The rule is LIVE, so linking a new option makes that slot required for the type at once —
+    including for items quoted before it existed, which is what broke Present to customer in
+    `bug_fixes.md` 2026-10-25. Since then the requirement is enforced only on an item being
+    QUOTED (`isAlreadyQuoted` / `prior`); a FIFTH client path to keep in step.
 - **Billed material quantity is a first-class blind-type concept (2026-08-22), alongside
   `describeUnitCosts` (2026-08-20).** `BaseBlindType.describeMaterialUsage(item)` returns
   `{ unit: 'sqm' | 'running_m'; quantity; measured }` for ONE blind, on the same minimised
@@ -310,9 +319,67 @@ section as the reference implementation for future collapsible UI.
 - Staff order URLs resolve by ORDER NUMBER; the customer slug is cosmetic and redirected to
   canonical (`pages/orders/orderRoute.tsx`). Pages read their id via `useOrderRouteId`, never
   `useParams` directly. Build links with `lib/orderPath.ts`; id-only callers use `/orders/:id`.
+- **Estimate sends are per customer over a selected set; the order routes no longer email
+  estimates.** One action: `POST /api/customers/:id/send-estimates`, orchestrated in
+  `lib/estimateSend.ts`, emails ONE customer-link message covering the ticked estimates, with
+  no PDF attached and no money in the body. The picker's list is
+  `GET /api/customers/:id/sendable-estimates` (`draft`/`sent`, unexpired, has items). There is
+  no per-order send route. The count in the email is what the link will SHOW after the send
+  (`countActiveEstimates` + newly sent), not the number ticked. Email first, persist after: a
+  failed email is a 502 with no write; a mid-way write failure is a 200
+  `{ sent, announced, failed }` because the customer already holds the email. An already-`sent`
+  row is re-announced only (no write, original `sent_at`); there is no un-share.
+- **A send writes status before freezing prices, so a half-written row errs toward locked.**
+  `holdsPriceLock('draft')` is false: a row left `draft` with frozen items would be silently
+  re-priced by the next `PUT /api/orders/:id`, unfreezing figures the customer already holds.
+  A row left `sent` with unfrozen items is the safe half-write (`sent` holds the lock, a retry
+  completes the freeze). Per-row writes are sequential so a failure leaves a known prefix.
 - The customer link (`/c/:token`, `routes/publicCustomer.ts`) only LISTS; it hands out each
   visible order's own token, and the existing `/public/estimate/:token` routes stay the only
   place a customer acts on an order. Visibility rules live in `lib/customerPortal.ts`.
+
+## Estimate revisions (2026-10-26)
+- **Quote snapshot on send.** A send cuts `order_revisions` row Rev N (`rev_no` unique per
+  order): `snapshot` = customer view (`PublicQuote`, sanitized: no `uid`, `attributes`,
+  `base_unit_price`, hidden items), `source` = staff-only restore copy (order `title` /
+  discount + raw `line_items` rows). `source` never leaves `/api/*`. RLS on, no policies.
+- **Cut on a send, only if customer-visible content changed.** Saves never cut one; an unchanged
+  re-announce writes none. `lib/orderRevisions.ts` `stampSent` wraps `stampQuotedFigures`
+  (`'overwrite' | 'fill'`); every send/stage stamp calls it, so after a send
+  `orders.quoted_total === latestRevision.total`. Email-then-persist: no revision if the email
+  throws. History readers are error-aware (unreadable != empty).
+- **Diff drives the banner and the email.** `lib/publicQuote.ts` builds the customer-visible
+  quote; `lib/quoteDiff.ts` diffs two of them (hidden items count as removed/added; named
+  fields incl. Room and Was price; any other difference of the canonical public quote, line
+  order included, is one "Other details updated", so a different snapshot is never "no
+  changes"); `lib/estimateEmailChanges.ts` + `email.ts` render up to 5 change lines and an
+  "updated" heading/subject when every named estimate is an update (sent rows, and drafts that
+  already have revision history). Web `revisionBanner.ts` / `RevisionBannerCard.tsx` is the
+  staff banner: "N changes not sent to the customer" (+ Send update) on `sent`/`expired`;
+  "Customer confirmed Rev N — current estimate differs" from `awaiting_payment` on (never
+  "not sent"/legacy there; hidden when a confirmed order has no revision).
+- **Rendered-label changes show up as unsent changes.** The diff compares formatted,
+  server-rendered values, so a code change to `describeAttributes` / `optionLineAmounts`
+  labels changes every rendered snapshot comparison — expect "changes not sent" on sent orders
+  after such a deploy (the stored snapshot keeps the old wording until the next send).
+- **Customer page source.** `lib/publicRevision.ts`: latest snapshot while `sent`/`expired`;
+  live with no revision (legacy) and from `awaiting_payment` on (version chip withheld once
+  that live quote differs from the latest revision); status, payments, edit requests and
+  address always live; unreadable history = 500. The customer only ever gets the latest
+  version (`revision` = `rev_no` + `sent_at`): no revision list, no change lines, no
+  earlier-revision route on `/public/*` (history is staff-only). Public responses pick quote
+  fields explicitly (`toPublicQuoteFields`), never spread a stored snapshot. Public confirm
+  takes optional `{ rev_no }` (stale = 409, nothing written), stores
+  `orders.accepted_revision_id`; a differing saved order is logged, not blocked, and the
+  confirm reply + staff email use the accepted revision's total with a review note.
+- **Restore is a normal save.** `PUT /api/orders/:id` + `restore_from_revision` (`lib/orderRestore.ts`)
+  overlays that revision's `source` price locks (`buildLockMap`) on the current ones, so
+  untouched items keep Rev N prices; edited items re-price at today's catalog. `customer_id`,
+  `order_date`, `expiry_date`, terms are not restored. 409 from `awaiting_payment` on.
+- **Migration-48 notices are unchanged and reset together with revisions.** The notice is the
+  live, per-item, dismissible price signal; the banner is the saved, order-level "customer not
+  told" signal and is not hidden by a dismissal. Reverting to `draft` clears stamps but keeps
+  revisions; the banner is hidden on drafts (`holdsPriceLock` gate).
 
 ## Incomplete draft items (2026-11-02)
 - **LOCKED: incomplete items only exist on drafts.** Gates (`/send`, `/mark-sent`, `/confirm`, `/status` to
@@ -331,7 +398,7 @@ section as the reference implementation for future collapsible UI.
 
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
-2. **Send flow:** Save draft → Generate Estimate PDF → Send via Resend → Set status=sent
+2. **Send flow:** (estimate page: Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked) → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices
 3. **Customer confirm:** Email link → Public view → Confirm → status=awaiting_payment → Notification email
 4. **Reverse confirm (user only):** Order detail → Reverse Confirmation → status back to sent
 5. **Payment:** Order detail → Record Payment → ledger row → status=in_progress → balance updates → PDF now an Invoice
@@ -369,6 +436,12 @@ amber=payment owed, emerald=ready/paid, rose=expired/destructive, slate=draft.
   local `INPUT_CLS` constants compose it rather than redefining it.
 - `Modal` owns Escape, backdrop dismissal, scroll lock and focus. A caller migrating onto it
   MUST delete its own equivalents or the close handler fires twice.
+- NO `window.confirm` / `alert` / `prompt` in the app. Yes/no questions go through
+  `useConfirm()` (`ui/confirmContext.ts`): `if (!(await askConfirm({ title, message,
+  confirmLabel, tone }))) return;`. `ConfirmProvider` (mounted once in `App.tsx`) renders it
+  on `Modal` inside a z-60 layer — above z-40 sheets and z-50 Modals it is raised from — and
+  swallows Escape in the window capture phase so only the confirm closes. `tone: 'danger'`
+  for deletes, discards and reversals; default `primary` for forward moves.
 - Cards carry a shadow AND a hairline border. The border is not redundant — the app is used
   on phones outdoors where a soft shadow alone can vanish in daylight.
 

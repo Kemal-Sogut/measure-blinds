@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   escapeHtml,
-  buildEstimateEmailHtml,
+  buildEstimatesEmailHtml,
   buildInvoiceEmailHtml,
   buildReceiptEmailHtml,
   buildConfirmationNoticeHtml,
@@ -21,6 +21,8 @@ import {
   buildCancellationDeniedHtml,
   buildCancellationNoticeHtml,
   estimateEmailSubject,
+  estimatesEmailSubject,
+  isUpdateEmail,
 } from './email';
 
 describe('escapeHtml', () => {
@@ -32,51 +34,6 @@ describe('escapeHtml', () => {
 
   it('leaves normal text untouched', () => {
     expect(escapeHtml('Kemal Sogut — Unit 5, Toronto')).toBe('Kemal Sogut — Unit 5, Toronto');
-  });
-});
-
-describe('buildEstimateEmailHtml', () => {
-  const html = buildEstimateEmailHtml({
-    company: {
-      name: 'Blinds <Nisa> & Co',
-      address: '22-174 Colonnade Road, Nepean ON',
-      phone: '(613) 699-1837',
-      email: 'info@blindsnisa.com',
-    },
-    customerFirstName: '<b>Kemal</b>',
-    viewUrl: 'https://app.example.com/customer/abc-123',
-  });
-
-  it('escapes injected markup in every user field', () => {
-    expect(html).not.toContain('<b>Kemal</b>');
-    expect(html).not.toContain('Blinds <Nisa>');
-    expect(html).toContain('&lt;b&gt;Kemal&lt;/b&gt;');
-    expect(html).toContain('Blinds &lt;Nisa&gt; &amp; Co');
-  });
-
-  it('contains the CTA link', () => {
-    expect(html).toContain('https://app.example.com/customer/abc-123');
-    expect(html).toContain('Review &amp; confirm your estimate');
-  });
-
-  it('carries no details section: no summary card, expiry or total', () => {
-    expect(html).not.toContain('Estimate summary');
-    expect(html).not.toContain('Valid until');
-    expect(html).not.toContain('Estimated total');
-    expect(html).not.toContain('How to go ahead');
-  });
-
-  it('sends the customer to the button and says they must confirm online', () => {
-    expect(html).toContain('Tap the button below');
-    expect(html).toContain('confirm it to go ahead with your order');
-    expect(html).toContain('isn&#39;t placed until you confirm it online');
-  });
-
-  it('renders the branded footer with contact details and the confidentiality notice', () => {
-    expect(html).toContain('22-174 Colonnade Road, Nepean ON');
-    expect(html).toContain('(613) 699-1837');
-    expect(html).toContain('mailto:info@blindsnisa.com');
-    expect(html).toContain('Confidentiality notice');
   });
 });
 
@@ -258,6 +215,18 @@ describe('buildConfirmationNoticeHtml', () => {
     expect(html).toContain('&lt;script&gt;');
     expect(html).toContain('F2606-1226');
     expect(html).toContain('$500.00');
+    expect(html).not.toContain('review before taking the deposit');
+  });
+
+  it('adds the escaped divergence note when the confirm diverged', () => {
+    const html = buildConfirmationNoticeHtml({
+      orderNumber: 'F2606-1226',
+      customerName: 'Ada',
+      total: 500,
+      divergedNote: 'Saved estimate differs <b>review</b> before taking the deposit.',
+    });
+    expect(html).toContain('Saved estimate differs &lt;b&gt;review&lt;/b&gt; before taking the deposit.');
+    expect(html).not.toContain('<b>review</b>');
   });
 });
 
@@ -315,19 +284,281 @@ describe('buildCancellationNoticeHtml', () => {
   });
 });
 
-describe('estimate email — title and choices', () => {
-  const base = { company: { name: 'Blinds Nisa' }, customerFirstName: 'Jane', viewUrl: 'https://x/c/t' };
+describe('buildEstimatesEmailHtml', () => {
+  const base = {
+    company: { name: 'Blinds Nisa' },
+    customerFirstName: 'Jane',
+    viewUrl: 'https://app.example.com/c/abc-123',
+    estimates: [{ order_number: 'M2010-126', title: null }],
+    liveCount: 1,
+  };
 
-  it('names the title in the intro, escaped', () => {
-    const html = buildEstimateEmailHtml({ ...base, title: 'Option <A>' });
+  it('says "Your estimate is ready" for one estimate', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html).toContain('Your estimate is ready');
+    expect(html).not.toContain('Your estimates are ready');
+  });
+
+  it('says "Your estimates are ready" for several', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: 'Option A' },
+        { order_number: 'M2010-127', title: 'Option B' },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('Your estimates are ready');
+    expect(html).not.toContain('Your estimate is ready');
+  });
+
+  it('names every estimate by order number, and its title when set', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: 'Option A' },
+        { order_number: 'M2010-127', title: null },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('M2010-126');
+    expect(html).toContain('Option A');
+    expect(html).toContain('M2010-127');
+    expect(html).toContain('<strong>M2010-127</strong></td>');
+  });
+
+  it('prints no money', () => {
+    expect(buildEstimatesEmailHtml(base)).not.toContain('$');
+  });
+
+  it('states the live count, not the sent count', () => {
+    const html = buildEstimatesEmailHtml({ ...base, liveCount: 3 });
+    expect(html).toContain('You have 3 estimates');
+  });
+
+  it('omits the choice line when liveCount is 1', () => {
+    expect(buildEstimatesEmailHtml(base)).not.toContain('You have');
+  });
+
+  it('links the button and the fallback to viewUrl', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html.split('https://app.example.com/c/abc-123')).toHaveLength(3);
+    expect(html).toContain('href="https://app.example.com/c/abc-123"');
+  });
+
+  it('gives the CTA a singular label for one estimate', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html).toContain('Review &amp; confirm your estimate<');
+    expect(html).not.toContain('Review &amp; confirm your estimates');
+  });
+
+  it('gives the CTA a plural label for several, agreeing with the heading', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: 'Option A' },
+        { order_number: 'M2010-127', title: 'Option B' },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('Review &amp; confirm your estimates');
+  });
+
+  it('says the order is not placed until the customer confirms online', () => {
+    expect(buildEstimatesEmailHtml(base)).toContain('isn&#39;t placed until you confirm it online');
+  });
+
+  it('makes no attachment promise', () => {
+    const html = buildEstimatesEmailHtml({ ...base, liveCount: 3 });
+    expect(html).not.toMatch(/attached/i);
+    expect(html).not.toMatch(/PDF/i);
+  });
+
+  it('escapes the consultant note', () => {
+    const html = buildEstimatesEmailHtml({ ...base, message: '<script>alert(1)</script>' });
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('escapes a title', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: 'Option <A>' }],
+    });
     expect(html).toContain('Option &lt;A&gt;');
+    expect(html).not.toContain('Option <A>');
   });
-  it('prints no title markup when none is set', () => {
-    expect(buildEstimateEmailHtml({ ...base, title: null })).toContain('Your estimate is ready.');
+
+  it('escapes the order number, customer name and company name', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      company: { name: 'Blinds <Nisa> & Co' },
+      customerFirstName: '<b>Kemal</b>',
+      estimates: [{ order_number: '<i>9</i>', title: null }],
+    });
+    expect(html).not.toContain('<b>Kemal</b>');
+    expect(html).not.toContain('<i>9</i>');
+    expect(html).toContain('&lt;b&gt;Kemal&lt;/b&gt;');
+    expect(html).toContain('Blinds &lt;Nisa&gt; &amp; Co');
+    expect(html).toContain('&lt;i&gt;9&lt;/i&gt;');
   });
-  it('adds the choice line only for more than one active estimate', () => {
-    expect(buildEstimateEmailHtml({ ...base, activeEstimateCount: 1 })).not.toContain('estimates to choose from');
-    expect(buildEstimateEmailHtml({ ...base, activeEstimateCount: 2 })).toContain('You have 2 estimates to choose from');
+
+  it('renders the branded footer', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      company: { name: 'Blinds Nisa', phone: '(613) 699-1837', email: 'info@blindsnisa.com' },
+    });
+    expect(html).toContain('(613) 699-1837');
+    expect(html).toContain('mailto:info@blindsnisa.com');
+    expect(html).toContain('Confidentiality notice');
+  });
+});
+
+describe('buildEstimatesEmailHtml: updated estimates', () => {
+  const base = {
+    company: { name: 'Blinds Nisa' },
+    customerFirstName: 'Jane',
+    viewUrl: 'https://app.example.com/c/abc-123',
+    estimates: [{ order_number: 'M2010-126', title: null, changes: ['Total $100.00 → $120.00'] }],
+    liveCount: 1,
+  };
+
+  it('says "Your estimate has been updated" when the only estimate changed', () => {
+    const html = buildEstimatesEmailHtml(base);
+    expect(html).toContain('Your estimate has been updated');
+    expect(html).not.toContain('Your estimate is ready');
+    expect(html).toContain('Total $100.00 → $120.00');
+  });
+
+  it('says "Your estimates have been updated" when every one of several changed', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: null, changes: ['a'] },
+        { order_number: 'M2010-127', title: null, changes: ['b'] },
+      ],
+      liveCount: 2,
+    });
+    expect(html).toContain('Your estimates have been updated');
+    expect(html).not.toContain('Your estimates are ready');
+  });
+
+  it('keeps the "ready" heading in a mixed send and tags only the updated row', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [
+        { order_number: 'M2010-126', title: null, changes: ['Total $100.00 → $120.00'] },
+        { order_number: 'M2010-127', title: null },
+        { order_number: 'M2010-128', title: null, changes: [] },
+      ],
+      liveCount: 3,
+    });
+    expect(html).toContain('Your estimates are ready');
+    expect(html).not.toContain('have been updated');
+    expect(html.match(/>Updated</g)).toHaveLength(1);
+    expect(html).toContain('Total $100.00 → $120.00');
+    expect(html.indexOf('>Updated<')).toBeLessThan(html.indexOf('M2010-127'));
+  });
+
+  it('prints no Updated tag for a new or unchanged estimate', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes: [] }],
+    });
+    expect(html).not.toContain('>Updated<');
+    expect(html).toContain('Your estimate is ready');
+  });
+
+  it('escapes the change lines', () => {
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes: ['<b>Lounge</b>: Colour a → b'] }],
+    });
+    expect(html).toContain('&lt;b&gt;Lounge&lt;/b&gt;');
+    expect(html).not.toContain('<b>Lounge');
+  });
+
+  it('shows at most 5 change lines, then "and {m} more"', () => {
+    const changes = Array.from({ length: 8 }, (_, n) => `Change number ${n + 1}`);
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes }],
+    });
+    expect(html).toContain('Change number 5');
+    expect(html).not.toContain('Change number 6');
+    expect(html).toContain('and 3 more');
+  });
+
+  it('shows all of exactly 5 change lines with no "more" line', () => {
+    const changes = Array.from({ length: 5 }, (_, n) => `Change number ${n + 1}`);
+    const html = buildEstimatesEmailHtml({
+      ...base,
+      estimates: [{ order_number: 'M2010-126', title: null, changes }],
+    });
+    expect(html).toContain('Change number 5');
+    expect(html).not.toContain(' more');
+  });
+});
+
+describe('isUpdateEmail', () => {
+  const line = (changes?: string[]) => ({ order_number: 'M1', title: null, changes });
+
+  it('is true only when every line has a non-empty changes list', () => {
+    expect(isUpdateEmail([line(['x']), line(['y'])])).toBe(true);
+    expect(isUpdateEmail([line(['x']), line([])])).toBe(false);
+    expect(isUpdateEmail([line(['x']), line(undefined)])).toBe(false);
+    expect(isUpdateEmail([line([])])).toBe(false);
+  });
+
+  it('is false for an empty list', () => {
+    expect(isUpdateEmail([])).toBe(false);
+  });
+});
+
+describe('estimatesEmailSubject: updated estimates', () => {
+  it('names the order number for one updated estimate, without the title', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [{ order_number: 'M2010-126', title: 'Option A', changes: ['x'] }])
+    ).toBe('Updated estimate M2010-126 from Blinds Nisa');
+  });
+
+  it('says "Your updated estimates" when several are all updates', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [
+        { order_number: 'M2010-126', title: null, changes: ['x'] },
+        { order_number: 'M2010-127', title: null, changes: ['y'] },
+      ])
+    ).toBe('Your updated estimates from Blinds Nisa');
+  });
+
+  it('keeps the plain subject in a mixed send', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [
+        { order_number: 'M2010-126', title: null, changes: ['x'] },
+        { order_number: 'M2010-127', title: null },
+      ])
+    ).toBe('Your estimates from Blinds Nisa');
+  });
+});
+
+describe('estimatesEmailSubject', () => {
+  it('names the order number and title for one estimate', () => {
+    expect(estimatesEmailSubject('Blinds Nisa', [{ order_number: 'M2010-126', title: 'Option A' }])).toBe(
+      'Your estimate M2010-126 – Option A from Blinds Nisa'
+    );
+  });
+  it('omits the title for one untitled estimate', () => {
+    expect(estimatesEmailSubject('Blinds Nisa', [{ order_number: 'M2010-126', title: null }])).toBe(
+      'Your estimate M2010-126 from Blinds Nisa'
+    );
+  });
+  it('drops to a plain subject for several', () => {
+    expect(
+      estimatesEmailSubject('Blinds Nisa', [
+        { order_number: 'M2010-126', title: 'Option A' },
+        { order_number: 'M2010-127', title: 'Option B' },
+      ])
+    ).toBe('Your estimates from Blinds Nisa');
   });
 });
 

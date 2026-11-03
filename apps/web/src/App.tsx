@@ -5,7 +5,8 @@
  * Root application component for the Blinds Nisa Field Estimator.
  *
  * Sets up the React Router with all page routes, TanStack Query
- * provider, and the global toast system. Pages are lazy-loaded
+ * provider, the global toast system, and the in-app confirmation
+ * dialog (`ConfirmProvider`, the app's replacement for `window.confirm`). Pages are lazy-loaded
  * (React.lazy + route-level Suspense) so the public customer view
  * doesn't pull in the whole consultant app and vice versa — this
  * keeps first paint fast on field connections and resolves the
@@ -18,6 +19,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
+import { ConfirmProvider } from './components/ui';
 import { useAuth } from './hooks';
 import './App.css';
 
@@ -87,6 +89,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <ConfirmProvider>
         <Suspense fallback={<PageFallback />}>
           <Routes>
             {/* Auth */}
@@ -152,6 +155,7 @@ export default function App() {
             <Route path="/:customerSlug/:orderNumber/:sub" element={guard(<Layout><OrderByNumberRoute /></Layout>)} />
           </Routes>
         </Suspense>
+        </ConfirmProvider>
         <Toaster
           position="top-center"
           toastOptions={{
