@@ -469,16 +469,6 @@ export default function LineItemRow({
           </span>
         )}
 
-        {/* Amber, like the edit-request card: something to finish, not an error. */}
-        {missing.length > 0 && (
-          <span
-            title={`Still to decide: ${missing.join(', ')}`}
-            className="mt-0.5 max-w-[14rem] shrink-0 truncate rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 sm:mt-0"
-          >
-            Incomplete · {missing.join(', ')}
-          </span>
-        )}
-
         {/*
           Name/body area is a BUTTON that toggles the detail panel
           below the row. It wraps the exact same span structure the
@@ -548,6 +538,26 @@ export default function LineItemRow({
               markup while no type declares attributes.
             */}
             {attrLine && <span className="mt-0.5 block text-xs text-text-muted">{attrLine}</span>}
+            {/*
+              Open choices on a draft, amber like the edit-request
+              card: something to finish, not an error. A line of
+              its own UNDER the name, for the same reason as the
+              attribute line above: as a `shrink-0` sibling of
+              this button it took the row's width first and
+              squeezed a long name ("Roof — Zebra") to one letter
+              per line. The pill holds one short word so it never
+              needs truncating, and the open fields follow it as
+              plain text that wraps with the name column at any
+              width.
+            */}
+            {missing.length > 0 && (
+              <span className="mt-1 block text-xs text-amber-800">
+                <span className="mr-1.5 inline-block whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide">
+                  Incomplete
+                </span>
+                {missing.join(', ')}
+              </span>
+            )}
           </span>
         </button>
       </div>

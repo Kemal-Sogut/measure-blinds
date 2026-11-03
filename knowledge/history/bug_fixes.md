@@ -1,5 +1,19 @@
 # Bug Fixes History
 
+## 2026-11-03 — "Incomplete" chip squeezed the item name to one letter per line
+Branch `feat/incomplete-draft-items` (PR #66); not deployed. Reported from the real app.
+- **Issue:** in the order editor's items list, an incomplete blind's amber chip
+  ("INCOMPLETE · INSTALLATION OPTION") sat in the row's flex line as a `shrink-0` sibling of the name
+  button. In a narrow card it took the width first and the name ("Roof — Zebra") wrapped one character
+  per line. The earlier harness check used a wide card and a short name, so it never showed.
+- **Fix:** `LineItemRow.tsx` renders it as a line of its own UNDER the name, nested in the name span like
+  the attribute line (the pattern that keeps the row's intrinsic width collapsible). The pill holds the
+  single word "Incomplete" (`whitespace-nowrap`), and the open fields follow as plain amber text that
+  wraps with the name column.
+- **Verified** in a throwaway harness at 520 / 360 / 343 / 300 px cards with a short name, a 60-character
+  unbroken name and an all-blank row: names wrap normally, no row scrolls sideways; at a 343 px card (a
+  375 px phone) the pill clears the price with 20 px to spare, at 320 px it overlaps the gap by 3 px.
+
 ## 2026-11-03 — Merge interplay: incomplete draft items × sent-estimate immunity and server-field refresh
 Branch `feat/incomplete-draft-items` after merging `origin/main` (`89d7422`); not deployed.
 - **Issue 1 (caught in the merge, never shipped):** the branch had moved "a used hardware slot left empty" out of
