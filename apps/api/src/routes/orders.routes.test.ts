@@ -2173,6 +2173,33 @@ describe('POST /api/orders/:id/duplicate', () => {
     expect(db.insertPayloads['payments']).toBeUndefined();
   });
 
+  it('duplicates an incomplete draft, pricing its open blind at 0', async () => {
+    // A draft may hold a blind with every open field null/blank (spec
+    // 2026-11-02); the copy must carry it over rather than 400.
+    seedSource();
+    const src = (db.responses['orders.select'][0] as { status: string; line_items: Record<string, unknown>[] });
+    src.status = 'draft';
+    src.line_items[0] = {
+      ...src.line_items[0],
+      blinds_type: '',
+      panels: [null],
+      height_cm: null,
+      material_id: null,
+      cassette_id: null,
+      bottom_rail_id: null,
+      control_id: null,
+      unit_price: 0,
+    };
+    db.orderInsertResults = [{ data: { id: 'new1', order_number: 'T0703-2' } }];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].line_total).toBe(0);
+    expect(rows[0].height_cm).toBeNull();
+    expect(rows[0].material_id).toBeNull();
+  });
+
   it('404s for an unknown order', async () => {
     db.responses['orders.select'] = [];
     const res = await ordersApp.request('/nope/duplicate', { method: 'POST' }, ENV);
@@ -3106,5 +3133,19 @@ describe('incomplete draft items — reads (spec 2026-11-02)', () => {
     const { data } = (await res.json()) as { data: { incomplete_items: number; line_items: Array<{ missing_fields: string[] }> } };
     expect(data.incomplete_items).toBe(1);
     expect(data.line_items[0].missing_fields).toEqual(['control option']);
+  });
+
+  it('GET /:id still answers 200, un-annotated, when the scoping read fails', async () => {
+    // The annotation is best-effort: it often follows a committed write,
+    // and a 500 there would invite a retry that repeats the write.
+    // A fresh copy: the annotation mutates its rows, and OPEN_ROW is shared.
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: '2099-01-01', line_items: [{ ...OPEN_ROW, missing_fields: undefined }], payments: [] }];
+    db.opErrors['blind_types.select'] = { message: 'scoping read failed' };
+    const res = await ordersApp.request('/d1', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { id: string; incomplete_items?: number; line_items: Array<{ missing_fields?: string[] }> } };
+    expect(data.id).toBe('d1');
+    expect(data.incomplete_items).toBeUndefined();
+    expect(data.line_items[0].missing_fields).toBeUndefined();
   });
 });
