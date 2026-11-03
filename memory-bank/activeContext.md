@@ -6,8 +6,34 @@
 
 ## Where things stand
 
-**Newest, on branch `estimate-revisions` (not deployed), api + web, MIGRATION 50 WRITTEN BUT
-NOT APPLIED:** estimate revisions. A send snapshots what the customer was shown
+**Current branch `feat/incomplete-draft-items` (not merged to main, not deployed, NO migration of its own),
+web + api, with `origin/main` (PRs #55–#65) merged in:** **incomplete draft items.** A draft estimate saves with
+blank blind type / material / height / panel width / cassette / bottom rail / control / installation / required
+attribute (stored at `line_total 0`, add-ons and override kept). Completeness is judged only when the order tries
+to LEAVE draft, and only while it is `draft`: the multi-estimate send (`POST /api/customers/:id/send-estimates`
+refuses the whole request, naming the estimate and the item, before any token, email, status, freeze or
+revision), `/mark-sent`, `/confirm`, `/status` to sent-or-later and `GET /pdf` answer 400 + message. Sent and
+confirmed orders are never re-judged; a pre-lock row on a sent order and an already-quoted draft are not asked
+for a hardware slot added since the send (main's immunity, kept). The editor pre-checks Send (before it saves and
+opens the picker), PDF, Customer View and forward stage moves; the send picker shows another incomplete draft
+disabled with an Incomplete badge (`incomplete_items` on `sendable-estimates`). The editor shows an amber
+"Incomplete" chip per item and "Total excludes N incomplete item(s)" (drafts only); the Present view shows "To be
+decided" and hides totals; lists show an Incomplete badge instead of a draft's partial total; `useLeaveGuard`
+confirms before leaving the order page with unsaved edits (server-refreshed draft fields do not count). The
+single rule is the twinned `lib/lineItemCompleteness.ts`. Verified by tests and type-checks (api 914, web 618,
+lint 0 errors with one pre-existing warning in `public/embed/lead-form.js`); the pre-merge UI was checked in a
+throwaway harness (chip, badge, Present). **NOT yet exercised against a real backend** (Send/picker/PDF toasts,
+the leave guard); the local app talks to the live Supabase project. Write-up:
+`knowledge/history/engine_features.md` 2026-11-02 and `bug_fixes.md` 2026-11-03; spec
+`knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
+
+**Deploying this branch:** it carries main's undeployed work, so main's order applies first: apply migration 50,
+then deploy the Worker (api), then the web. The web must not go out before the Worker: a new web app against an
+old Worker gets 400s on null panels / material. Before deploying, run a read-only count of non-draft blind rows
+with an empty `trim(blinds_type)`; those orders would become unsavable from the editor until a type is chosen.
+
+**On `origin/main` (PRs #64–#65, branch `estimate-revisions`; not deployed), api + web, MIGRATION 50
+WRITTEN BUT NOT APPLIED:** estimate revisions. A send snapshots what the customer was shown
 (`order_revisions.snapshot`, plus a staff-only `source` copy used to restore); the customer page
 serves the latest snapshot while the estimate is `sent`/`expired` (live again from
 `awaiting_payment`; orders sent before this shipped have no revision and stay live), the staff
@@ -27,7 +53,7 @@ against a live database or in a browser. **Apply migration 50 first, then deploy
 the web.** Details: `knowledge/history/engine_features.md` 2026-10-26; patterns in
 `systemPatterns.md` "Estimate revisions".
 
-**Legacy-data hardening, Phase 0 (same branch, uncommitted, code NOT deployed), MIGRATION 49
+**Legacy-data hardening, Phase 0 (on `origin/main`, code NOT deployed), MIGRATION 49
 APPLIED and price-lock BACKFILL RUN 2026-10-25:** catalog rows are archived, never deleted. Settings DELETE stamps
 `archived_at` + `active = false`; `line_items` FKs are `ON DELETE RESTRICT`; list endpoints still
 return archived rows and the Settings pages hide them. `price_basis` is parsed (`isPriceBasis`)
@@ -40,8 +66,8 @@ behind it, with Phases 1–4 (fingerprint code-drift guard, read-side adapter, s
 migration 48 (incl. the `quoted_notice_ack_*` columns) IS applied — verified against the live
 schema 2026-10-25. See `knowledge/history/bug_fixes.md` 2026-10-25 (Phase 0).
 
-**Newest, on branch `feat/multi-estimate-send` (on top of the multi-estimate send below, not
-deployed), web + api, MIGRATION 48 WRITTEN BUT NOT APPLIED:** sent estimates are now immune to
+**On `origin/main` (multi-estimate-send PRs #56–#61; not deployed), web + api, migration 48 IS
+applied (see Phase 0 above):** sent estimates are now immune to
 hardware options added to their blind type afterwards, and say so when a price moves. Adding
 the first installation option for a type used to make **Present to customer** unreachable on
 every estimate already quoted on it — the block was the web's own `buildPayload`, which had no
@@ -61,12 +87,12 @@ Sending again clears both notices, including the per-item one, which needed
 `applyServerFields` to refresh the server-owned draft fields after the refetch (drafts hydrate
 once). Verified api 736 / web 562, `tsc` clean both sides, oxlint clean apart from the
 pre-existing `public/embed/lead-form.js` warning. NOT exercised against a live database.
-**Apply migration 48 first, then deploy the API, then the web.** See
+Deploy the API, then the web. See
 `knowledge/history/bug_fixes.md` and `engine_features.md` 2026-10-25, spec
 `knowledge/specs/2026-10-25-sent-estimate-price-freeze-design.md`.
 
-**On branch `feat/multi-estimate-send` (from `main`, not deployed), web + api, NO
-migration:** the **multi-estimate send**. Sending is one customer-scoped action: a **Send
+**On `origin/main` (PR #56; not deployed), web + api, NO migration:** the **multi-estimate
+send**. Sending is one customer-scoped action: a **Send
 estimates** dialog (opened from the customer group on the Estimates page, or from the Send
 button on an estimate's own page, which saves first) lists that customer's valid estimates
 (`draft`/`sent`, unexpired, with items; all ticked, untick to exclude) and emails ONE link
@@ -78,36 +104,15 @@ Already-`sent` rows are re-announced only (no un-share). Verified api 700 / web 
 oxlint clean; the dialog has not been exercised in a browser against a live database. Deploy the
 API before the web. See `knowledge/history/engine_features.md` 2026-10-24.
 
-**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
+**On `origin/main` (PR #55; not deployed), web + api, no migration:**
 Delete conversation on the Inbox thread page — app only, Titan keeps the mail
 (`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
 
-**Newest, on branch `feat/inbox-delete` (from `main`, not deployed), web + api, no migration:**
-Delete conversation on the Inbox thread page — app only, Titan keeps the mail
-(`DELETE /api/inbox/:id`; engine_features 2026-10-22). Deploy the API before the web.
+**On `origin/main` (PRs #62–#63; not deployed), web-only:** every confirmation is an in-app dialog
+(`ui/ConfirmProvider`, `useConfirm`; `window.confirm` is gone) and line-item deletes ask first
+(`DeleteItemsDialog`). See `knowledge/history/engine_features.md` 2026-10-26.
 
-**Current branch `feat/incomplete-draft-items` (not merged, not deployed, NO migration), web + api:**
-**incomplete draft items.** A draft estimate saves with blank blind type / material / height / panel width /
-cassette / bottom rail / control / installation / required attribute (stored at `line_total 0`, add-ons and
-override kept). Completeness is judged only when the order tries to LEAVE draft: `/send`, `/mark-sent`,
-`/confirm`, `/status` to sent-or-later and `GET /pdf` refuse with a 400 + message while the order is `draft`
-(the editor pre-checks first). Sent and confirmed orders are never re-judged. The editor shows an amber
-"Incomplete" chip per item and "Total excludes N incomplete item(s)" (drafts only); the Present view shows
-"To be decided" and hides totals; lists show an Incomplete badge instead of a draft's partial total;
-`useLeaveGuard` confirms before leaving the order page with unsaved edits. The single rule is the twinned
-`lib/lineItemCompleteness.ts`. The staff "Customer View" button is refused for an incomplete draft, like the
-PDF. Verified by tests and type-checks (api 705, web 543, check, lint 0 errors with one pre-existing warning in
-`public/embed/lead-form.js`), and by the controller in a throwaway harness (seeded query cache, no API
-requests): editor chip on drafts only, list badge, Present "To be decided" with hidden totals. **NOT yet
-exercised against a real backend** (Send/PDF toasts, the leave guard); the local app talks to the live Supabase
-project. Write-up: `knowledge/history/engine_features.md` 2026-11-02; spec
-`knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
-
-**Deploying this branch:** deploy the Worker (api) BEFORE the web app; a new web app against the old Worker
-gets 400s on null panels / material. Before deploying, run a read-only count of non-draft blind rows with an
-empty `trim(blinds_type)`; those orders would become unsavable from the editor until a type is chosen.
-
-Also on local `main` (not pushed, not deployed; **migration 47 is applied** to
+Also on `origin/main` (not deployed; **migration 47 is applied** to
 `lgbxxlwsdeuhdgzrjjen`): multiple estimates per customer. `/` is the **Estimates** page (grouped by
 customer, newest first), `/orders` is confirmed-only, staff URLs are `/<customer-slug>/<order-number>`
 (old `/orders/:id` links redirect), and each customer has one link `/c/:token` listing live estimates and

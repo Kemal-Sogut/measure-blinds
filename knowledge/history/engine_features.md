@@ -6,7 +6,8 @@ cassette, bottom rail, control or installation choice (and with a blank required
 no longer hits a dead end on site; the order is only refused when it tries to LEAVE draft. Spec
 `knowledge/specs/2026-11-02-incomplete-draft-items-design.md`, plan
 `knowledge/plans/2026-11-02-incomplete-draft-items.md`. Branch `feat/incomplete-draft-items`
-(commits `f6d8781`..`4b37eb2`), **not merged, not deployed. No database migration.**
+(commits `f6d8781`..`351e58e`, then `origin/main` merged in at `89d7422` and the gates ported to the
+multi-estimate send), **not merged to main, not deployed. No database migration of its own.**
 
 - **One rule, two twins.** `lib/lineItemCompleteness.ts` exists byte-identical in `apps/api` and `apps/web`
   (with byte-identical tests): `missingFields`, `firstIncompleteMessage`, `countIncomplete`, `measuredWidths`,
@@ -18,9 +19,14 @@ no longer hits a dead end on site; the order is only refused when it tries to LE
   Non-draft saves still refuse, and their wording changed from "a X option is required" to "choose a X option".
   `toDuplicateInput` is null-safe, so a draft with open items duplicates.
 - **Leave-draft gates (draft only).** `lib/orderCompleteness.ts` plus the route-local `leaveDraftRefusal`:
-  `/send`, `/mark-sent`, `/confirm`, `/status` (to sent or later) and `GET /pdf` answer 400 with the first
-  message, before any side effect, and ONLY while the order's current status is `draft`. A sent / confirmed
-  order is never re-judged against today's Settings scoping.
+  `/mark-sent`, `/confirm`, `/status` (to sent or later) and `GET /pdf` answer 400 with the first message,
+  before any side effect (freeze, quoted stamp, `order_revisions` row, status write, token mint), and ONLY while
+  the order's current status is `draft`. A sent / confirmed order is never re-judged against today's Settings
+  scoping. The multi-estimate send (`POST /api/customers/:id/send-estimates`, which replaced `POST
+  /api/orders/:id/send`) refuses the WHOLE request on the first selected draft with an incomplete item:
+  `readSendCandidates` judges every selected draft in one scoping load (`incompleteDraftMessages`) and
+  `planSelection` answers 400 `Estimate M2010-127 is incomplete and cannot be sent — Item 2 (Kitchen): enter a
+  height.` before any token, email, status, freeze, stamp or revision.
 - **Reads.** `readDetail` and `/by-number` add `incomplete_items` and a per-line `missing_fields` (best-effort in
   `readDetail`: if the scoping read fails the order is returned un-annotated rather than 500ing after a committed
   write); `missingRequiredAttribute` uses the same blank rule as the completeness check (null / undefined / blank
@@ -28,7 +34,8 @@ no longer hits a dead end on site; the order is only refused when it tries to LE
   `/grouped` attach `incomplete_items`, counted with ids chunked by 100 and rows paged 1000 at a time
   (PostgREST's row cap would otherwise silently undercount).
 - **Editor (web).** An amber "Incomplete · …" chip per item and a pricing-panel note "Total excludes N
-  incomplete item(s)"; Send, PDF, Customer View and forward stage moves pre-check and show the first message
+  incomplete item(s)"; Send (before it saves and opens the multi-estimate picker), PDF, Customer View and forward
+  stage moves pre-check and show the first message
   (Customer View would otherwise open a customer page with $0 lines and a partial total). Payload
   building moved out of `OrderDetail.tsx` into `pages/orders/orderPayload.ts` (`buildOrderPayload`, `toIso`)
   with tests. `LineItem.panels` is `(number|null)[]`, read through `measuredWidths`. `lineItemDrafts.ts` gained
@@ -38,6 +45,10 @@ no longer hits a dead end on site; the order is only refused when it tries to LE
   the order strip are replaced by "Total available once every item is complete."
 - **Lists.** Estimates groups, the Orders list (both breakpoints) and the appointment wizard show an
   `IncompleteBadge` instead of a draft's partial total.
+- **Send picker.** `GET /api/customers/:id/sendable-estimates` carries `incomplete_items`
+  (`attachIncompleteCounts`); `SendEstimatesDialog` lists such a draft with its checkbox disabled, never ticked
+  (`isSendable` in `lib/estimateSelection.ts`), an `IncompleteBadge` instead of its total and "Finish its items
+  before sending."
 - **Leave guard.** `hooks/useLeaveGuard.ts`: `beforeunload` plus a capture-phase same-origin link-click confirm
   ("You have unsaved changes. Leave without saving?") while the order editor differs from its saved baseline.
   The browser Back button is not intercepted (accepted limit).
@@ -57,25 +68,46 @@ no longer hits a dead end on site; the order is only refused when it tries to LE
 - `bulkAdd.ts`'s doc comment (which said completeness is enforced at save) was corrected to say it is enforced
   when the order leaves draft.
 
+### Merging origin/main (PRs #55–#65)
+- The gate moved from the deleted `POST /api/orders/:id/send` to the multi-estimate send (above); its route test
+  moved with it (`customers.routes.test.ts`, `estimateSend.test.ts`).
+- Sent-estimate immunity (2026-10-25) and the completeness rule now agree: a GRANDFATHERED row (`prior` in
+  `resolveLineItems`, a pre-lock row on a price-locked order) and an ALREADY-QUOTED draft (`isAlreadyQuoted`,
+  via `draftScope` in `draftMissingFields` / `firstIncompleteDraftMessage`) are judged with no hardware slot
+  required, so a slot its type gained since the send cannot block the save. A draft is never grandfathered:
+  main's "demands the new option on a draft" test now asserts the draft saves the item incomplete at $0.
+- `buildOrderPayload` gained main's quoted exemption and stale-id drop (`sendable`); the null-panel hydration
+  moved with `toDrafts` into `lineItemHydration.ts` (`draftsFromLineItems`).
+- Revisions: every leave-draft gate runs before `stampSent`, so no `order_revisions` snapshot
+  (`buildPublicQuote`) is ever cut for an incomplete draft; the gate tests assert no `order_revisions` read or
+  write.
+- The leave guard's snapshot strips the four server-owned draft fields that `applyServerFields` refreshes after
+  a save, send or dismissal, so those refetches no longer read as unsaved edits.
+
 ### Files
 API: `lib/lineItemCompleteness.ts`(+test), `lib/orderCompleteness.ts`(+test), `lib/blindTypes/{base,index}.ts`,
-`lib/orderDuplicate.ts`, `routes/orders.ts`(+routes test). Web: `lib/lineItemCompleteness.ts`(+test),
+`lib/orderDuplicate.ts`, `lib/estimateSend.ts`(+test), `routes/orders.ts`(+routes test),
+`routes/customers.ts`(+routes test). Web: `lib/lineItemCompleteness.ts`(+test), `lib/estimateSelection.ts`(+test),
 `lib/blindTypes/{base,index}.ts`, `hooks/useLeaveGuard.ts`(+test), `hooks/useOrders.ts`,
 `components/IncompleteBadge.tsx`, `pages/orders/{orderPayload,lineItemDrafts,OrderDetail,LineItemRow,
-LineItemList,OrderList,OrderPresentation,PresentationTable,bulkAdd}.ts(x)`, `pages/estimates/EstimateGroup.tsx`,
+LineItemList,OrderList,OrderPresentation,PresentationTable,bulkAdd,lineItemHydration}.ts(x)`,
+`pages/estimates/{EstimateGroup,SendEstimatesDialog}.tsx`,
 `pages/calendar/AppointmentWizard.tsx`, `pages/customer-view/CustomerView.tsx`, `types/index.ts`.
 
 ### Verified
-`pnpm --filter ./apps/api check` clean, `test` 705/705; `pnpm --filter ./apps/web check` clean, `test` 543/543,
-`lint` 0 errors (one pre-existing `public/embed/lead-form.js` unused-function warning, not from this work). The two
+After the merge: `pnpm --filter ./apps/api check` clean, `test` 914/914; `pnpm --filter ./apps/web check` clean,
+`test` 618/618, `lint` 0 errors (one pre-existing `public/embed/lead-form.js` unused-function warning, not from this work). The two
 `lineItemCompleteness.ts` twins diff clean. Verified by the controller in a throwaway harness (seeded query cache,
 no API requests): editor chip on drafts only, list badge, Present "To be decided" + hidden totals. **NOT yet
-exercised against a real backend** (Send/PDF toasts, leave guard): the local app talks to the live Supabase project.
+exercised against a real backend** (Send/PDF toasts, the send picker's Incomplete row, leave guard): the local
+app talks to the live Supabase project.
 
 ### Deploy notes
 Deploy the Worker (api) BEFORE the web app: a new web app against the old Worker gets 400s on null panels /
 material. Before deploying, run a read-only count of non-draft blind rows with an empty `trim(blinds_type)`; those
-orders would become unsavable from the editor until a type is chosen.
+orders would become unsavable from the editor until a type is chosen. The branch now carries main's
+unapplied/undeployed work too, so main's own order applies first (migration 50 before the API, API before web).
+
 ## 2026-10-29 — Customer page shows only the latest sent version (earlier versions removed)
 Branch `estimate-revisions`, api + web, not deployed. The customer now sees ONLY the latest
 sent version and its "Updated <date> · version N" chip. Everything about earlier versions is

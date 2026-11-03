@@ -1,5 +1,22 @@
 # Bug Fixes History
 
+## 2026-11-03 — Merge interplay: incomplete draft items × sent-estimate immunity and server-field refresh
+Branch `feat/incomplete-draft-items` after merging `origin/main` (`89d7422`); not deployed.
+- **Issue 1 (caught in the merge, never shipped):** the branch had moved "a used hardware slot left empty" out of
+  `resolveLineItems`' slot gate into the shared completeness rule, but main's grandfathering (`prior`, 2026-10-25)
+  exempted only the slot gate. A pre-lock row on a sent order whose type has since gained an option would have
+  been refused again ("Item 1 (Kitchen): choose an installation option."), so Present to customer broke again.
+  The web side had the same gap through `draftMissingFields` (shown on `blindDraftInputs` and the non-draft
+  save guard).
+- **Fix 1:** a grandfathered row is judged by `missingFields` with a scope that requires no hardware slot (Worker,
+  `resolveLineItems`); the web judges an already-quoted draft the same way (`draftScope` in `lineItemDrafts.ts`).
+  Main's "saves a pre-lock row whose type has since gained an installation option" test passes unchanged.
+- **Issue 2:** the branch's leave guard (`useLeaveGuard`) compared a snapshot of every draft field, and main's
+  `applyServerFields` rewrites four server-owned draft fields after a save, a send or a dismissal refetches the
+  order — so an unedited page read as dirty and prompted on leave.
+- **Fix 2:** the snapshot strips `lock`, `previously_quoted`, `quoted_base`, `notice_ack_base` (Save never sends
+  them). Not covered by a test (the snapshot is inline in `OrderDetail.tsx`; there is no component harness).
+
 ## 2026-10-26 — Dismiss on the order-total price notice undid itself
 - **Issue:** pressing Dismiss on the "Order total $X → $Y" notice hid it for a moment, then it
   came back — immediately when there were unsaved edits, otherwise on any refetch.

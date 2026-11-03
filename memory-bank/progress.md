@@ -6,13 +6,16 @@
 
 ## What Works
 
-**Incomplete draft items, on `feat/incomplete-draft-items` (no migration):** a draft saves with open blind choices
-or measurements (stored at $0); the order is only refused when it tries to leave draft (Send, Mark sent, Confirm,
-a stage move to Sent+, the PDF), by the editor first and the Worker regardless. Sent and confirmed orders keep
-today's behaviour exactly. Editor chip and total note, Present "To be decided", list badge and the unsaved-changes
-leave guard are in. Tests and type-checks pass (api 703, web 543); see the known issue below about browser checks.
+**Incomplete draft items, on `feat/incomplete-draft-items` (no migration of its own; `origin/main` merged in):** a
+draft saves with open blind choices or measurements (stored at $0); the order is only refused when it tries to
+leave draft (the multi-estimate send — the whole request, naming the estimate and item — Mark sent, Confirm, a
+stage move to Sent+, the PDF), by the editor first and the Worker regardless, before any email, freeze, revision or
+status write. The send picker shows another incomplete draft disabled with an Incomplete badge. Sent and confirmed
+orders keep today's behaviour exactly, including main's immunity to hardware options added after a send. Editor
+chip and total note, Present "To be decided", list badge and the unsaved-changes leave guard are in. Tests and
+type-checks pass (api 914, web 618); see the known issue below about browser checks.
 
-**Estimate revisions, on `estimate-revisions` (migration 50 written, NOT applied, not
+**Estimate revisions, on `origin/main` (PRs #64–#65; migration 50 written, NOT applied, not
 deployed):** a send records a revision (customer-view snapshot + staff restore copy) only when
 something customer-visible changed. The customer page shows only the latest sent version with
 its "Updated <date> · version N" chip (no earlier versions, no "what changed"; the public
@@ -23,8 +26,8 @@ changes; the public confirm stores `accepted_revision_id` and 409s a stale page.
 Migration-48 price notices are unchanged and reset together with revisions via `stampSent`.
 Not exercised against a live database or in a browser.
 
-**Quoted-price immunity and price-update notices, on `feat/multi-estimate-send` (migration 48
-written, NOT applied, not deployed):** a hardware option added to a blind type no longer
+**Quoted-price immunity and price-update notices, on `origin/main` (migration 48 applied, not
+deployed):** a hardware option added to a blind type no longer
 reaches back into estimates already quoted on it, so Present to customer works on them again;
 only an item being quoted — new, or one whose own pricing inputs were just edited — must
 satisfy today's requirements. A line item whose price has moved since the last send shows
@@ -34,10 +37,9 @@ quiet. Either notice can be dismissed, which records the acknowledged figure on 
 per device) — so a later move speaks up again, and the next send clears it (the per-item notice
 too: `applyServerFields` refreshes the server-owned draft fields after the send's refetch,
 since drafts hydrate once). api 736 tests, web 562, `tsc` clean; not exercised against a live
-database. Apply
-migration 48 before deploying either side.
+database.
 
-**Multi-estimate send, on `feat/multi-estimate-send` (no migration, not deployed):** one
+**Multi-estimate send, on `origin/main` (PR #56; no migration, not deployed):** one
 customer-scoped **Send estimates** dialog (from the customer group on the Estimates page, or
 the Send button on an estimate's page, which saves first and is hidden for `expired`) emails
 ONE customer link covering the ticked estimates, no PDF attached.
@@ -298,10 +300,11 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
-- **Incomplete draft items is not merged or deployed and has never been seen in a browser.** The local app
-  talks to the live Supabase project, so the editor chip, total note, Present "To be decided", list badges and
-  the leave guard are verified by tests only. The leave guard does not intercept the browser Back button
-  (accepted limit). Deploy the API before the web.
+- **Incomplete draft items is not merged to main or deployed, and the merged build has never been seen in a
+  browser.** The local app talks to the live Supabase project, so the editor chip, total note, Present "To be
+  decided", list badges, the send picker's Incomplete row and the leave guard are verified by tests only (the
+  pre-merge UI also in a throwaway harness). The leave guard does not intercept the browser Back button
+  (accepted limit). Deploy order follows main's: migration 50, then the API, then the web.
 - **Estimate revisions not deployed; migration 50 NOT applied.** Apply
   `20261026000050_order_revisions.sql`, then deploy the API, then the web. Orders already `sent`
   have no revision (no backfill): their customer page stays live and the staff banner says
