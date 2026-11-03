@@ -981,6 +981,15 @@ function firstZodIssue(error: z.ZodError): string {
  * `missing_fields` on each line (both empty/0 unless it is a draft).
  * Every route that returns an order goes through here, so the editor
  * cache and the Present view always see the annotation.
+ *
+ * The annotation is best-effort: this read often follows a COMMITTED
+ * write (create, save, duplicate), and failing the response then would
+ * invite a retry that repeats the write (a duplicate order). If the
+ * scoping read behind the annotation throws, the order is returned
+ * un-annotated — `incomplete_items` and `missing_fields` stay absent —
+ * and the response keeps the shape callers already read (`data`/`error`
+ * from the order read itself). The gates that enforce the invariant do
+ * not use this function, so nothing is let through by the omission.
  */
 async function readDetail(sb: SupabaseClient, id: string) {
   const result = await sb
@@ -990,7 +999,13 @@ async function readDetail(sb: SupabaseClient, id: string) {
     .order('position', { referencedTable: 'line_items' })
     .order('paid_on', { referencedTable: 'payments' })
     .maybeSingle();
-  if (result.data) await annotateOrderCompleteness(sb, result.data as Record<string, unknown>);
+  if (result.data) {
+    try {
+      await annotateOrderCompleteness(sb, result.data as Record<string, unknown>);
+    } catch {
+      // Best-effort annotation — see the JSDoc. The write already succeeded.
+    }
+  }
   return result;
 }
 
