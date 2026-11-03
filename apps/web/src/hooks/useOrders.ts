@@ -24,6 +24,7 @@ import {
 } from '@tanstack/react-query';
 import { apiFetch, apiDownload } from '../lib/api';
 import { useDebouncedValue } from './useDebouncedValue';
+import { sendableKey } from './useSendEstimates';
 import type { Order, OrderLog, OrderEditRequest, OrderStatus, DiscountType, LineItem } from '../types';
 
 /** API envelope: every orders endpoint returns `{ data: T }`. */
@@ -370,6 +371,11 @@ export function useOrderPublicToken(): UseMutationResult<{ public_token: string 
  * response does not. They are carried over from the cached copy so the
  * revision banner does not vanish on every save, and the detail is then
  * refetched because a save changes what is unsent.
+ *
+ * The order's customer's send-picker list is invalidated too: a save can
+ * finish (or open) a draft's items, which flips its `incomplete_items`
+ * (spec 2026-11-02), and a status move changes whether it is sendable at
+ * all. The estimate page's Send saves and then opens that picker.
  */
 function useCacheOrder() {
   const qc = useQueryClient();
@@ -384,6 +390,7 @@ function useCacheOrder() {
     void qc.invalidateQueries({ queryKey: key });
     void qc.invalidateQueries({ queryKey: LIST_KEY });
     void qc.invalidateQueries({ queryKey: ['orders', 'logs', data.id] });
+    if (data.customer_id) void qc.invalidateQueries({ queryKey: sendableKey(data.customer_id) });
   };
 }
 

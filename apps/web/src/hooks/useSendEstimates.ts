@@ -32,10 +32,11 @@ interface Envelope<T> {
 const ORDERS_LIST_KEY = ['orders', 'list'] as const;
 
 /**
- * Cache key for one customer's sendable-estimates list. Shared by the query
- * and by the send mutation's invalidation so the two cannot drift apart.
+ * Cache key for one customer's sendable-estimates list. Shared by the query,
+ * the send mutation's invalidation and `useOrders.ts`' order-mutation cache
+ * update, so the three cannot drift apart.
  */
-const sendableKey = (customerId: string | undefined) =>
+export const sendableKey = (customerId: string | undefined) =>
   ['customers', customerId, 'sendable-estimates'] as const;
 
 /**
@@ -46,6 +47,15 @@ const sendableKey = (customerId: string | undefined) =>
  * The query is inert until a customer id is provided, so the dialog can mount
  * before a customer is chosen. An unknown or soft-deleted customer surfaces as
  * a query error (the API answers 404).
+ *
+ * `refetchOnMount: 'always'`: the dialog mounts only while it is open, and
+ * each opening must read the list as it is NOW. Each row's
+ * `incomplete_items` (spec 2026-11-02) is judged against today's Settings
+ * as well as the order's own items, so a cached copy under the app's
+ * five-minute `staleTime` could still show a just-finished draft as
+ * Incomplete — and untickable — or the reverse after a Settings change
+ * that no order mutation invalidates. One round trip per opening is the
+ * price; the cached rows still render at once while it refetches.
  */
 export function useSendableEstimates(
   customerId: string | undefined
@@ -59,6 +69,7 @@ export function useSendableEstimates(
         )
       ).data,
     enabled: Boolean(customerId),
+    refetchOnMount: 'always',
   });
 }
 
@@ -103,10 +114,9 @@ export interface SendEstimatesResult {
  * wrong. Without this the stale row stayed listed and ticked, and because
  * `App.tsx` sets a five-minute `staleTime`, closing and reopening the dialog
  * re-served the same snapshot — a full page reload was the only way out.
- * Invalidating here both refetches the dialog that is still open and marks
- * the entry stale for the next mount, which is why this is done in `onError`
- * rather than by giving the query `refetchOnMount: 'always'` (that would fix
- * only the reopen, and would pay a round trip on every open).
+ * Invalidating here refetches the dialog that is still open; the reopen is
+ * covered as well by the query's own `refetchOnMount: 'always'` (see
+ * {@link useSendableEstimates}).
  */
 export function useSendEstimates(): UseMutationResult<
   SendEstimatesResult,
