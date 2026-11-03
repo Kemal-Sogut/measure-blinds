@@ -15,15 +15,25 @@ override kept). Completeness is judged only when the order tries to LEAVE draft:
 "Incomplete" chip per item and "Total excludes N incomplete item(s)" (drafts only); the Present view shows
 "To be decided" and hides totals; lists show an Incomplete badge instead of a draft's partial total;
 `useLeaveGuard` confirms before leaving the order page with unsaved edits. The single rule is the twinned
-`lib/lineItemCompleteness.ts`. Verified by tests and type-checks (api 703, web 543, lint clean); **never seen
-in a browser** (the local app talks to the live Supabase project). Write-up:
-`knowledge/history/engine_features.md` 2026-11-02; spec `knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
+`lib/lineItemCompleteness.ts`. The staff "Customer View" button is refused for an incomplete draft, like the
+PDF. Verified by tests and type-checks (api 705, web 543, check, lint 0 errors with one pre-existing warning in
+`public/embed/lead-form.js`), and by the controller in a throwaway harness (seeded query cache, no API
+requests): editor chip on drafts only, list badge, Present "To be decided" with hidden totals. **NOT yet
+exercised against a real backend** (Send/PDF toasts, the leave guard); the local app talks to the live Supabase
+project. Write-up: `knowledge/history/engine_features.md` 2026-11-02; spec
+`knowledge/specs/2026-11-02-incomplete-draft-items-design.md`.
+
+**Deploying this branch:** deploy the Worker (api) BEFORE the web app; a new web app against the old Worker
+gets 400s on null panels / material. Before deploying, run a read-only count of non-draft blind rows with an
+empty `trim(blinds_type)`; those orders would become unsavable from the editor until a type is chosen.
 
 Also on local `main` (not pushed, not deployed; **migration 47 is applied** to
 `lgbxxlwsdeuhdgzrjjen`): multiple estimates per customer. `/` is the **Estimates** page (grouped by
-customer, newest first), `/orders` is confirmed-only, staff URLs are `/<customer-slug>/<order-number>`,
-and each customer has one link `/c/:token`; estimates take an optional title. Migration 47 is live,
-so the new code can deploy any time. See `knowledge/history/engine_features.md` 2026-10-22.
+customer, newest first), `/orders` is confirmed-only, staff URLs are `/<customer-slug>/<order-number>`
+(old `/orders/:id` links redirect), and each customer has one link `/c/:token` listing live estimates and
+confirmed orders (the estimate email links it); estimates take an optional title. The Customers pages are
+unchanged and the `/public` rate limit is 20/min/IP. Migration 47 is live, so the deployed (old) code is
+unaffected and the new code can deploy any time. See `knowledge/history/engine_features.md` 2026-10-22.
 
 **Merged to `main` (PR #54), web + api, migration 46 applied**: unread dots on
 Inbox rows, category tabs and the sidebar, plus a "New email" Notifications entry per received
@@ -105,7 +115,6 @@ Touches four files, all in `apps/web/src/pages/orders/`. Verified: web `pnpm che
 per-unit totals, Select all matching the order total, Clear, the mixed-state row box) but
 STILL not seen inside the real order page — see the blocker below. Write-up in
 `knowledge/history/engine_features.md`, 2026-09-09.
-
 
 **Newest, uncommitted, and needing its own DATABASE migration applied before deploy:**
 **customer edit requests** (migration 41,

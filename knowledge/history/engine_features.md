@@ -21,11 +21,15 @@ no longer hits a dead end on site; the order is only refused when it tries to LE
   `/send`, `/mark-sent`, `/confirm`, `/status` (to sent or later) and `GET /pdf` answer 400 with the first
   message, before any side effect, and ONLY while the order's current status is `draft`. A sent / confirmed
   order is never re-judged against today's Settings scoping.
-- **Reads.** `readDetail` and `/by-number` add `incomplete_items` and a per-line `missing_fields`; `GET /` and
+- **Reads.** `readDetail` and `/by-number` add `incomplete_items` and a per-line `missing_fields` (best-effort in
+  `readDetail`: if the scoping read fails the order is returned un-annotated rather than 500ing after a committed
+  write); `missingRequiredAttribute` uses the same blank rule as the completeness check (null / undefined / blank
+  string only); `GET /` and
   `/grouped` attach `incomplete_items`, counted with ids chunked by 100 and rows paged 1000 at a time
   (PostgREST's row cap would otherwise silently undercount).
 - **Editor (web).** An amber "Incomplete · …" chip per item and a pricing-panel note "Total excludes N
-  incomplete item(s)"; Send, PDF and forward stage moves pre-check and show the first message. Payload
+  incomplete item(s)"; Send, PDF, Customer View and forward stage moves pre-check and show the first message
+  (Customer View would otherwise open a customer page with $0 lines and a partial total). Payload
   building moved out of `OrderDetail.tsx` into `pages/orders/orderPayload.ts` (`buildOrderPayload`, `toIso`)
   with tests. `LineItem.panels` is `(number|null)[]`, read through `measuredWidths`. `lineItemDrafts.ts` gained
   `scopeFromCatalogs`, `draftCompletenessInput`, `draftMissingFields`, `firstIncompleteDraftMessage`;
@@ -62,10 +66,16 @@ LineItemList,OrderList,OrderPresentation,PresentationTable,bulkAdd}.ts(x)`, `pag
 `pages/calendar/AppointmentWizard.tsx`, `pages/customer-view/CustomerView.tsx`, `types/index.ts`.
 
 ### Verified
-`pnpm --filter ./apps/api check` clean, `test` 703/703; `pnpm --filter ./apps/web check` clean, `test` 543/543,
-`lint` 0 errors (one existing `public/embed/lead-form.js` unused-function warning, not from this work). The two
-`lineItemCompleteness.ts` twins diff clean. **Not verified in a browser:** the local app talks to the live
-Supabase project, so no editor, Present, list or leave-guard screen has been seen rendered.
+`pnpm --filter ./apps/api check` clean, `test` 705/705; `pnpm --filter ./apps/web check` clean, `test` 543/543,
+`lint` 0 errors (one pre-existing `public/embed/lead-form.js` unused-function warning, not from this work). The two
+`lineItemCompleteness.ts` twins diff clean. Verified by the controller in a throwaway harness (seeded query cache,
+no API requests): editor chip on drafts only, list badge, Present "To be decided" + hidden totals. **NOT yet
+exercised against a real backend** (Send/PDF toasts, leave guard): the local app talks to the live Supabase project.
+
+### Deploy notes
+Deploy the Worker (api) BEFORE the web app: a new web app against the old Worker gets 400s on null panels /
+material. Before deploying, run a read-only count of non-draft blind rows with an empty `trim(blinds_type)`; those
+orders would become unsavable from the editor until a type is chosen.
 
 ## 2026-10-22 — Multiple estimates per customer: grouped Estimates page, Orders page, customer link
 A customer can now hold several estimates and choose one themselves. Spec
