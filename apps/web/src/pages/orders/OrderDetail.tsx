@@ -762,11 +762,16 @@ export default function OrderDetail() {
   );
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   // Baseline once the loaded order has hydrated (existing order) — a new
-  // order is dirty as soon as it has an item.
+  // order is dirty as soon as it has an item. A pending revision restore
+  // (`restoreFrom`) is unsaved too, even when its copy happens to match
+  // the snapshot: leaving drops the `restore_from_revision` the next save
+  // would send, and with it Rev N's prices for untouched items.
   useEffect(() => {
     if (id && hydrated && savedSnapshot === null) setSavedSnapshot(editorSnapshot);
   }, [id, hydrated, savedSnapshot, editorSnapshot]);
-  const dirty = id ? savedSnapshot !== null && editorSnapshot !== savedSnapshot : items.length > 0;
+  const dirty = id
+    ? (savedSnapshot !== null && editorSnapshot !== savedSnapshot) || restoreFrom !== null
+    : items.length > 0;
   useLeaveGuard(dirty);
 
   // Restore: once the confirmed revision's copy arrives, it replaces the
