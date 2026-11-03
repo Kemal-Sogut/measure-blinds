@@ -1554,8 +1554,13 @@ export default function OrderDetail() {
    * the token may still need minting. `?preview=1` tells `CustomerView`
    * to render a draft, disable every mutating control, and skip the
    * "customer opened this" ping.
+   *
+   * An incomplete draft is refused with {@link leaveDraftMessage}, like
+   * the PDF: the customer page would render its unfinished lines at $0
+   * with a partial total.
    */
   async function handleCustomerView() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     if (!id) return;
     const tab = window.open('', '_blank');
     try {
