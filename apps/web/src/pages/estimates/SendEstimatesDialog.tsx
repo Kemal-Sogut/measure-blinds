@@ -18,6 +18,14 @@
  * a stale id in state or in the send button's count, and a newly eligible
  * row arrives ticked, consistent with sending being opt-out.
  *
+ * A DRAFT with incomplete items (spec 2026-11-02) is listed but cannot be
+ * ticked: its checkbox is disabled, it never starts ticked
+ * (`isSendable`), and an "Incomplete" badge stands where its total would
+ * be — the Worker would refuse the whole send because of it. The
+ * estimate's own Send button refuses before opening this dialog while
+ * the order on screen is incomplete, so this covers the customer's OTHER
+ * drafts.
+ *
  * A row already `sent` is listed and ticked like any other; its tick only
  * means "name it again in this email". Unticking it does NOT take it off the
  * customer's page, and there is deliberately no un-share control here.
@@ -49,6 +57,7 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import CopyLinkField from '../../components/CopyLinkField';
 import EmptyState from '../../components/EmptyState';
+import IncompleteBadge from '../../components/IncompleteBadge';
 import { Skeleton } from '../../components/Skeleton';
 import Button from '../../components/ui/Button';
 import Modal from '../../components/ui/Modal';
@@ -56,6 +65,7 @@ import { useCustomerPublicLink } from '../../hooks/useCustomers';
 import { useSendableEstimates, useSendEstimates } from '../../hooks/useSendEstimates';
 import {
   initialSelection,
+  isSendable,
   partialFailureMessage,
   sendButtonLabel,
   toggleSelection,
@@ -224,34 +234,51 @@ export default function SendEstimatesDialog({
       ) : (
         <div className="flex flex-col gap-3">
           <ul className="flex flex-col gap-1.5">
-            {rows.map((r) => (
-              <li key={r.id}>
-                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border border-border-light px-3 py-2.5 hover:bg-surface-sunken">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(r.id)}
-                    onChange={() => toggle(r.id)}
-                    className="h-5 w-5 shrink-0 accent-brand-600"
-                  />
-                  <span className="min-w-0 flex-1">
-                    {r.title && (
-                      <span className="block truncate text-[14px] font-semibold text-text-primary">
-                        {r.title}
+            {rows.map((r) => {
+              const sendableRow = isSendable(r);
+              return (
+                <li key={r.id}>
+                  <label
+                    className={`flex min-h-11 items-center gap-3 rounded-lg border border-border-light px-3 py-2.5 ${sendableRow ? 'cursor-pointer hover:bg-surface-sunken' : 'cursor-not-allowed opacity-70'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(r.id)}
+                      onChange={() => toggle(r.id)}
+                      disabled={!sendableRow}
+                      className="h-5 w-5 shrink-0 accent-brand-600"
+                    />
+                    <span className="min-w-0 flex-1">
+                      {r.title && (
+                        <span className="block truncate text-[14px] font-semibold text-text-primary">
+                          {r.title}
+                        </span>
+                      )}
+                      <span className="block text-[13px] text-text-secondary">
+                        <span className="font-mono">{r.order_number}</span> · {shortDay(r.order_date)}
+                      </span>
+                      {r.status === 'sent' && (
+                        <span className="block text-xs text-text-muted">Already on their page</span>
+                      )}
+                      {!sendableRow && (
+                        <span className="block text-xs text-amber-700">
+                          Finish its items before sending.
+                        </span>
+                      )}
+                    </span>
+                    {sendableRow ? (
+                      <span className="shrink-0 font-mono text-[13px] font-semibold text-text-primary">
+                        {money.format(Number(r.total))}
+                      </span>
+                    ) : (
+                      <span className="shrink-0">
+                        <IncompleteBadge count={r.incomplete_items ?? 0} />
                       </span>
                     )}
-                    <span className="block text-[13px] text-text-secondary">
-                      <span className="font-mono">{r.order_number}</span> · {shortDay(r.order_date)}
-                    </span>
-                    {r.status === 'sent' && (
-                      <span className="block text-xs text-text-muted">Already on their page</span>
-                    )}
-                  </span>
-                  <span className="shrink-0 font-mono text-[13px] font-semibold text-text-primary">
-                    {money.format(Number(r.total))}
-                  </span>
-                </label>
-              </li>
-            ))}
+                  </label>
+                </li>
+              );
+            })}
           </ul>
           {hasSentRow && (
             <p className="text-[12px] text-text-muted">

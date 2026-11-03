@@ -12,6 +12,10 @@
  *
  * Eligibility (right customer, draft-or-sent, not expired, has line items)
  * is decided by the server; nothing here re-filters the rows it is given.
+ * The one exception is a DRAFT with incomplete items (spec 2026-11-02):
+ * the server lists it, with `incomplete_items`, so the consultant can see
+ * it exists, but the send would refuse it — so {@link isSendable} keeps it
+ * out of every selection.
  */
 
 /**
@@ -27,22 +31,40 @@ export interface SendableEstimate {
   order_date: string;
   expiry_date: string;
   total: number;
+  /**
+   * How many of a draft's items are still incomplete (the Worker's
+   * `attachIncompleteCounts`); `0` for a sent row. Optional so a list from
+   * a Worker that predates the field reads as complete — that Worker has
+   * no incomplete items to report.
+   */
+  incomplete_items?: number;
 }
 
 /**
- * The selection the dialog opens with: every row's id, in `rows` order.
- * Sending is opt-out — the consultant unticks what should not go.
+ * Whether a row can be ticked: false only for a DRAFT with incomplete
+ * items, which the Worker's send refuses outright (and with it the whole
+ * request). A sent row is never re-judged — it left draft complete.
+ */
+export function isSendable(row: SendableEstimate): boolean {
+  return !(row.status === 'draft' && (row.incomplete_items ?? 0) > 0);
+}
+
+/**
+ * The selection the dialog opens with: every SENDABLE row's id, in `rows`
+ * order. Sending is opt-out — the consultant unticks what should not go —
+ * except that an incomplete draft ({@link isSendable}) never starts ticked.
  */
 export function initialSelection(rows: SendableEstimate[]): string[] {
-  return rows.map((r) => r.id);
+  return rows.filter(isSendable).map((r) => r.id);
 }
 
 /**
  * Adds `id` to `selected` if absent, removes it if present, and returns a new
  * array ordered by `rows` (not by click order) so the send payload matches
  * the order the consultant sees. Ids not present in `rows` are dropped, since
- * the list is a snapshot and a stale id could never be sent anyway. Does not
- * mutate its input.
+ * the list is a snapshot and a stale id could never be sent anyway, and so
+ * is any row {@link isSendable} refuses — ticking an incomplete draft is a
+ * no-op. Does not mutate its input.
  */
 export function toggleSelection(
   selected: string[],
@@ -52,7 +74,7 @@ export function toggleSelection(
   const next = new Set(selected);
   if (next.has(id)) next.delete(id);
   else next.add(id);
-  return rows.filter((r) => next.has(r.id)).map((r) => r.id);
+  return rows.filter((r) => next.has(r.id) && isSendable(r)).map((r) => r.id);
 }
 
 /**

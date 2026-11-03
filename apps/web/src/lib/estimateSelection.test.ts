@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   initialSelection,
+  isSendable,
   toggleSelection,
   sendButtonLabel,
   partialFailureMessage,
@@ -36,6 +37,28 @@ describe('initialSelection', () => {
   });
   it('is empty for no rows', () => {
     expect(initialSelection([])).toEqual([]);
+  });
+});
+
+describe('incomplete drafts (spec 2026-11-02)', () => {
+  const open: SendableEstimate = { ...row('a2', 'M2010-2'), incomplete_items: 2 };
+  const mixed = [row('a1', 'M2010-1'), open, row('a3', 'M2010-3')];
+
+  it('is not sendable as a draft with incomplete items', () => {
+    expect(isSendable(open)).toBe(false);
+  });
+  it('is sendable when complete, or when the field is absent (older Worker)', () => {
+    expect(isSendable({ ...open, incomplete_items: 0 })).toBe(true);
+    expect(isSendable(row('a1', 'M2010-1'))).toBe(true);
+  });
+  it('never re-judges a sent row', () => {
+    expect(isSendable({ ...open, status: 'sent' })).toBe(true);
+  });
+  it('opens with the incomplete draft unticked', () => {
+    expect(initialSelection(mixed)).toEqual(['a1', 'a3']);
+  });
+  it('cannot be ticked', () => {
+    expect(toggleSelection(['a1', 'a3'], 'a2', mixed)).toEqual(['a1', 'a3']);
   });
 });
 
