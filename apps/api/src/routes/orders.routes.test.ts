@@ -3485,7 +3485,7 @@ describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', 
   const MESSAGE = 'Item 1 (Kitchen): choose a control option.';
   const json = { 'Content-Type': 'application/json' };
   const company = () => [{ company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 }];
-  /** A full order bundle, as `readDetail` returns it, for /send and /pdf. */
+  /** A full order bundle, as `readDetail` returns it, for /pdf. */
   function bundle(status: string) {
     return {
       id: 'g1', status, order_number: 'F0307-126', order_date: new Date().toISOString().slice(0, 10), expiry_date: future(),
@@ -3494,10 +3494,16 @@ describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', 
       customer: { first_name: 'A', last_name: 'B', email: 'a@example.com', phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true, billing_address_line1: '', billing_address_line2: '', billing_city: '', billing_province: '', billing_postal_code: '' },
     };
   }
-  /** Asserts the transition had no side effect at all. */
+  /**
+   * Asserts the transition had no side effect at all: no status or token
+   * write, no price freeze or quoted stamp, and no `order_revisions` row
+   * (every send and stage stamp cuts one through `stampSent`).
+   */
   function expectUntouched() {
     expect(db.calls).not.toContain('orders.update');
     expect(db.calls).not.toContain('line_items.update');
+    expect(db.calls).not.toContain('order_revisions.insert');
+    expect(db.calls).not.toContain('order_revisions.select');
   }
 
   it('/pdf refuses a draft with an incomplete item', async () => {
@@ -3524,6 +3530,17 @@ describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', 
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: MESSAGE });
     expectUntouched();
+  });
+
+  it('/mark-sent on a COMPLETE draft goes through and cuts a revision', async () => {
+    // The positive control for `expectUntouched`: the same route, once the
+    // item is complete, writes the status and an `order_revisions` row.
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', expiry_date: future() }];
+    db.responses['line_items.select'] = [{ ...OPEN_ROW, control_id: CONTROL.id }];
+    const res = await ordersApp.request('/g1/mark-sent', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('orders.update');
+    expect(db.calls).toContain('order_revisions.insert');
   });
 
   it('/confirm refuses a draft', async () => {

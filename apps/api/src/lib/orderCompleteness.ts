@@ -5,15 +5,20 @@
  * The Worker's DB-facing side of the incomplete-item rule (spec
  * 2026-11-02). `lib/lineItemCompleteness.ts` decides; this module feeds
  * it stored rows and today's slot scoping, for three callers:
- *   - the gates on every route that takes an order OUT of draft (send,
- *     mark-sent, confirm, a status move to sent+, the PDF) — each runs
+ *   - the gates on every route that takes an order OUT of draft (the
+ *     multi-estimate send, mark-sent, confirm, a status move to sent+,
+ *     the PDF) — each runs
  *     ONLY while the order is currently a draft, so a sent or confirmed
  *     order is never re-judged against a later Settings change;
  *   - the detail reads, which annotate a draft's lines with
  *     `missing_fields` and the order with `incomplete_items` for the
  *     Present view;
  *   - the list reads, which attach `incomplete_items` to every draft so
- *     a list shows "Incomplete" instead of a partial total.
+ *     a list shows "Incomplete" instead of a partial total (the order
+ *     lists and the send picker's `GET /api/customers/:id/sendable-estimates`);
+ *   - the multi-estimate send (`lib/estimateSend.ts`), which judges every
+ *     selected DRAFT in one scoping load before anything is minted, sent
+ *     or written ({@link incompleteDraftMessages}).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -51,6 +56,36 @@ export async function incompleteMessageFor(
   if (!items.some((it) => it.item_type === 'blind')) return null;
   const scope = await loadSlotScoping(sb, blindTypesOf(items));
   return firstIncompleteMessage(items, scope);
+}
+
+/**
+ * The first incomplete item's message for each DRAFT among `orders`, keyed
+ * by order id; complete drafts and every non-draft are absent. For the
+ * multi-estimate send, which reads several orders' rows in one query and
+ * must refuse the whole selection before its first side effect.
+ *
+ * One scoping load covers every draft (none at all when no draft holds a
+ * blind). A non-draft is never judged: it left draft complete, and must
+ * not be re-judged against a later Settings change. `items` must be in
+ * `position` order, because the message says "Item N".
+ *
+ * @throws Error when the scoping read fails, so the caller refuses the
+ *         send rather than letting an unchecked draft through.
+ */
+export async function incompleteDraftMessages(
+  sb: SupabaseClient,
+  orders: readonly { id: string; status: string; items: readonly CompletenessInput[] }[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const drafts = orders.filter((o) => o.status === 'draft');
+  const blindTypes = drafts.flatMap((o) => blindTypesOf(o.items));
+  if (!drafts.some((o) => o.items.some((it) => it.item_type === 'blind'))) return out;
+  const scope = await loadSlotScoping(sb, blindTypes);
+  for (const o of drafts) {
+    const message = firstIncompleteMessage(o.items, scope);
+    if (message) out.set(o.id, message);
+  }
+  return out;
 }
 
 /**
