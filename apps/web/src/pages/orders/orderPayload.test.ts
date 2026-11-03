@@ -132,6 +132,30 @@ describe('buildOrderPayload', () => {
     expect(typeof buildOrderPayload(state({ items: [d], status: 'draft' }))).toBe('object');
   });
 
+  it('does not demand a slot added since the send of an already-quoted item, but does of a new one', () => {
+    // Roller now scopes a control; neither item carries one. The quoted item
+    // (a uid on a price-locked order, with no lock — a pre-lock row) is
+    // grandfathered exactly as the Worker's `prior` does; the line added
+    // since the send (no uid) must satisfy today's rule.
+    const quoted = draft({ uid: 'u1', previously_quoted: true, room_name: 'Kitchen', control_id: '' });
+    const fresh = draft({ room_name: 'Hall', control_id: '' });
+    expect(typeof buildOrderPayload(state({ items: [quoted], status: 'sent' }))).toBe('object');
+    expect(buildOrderPayload(state({ items: [quoted, fresh], status: 'sent' }))).toBe(
+      'Item 2 (Hall): choose a control option.'
+    );
+  });
+
+  it('drops an id for a slot the type no longer uses, unless the item is already quoted', () => {
+    // `ins-1` is scoped to Curtains only, so Roller does not use it.
+    const stale = draft({ installation_id: 'ins-1' });
+    const dropped = buildOrderPayload(state({ items: [stale] })) as { line_items: BlindItemInput[] };
+    expect(dropped.line_items[0].installation_id).toBeNull();
+
+    const quoted = draft({ uid: 'u1', previously_quoted: true, installation_id: 'ins-1' });
+    const kept = buildOrderPayload(state({ items: [quoted], status: 'sent' })) as { line_items: BlindItemInput[] };
+    expect(kept.line_items[0].installation_id).toBe('ins-1');
+  });
+
   it('still requires a customer and an expiry date', () => {
     expect(buildOrderPayload(state({ customer: null }))).toBe('Select a customer first.');
     expect(buildOrderPayload(state({ expiryDate: null }))).toBe('Pick an expiry date.');
