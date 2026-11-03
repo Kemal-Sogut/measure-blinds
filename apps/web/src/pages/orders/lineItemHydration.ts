@@ -176,7 +176,8 @@ export function draftsFromLineItems(items: LineItem[], pricesFrozen: boolean): I
         item_type: 'blind',
         room_name: li.room_name,
         blinds_type: li.blinds_type,
-        panels: li.panels.map(String),
+        // A draft may hold a blank panel (spec 2026-11-02): null → ''.
+        panels: li.panels.map((p) => (p === null ? '' : String(p))),
         height_cm: String(li.height_cm ?? ''),
         material_id: li.material_id ?? '',
         cassette_id: li.cassette_id ?? '',

@@ -20,6 +20,8 @@ import {
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
+  draftMissingFields,
+  firstIncompleteDraftMessage,
   flatDraftPrice,
   isPriceLocked,
   optionsForType,
@@ -260,6 +262,10 @@ describe('optionsForType / slotsForType', () => {
       expect(blindDraftPrice({ ...curtain, installation_id: '' }, catalogs())).toBeNull();
     });
 
+    it('previews nothing for a blind with no type — it is incomplete', () => {
+      expect(blindDraftPrice({ ...roller, blinds_type: '' }, catalogs())).toBeNull();
+    });
+
     it('prices a type whose control slot is unscoped with no control chosen', () => {
       const noControls = catalogs({ controls: [] });
       expect(blindDraftPrice({ ...roller, control_id: '' }, noControls)).not.toBeNull();
@@ -280,6 +286,20 @@ describe('optionsForType / slotsForType', () => {
       expect(blindDraftPrice(stale, catalogs())!.base).toBe(
         blindDraftPrice({ ...curtain, installation_id: 'ins-free' }, catalogs())!.base
       );
+    });
+  });
+
+  describe('draft completeness', () => {
+    it('reports open fields of a draft in message order', () => {
+      const d = draft({ blinds_type: 'Roller', panels: ['100', ''], height_cm: '', material_id: '', control_id: '' });
+      expect(draftMissingFields(d, catalogs())).toEqual(['width', 'height', 'material', 'control option']);
+    });
+
+    it('names the first incomplete draft', () => {
+      const done = draft({ blinds_type: 'Roller', panels: ['100'], height_cm: '200', room_name: 'Hall' });
+      const open = draft({ blinds_type: 'Roller', panels: ['100'], height_cm: '200', room_name: 'Kitchen', cassette_id: '' });
+      expect(firstIncompleteDraftMessage([done, open], catalogs())).toBe('Item 2 (Kitchen): choose a cassette.');
+      expect(firstIncompleteDraftMessage([done], catalogs())).toBeNull();
     });
   });
 });

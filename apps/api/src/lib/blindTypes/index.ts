@@ -13,6 +13,7 @@ export {
   type BlindPricingInputs,
   type MaterialUnit,
   type MaterialUsage,
+  type RequiredAttribute,
 } from './base';
 export { getBlindType, normalizeBlindType } from './registry';
 export { RollerBlindType } from './roller';

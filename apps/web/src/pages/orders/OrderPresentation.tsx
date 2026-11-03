@@ -197,30 +197,40 @@ export default function OrderPresentation() {
             {/* Server-authoritative order money. Never recomputed here, and
                 never governed by the breakdown toggle. */}
             <section className="rounded-lg border border-border bg-surface p-4 print:break-inside-avoid">
-              <TotalRow label="Subtotal" value={money(order.subtotal)} />
-              {Number(order.discount_amount) > 0 && (
-                <TotalRow label="Discount" value={`−${money(order.discount_amount)}`} />
-              )}
-              <TotalRow
-                label={`HST (${Math.round(Number(order.tax_rate) * 100)}%)`}
-                value={money(order.tax_amount)}
-              />
-              <TotalRow label="Order total" value={money(order.total)} strong />
-              {amountPaid > 0 && (
-                <>
-                  <TotalRow label="Paid" value={`−${money(amountPaid)}`} />
-                  <TotalRow
-                    label="Balance due"
-                    value={money(balance)}
-                    strong
-                    tone={balance <= 0 ? 'text-success' : undefined}
-                  />
-                </>
-              )}
-              {filtered && (
-                <p className="mt-2 border-t border-border-light pt-2 text-xs text-text-muted">
-                  Showing {shown.length} of {blinds.length} blinds · order total unchanged
+              {Number(order.incomplete_items ?? 0) > 0 ? (
+                // A $0 line among twenty is easy to miss, so a partial
+                // total is never shown to a customer (spec 2026-11-02).
+                <p className="text-sm font-medium text-amber-700">
+                  Total available once every item is complete.
                 </p>
+              ) : (
+                <>
+                  <TotalRow label="Subtotal" value={money(order.subtotal)} />
+                  {Number(order.discount_amount) > 0 && (
+                    <TotalRow label="Discount" value={`−${money(order.discount_amount)}`} />
+                  )}
+                  <TotalRow
+                    label={`HST (${Math.round(Number(order.tax_rate) * 100)}%)`}
+                    value={money(order.tax_amount)}
+                  />
+                  <TotalRow label="Order total" value={money(order.total)} strong />
+                  {amountPaid > 0 && (
+                    <>
+                      <TotalRow label="Paid" value={`−${money(amountPaid)}`} />
+                      <TotalRow
+                        label="Balance due"
+                        value={money(balance)}
+                        strong
+                        tone={balance <= 0 ? 'text-success' : undefined}
+                      />
+                    </>
+                  )}
+                  {filtered && (
+                    <p className="mt-2 border-t border-border-light pt-2 text-xs text-text-muted">
+                      Showing {shown.length} of {blinds.length} blinds · order total unchanged
+                    </p>
+                  )}
+                </>
               )}
             </section>
           </div>

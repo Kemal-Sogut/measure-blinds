@@ -39,6 +39,7 @@ import {
   type FlatDraft,
   type ItemDraft,
   type Catalogs,
+  draftMissingFields,
 } from './lineItemDrafts';
 import { lineItemName } from './lineItemName';
 
@@ -297,6 +298,10 @@ export interface LineItemRowProps {
   catalogs: Catalogs;
   /** Hides the checkbox and every action control, per `LineItemListProps.readOnly`. */
   readOnly: boolean;
+  /** True only while the order is a draft. Only a draft can hold an incomplete
+   *  item, so the "Incomplete" chip is shown for drafts alone — a sent or
+   *  confirmed order is never re-judged against today's Settings scoping. */
+  isDraft: boolean;
   /** Disables the Show/Hide menu item, per `LineItemListProps.postConfirm`. */
   postConfirm: boolean;
   /** Whether this row is checkbox-selected. */
@@ -346,6 +351,7 @@ export default function LineItemRow({
   isLast,
   catalogs,
   readOnly,
+  isDraft,
   postConfirm,
   selected,
   expanded,
@@ -361,6 +367,9 @@ export default function LineItemRow({
   // Whether the figure beside the padlock is the confirmed one rather
   // than a live calculation — see `isPriceLocked`.
   const locked = isPriceLocked(item);
+  // Open product decisions on this blind (spec 2026-11-02). Savable on a
+  // draft; Send and stage moves stay refused until this is empty.
+  const missing = isDraft ? draftMissingFields(item, catalogs) : [];
   const name = lineItemName(item, index);
   const attrLine =
     item.item_type === 'blind'
@@ -457,6 +466,16 @@ export default function LineItemRow({
         {item.hidden && (
           <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
             Hidden
+          </span>
+        )}
+
+        {/* Amber, like the edit-request card: something to finish, not an error. */}
+        {missing.length > 0 && (
+          <span
+            title={`Still to decide: ${missing.join(', ')}`}
+            className="mt-0.5 max-w-[14rem] shrink-0 truncate rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 sm:mt-0"
+          >
+            Incomplete · {missing.join(', ')}
           </span>
         )}
 

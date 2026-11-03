@@ -20,6 +20,7 @@
  */
 
 import { getBlindType } from './blindTypes';
+import { measuredWidths } from './lineItemCompleteness';
 import { isPriceBasis, type CatalogSlot, type HardwareCharge } from './blindTypes/base';
 import type { LineItem } from '../types';
 
@@ -205,7 +206,7 @@ export function describeLineBreakdown(item: LineItem): LineBreakdown {
   }
 
   const legs = getBlindType(item.blinds_type).describeUnitCosts({
-    panels: item.panels,
+    panels: measuredWidths(item.panels),
     height_cm: Number(item.height_cm) || 0,
     material_price_per_sqm: Number(item.material_price_per_sqm) || 0,
     hardware: hardwareFromLineItem(item),

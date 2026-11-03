@@ -117,16 +117,13 @@ import {
   useRevisionSource,
   downloadOrderPdf,
   downloadWarrantyPdf,
-  type OrderInput,
-  type LineItemInput,
-  type AdjustmentInputFields,
-  type ItemIdentityFields,
   type PendingEtransfer,
 } from '../../hooks/useOrders';
 import { useCustomer, useCustomerSearch } from '../../hooks/useCustomers';
 import { useOrderAppointment } from '../../hooks/useCalendar';
 import { displayName } from '../../lib/customerName';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
+import { useLeaveGuard } from '../../hooks/useLeaveGuard';
 import {
   useBlindTypeDefaults,
   useCatalogList,
@@ -145,16 +142,9 @@ import { arrayMove } from '@dnd-kit/sortable';
 import {
   blindDraftPrice,
   bulkEditSelection,
-  canOverridePrice,
   flatDraftPrice,
-  isAlreadyQuoted,
   newBlindDraft,
-  parseAddons,
-  parseDraftAttributes,
-  parseOverride,
-  parsePositive,
   pruneSelection,
-  slotsForType,
   NO_ADJUSTMENTS,
   type BlindDraft,
   type BlindDraftDefaults,
@@ -162,6 +152,8 @@ import {
   type ItemDraft,
   type Catalogs,
   type QuotedPriceChange,
+  draftMissingFields,
+  firstIncompleteDraftMessage,
 } from './lineItemDrafts';
 import {
   applyServerFields,
@@ -175,10 +167,10 @@ import { PriceUpdateNotice } from './PriceUpdateNotice';
 import { RevisionBanner } from './RevisionBannerCard';
 import { canSendUpdate } from './revisionBanner';
 import { holdsPriceLock } from '../../lib/orderStatus';
-import type { CatalogSlot } from '../../lib/blindTypes/base';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
+import { buildOrderPayload, toIso } from './orderPayload';
 import BulkAddSheet from './BulkAddSheet';
 import EditRequestsCard from './EditRequestsCard';
 import OrderActivityLog from './OrderActivityLog';
@@ -283,11 +275,6 @@ function SectionIcon({ accent, d }: { accent: CardAccent; d: string }) {
       </svg>
     </span>
   );
-}
-
-/** Formats a Date as the API's YYYY-MM-DD. */
-function toIso(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /** Parses YYYY-MM-DD as a local Date (no UTC shift). */
@@ -736,6 +723,57 @@ export default function OrderDetail() {
     }
   }, [id, existing, hydrated]);
 
+  /**
+   * A comparable snapshot of what Save would send — the editor's own
+   * render keys stripped — so "dirty" means an actual edit, not a
+   * re-render. Compared against `savedSnapshot`, set on hydrate and after
+   * every successful save.
+   *
+   * The four server-owned draft fields (`ServerItemFields`: lock,
+   * previously_quoted, quoted_base, notice_ack_base) are stripped too:
+   * Save never sends them, and `applyServerFields` rewrites them after a
+   * save, a send or a dismissal refetches the order — counting them would
+   * make the leave guard prompt on a page with no unsaved edit.
+   */
+  const editorSnapshot = useMemo(
+    () =>
+      JSON.stringify({
+        customer: customer?.id ?? null,
+        orderDate: toIso(orderDate),
+        expiryDate: expiryDate ? toIso(expiryDate) : null,
+        title,
+        discountType,
+        discountValue,
+        items: items.map(
+          ({
+            key: _key,
+            lock: _lock,
+            previously_quoted: _quoted,
+            quoted_base: _quotedBase,
+            notice_ack_base: _noticeAck,
+            ...rest
+          }) => ({
+            ...rest,
+            addons: rest.addons.map(({ key: _addonKey, ...a }) => a),
+          })
+        ),
+      }),
+    [customer, orderDate, expiryDate, title, discountType, discountValue, items]
+  );
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  // Baseline once the loaded order has hydrated (existing order) — a new
+  // order is dirty as soon as it has an item. A pending revision restore
+  // (`restoreFrom`) is unsaved too, even when its copy happens to match
+  // the snapshot: leaving drops the `restore_from_revision` the next save
+  // would send, and with it Rev N's prices for untouched items.
+  useEffect(() => {
+    if (id && hydrated && savedSnapshot === null) setSavedSnapshot(editorSnapshot);
+  }, [id, hydrated, savedSnapshot, editorSnapshot]);
+  const dirty = id
+    ? (savedSnapshot !== null && editorSnapshot !== savedSnapshot) || restoreFrom !== null
+    : items.length > 0;
+  useLeaveGuard(dirty);
+
   // Restore: once the confirmed revision's copy arrives, it replaces the
   // title, discount and items (customer, dates and terms stay) as unsaved
   // edits, and is remembered for the next save.
@@ -900,6 +938,25 @@ export default function OrderDetail() {
   const materialUsage = useMemo(() => summarizeMaterialUsage(items, catalogs), [items, catalogs]);
 
   const status = existing?.status ?? 'draft';
+  /**
+   * Visible items still incomplete — they price at $0, so the running
+   * total leaves them out and says so. Hidden ones are already outside
+   * the total; they still block Send (see `leaveDraftMessage`). Only
+   * drafts are judged: a sent or confirmed order is never re-judged
+   * against today's Settings scoping, so this is 0 for them.
+   */
+  const incompleteVisible = useMemo(
+    () =>
+      status === 'draft'
+        ? items.filter((it) => !it.hidden && draftMissingFields(it, catalogs).length > 0).length
+        : 0,
+    [status, items, catalogs]
+  );
+  /** Why this draft cannot leave draft yet, or null. Only drafts are judged. */
+  const leaveDraftMessage = useMemo(
+    () => (status === 'draft' ? firstIncompleteDraftMessage(items, catalogs) : null),
+    [status, items, catalogs]
+  );
   // Orders are editable at every lifecycle stage — the Worker recomputes
   // totals authoritatively on every save, regardless of status.
   const readOnly = false;
@@ -1185,175 +1242,12 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  /**
-   * Validates drafts and builds the API payload.
-   * Returns a string error message when something is incomplete.
-   */
-  function buildPayload(): OrderInput | string {
-    if (!customer) return 'Select a customer first.';
-    if (!expiryDate) return 'Pick an expiry date.';
-    const line_items: LineItemInput[] = [];
-
-    /**
-     * The three adjustment fields, validated once for any item type.
-     * Returns a message string when the override does not parse, matching
-     * this function's error convention.
-     *
-     * `unit_price_override` is left OFF the payload where the item cannot
-     * be overridden — the Worker rejects the field on a custom item.
-     */
-    function adjustmentsFor(it: ItemDraft, index: number): AdjustmentInputFields | string {
-      const override = parseOverride(it.unit_price_override);
-      if (!override.valid) return `Item ${index + 1}: enter a valid override price.`;
-      return {
-        ...(canOverridePrice(it) ? { unit_price_override: override.value } : {}),
-        show_original_price: it.show_original_price,
-        addons: parseAddons(it.addons),
-      };
-    }
-    /**
-     * Identity and visibility, as the API expects them.
-     *
-     * `uid` is OMITTED for an item that has never been saved — the
-     * Worker mints one then — and round-tripped verbatim otherwise, since
-     * it is what the Worker diffs visibility against on a confirmed
-     * order.
-     */
-    function identityFor(it: ItemDraft): ItemIdentityFields {
-      return { ...(it.uid ? { uid: it.uid } : {}), hidden: it.hidden };
-    }
-    for (const [i, it] of items.entries()) {
-      if (it.item_type === 'blind') {
-        const panels = it.panels.map(parsePositive);
-        const height = parsePositive(it.height_cm);
-        const qty = parsePositive(it.quantity);
-        if (panels.some((p) => p === null) || !panels.length)
-          return `Item ${i + 1}: enter every panel width.`;
-        if (!height) return `Item ${i + 1}: enter a height.`;
-        // Which hardware a blind needs comes from the SCOPING, the same
-        // rule the form renders from and the Worker validates against:
-        // Curtains has no cassette scoped to it, and demanding one here
-        // would make a curtain unsavable.
-        //
-        // An ALREADY-QUOTED item is exempt, exactly as it is on the
-        // Worker (`isAlreadyQuoted`): a slot added to its blind type after
-        // the estimate went out must not be demanded of a price the
-        // customer is already holding. Without this, adding an option
-        // retroactively blocks every save — and so `Present to customer`,
-        // which saves first — on every estimate quoted on that type.
-        const uses = slotsForType(catalogs, it.blinds_type);
-        const quoted = isAlreadyQuoted(it);
-        const needs = (slot: CatalogSlot) => !quoted && uses.has(slot);
-        const sendable = (slot: CatalogSlot, id: string) =>
-          (quoted || uses.has(slot)) && id ? id : null;
-        if (!it.material_id) return `Item ${i + 1}: choose a material.`;
-        if (needs('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
-        if (needs('bottom_rail') && !it.bottom_rail_id)
-          return `Item ${i + 1}: choose a bottom rail.`;
-        if (needs('control') && !it.control_id)
-          return `Item ${i + 1}: choose a control option.`;
-        if (needs('installation') && !it.installation_id)
-          return `Item ${i + 1}: choose an installation option.`;
-        if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        // Convert once, here. Failing now gives a readable message instead
-        // of a 400 from the server's own re-parse.
-        const attributes = parseDraftAttributes(it);
-        if (attributes === null)
-          return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
-        const adj = adjustmentsFor(it, i);
-        if (typeof adj === 'string') return adj;
-        line_items.push({
-          item_type: 'blind',
-          room_name: it.room_name.trim(),
-          blinds_type: it.blinds_type.trim(),
-          panels: panels as number[],
-          height_cm: height,
-          material_id: it.material_id,
-          // Null, not '' — the API accepts a uuid or null for a slot the
-          // type does not use, and rejects an id for one it does not.
-          //
-          // An id for a slot the type no longer uses is DROPPED, unless the
-          // item is already quoted (whose Worker branch keeps and charges
-          // whatever it carries). That happens when Settings deletes —
-          // archives, migration 49 — or deactivates a type's last option of
-          // a slot: the dropdown disappears, so the consultant could never
-          // clear the stale id, and the Worker would refuse every save of
-          // the draft. The preview already ignores it (`blindDraftInputs`),
-          // so dropping it here makes the save match what is on screen.
-          cassette_id: sendable('cassette', it.cassette_id),
-          bottom_rail_id: sendable('bottom_rail', it.bottom_rail_id),
-          control_id: sendable('control', it.control_id),
-          installation_id: sendable('installation', it.installation_id),
-          color: it.color.trim(),
-          note: it.note.trim(),
-          attributes,
-          quantity: Math.round(qty),
-          ...adj,
-          ...identityFor(it),
-        });
-      } else {
-        const qty = parsePositive(it.quantity);
-        const unit = Number(it.unit_price);
-        if (!it.title.trim() && !it.description.trim())
-          return `Item ${i + 1}: enter a title or a description.`;
-        if (!qty) return `Item ${i + 1}: enter a quantity.`;
-        const adj = adjustmentsFor(it, i);
-        if (typeof adj === 'string') return adj;
-        if (it.item_type === 'preset' && it.preset_id) {
-          // Priced by the Worker from the catalog. Sending a figure would
-          // be ignored, and sending one that disagreed would be a lie the
-          // consultant could read on screen.
-          line_items.push({
-            item_type: 'preset',
-            preset_id: it.preset_id,
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            ...adj,
-            ...identityFor(it),
-          });
-        } else if (it.item_type === 'preset') {
-          // Legacy preset: no provenance, so its stored price still
-          // travels and the Worker keeps honouring it.
-          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-          line_items.push({
-            item_type: 'preset',
-            preset_id: null,
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            unit_price: unit,
-            ...adj,
-            ...identityFor(it),
-          });
-        } else {
-          if (!Number.isFinite(unit) || unit < 0) return `Item ${i + 1}: enter a unit price.`;
-          line_items.push({
-            item_type: 'custom',
-            title: it.title.trim(),
-            description: it.description.trim(),
-            quantity: Math.round(qty),
-            unit_price: unit,
-            ...adj,
-            ...identityFor(it),
-          });
-        }
-      }
-    }
-    return {
-      customer_id: customer.id,
-      order_date: toIso(orderDate),
-      expiry_date: toIso(expiryDate),
-      title: title.trim() === '' ? null : title.trim(),
-      discount_type: discountType,
-      discount_value: Number(discountValue) || 0,
-      line_items,
-    };
-  }
-
   /** Saves (create or update); resolves to the saved order id. */
   async function save(): Promise<string | null> {
-    const payload = buildPayload();
+    const snapshotAtSave = editorSnapshot;
+    const payload = buildOrderPayload({
+      customer, orderDate, expiryDate, title, discountType, discountValue, items, catalogs, status,
+    });
     if (typeof payload === 'string') {
       toast.error(payload);
       return null;
@@ -1365,6 +1259,7 @@ export default function OrderDetail() {
             input: restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
           })
         : await createMut.mutateAsync(payload);
+      setSavedSnapshot(snapshotAtSave);
       setRestoreFrom(null);
       // A save ends any dismissal; the Worker drops its acknowledgement
       // on the same save, so the notice speaks again if the total still
@@ -1455,6 +1350,7 @@ export default function OrderDetail() {
    * the estimate path also blocks a lapsed expiry date ({@link estimateLapsed}).
    */
   async function openSend() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     if (!customer?.email) return toast.error('This customer has no email address.');
     if (!isInvoice) {
       if (estimateLapsed) return toast.error(EXPIRED_ESTIMATE_SEND_MESSAGE);
@@ -1549,6 +1445,12 @@ export default function OrderDetail() {
     const toIdx = STAGES.findIndex((s) => s.key === to);
     const confirmIdx = STAGES.findIndex((s) => s.key === 'awaiting_payment');
     const backward = toIdx < curIdx;
+    // Leaving draft forward is refused while anything is incomplete — say
+    // so before the confirm prompt and the save, not after.
+    if (!backward && toIdx >= STAGES.findIndex((s) => s.key === 'sent') && leaveDraftMessage) {
+      toast.error(leaveDraftMessage);
+      return;
+    }
     const reversesConfirmation = backward && curIdx >= confirmIdx && toIdx < confirmIdx;
     const confirmsOrder = !backward && curIdx < confirmIdx && toIdx >= confirmIdx;
     const ok = await askConfirm({
@@ -1596,6 +1498,7 @@ export default function OrderDetail() {
       // Hydration is keyed off the loaded order, so the editor must be
       // told to hydrate again for the copy it is about to show.
       setHydrated(false);
+      setSavedSnapshot(null);
       navigate(orderPath(copy));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Duplicate failed.');
@@ -1845,6 +1748,7 @@ export default function OrderDetail() {
   }
 
   async function handlePdf() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     const savedId = id ?? (await save());
     if (!savedId) return;
     try {
@@ -1863,8 +1767,13 @@ export default function OrderDetail() {
    * the token may still need minting. `?preview=1` tells `CustomerView`
    * to render a draft, disable every mutating control, and skip the
    * "customer opened this" ping.
+   *
+   * An incomplete draft is refused with {@link leaveDraftMessage}, like
+   * the PDF: the customer page would render its unfinished lines at $0
+   * with a partial total.
    */
   async function handleCustomerView() {
+    if (leaveDraftMessage) return toast.error(leaveDraftMessage);
     if (!id) return;
     const tab = window.open('', '_blank');
     try {
@@ -2000,6 +1909,11 @@ export default function OrderDetail() {
           ${totals.total.toFixed(2)}
         </span>
       </div>
+      {incompleteVisible > 0 && (
+        <p className="text-[12px] font-medium text-amber-700">
+          Total excludes {incompleteVisible} incomplete item{incompleteVisible === 1 ? '' : 's'}
+        </p>
+      )}
       {/*
         Under the total, in both hosts that render these rows: what the
         customer was last sent, whenever it is no longer what they would
@@ -2644,6 +2558,7 @@ export default function OrderDetail() {
             items={items}
             catalogs={catalogs}
             readOnly={readOnly}
+            isDraft={status === 'draft'}
             postConfirm={postConfirm}
             selected={selected}
             onToggleSelect={toggleSelect}

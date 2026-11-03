@@ -95,6 +95,7 @@ import RevisionInfo from './RevisionInfo';
 import type { RevisionStamp } from './revisionView';
 import { displayName } from '../../lib/customerName';
 import { maintenanceMessage } from '../../lib/maintenance';
+import { measuredWidths } from '../../lib/lineItemCompleteness';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
@@ -275,11 +276,12 @@ function itemContent(li: PublicLineItem): { title: string; attrs: string[] } {
       const amount = prices[slot];
       return amount ? `${label}: ${name} — $${amount.toFixed(2)}` : `${label}: ${name}`;
     };
+    const widths = measuredWidths(li.panels);
     return {
       title: [li.room_name || 'Blind', li.blinds_type].filter(Boolean).join(' — '),
       attrs: [
-        li.panels?.length
-          ? `Panels: ${li.panels.join(' + ')} cm × H ${li.height_cm} cm`
+        widths.length
+          ? `Panels: ${widths.join(' + ')} cm × H ${li.height_cm} cm`
           : '',
         li.material_name ? `Material: ${li.material_name}` : '',
         li.color?.trim() ? `Color: ${li.color.trim()}` : '',

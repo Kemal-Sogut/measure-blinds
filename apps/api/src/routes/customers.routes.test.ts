@@ -112,7 +112,8 @@ function makeBuilder(table: string) {
       if (['eq', 'in', 'is', 'gte', 'order'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'or', 'order', 'limit']) {
+  // `range` because `attachIncompleteCounts` pages its line_items read.
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'in', 'is', 'gte', 'or', 'order', 'limit', 'range']) {
     builder[m] = chain(m);
   }
   (builder.select as unknown) = (_columns?: string, opts?: { count?: string; head?: boolean }) => {
@@ -299,8 +300,27 @@ describe('GET /api/customers/:id/sendable-estimates', () => {
         order_date: '2026-10-01',
         expiry_date: '2026-12-01',
         total: 1234.5,
+        incomplete_items: 0,
       },
     ]);
+  });
+
+  it('counts incomplete items on drafts only (spec 2026-11-02)', async () => {
+    db.responses['orders.select'] = [row({ id: 'd1' }), row({ id: 's1', status: 'sent' })];
+    db.responses['line_items.select'] = [
+      { order_id: 'd1', item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller', panels: [100], height_cm: null, material_id: 'm1', attributes: {} },
+    ];
+    const body = (await (await get()).json()) as Body;
+    expect(body.data.map((r) => [r.id, r.incomplete_items])).toEqual([['d1', 1], ['s1', 0]]);
+    // Only the draft's rows are asked for: a sent order is never re-judged.
+    expect(db.filters).toContainEqual(['line_items', 'in', ['order_id', ['d1']]]);
+  });
+
+  it('500s rather than listing a draft whose items could not be counted', async () => {
+    db.responses['orders.select'] = [row()];
+    db.opErrors['line_items.select'] = [{ message: 'items read failed' }];
+    const res = await get();
+    expect(res.status).toBe(500);
   });
 
   it('drops rows with no line items', async () => {
@@ -745,6 +765,54 @@ describe('POST /api/customers/:id/send-estimates', () => {
     const res = await post({ order_ids: [O1, O2] });
     expect(res.status).toBe(502);
     expect(db.insertPayloads['order_revisions']).toBeUndefined();
+    expect(db.updatePayloads['orders']).toBeUndefined();
+  });
+
+  /**
+   * A draft blind with its height still open (spec 2026-11-02). Its type
+   * is unknown to the scripted catalog, so the height is the only open
+   * field and the message is predictable.
+   */
+  const OPEN_BLIND = {
+    id: 'li2', item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller',
+    panels: [100], height_cm: null, material_id: 'm1', cassette_id: null, bottom_rail_id: null,
+    control_id: null, installation_id: null, attributes: {},
+  };
+
+  it('refuses the WHOLE send when a selected draft has an incomplete item, before any side effect', async () => {
+    db.responses['orders.select'] = [
+      orderRow(),
+      orderRow({ id: O2, order_number: 'M2010-127', line_items: [{ id: 'li1', item_type: 'preset', position: 0 }, { ...OPEN_BLIND, position: 1 }] }),
+    ];
+    const res = await post({ order_ids: [O1, O2] });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe(
+      'Estimate M2010-127 is incomplete and cannot be sent — Item 2 (Kitchen): enter a height.'
+    );
+    // No email, no partial send of the complete O1, no token, freeze,
+    // quoted stamp, revision or log line.
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(db.updatePayloads['orders']).toBeUndefined();
+    expect(db.updatePayloads['line_items']).toBeUndefined();
+    expect(db.updatePayloads['customers']).toBeUndefined();
+    expect(db.insertPayloads['order_revisions']).toBeUndefined();
+    expect(db.insertPayloads['order_logs']).toBeUndefined();
+  });
+
+  it('never re-judges an already-sent estimate against today\'s rule', async () => {
+    db.responses['orders.select'] = [sentRow({ line_items: [OPEN_BLIND] })];
+    const res = await post({ order_ids: [O2] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as SendBody).data.announced).toEqual([O2]);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('500s and sends nothing when the completeness check cannot read the catalog', async () => {
+    db.responses['orders.select'] = [orderRow({ line_items: [OPEN_BLIND] })];
+    db.opErrors['blind_types.select'] = [{ message: 'scoping read failed' }];
+    const res = await post({ order_ids: [O1] });
+    expect(res.status).toBe(500);
+    expect(sendEmailMock).not.toHaveBeenCalled();
     expect(db.updatePayloads['orders']).toBeUndefined();
   });
 

@@ -37,6 +37,7 @@
 
 import type { LineItem } from '../types';
 import { getBlindType, normalizeBlindType } from './blindTypes/registry';
+import { measuredWidths } from './lineItemCompleteness';
 
 /**
  * Default length of one stock aluminium bar, in cm (6 m) — the bar the
@@ -421,7 +422,7 @@ export function buildManufacturingPlan(
 
     const height = item.height_cm ?? 0;
     const qty = Math.max(1, item.quantity);
-    const panels = (item.panels ?? []).filter((w) => w > 0);
+    const panels = measuredWidths(item.panels);
     if (panels.length === 0) {
       warnings.push(`${roomLabel} — ${typeLabel}: no panel widths set; skipped.`);
       continue;
@@ -516,8 +517,8 @@ export function buildManufacturingPlan(
  * as-is list, e.g. "150+100 cm W × 210 cm H". Returns '' when nothing is
  * measured.
  */
-function describeDimensions(panels: number[] | null, height: number | null): string {
-  const widths = (panels ?? []).filter((w) => w > 0);
+function describeDimensions(panels: readonly (number | null)[] | null, height: number | null): string {
+  const widths = measuredWidths(panels);
   const parts: string[] = [];
   if (widths.length > 0) parts.push(`${widths.join('+')} cm W`);
   if (height && height > 0) parts.push(`${height} cm H`);

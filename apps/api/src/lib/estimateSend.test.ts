@@ -28,6 +28,7 @@ const row = (over: Partial<SendCandidateRow> = {}): SendCandidateRow => ({
   item_count: 2,
   public_token: null,
   terms_snapshot: null,
+  incomplete: null,
   ...over,
 });
 
@@ -99,6 +100,25 @@ describe('planSelection', () => {
     expect(planSelection(rows, ['a1', 'a2'], 'c1', TODAY)).toEqual({
       error: 'Estimate M2010-2 has no line items and cannot be sent.',
     });
+  });
+
+  it('rejects a draft with an incomplete item, naming the estimate and the item (spec 2026-11-02)', () => {
+    const rows = [
+      row({ id: 'a1', order_number: 'M2010-1' }),
+      row({ id: 'a2', order_number: 'M2010-2', incomplete: 'Item 3 (Kitchen): choose a control option.' }),
+    ];
+    expect(planSelection(rows, ['a1', 'a2'], 'c1', TODAY)).toEqual({
+      error: 'Estimate M2010-2 is incomplete and cannot be sent — Item 3 (Kitchen): choose a control option.',
+    });
+  });
+
+  it('never re-judges a row that has left draft', () => {
+    // A sent row is complete by the invariant; `incomplete` is null for it
+    // in practice, and even a stray value must not refuse the send.
+    const rows = [row({ status: 'sent', incomplete: 'Item 1: choose a material.' })];
+    const result = planSelection(rows, ['a1'], 'c1', TODAY);
+    if (!('plan' in result)) throw new Error(`expected a plan, got: ${result.error}`);
+    expect(result.plan.toAnnounce.map((r) => r.id)).toEqual(['a1']);
   });
 
   it('rejects an empty id list', () => {

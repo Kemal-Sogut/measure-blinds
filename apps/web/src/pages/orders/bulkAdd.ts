@@ -327,20 +327,15 @@ export function bulkAddHasContent(sections: BulkSection[]): boolean {
  * `lineItemBulk.ts`) is how a whole batch of those gets filled in at once
  * afterwards, back at the customer's house or later at a desk.
  *
- * COMPLETENESS IS ENFORCED LATER, AT SAVE — not here. `buildPayload` in
- * `OrderDetail.tsx` is what actually blocks an incomplete item from
- * reaching the Worker: it walks every item in the order (bulk-added or
- * not — by the time it runs, a bulk-add item is just an item like any
- * other) and returns a message naming the first offender, for example:
- *   if (!it.material_id) return `Item ${i + 1}: choose a material.`;
- *   if (uses.has('cassette') && !it.cassette_id) return `Item ${i + 1}: choose a cassette.`;
- *   if (attributes === null) return `Item ${i + 1}: check the ${it.blinds_type || 'blind'} options.`;
- * (plus the matching bottom-rail, control and installation checks). A
- * future reader who finds a blind-type / material / hardware check
- * missing from HERE and "fixes" it by adding one back would be
- * reintroducing the exact on-site dead end this relaxation exists to
- * remove — go read `buildPayload`'s blind-item branch first; it is the
- * real gate, and it already covers every field this function used to.
+ * COMPLETENESS IS ENFORCED LATER, WHEN THE ORDER LEAVES DRAFT — not here,
+ * and no longer at save either (spec 2026-11-02). A draft saves with
+ * incomplete items; `lib/lineItemCompleteness.ts` (twinned in the
+ * Worker) decides what is still open, the editor marks such items
+ * "Incomplete", and Send / a stage move to Sent+ / the PDF are refused
+ * — by the editor first and by the Worker regardless — until nothing
+ * is. A future reader who adds a blind-type / material / hardware check
+ * HERE would reintroduce the exact on-site dead end this relaxation
+ * exists to remove.
  *
  * What THIS function still rejects, because nothing downstream catches
  * these and letting them through would silently corrupt a measurement

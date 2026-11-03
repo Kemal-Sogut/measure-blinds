@@ -81,6 +81,13 @@ import type {
 } from '../lib/blindTypes/base';
 import { isPriceBasis } from '../lib/blindTypes/base';
 import { loadSlotScoping } from '../lib/optionScoping';
+import { incompleteMessage, missingFields, type CompletenessInput } from '../lib/lineItemCompleteness';
+import {
+  annotateOrderCompleteness,
+  attachIncompleteCounts,
+  incompleteMessageFor,
+  loadIncompleteMessage,
+} from '../lib/orderCompleteness';
 import { calculateTotals } from '../lib/totals';
 import { applyPriceAdjustments, type Addon } from '../lib/lineItemAdjustments';
 import { lockApplies, pricingFingerprint, type PriceLockInput } from '../lib/priceLock';
@@ -192,9 +199,16 @@ const blindItemSchema = z
     item_type: z.literal('blind'),
     room_name: z.string().max(200).default(''),
     blinds_type: z.string().max(100).default(''),
-    panels: z.array(z.number().positive().max(1000)).min(1, 'At least one panel').max(10),
-    height_cm: z.number().positive().max(1000),
-    material_id: z.string().uuid(),
+    /**
+     * A BLANK measurement or material is allowed (spec 2026-11-02): a
+     * draft may hold a blind that is not decided yet. A blank panel is
+     * `null` so the panel COUNT survives; a typed value must still be
+     * positive. Whether blanks are acceptable for THIS order is decided
+     * in `resolveLineItems` (`allowIncomplete`), never here.
+     */
+    panels: z.array(z.number().positive().max(1000).nullable()).max(10).default([]),
+    height_cm: z.number().positive().max(1000).nullable().default(null),
+    material_id: z.string().uuid().nullable().default(null),
     /**
      * All four nullable because a blind type may not use a slot at all —
      * Curtains has neither a cassette nor a bottom rail. WHICH slots a
@@ -467,8 +481,10 @@ function lockInputFromPayload(it: z.infer<typeof lineItemSchema>): PriceLockInpu
     return {
       item_type: 'blind',
       blinds_type: it.blinds_type,
-      panels: it.panels,
-      height_cm: it.height_cm,
+      // An incomplete item never reaches a lock (it exists only on a
+      // draft), so these maps are identity for every item that does.
+      panels: it.panels.map((p) => p ?? 0),
+      height_cm: it.height_cm ?? 0,
       material_id: it.material_id,
       cassette_id: it.cassette_id,
       bottom_rail_id: it.bottom_rail_id,
@@ -513,6 +529,11 @@ function lockInputFromPayload(it: z.infer<typeof lineItemSchema>): PriceLockInpu
  *     at all (see the locked branch below), and one whose lock BROKE is
  *     being re-quoted, so it must satisfy today's requirements.
  *
+ * `allowIncomplete` is true only when the order is (or, in this save,
+ * becomes) a `draft`. Then a blind the completeness rule reports open is
+ * stored with null snapshots for what is missing and `line_total: 0`;
+ * otherwise the first such item throws the shared message.
+ *
  * @throws Error with a user-readable message when an option id is
  *         unknown (e.g. a material was deleted mid-edit).
  */
@@ -520,7 +541,8 @@ async function resolveLineItems(
   sb: SupabaseClient,
   items: z.infer<typeof lineItemSchema>[],
   locks?: Map<string, StoredLock>,
-  prior?: PriorItems
+  prior?: PriorItems,
+  allowIncomplete = false
 ): Promise<LineItemRow[]> {
   /**
    * The lock still in force for each item, by position — null where the
@@ -562,7 +584,7 @@ async function resolveLineItems(
       continue;
     }
     if (it.item_type !== 'blind') continue;
-    ids.materials.add(it.material_id);
+    if (it.material_id) ids.materials.add(it.material_id);
     if (it.cassette_id) ids.cassette_options.add(it.cassette_id);
     if (it.bottom_rail_id) ids.bottom_rail_options.add(it.bottom_rail_id);
     if (it.control_id) ids.control_options.add(it.control_id);
@@ -814,8 +836,23 @@ async function resolveLineItems(
 
     const blindType = getBlindType(it.blinds_type);
     const label = it.blinds_type || 'this blind type';
-    const material = materials.get(it.material_id);
-    if (!material) throw new Error('Selected material no longer exists.');
+    // Open fields are judged FIRST: on a non-draft order an incomplete
+    // item is refused with the shared message before anything is looked
+    // up; on a draft it is priced at $0 below. A GRANDFATHERED row (see
+    // `prior`) is judged as an unknown type is — no hardware slot is
+    // required of it — so a slot its type gained since the estimate was
+    // quoted cannot block the save; the web's `draftMissingFields` exempts
+    // the same rows through `isAlreadyQuoted`.
+    const missing = missingFields(
+      it,
+      grandfathered ? { isKnownType: () => false, usesSlot: () => false } : scoping
+    );
+    if (missing.length > 0 && !allowIncomplete) {
+      throw new Error(incompleteMessage(position, it, missing));
+    }
+    const complete = missing.length === 0;
+    const material = it.material_id ? materials.get(it.material_id) : undefined;
+    if (it.material_id && !material) throw new Error('Selected material no longer exists.');
 
     // Resolve the chosen rows FIRST. An id that no longer resolves is
     // reported as the deletion it is; deferring this behind the slot
@@ -848,33 +885,20 @@ async function resolveLineItems(
     // not reach back into estimates already quoted on it.
     const enforced = scoping.isKnownType(it.blinds_type) && !grandfathered;
     const uses = (slot: CatalogSlot) => scoping.usesSlot(it.blinds_type, slot);
-    if (enforced && uses('cassette') !== Boolean(it.cassette_id)) {
-      throw new Error(
-        it.cassette_id
-          ? `Item ${position + 1}: ${label} does not take a cassette.`
-          : `Item ${position + 1}: a cassette option is required.`
-      );
+    // An id for a slot the type does not use would name an option on
+    // every document while pricing nothing. The OTHER half — a used slot
+    // left empty — is the completeness rule's now (above).
+    if (enforced && it.cassette_id && !uses('cassette')) {
+      throw new Error(`Item ${position + 1}: ${label} does not take a cassette.`);
     }
-    if (enforced && uses('bottom_rail') !== Boolean(it.bottom_rail_id)) {
-      throw new Error(
-        it.bottom_rail_id
-          ? `Item ${position + 1}: ${label} does not take a bottom rail.`
-          : `Item ${position + 1}: a bottom rail option is required.`
-      );
+    if (enforced && it.bottom_rail_id && !uses('bottom_rail')) {
+      throw new Error(`Item ${position + 1}: ${label} does not take a bottom rail.`);
     }
-    if (enforced && uses('control') !== Boolean(it.control_id)) {
-      throw new Error(
-        it.control_id
-          ? `Item ${position + 1}: ${label} does not take a control option.`
-          : `Item ${position + 1}: a control option is required.`
-      );
+    if (enforced && it.control_id && !uses('control')) {
+      throw new Error(`Item ${position + 1}: ${label} does not take a control option.`);
     }
-    if (enforced && uses('installation') !== Boolean(it.installation_id)) {
-      throw new Error(
-        it.installation_id
-          ? `Item ${position + 1}: ${label} does not take an installation option.`
-          : `Item ${position + 1}: an installation option is required.`
-      );
+    if (enforced && it.installation_id && !uses('installation')) {
+      throw new Error(`Item ${position + 1}: ${label} does not take an installation option.`);
     }
     // Second, type-aware gate: the loose `z.record` on the payload schema
     // only proved the blob is an object. This parses it through the blind
@@ -906,13 +930,19 @@ async function resolveLineItems(
 
     // Dispatch to the blind type's own module (falls back to the
     // shared default when the type has no dedicated formula yet).
-    const base = calculateBlindUnitPriceForType(it.blinds_type, {
-      panels: it.panels,
-      height_cm: it.height_cm,
-      material_price_per_sqm: material.price,
-      hardware,
-      attributes,
-    });
+    // An incomplete blind has no formula price: it is stored at $0 base
+    // with its hand-entered override and add-ons KEPT (so nothing typed
+    // is lost) and `line_total` forced to 0 below, so it adds nothing to
+    // the subtotal — matching the editor, which previews it as "—".
+    const base = complete
+      ? calculateBlindUnitPriceForType(it.blinds_type, {
+          panels: it.panels as number[],
+          height_cm: it.height_cm as number,
+          material_price_per_sqm: material!.price,
+          hardware,
+          attributes,
+        })
+      : 0;
     const adjusted = applyPriceAdjustments({
       base,
       quantity: it.quantity,
@@ -929,8 +959,8 @@ async function resolveLineItems(
       panels: it.panels,
       height_cm: it.height_cm,
       material_id: it.material_id,
-      material_name: material.name,
-      material_price_per_sqm: material.price,
+      material_name: material?.name ?? null,
+      material_price_per_sqm: material?.price ?? null,
       // The rate columns keep their original names (migration 36 left
       // them alone: nothing reads them, and renaming would rewrite the
       // audit trail). The basis beside each is what makes the rate
@@ -962,7 +992,7 @@ async function resolveLineItems(
       unit_price: adjusted.unit_price,
       base_unit_price: adjusted.base_unit_price,
       addons: adjusted.addons,
-      line_total: adjusted.line_total,
+      line_total: complete ? adjusted.line_total : 0,
       ...lockColumns(base),
       ...quotedColumns,
     };
@@ -1011,15 +1041,38 @@ function firstZodIssue(error: z.ZodError): string {
   return issue ? `${issue.path.join('.') || 'payload'}: ${issue.message}` : 'Invalid payload';
 }
 
-/** Reads one full order (items ordered, payments oldest-first). */
+/**
+ * Reads one full order (items ordered, payments oldest-first), annotated
+ * for the incomplete-item rule: `incomplete_items` on the order and
+ * `missing_fields` on each line (both empty/0 unless it is a draft).
+ * Every route that returns an order goes through here, so the editor
+ * cache and the Present view always see the annotation.
+ *
+ * The annotation is best-effort: this read often follows a COMMITTED
+ * write (create, save, duplicate), and failing the response then would
+ * invite a retry that repeats the write (a duplicate order). If the
+ * scoping read behind the annotation throws, the order is returned
+ * un-annotated — `incomplete_items` and `missing_fields` stay absent —
+ * and the response keeps the shape callers already read (`data`/`error`
+ * from the order read itself). The gates that enforce the invariant do
+ * not use this function, so nothing is let through by the omission.
+ */
 async function readDetail(sb: SupabaseClient, id: string) {
-  return sb
+  const result = await sb
     .from('orders')
     .select(DETAIL_SELECT)
     .eq('id', id)
     .order('position', { referencedTable: 'line_items' })
     .order('paid_on', { referencedTable: 'payments' })
     .maybeSingle();
+  if (result.data) {
+    try {
+      await annotateOrderCompleteness(sb, result.data as Record<string, unknown>);
+    } catch {
+      // Best-effort annotation — see the JSDoc. The write already succeeded.
+    }
+  }
+  return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1093,6 +1146,13 @@ app.get('/', async (c) => {
     ...o,
     amount_paid: sumPayments(o.payments),
   }));
+  // Drafts carry `incomplete_items` so the list shows "Incomplete"
+  // instead of a total that silently leaves those items out.
+  try {
+    await attachIncompleteCounts(sb, rows);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not read items' }, 500);
+  }
   return c.json({ data: rows });
 });
 
@@ -1134,6 +1194,12 @@ app.get('/grouped', async (c) => {
     created_at: String(o.created_at),
     amount_paid: sumPayments(o.payments),
   }));
+  // Same badge source as the flat list (see `GET /`).
+  try {
+    await attachIncompleteCounts(sb, rows);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not read items' }, 500);
+  }
   return c.json({ data: groupOrdersByCustomer(rows) });
 });
 
@@ -1160,6 +1226,7 @@ app.get('/by-number/:orderNumber', async (c) => {
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Order not found' }, 404);
+  await annotateOrderCompleteness(sb, data as Record<string, unknown>);
   data.status = await applyDefensiveExpiry(sb, data);
   data.amount_paid = sumPayments(data.payments);
   Object.assign(data, await revisionDetailFields(sb, data.id, holdsPriceLock(data.status)));
@@ -1207,7 +1274,8 @@ async function createOrderFromInput(
 
   let rows: LineItemRow[];
   try {
-    rows = await resolveLineItems(sb, input.line_items);
+    // Every create — POST / and /duplicate — makes a draft.
+    rows = await resolveLineItems(sb, input.line_items, undefined, undefined, true);
   } catch (e) {
     return {
       error: e instanceof Error ? e.message : 'Invalid line items',
@@ -1417,7 +1485,10 @@ app.put('/:id', async (c) => {
 
   let rows: LineItemRow[];
   try {
-    rows = await resolveLineItems(sb, input.line_items, locks, prior);
+    // Incomplete items may live only on a draft (spec 2026-11-02): a
+    // draft stays one, and so does an expired estimate revived here.
+    const allowIncomplete = existing.status === 'draft' || reviveToDraft;
+    rows = await resolveLineItems(sb, input.line_items, locks, prior, allowIncomplete);
   } catch (e) {
     return c.json({ error: e instanceof Error ? e.message : 'Invalid line items' }, 400);
   }
@@ -1707,6 +1778,23 @@ async function toPdfData(
 }
 
 /**
+ * The leave-draft gate (spec 2026-11-02): a 400 body naming the first
+ * incomplete item while the order is a DRAFT, or null to proceed. Never
+ * consulted for any other status — a sent or confirmed order is complete
+ * by the invariant, and must not be re-judged against a later Settings
+ * change. `rows` is passed when the caller already holds them.
+ */
+async function leaveDraftRefusal(
+  sb: SupabaseClient,
+  order: { id: string; status: string },
+  rows?: readonly CompletenessInput[]
+): Promise<{ error: string } | null> {
+  if (order.status !== 'draft') return null;
+  const message = rows ? await incompleteMessageFor(sb, rows) : await loadIncompleteMessage(sb, order.id);
+  return message ? { error: message } : null;
+}
+
+/**
  * Streams the order as a downloadable PDF (Estimate, or Invoice once paid).
  *
  * The document carries the customer's order-page button, so this GET
@@ -1721,6 +1809,8 @@ app.get('/:id/pdf', async (c) => {
   const id = c.req.param('id');
   const bundle = await loadOrderBundle(sb, id);
   if (!bundle) return c.json({ error: 'Order not found' }, 404);
+  const refusal = await leaveDraftRefusal(sb, bundle.order, bundle.order.line_items as CompletenessInput[]);
+  if (refusal) return c.json(refusal, 400);
   const terms = bundle.order.terms_snapshot ?? bundle.company.terms_and_conditions ?? '';
 
   const publicToken: string = bundle.order.public_token ?? crypto.randomUUID();
@@ -1784,6 +1874,8 @@ app.post('/:id/mark-sent', async (c) => {
   if (existing.expiry_date < today) {
     return c.json({ error: 'This estimate has expired — update the expiry date first.' }, 400);
   }
+  const refusal = await leaveDraftRefusal(sb, existing);
+  if (refusal) return c.json(refusal, 400);
 
   // Handed over in person is still handed over: the prices freeze here
   // exactly as they do on a real emailed send, and the quoted figures are
@@ -2019,6 +2111,8 @@ app.post('/:id/confirm', async (c) => {
   if (!EDITABLE.includes(existing.status)) {
     return c.json({ error: `Order is already ${existing.status}.` }, 409);
   }
+  const refusal = await leaveDraftRefusal(sb, existing);
+  if (refusal) return c.json(refusal, 400);
   // Normally a no-op: a `sent` order froze its prices when the estimate
   // went out. It still runs because `/confirm` also accepts a `draft`
   // order — confirmed over the phone, never formally sent — and that
@@ -2849,6 +2943,11 @@ app.post('/:id/status', async (c) => {
     .maybeSingle();
   if (!existing) return c.json({ error: 'Order not found' }, 404);
   if (existing.status === to) return c.json({ error: `Order is already ${to}.` }, 409);
+  // Moving forward OUT of draft is gated; moving back to draft never is.
+  if (STAGE_ORDER.indexOf(to) >= STAGE_ORDER.indexOf('sent')) {
+    const refusal = await leaveDraftRefusal(sb, existing);
+    if (refusal) return c.json(refusal, 400);
+  }
 
   const { error } = await sb
     .from('orders')

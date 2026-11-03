@@ -78,7 +78,7 @@ function makeBuilder(table: string) {
       if (['eq', 'neq', 'in', 'is', 'gte', 'lt'].includes(name)) db.filters.push([state.table, name, args]);
       return builder;
     }) as unknown;
-  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit']) {
+  for (const m of ['select', 'insert', 'update', 'delete', 'eq', 'neq', 'in', 'is', 'lt', 'gte', 'lte', 'or', 'ilike', 'order', 'limit', 'range']) {
     builder[m] = chain(m);
   }
   const resolve = () => {
@@ -414,16 +414,36 @@ describe('POST /api/orders', () => {
     expect(db.calls).not.toContain('line_items.insert');
   });
 
-  it('rejects a blind with no bottom rail chosen', async () => {
-    const bad = payload();
-    delete (bad.line_items[0] as Record<string, unknown>).bottom_rail_id;
+  it('saves a draft blind with no bottom rail chosen at $0', async () => {
+    db.orderInsertResults = [{ data: { id: 'br1' } }];
+    const draft = payload();
+    delete (draft.line_items[0] as Record<string, unknown>).bottom_rail_id;
     const res = await ordersApp.request('/', {
       method: 'POST',
-      body: JSON.stringify(bad),
+      body: JSON.stringify(draft),
+      headers: { 'Content-Type': 'application/json' },
+    }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].bottom_rail_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
+  });
+
+  it('refuses a sent order edited to have no bottom rail, and writes nothing', async () => {
+    const future = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+    db.responses['orders.select'] = [{ id: 'br2', status: 'sent', expiry_date: future, line_items: [] }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = new Date().toISOString().slice(0, 10);
+    p.expiry_date = future;
+    p.line_items[0].bottom_rail_id = null;
+    const res = await ordersApp.request('/br2', {
+      method: 'PUT',
+      body: JSON.stringify(p),
       headers: { 'Content-Type': 'application/json' },
     }, ENV);
     expect(res.status).toBe(400);
-    expect(db.calls).not.toContain('line_items.insert');
+    expect(await res.json()).toMatchObject({ error: 'Item 1 (Living Room): choose a bottom rail.' });
+    expect(db.calls).not.toContain('line_items.delete');
   });
 
   it('fails clearly when the chosen bottom rail was deleted mid-edit', async () => {
@@ -1510,14 +1530,17 @@ describe('Curtains line items', () => {
     expect(rows[0].control_price_per_item).toBeNull();
   });
 
-  it('requires a control while one is still scoped to the type', async () => {
+  it('saves a draft blind with a scoped control left open — at $0, snapshot null', async () => {
     const p = payload() as unknown as { line_items: Record<string, unknown>[] };
     p.line_items[0].control_id = null;
     const res = await create(p);
-    expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({
-      error: 'Item 1: a control option is required.',
-    });
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].control_id).toBeNull();
+    expect(rows[0].control_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
+    // Only the 25.00 preset reaches the subtotal.
+    expect((db.insertPayloads['orders']?.[0] as Record<string, number>).subtotal).toBe(25);
   });
 
   it('accepts anything for an unknown legacy blind type', async () => {
@@ -1537,11 +1560,14 @@ describe('Curtains line items', () => {
     expect(res.status).toBe(400);
   });
 
-  it('still requires a cassette on a type that uses one', async () => {
+  it('saves a draft blind missing its cassette at $0', async () => {
     const p = payload() as unknown as { line_items: Record<string, unknown>[] };
     p.line_items[0].cassette_id = null;
     const res = await create(p);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].cassette_name).toBeNull();
+    expect(rows[0].line_total).toBe(0);
   });
 });
 
@@ -2121,6 +2147,33 @@ describe('POST /api/orders/:id/duplicate', () => {
     expect(db.insertPayloads['payments']).toBeUndefined();
   });
 
+  it('duplicates an incomplete draft, pricing its open blind at 0', async () => {
+    // A draft may hold a blind with every open field null/blank (spec
+    // 2026-11-02); the copy must carry it over rather than 400.
+    seedSource();
+    const src = (db.responses['orders.select'][0] as { status: string; line_items: Record<string, unknown>[] });
+    src.status = 'draft';
+    src.line_items[0] = {
+      ...src.line_items[0],
+      blinds_type: '',
+      panels: [null],
+      height_cm: null,
+      material_id: null,
+      cassette_id: null,
+      bottom_rail_id: null,
+      control_id: null,
+      unit_price: 0,
+    };
+    db.orderInsertResults = [{ data: { id: 'new1', order_number: 'T0703-2' } }];
+    const res = await ordersApp.request('/src/duplicate', { method: 'POST' }, ENV);
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].line_total).toBe(0);
+    expect(rows[0].height_cm).toBeNull();
+    expect(rows[0].material_id).toBeNull();
+  });
+
   it('404s for an unknown order', async () => {
     db.responses['orders.select'] = [];
     const res = await ordersApp.request('/nope/duplicate', { method: 'POST' }, ENV);
@@ -2502,8 +2555,10 @@ describe('per-item price lock (migration 39)', () => {
     items.push(fresh);
     const res = await put(body);
     expect(res.status).toBe(400);
+    // The completeness rule's wording (spec 2026-11-02), which now owns
+    // "a used slot left empty".
     expect(((await res.json()) as { error: string }).error).toContain(
-      'an installation option is required'
+      'choose an installation option'
     );
   });
 
@@ -2519,11 +2574,19 @@ describe('per-item price lock (migration 39)', () => {
   });
 
   it('demands the new option on a draft, however long it has existed', async () => {
+    // A draft is never grandfathered. Since spec 2026-11-02 a draft may
+    // SAVE an item with a used slot left open, so "demanded" means the
+    // item is stored INCOMPLETE — at $0, and gated out of draft — rather
+    // than priced as it was quoted, which a pre-lock row on a sent order
+    // would be (see the test above).
     requireInstallationOnRoller();
     seedExisting('draft', [preLockBlindRow()]);
     const { body } = blindOnlyPayload();
     const res = await put(body);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    const [blind] = savedRows();
+    expect(blind.installation_id).toBeNull();
+    expect(blind.line_total).toBe(0);
   });
 
   it('carries quoted_base_price across the save, by uid', async () => {
@@ -3318,5 +3381,238 @@ describe('restore a revision (migration 50, Design decision 8)', () => {
 
     db.responses['order_revisions.select'] = [];
     expect((await ordersApp.request(`/o1/revisions/${REV1_ID}`, {}, ENV)).status).toBe(404);
+  });
+});
+
+describe('incomplete draft items — saving (spec 2026-11-02)', () => {
+  const json = { 'Content-Type': 'application/json' };
+  const create = (body: unknown) =>
+    ordersApp.request('/', { method: 'POST', body: JSON.stringify(body), headers: json }, ENV);
+  const put = (id: string, body: unknown) =>
+    ordersApp.request(`/${id}`, { method: 'PUT', body: JSON.stringify(body), headers: json }, ENV);
+  const future = () => new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  const today = () => new Date().toISOString().slice(0, 10);
+  /** payload() with its blind replaced by a bulk-added blank row. */
+  function blankPayload(over: Record<string, unknown> = {}) {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items[0] = {
+      item_type: 'blind', room_name: 'Kitchen', blinds_type: '', panels: [null], height_cm: null,
+      material_id: null, cassette_id: null, bottom_rail_id: null, control_id: null, quantity: 1, ...over,
+    };
+    return p;
+  }
+
+  it('creates a draft whose blind has no type, width, height or material', async () => {
+    db.orderInsertResults = [{ data: { id: 'n1' } }];
+    const res = await create(blankPayload());
+    expect(res.status).toBe(201);
+    const [row] = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(row).toMatchObject({ blinds_type: '', panels: [null], height_cm: null, material_id: null, material_name: null, material_price_per_sqm: null, line_total: 0, unit_price: 0, base_unit_price: null });
+  });
+
+  it('keeps the same column set on an incomplete row as on a priced one', async () => {
+    db.orderInsertResults = [{ data: { id: 'n2' } }];
+    const p = blankPayload();
+    p.line_items.push(payload().line_items[0] as unknown as Record<string, unknown>);
+    await create(p);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    const keys = rows.map((r) => Object.keys(r).sort().join(','));
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it('keeps an override and add-ons typed on an incomplete item, charging nothing', async () => {
+    db.orderInsertResults = [{ data: { id: 'n3' } }];
+    const res = await create(blankPayload({ unit_price_override: 150, addons: [{ label: 'Motor', price: 50 }] }));
+    expect(res.status).toBe(201);
+    const [row] = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(row).toMatchObject({ unit_price: 150, base_unit_price: 0, addons: [{ label: 'Motor', price: 50 }], line_total: 0 });
+  });
+
+  it('still rejects a typed garbage measurement', async () => {
+    const res = await create(blankPayload({ panels: [-5] }));
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+  });
+
+  it('PUT on a draft accepts an incomplete item', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: future(), line_items: [] }];
+    const res = await put('d1', blankPayload());
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('line_items.insert');
+  });
+
+  it('PUT on a sent order refuses an incomplete item and writes nothing', async () => {
+    db.responses['orders.select'] = [{ id: 's1', status: 'sent', expiry_date: future(), line_items: [] }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items[0].control_id = null;
+    const res = await put('s1', p);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Item 1 (Living Room): choose a control option.' });
+    expect(db.calls).not.toContain('line_items.delete');
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('completing an overridden incomplete item logs no price-change line', async () => {
+    db.responses['orders.select'] = [{
+      id: 'd2', status: 'draft', expiry_date: future(),
+      line_items: [{ position: 0, unit_price: 150, base_unit_price: 0, addons: [] }],
+    }];
+    const p = payload() as unknown as { line_items: Record<string, unknown>[]; order_date: string; expiry_date: string };
+    p.order_date = today();
+    p.expiry_date = future();
+    p.line_items = [{ ...p.line_items[0], unit_price_override: 150 }];
+    const res = await put('d2', p);
+    expect(res.status).toBe(200);
+    const messages = ((db.insertPayloads['order_logs'] ?? []) as Array<{ message: string }>).map((l) => l.message);
+    expect(messages.filter((m) => m.includes('price override'))).toEqual([]);
+  });
+});
+
+describe('incomplete draft items — leaving draft is gated (spec 2026-11-02)', () => {
+  const future = () => new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  /** A Roller row with its scoped control still open. */
+  const OPEN_ROW = {
+    item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller', panels: [70], height_cm: 200,
+    material_id: MATERIAL.id, cassette_id: CASSETTE.id, bottom_rail_id: BOTTOM_RAIL.id, control_id: null,
+    installation_id: null, attributes: {}, quantity: 1, unit_price: 0, line_total: 0, base_unit_price: null,
+    material_name: 'Blackout White', cassette_name: 'Standard', bottom_rail_name: 'Regular', control_name: null,
+    addons: [], hidden: false, title: '', description: '', note: '', color: '', show_original_price: true,
+  };
+  const MESSAGE = 'Item 1 (Kitchen): choose a control option.';
+  const json = { 'Content-Type': 'application/json' };
+  const company = () => [{ company_name: 'Blinds Nisa', logo_url: null, email: 'x@y.z', phone: '', address: '', hst_number: '', terms_and_conditions: 'T&C', default_expiry_days: 14 }];
+  /** A full order bundle, as `readDetail` returns it, for /pdf. */
+  function bundle(status: string) {
+    return {
+      id: 'g1', status, order_number: 'F0307-126', order_date: new Date().toISOString().slice(0, 10), expiry_date: future(),
+      subtotal: 0, discount_amount: 0, taxable_amount: 0, tax_amount: 0, total: 0, tax_rate: 0.13,
+      public_token: 'tok', terms_snapshot: null, line_items: [OPEN_ROW], payments: [], customer_id: 'c1',
+      customer: { first_name: 'A', last_name: 'B', email: 'a@example.com', phone: '', shipping_address_line1: '', shipping_address_line2: '', shipping_city: '', shipping_province: '', shipping_postal_code: '', billing_same_as_shipping: true, billing_address_line1: '', billing_address_line2: '', billing_city: '', billing_province: '', billing_postal_code: '' },
+    };
+  }
+  /**
+   * Asserts the transition had no side effect at all: no status or token
+   * write, no price freeze or quoted stamp, and no `order_revisions` row
+   * (every send and stage stamp cuts one through `stampSent`).
+   */
+  function expectUntouched() {
+    expect(db.calls).not.toContain('orders.update');
+    expect(db.calls).not.toContain('line_items.update');
+    expect(db.calls).not.toContain('order_revisions.insert');
+    expect(db.calls).not.toContain('order_revisions.select');
+  }
+
+  it('/pdf refuses a draft with an incomplete item', async () => {
+    db.responses['orders.select'] = [bundle('draft')];
+    db.responses['company_settings.select'] = company();
+    const res = await ordersApp.request('/g1/pdf', { method: 'GET' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+  });
+
+  it('/pdf is NOT re-judged once the order has left draft', async () => {
+    // A sent order is complete by the invariant; a later Settings change
+    // must never block its documents.
+    db.responses['orders.select'] = [bundle('sent')];
+    db.responses['company_settings.select'] = company();
+    const res = await ordersApp.request('/g1/pdf', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it('/mark-sent refuses', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', expiry_date: future() }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/mark-sent', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+    expectUntouched();
+  });
+
+  it('/mark-sent on a COMPLETE draft goes through and cuts a revision', async () => {
+    // The positive control for `expectUntouched`: the same route, once the
+    // item is complete, writes the status and an `order_revisions` row.
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', expiry_date: future() }];
+    db.responses['line_items.select'] = [{ ...OPEN_ROW, control_id: CONTROL.id }];
+    const res = await ordersApp.request('/g1/mark-sent', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.calls).toContain('orders.update');
+    expect(db.calls).toContain('order_revisions.insert');
+  });
+
+  it('/confirm refuses a draft', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft' }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/confirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(400);
+    expectUntouched();
+  });
+
+  it.each(['sent', 'installed'])('/status draft → %s refuses', async (to) => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'draft', sent_at: null, confirmed_at: null, installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to }), headers: json }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: MESSAGE });
+    expectUntouched();
+  });
+
+  it('/status from a non-draft stage is never re-judged', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'in_progress', sent_at: 'x', confirmed_at: 'x', installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to: 'ready' }), headers: json }, ENV);
+    expect(res.status).toBe(200);
+  });
+
+  it('/status sent → draft stays allowed', async () => {
+    db.responses['orders.select'] = [{ id: 'g1', status: 'sent', sent_at: 'x', confirmed_at: null, installed_at: null }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/g1/status', { method: 'POST', body: JSON.stringify({ to: 'draft' }), headers: json }, ENV);
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('incomplete draft items — reads (spec 2026-11-02)', () => {
+  const OPEN_ROW = { order_id: 'd1', item_type: 'blind', position: 0, room_name: 'Kitchen', blinds_type: 'Roller', panels: [70], height_cm: 200, material_id: MATERIAL.id, cassette_id: CASSETTE.id, bottom_rail_id: BOTTOM_RAIL.id, control_id: null, installation_id: null, attributes: {} };
+
+  it('GET / attaches incomplete_items to drafts only', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', payments: [] }, { id: 's1', status: 'sent', payments: [] }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: Array<{ id: string; incomplete_items: number }> };
+    expect(data.map((o) => [o.id, o.incomplete_items])).toEqual([['d1', 1], ['s1', 0]]);
+  });
+
+  it('GET /grouped attaches incomplete_items', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', customer_id: 'c1', created_at: '2026-11-02T00:00:00Z', customer: { id: 'c1', first_name: 'A', last_name: 'B', email: '', phone: '' }, payments: [] }];
+    db.responses['line_items.select'] = [OPEN_ROW];
+    const res = await ordersApp.request('/grouped?status=all', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: Array<{ orders: Array<{ incomplete_items: number }> }> };
+    expect(data[0].orders[0].incomplete_items).toBe(1);
+  });
+
+  it('GET /:id annotates each line with missing_fields', async () => {
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: '2099-01-01', line_items: [OPEN_ROW], payments: [] }];
+    const res = await ordersApp.request('/d1', { method: 'GET' }, ENV);
+    const { data } = (await res.json()) as { data: { incomplete_items: number; line_items: Array<{ missing_fields: string[] }> } };
+    expect(data.incomplete_items).toBe(1);
+    expect(data.line_items[0].missing_fields).toEqual(['control option']);
+  });
+
+  it('GET /:id still answers 200, un-annotated, when the scoping read fails', async () => {
+    // The annotation is best-effort: it often follows a committed write,
+    // and a 500 there would invite a retry that repeats the write.
+    // A fresh copy: the annotation mutates its rows, and OPEN_ROW is shared.
+    db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: '2099-01-01', line_items: [{ ...OPEN_ROW, missing_fields: undefined }], payments: [] }];
+    db.opErrors['blind_types.select'] = { message: 'scoping read failed' };
+    const res = await ordersApp.request('/d1', { method: 'GET' }, ENV);
+    expect(res.status).toBe(200);
+    const { data } = (await res.json()) as { data: { id: string; incomplete_items?: number; line_items: Array<{ missing_fields?: string[] }> } };
+    expect(data.id).toBe('d1');
+    expect(data.incomplete_items).toBeUndefined();
+    expect(data.line_items[0].missing_fields).toBeUndefined();
   });
 });

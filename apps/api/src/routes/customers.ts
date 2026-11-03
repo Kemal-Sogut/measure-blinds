@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
 import { ensureCustomerToken } from '../lib/customerLink';
 import { runEstimateSend } from '../lib/estimateSend';
+import { attachIncompleteCounts } from '../lib/orderCompleteness';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -212,6 +213,13 @@ app.post('/:id/public-link', async (c) => {
  * first. 404 for an unknown or soft-deleted customer — checked before the
  * list so a bad id never reads as "no estimates". `total` is coerced to a
  * number because PostgREST returns numerics as strings.
+ *
+ * Every row carries `incomplete_items` (spec 2026-11-02): for a draft, how
+ * many of its items are still incomplete — counted by
+ * `attachIncompleteCounts`, the same source as the order lists — and `0`
+ * for a sent row. The picker shows a draft with a non-zero count as
+ * "Incomplete" and will not tick it, because the send would refuse it; a
+ * failed count read is a 500 rather than a list that hides the problem.
  */
 app.get('/:id/sendable-estimates', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -247,6 +255,11 @@ app.get('/:id/sendable-estimates', async (c) => {
       expiry_date: row.expiry_date,
       total: Number(row.total),
     }));
+  try {
+    await attachIncompleteCounts(sb, estimates);
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : 'Could not read items' }, 500);
+  }
   return c.json({ data: estimates });
 });
 

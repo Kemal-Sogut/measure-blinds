@@ -33,6 +33,7 @@ import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import DatePicker from '../../components/DatePicker';
 import CustomerCreateModal from '../../components/CustomerCreateModal';
+import IncompleteBadge from '../../components/IncompleteBadge';
 import {
   useCreateAppointment,
   useReproposeAppointment,
@@ -345,7 +346,11 @@ export default function AppointmentWizard({
                       {o.order_number}
                     </span>
                     <span className="font-mono text-sm font-semibold text-text-primary">
-                      ${Number(o.total).toFixed(2)}
+                      {Number(o.incomplete_items ?? 0) > 0 ? (
+                        <IncompleteBadge count={Number(o.incomplete_items)} />
+                      ) : (
+                        `$${Number(o.total).toFixed(2)}`
+                      )}
                     </span>
                   </span>
                   <span className="mt-0.5 block text-[13px] text-text-secondary">

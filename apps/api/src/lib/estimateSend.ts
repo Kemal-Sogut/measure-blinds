@@ -38,6 +38,8 @@ import {
   sendEmail,
   type CompanyBrand,
 } from './email';
+import type { CompletenessInput } from './lineItemCompleteness';
+import { incompleteDraftMessages } from './orderCompleteness';
 import { logOrderEvent } from './orderLog';
 import { stampSent } from './orderRevisions';
 import { freezeOrderPrices } from './priceLockStore';
@@ -55,6 +57,14 @@ export interface SendCandidateRow {
   item_count: number;
   public_token: string | null;
   terms_snapshot: string | null;
+  /**
+   * For a `draft` row, the first incomplete item's message (spec
+   * 2026-11-02, e.g. `Item 3 (Kitchen): choose a control option.`), or
+   * null when every item is complete. Always null for a row that is not a
+   * draft: it left draft complete and is never re-judged. Computed by the
+   * orchestrator's read so {@link planSelection} stays pure.
+   */
+  incomplete: string | null;
 }
 
 /**
@@ -81,7 +91,8 @@ export interface SelectionPlan {
  * `customerId`, the row is `draft` or `sent` (a confirmed or `expired`
  * status never is), its `expiry_date` is not before `today` (the same
  * "active" rule as `countActiveEstimates`: expiry on or after today), and
- * it has at least one line item. Ids are walked in the caller's order and
+ * it has at least one line item, and — for a draft — none of its items is
+ * incomplete (`incomplete`, spec 2026-11-02). Ids are walked in the caller's order and
  * the FIRST failure is returned, so the 400 the route sends names one
  * problem at a time. A repeated id is counted once.
  *
@@ -129,6 +140,12 @@ export function planSelection(
     }
     if (r.item_count === 0) {
       return { error: `Estimate ${r.order_number} has no line items and cannot be sent.` };
+    }
+    // The leave-draft gate (spec 2026-11-02): an incomplete item may exist
+    // only on a draft, so a draft holding one refuses the WHOLE selection
+    // — no email, no partial send — naming the estimate and the item.
+    if (r.status === 'draft' && r.incomplete) {
+      return { error: `Estimate ${r.order_number} is incomplete and cannot be sent — ${r.incomplete}` };
     }
 
     (r.status === 'draft' ? plan.toSend : plan.toAnnounce).push(r);
@@ -208,23 +225,33 @@ export type EstimateSendResult =
   | { data: EstimateSendReport }
   | { error: string; status: 400 | 404 | 500 | 502 };
 
-/** The order columns a candidate row is read from (`line_items` collapses to a count). */
+/**
+ * The order columns a candidate row is read from. `line_items` collapses
+ * to a count and, for a draft, to its first incomplete item; the embedded
+ * columns are exactly the ones the completeness rule reads, plus
+ * `position` for "Item N". A literal string because supabase-js parses
+ * the select at the type level.
+ */
 const CANDIDATE_SELECT =
-  'id, order_number, title, customer_id, status, expiry_date, public_token, terms_snapshot, line_items(id)';
+  'id, order_number, title, customer_id, status, expiry_date, public_token, terms_snapshot, line_items(id, item_type, position, room_name, blinds_type, panels, height_cm, material_id, cassette_id, bottom_rail_id, control_id, installation_id, attributes)';
 
 /**
  * Reads the selected orders and shapes them into {@link SendCandidateRow}s
  * for {@link planSelection}.
  *
- * `line_items(id)` is embedded purely to collapse into `item_count`: the
- * send never needs the items themselves, and PostgREST cannot filter on
- * an embedded count, so "an empty estimate cannot be sent" is enforced in
- * `planSelection` rather than in this query. Rows are NOT filtered by
+ * `line_items` is embedded to collapse into `item_count` and, for each
+ * DRAFT, into `incomplete` (one scoping load for the whole selection, via
+ * `incompleteDraftMessages`): the send never writes the items, and
+ * PostgREST cannot filter on an embedded count, so "an empty estimate
+ * cannot be sent" and "an incomplete draft cannot be sent" are enforced
+ * in `planSelection` rather than in this query. Strictly read-only, and
+ * it runs before any token is minted. Rows are NOT filtered by
  * customer or status here either — every such rule is `planSelection`'s,
  * so a mismatch produces its user-facing sentence instead of a row that
  * silently went missing.
  *
- * @returns the candidates, or the database's own message for a 500
+ * @returns the candidates, or the database's own message for a 500 — a
+ *          failed scoping read included, so no draft goes out unjudged
  */
 async function readSendCandidates(
   sb: SupabaseClient,
@@ -232,17 +259,34 @@ async function readSendCandidates(
 ): Promise<{ rows: SendCandidateRow[] } | { error: string }> {
   const { data, error } = await sb.from('orders').select(CANDIDATE_SELECT).in('id', orderIds);
   if (error) return { error: error.message };
+  const orders = (data ?? []).map((row) => ({
+    row,
+    // Position order, so the message's "Item N" matches the editor.
+    items: [...((row.line_items ?? []) as Array<CompletenessInput & { position?: number }>)].sort(
+      (a, b) => (a.position ?? 0) - (b.position ?? 0)
+    ),
+  }));
+  let incomplete: Map<string, string>;
+  try {
+    incomplete = await incompleteDraftMessages(
+      sb,
+      orders.map(({ row, items }) => ({ id: String(row.id), status: String(row.status), items }))
+    );
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Could not check the estimates' };
+  }
   return {
-    rows: (data ?? []).map((row) => ({
+    rows: orders.map(({ row, items }) => ({
       id: row.id,
       order_number: row.order_number,
       title: row.title,
       customer_id: row.customer_id,
       status: row.status,
       expiry_date: row.expiry_date,
-      item_count: (row.line_items ?? []).length,
+      item_count: items.length,
       public_token: row.public_token,
       terms_snapshot: row.terms_snapshot,
+      incomplete: incomplete.get(String(row.id)) ?? null,
     })),
   };
 }
@@ -404,7 +448,10 @@ async function restampAnnounced(
  *   1. the customer must exist, not be soft-deleted, and have an email
  *      address;
  *   2. the selection is validated by {@link planSelection}, whose first
- *      rejection becomes the 400 — nothing is written on a bad selection;
+ *      rejection becomes the 400 — nothing is written on a bad selection,
+ *      and that includes a selected draft holding an incomplete item
+ *      (spec 2026-11-02): the whole request is refused before any token,
+ *      email, status, freeze or revision;
  *   3. tokens are minted BEFORE the email, because a token announces
  *      nothing and the email needs the link in it (the `/pdf` download
  *      already mints the same way);

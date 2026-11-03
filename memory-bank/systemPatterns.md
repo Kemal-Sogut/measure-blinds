@@ -381,9 +381,33 @@ section as the reference implementation for future collapsible UI.
   told" signal and is not hidden by a dismissal. Reverting to `draft` clears stamps but keeps
   revisions; the banner is hidden on drafts (`holdsPriceLock` gate).
 
+## Incomplete draft items (2026-11-02)
+- **LOCKED: incomplete items only exist on drafts.** Gates (the multi-estimate send, `/mark-sent`, `/confirm`,
+  `/status` to sent-or-later, `GET /pdf`) run ONLY while the order's CURRENT status is `draft`, before any side
+  effect — token, email, freeze, `stampSent` (quoted stamp + `order_revisions` row), status write. A sent or
+  confirmed order is never re-judged against today's Settings scoping, and the editor's chip / total note show
+  on drafts only for the same reason. A new route that moves an order out of draft MUST call the gate first.
+- **Multi-estimate send gate.** `readSendCandidates` (`lib/estimateSend.ts`) judges every selected draft in one
+  scoping load (`incompleteDraftMessages`) and `planSelection` refuses the whole selection on the first
+  incomplete draft, naming estimate and item, in the same style as its other refusals. The picker reads
+  `incomplete_items` from `GET /api/customers/:id/sendable-estimates` and cannot tick such a draft (`isSendable`).
+- **Completeness vs. sent-estimate immunity.** A grandfathered row (`prior` in `resolveLineItems`) and an
+  already-quoted draft (`isAlreadyQuoted`, web `draftScope`) are judged with NO hardware slot required — the
+  "used slot left empty" half of the old slot gate lives in the completeness rule now, so it must honour the
+  same exemption. Measurements, material and required attributes are still judged.
+- `lib/lineItemCompleteness.ts` (api and web twins, byte-identical code and tests) is the single rule for what
+  is missing; messages are `Item N (Room): choose a <thing>.` Do not re-implement the check in a component or a
+  route. A type's required attributes come from `BaseBlindType.requiredAttributes`.
+- An incomplete blind is stored at `line_total 0` (add-ons and override kept) via
+  `resolveLineItems(..., allowIncomplete)`; it never previews a price (`blindDraftInputs` returns null) and is
+  excluded from Material usage. Every `line_items` insert row still carries the same column set.
+- Reads annotate (`incomplete_items`, per-line `missing_fields`); list counts chunk ids by 100 and page 1000 rows.
+- Money surfaces never show a partial total for an open draft: lists show `IncompleteBadge`, Present shows
+  "Total available once every item is complete."
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
-2. **Send flow:** (estimate page: Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked) → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices
+2. **Send flow:** (estimate page: incomplete-draft pre-check, then Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked; an incomplete draft listed but not tickable) → Worker refuses the whole send if a selected draft is incomplete → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices, then `stampSent`
 3. **Customer confirm:** Email link → Public view → Confirm → status=awaiting_payment → Notification email
 4. **Reverse confirm (user only):** Order detail → Reverse Confirmation → status back to sent
 5. **Payment:** Order detail → Record Payment → ledger row → status=in_progress → balance updates → PDF now an Invoice

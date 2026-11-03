@@ -80,6 +80,16 @@ describe('toDuplicateInput', () => {
     expect(input.line_items[0].unit_price).toBeUndefined();
   });
 
+  it('carries a blank height and blank panels through as null', () => {
+    const out = toDuplicateInput(
+      order([
+        { item_type: 'blind', position: 0, room_name: '', blinds_type: '', panels: [null, 70], height_cm: null, material_id: null, quantity: 1, addons: [], attributes: {} },
+      ])
+    ) as { line_items: Array<Record<string, unknown>> };
+    expect(out.line_items[0].height_cm).toBeNull();
+    expect(out.line_items[0].panels).toEqual([null, 70]);
+  });
+
   it('orders items by position, not by however they arrived', () => {
     const item = (position: number, room: string) => ({
       item_type: 'blind',

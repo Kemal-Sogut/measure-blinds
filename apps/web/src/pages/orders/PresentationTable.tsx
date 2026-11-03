@@ -36,7 +36,8 @@
  * Columns for option types no visible blind carries are dropped entirely
  * rather than rendered full of dashes: an order of plain rollers should not
  * present a customer with four empty columns. That is independent of the
- * toggle — a column survives on whether any row NAMES an option, not on
+ * toggle — a column survives on whether any row NAMES an option, or has that
+ * choice still open on a draft (so the cell can say "To be decided"), not on
  * whether its price is showing. The table scrolls inside its own container
  * so the page body never scrolls sideways on a tablet.
  */
@@ -51,7 +52,18 @@ import {
 } from '../../lib/optionBreakdown';
 import { Td, Tf, Th, UnitPrice } from './presentationCells';
 import { money } from './presentationMoney';
+import { SLOT_NOUNS, measuredWidths } from '../../lib/lineItemCompleteness';
 import type { LineItem } from '../../types';
+
+/** Amber placeholder for a choice still open on a draft (spec 2026-11-02). */
+const TBD = <span className="font-medium text-amber-700">To be decided</span>;
+
+/** True when the line's open fields include this option column. */
+function columnOpen(missing: ReadonlySet<string>, column: OptionColumn): boolean {
+  if (column === 'material') return missing.has('material');
+  if (column === 'color') return false;
+  return missing.has(SLOT_NOUNS[column]);
+}
 
 /**
  * A blind's size for a customer: `120 × 210`, or `(120 + 80) × 210` when
@@ -59,7 +71,7 @@ import type { LineItem } from '../../types';
  * as arithmetic with the wrong precedence.
  */
 function size(item: LineItem): string {
-  const widths = item.panels.filter((w) => w > 0);
+  const widths = measuredWidths(item.panels);
   if (widths.length === 0 || item.height_cm === null) return '—';
   const width = widths.length > 1 ? `(${widths.join(' + ')})` : `${widths[0]}`;
   return `${width} × ${item.height_cm}`;
@@ -100,18 +112,25 @@ export default function PresentationTable({
   /**
    * Rows, their surviving column set, and every footer figure — recomputed
    * only when the visible items change. A column survives when at least one
-   * visible row fills it, so the table narrows as the filters narrow.
+   * visible row fills it OR has that choice still open (so the cell can read
+   * "To be decided"), so the table narrows as the filters narrow.
    *
    * `showBreakdown` is NOT a dependency here: every figure below is
    * computed either way and the toggle decides what is rendered. Folding it
    * in would recompute the whole table on a switch flip for no change in
    * result, and would make `hasAddons` mean two things at once.
    */
-  const { rows, columns, totals, addonsTotal, overall, quantityTotal, hasAddons } =
+  const { rows, columns, totals, addonsTotal, overall, quantityTotal, hasAddons, anyOpen } =
     useMemo(() => {
-      const rows = items.map((item) => ({ item, breakdown: describeLineBreakdown(item) }));
+      const rows = items.map((item) => ({
+        item,
+        breakdown: describeLineBreakdown(item),
+        missing: new Set(item.missing_fields ?? []),
+      }));
       const columns = OPTION_COLUMNS.filter((column) =>
-        rows.some((row) => row.breakdown.cells[column].name !== null)
+        rows.some(
+          (row) => row.breakdown.cells[column].name !== null || columnOpen(row.missing, column)
+        )
       );
       const totals = new Map<OptionColumn, number>();
       for (const column of columns) {
@@ -131,6 +150,7 @@ export default function PresentationTable({
         overall: Math.round(rows.reduce((sum, row) => sum + row.breakdown.lineTotal, 0) * 100) / 100,
         quantityTotal: rows.reduce((sum, row) => sum + (Number(row.item.quantity) || 0), 0),
         hasAddons: rows.some((row) => row.breakdown.addons !== 0),
+        anyOpen: rows.some((row) => row.missing.size > 0),
       };
     }, [items]);
 
@@ -158,35 +178,42 @@ export default function PresentationTable({
           </tr>
         </thead>
         <tbody className="divide-y divide-border-light">
-          {rows.map(({ item, breakdown }, i) => (
-            <tr key={item.id}>
-              <Td>{item.room_name || `Blind ${i + 1}`}</Td>
-              <Td>{item.blinds_type || '—'}</Td>
-              <Td right mono>
-                {size(item)}
-              </Td>
-              {columns.map((column) => (
-                <Td key={column}>
-                  <OptionValue cell={breakdown.cells[column]} showBreakdown={showBreakdown} />
-                </Td>
-              ))}
-              <Td right mono>
-                {item.quantity}
-              </Td>
-              <Td right mono>
-                <UnitPrice item={item} />
-              </Td>
-              {showAddons && (
+          {rows.map(({ item, breakdown, missing }, i) => {
+            const open = missing.size > 0;
+            return (
+              <tr key={item.id}>
+                <Td>{item.room_name || `Blind ${i + 1}`}</Td>
+                <Td>{missing.has('blind type') ? TBD : item.blinds_type || '—'}</Td>
                 <Td right mono>
-                  {breakdown.addons === 0 ? '' : money(breakdown.addons)}
+                  {missing.has('width') || missing.has('height') ? TBD : size(item)}
                 </Td>
-              )}
-              <Td right mono>
-                {money(breakdown.lineTotal)}
-              </Td>
-              <Td>{item.note || '—'}</Td>
-            </tr>
-          ))}
+                {columns.map((column) => (
+                  <Td key={column}>
+                    {columnOpen(missing, column) ? (
+                      TBD
+                    ) : (
+                      <OptionValue cell={breakdown.cells[column]} showBreakdown={showBreakdown} />
+                    )}
+                  </Td>
+                ))}
+                <Td right mono>
+                  {item.quantity}
+                </Td>
+                <Td right mono>
+                  {open ? '' : <UnitPrice item={item} />}
+                </Td>
+                {showAddons && (
+                  <Td right mono>
+                    {open || breakdown.addons === 0 ? '' : money(breakdown.addons)}
+                  </Td>
+                )}
+                <Td right mono>
+                  {open ? '' : money(breakdown.lineTotal)}
+                </Td>
+                <Td>{item.note || '—'}</Td>
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr className="border-t-2 border-border bg-surface-muted">
@@ -200,15 +227,15 @@ export default function PresentationTable({
                 figure columns, so a total sits under the choices it sums. */}
             {columns.map((column) => (
               <Tf key={column}>
-                {showBreakdown && totals.get(column) ? money(totals.get(column)) : ''}
+                {!anyOpen && showBreakdown && totals.get(column) ? money(totals.get(column)) : ''}
               </Tf>
             ))}
             <Tf right>{quantityTotal}</Tf>
             {/* Unit prices summed across rows is not a number that means
                 anything to anyone; the column exists per-row only. */}
             <Tf>{''}</Tf>
-            {showAddons && <Tf right>{addonsTotal ? money(addonsTotal) : ''}</Tf>}
-            <Tf right>{money(overall)}</Tf>
+            {showAddons && <Tf right>{!anyOpen && addonsTotal ? money(addonsTotal) : ''}</Tf>}
+            <Tf right>{anyOpen ? '' : money(overall)}</Tf>
             <Tf>{''}</Tf>
           </tr>
         </tfoot>

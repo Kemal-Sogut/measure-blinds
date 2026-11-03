@@ -202,6 +202,13 @@ export interface Order {
    * no revision, or the read failed. Order-detail reads only.
    */
   unsent_changes?: string[] | null;
+  /**
+   * How many items are still incomplete — set on drafts by every list and
+   * detail read, `0` otherwise. Non-zero means the order cannot be sent
+   * yet and its stored total leaves those items out, so lists show an
+   * "Incomplete" badge instead of the total.
+   */
+  incomplete_items?: number;
   terms_snapshot: string | null;
   public_token: string | null;
   sent_at: string | null;
@@ -364,7 +371,14 @@ export interface LineItem {
   hidden: boolean;
   room_name: string;
   blinds_type: string;
-  panels: number[];
+  /** Panel widths in cm; a draft may hold a blank (`null`) panel — read through `measuredWidths`. */
+  panels: (number | null)[];
+  /**
+   * Open fields on a DRAFT's incomplete blind (spec 2026-11-02), set by
+   * the Worker's detail reads; `[]` on every complete item and on every
+   * non-draft order. The Present view renders these as "To be decided".
+   */
+  missing_fields?: string[];
   height_cm: number | null;
   material_id: string | null;
   material_name: string | null;
