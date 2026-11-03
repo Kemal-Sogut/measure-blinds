@@ -46,8 +46,9 @@ function blindTypesOf(items: readonly CompletenessInput[]): string[] {
 
 /**
  * The first incomplete item's message for rows already in hand (the
- * order bundle the PDF and send routes load), or null. Costs no query
- * when no row is a blind.
+ * order bundle `GET /pdf` loads), or null. Costs no query when no row is
+ * a blind. The multi-estimate send judges several orders at once and
+ * uses {@link incompleteDraftMessages} instead.
  */
 export async function incompleteMessageFor(
   sb: SupabaseClient,

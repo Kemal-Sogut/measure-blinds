@@ -3,6 +3,10 @@
 **Date:** 2026-11-02
 **Status:** Design approved in conversation; awaiting spec review.
 
+> **Post-merge note (2026-11-03):** the single-estimate `POST /api/orders/:id/send` this spec names was replaced
+> on main by the multi-estimate send (`POST /api/customers/:id/send-estimates`), gated the same way — see
+> `knowledge/history/engine_features.md` 2026-11-02.
+
 ## Problem
 
 A blind line item cannot be saved until every option its type needs is chosen — material,
