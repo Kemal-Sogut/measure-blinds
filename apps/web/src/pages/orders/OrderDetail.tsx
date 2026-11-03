@@ -728,6 +728,12 @@ export default function OrderDetail() {
    * render keys stripped — so "dirty" means an actual edit, not a
    * re-render. Compared against `savedSnapshot`, set on hydrate and after
    * every successful save.
+   *
+   * The four server-owned draft fields (`ServerItemFields`: lock,
+   * previously_quoted, quoted_base, notice_ack_base) are stripped too:
+   * Save never sends them, and `applyServerFields` rewrites them after a
+   * save, a send or a dismissal refetches the order — counting them would
+   * make the leave guard prompt on a page with no unsaved edit.
    */
   const editorSnapshot = useMemo(
     () =>
@@ -738,10 +744,19 @@ export default function OrderDetail() {
         title,
         discountType,
         discountValue,
-        items: items.map(({ key: _key, ...rest }) => ({
-          ...rest,
-          addons: rest.addons.map(({ key: _addonKey, ...a }) => a),
-        })),
+        items: items.map(
+          ({
+            key: _key,
+            lock: _lock,
+            previously_quoted: _quoted,
+            quoted_base: _quotedBase,
+            notice_ack_base: _noticeAck,
+            ...rest
+          }) => ({
+            ...rest,
+            addons: rest.addons.map(({ key: _addonKey, ...a }) => a),
+          })
+        ),
       }),
     [customer, orderDate, expiryDate, title, discountType, discountValue, items]
   );
