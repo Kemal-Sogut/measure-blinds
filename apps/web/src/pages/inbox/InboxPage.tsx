@@ -17,12 +17,20 @@
  * dot marks a conversation with an unopened incoming email, and a tab
  * gets the same dot while any of its conversations (New or Handled) is
  * unread — All while any conversation is.
+ *
+ * Quick actions at each row's right edge (`RowIconButton`, the same icons
+ * as the Leads page): Handled (tick; green on a handled conversation, where
+ * it moves it back to New) and Delete (bin; asks first, then removes it
+ * from the app only, as Delete conversation on the thread page does).
  */
 
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import toast from 'react-hot-toast';
 import PageHeader from '../../components/PageHeader';
 import { ListSkeleton } from '../../components/Skeleton';
-import { useInboxThreads, useInboxUnread } from '../../hooks/useInbox';
+import RowIconButton, { BinIcon, TickCircleIcon } from '../../components/RowIconButton';
+import { useConfirm } from '../../components/ui';
+import { useDeleteInboxThread, useInboxThreads, useInboxUnread, useUpdateInboxThread } from '../../hooks/useInbox';
 import { displayName } from '../../lib/customerName';
 import type { EmailThreadStatus, EmailThreadSummary } from '../../types';
 import {
@@ -43,8 +51,68 @@ function UnreadDot() {
 }
 
 /**
+ * Handled + Delete icons for one conversation row. Handled toggles
+ * New ⇄ Handled through the same `PUT /api/inbox/:id` the thread page uses;
+ * Delete asks first. Either way the row leaves the current list when the
+ * `['inbox']` queries refetch.
+ */
+function ThreadQuickActions({ thread }: { thread: EmailThreadSummary }) {
+  const update = useUpdateInboxThread();
+  const remove = useDeleteInboxThread();
+  const askConfirm = useConfirm();
+  const handled = thread.status === 'handled';
+  const busy = update.isPending || remove.isPending;
+
+  function toggleHandled() {
+    update.mutate(
+      { id: thread.id, update: { status: handled ? 'new' : 'handled' } },
+      {
+        onSuccess: () => toast.success(handled ? 'Moved back to New' : 'Marked as handled'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  }
+
+  async function handleDelete() {
+    const ok = await askConfirm({
+      title: 'Delete this conversation?',
+      message: 'It is removed from the app but stays in Titan. A new reply will start a new conversation.',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!ok) return;
+    remove.mutate(thread.id, {
+      onSuccess: () => toast.success('Conversation deleted'),
+      onError: (e) => toast.error(e.message),
+    });
+  }
+
+  return (
+    <div className="flex shrink-0 items-center gap-0.5 py-2 pr-2">
+      <RowIconButton
+        label={handled ? 'Move back to New' : 'Mark handled'}
+        tone="success"
+        active={handled}
+        disabled={busy}
+        onClick={toggleHandled}
+      >
+        <TickCircleIcon />
+      </RowIconButton>
+      <RowIconButton label="Delete conversation" tone="danger" disabled={busy} onClick={() => void handleDelete()}>
+        <BinIcon />
+      </RowIconButton>
+    </div>
+  );
+}
+
+/**
  * One conversation row; a blue dot and bold name while it has an unopened
  * email. `showCategory` adds the category chip (the All tab mixes them).
+ *
+ * The card is a flex row: the open-conversation button (`min-w-0 flex-1`,
+ * so its truncating lines shrink) and the fixed 2 × 36px quick-action group
+ * beside it. The group is outside the button because a button cannot nest
+ * inside another.
  */
 function ThreadRow({
   thread,
@@ -57,47 +125,52 @@ function ThreadRow({
 }) {
   const unread = thread.unread;
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex w-full flex-col gap-0.5 rounded-xl border border-border-light bg-surface p-3 text-left shadow-sm hover:bg-surface-muted"
-    >
-      <span className="flex items-baseline justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-2">
-          {unread && <UnreadDot />}
-          <span className={`truncate text-sm text-text-primary ${unread ? 'font-bold' : 'font-semibold'}`}>
-            {threadTitle(thread)}
+    <div className="flex items-start rounded-xl border border-border-light bg-surface shadow-sm">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 flex-col gap-0.5 rounded-l-xl p-3 pr-1 text-left hover:bg-surface-muted"
+      >
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2">
+            {unread && <UnreadDot />}
+            <span className={`truncate text-sm text-text-primary ${unread ? 'font-bold' : 'font-semibold'}`}>
+              {threadTitle(thread)}
+            </span>
+            {unread && <span className="sr-only">(unread)</span>}
           </span>
-          {unread && <span className="sr-only">(unread)</span>}
+          <time dateTime={thread.last_message_at} className="shrink-0 text-[12px] text-text-muted">
+            {formatThreadTime(thread.last_message_at)}
+          </time>
         </span>
-        <time dateTime={thread.last_message_at} className="shrink-0 text-[12px] text-text-muted">
-          {formatThreadTime(thread.last_message_at)}
-        </time>
-      </span>
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="truncate text-[13px] font-medium text-text-secondary">{thread.subject || '(no subject)'}</span>
-        {thread.message_count > 1 && (
-          <span className="shrink-0 rounded-pill bg-surface-sunken px-1.5 text-[11px] font-semibold text-text-secondary">
-            {thread.message_count}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-[13px] font-medium text-text-secondary">
+            {thread.subject || '(no subject)'}
+          </span>
+          {thread.message_count > 1 && (
+            <span className="shrink-0 rounded-pill bg-surface-sunken px-1.5 text-[11px] font-semibold text-text-secondary">
+              {thread.message_count}
+            </span>
+          )}
+        </span>
+        <span className="truncate text-[13px] text-text-muted">{snippetLine(thread)}</span>
+        {(showCategory || thread.customer) && (
+          <span className="mt-1 flex flex-wrap gap-1.5">
+            {showCategory && (
+              <span className="rounded-pill bg-surface-sunken px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
+                {CATEGORY_LABELS[thread.category]}
+              </span>
+            )}
+            {thread.customer && (
+              <span className="rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
+                {displayName(thread.customer)}
+              </span>
+            )}
           </span>
         )}
-      </span>
-      <span className="truncate text-[13px] text-text-muted">{snippetLine(thread)}</span>
-      {(showCategory || thread.customer) && (
-        <span className="mt-1 flex flex-wrap gap-1.5">
-          {showCategory && (
-            <span className="rounded-pill bg-surface-sunken px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
-              {CATEGORY_LABELS[thread.category]}
-            </span>
-          )}
-          {thread.customer && (
-            <span className="rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
-              {displayName(thread.customer)}
-            </span>
-          )}
-        </span>
-      )}
-    </button>
+      </button>
+      <ThreadQuickActions thread={thread} />
+    </div>
   );
 }
 

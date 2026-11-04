@@ -9,8 +9,10 @@
  *
  * Every lead is already linked to a customer when it arrives (created, or
  * matched by email), so this page is a work queue, not a conversion step.
- * Staff call or email the visitor, then mark the lead Contacted, or Archive
- * spam and duplicates.
+ * Staff propose an in-home estimate visit (one dialog: day, time, send; the
+ * lead is then handled), or call and tick it Handled, or delete spam and
+ * duplicates, all from the icons at the right of each card. New / Handled
+ * match the Inbox.
  *
  * The filter (`?status=`, default New) and the page (`?page=`) live in the
  * URL, as on the Notifications page, so opening a customer and pressing
@@ -35,8 +37,7 @@ function pageFromParams(params: URLSearchParams): number {
 /** What the list says when a filter has nothing in it. */
 const EMPTY_TEXT: Record<LeadFilter, string> = {
   new: 'No new leads. Requests from the website form show up here.',
-  contacted: 'No contacted leads.',
-  archived: 'No archived leads.',
+  handled: 'No handled leads.',
   all: 'No leads yet. Requests from the website form show up here.',
 };
 

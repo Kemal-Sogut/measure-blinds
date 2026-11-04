@@ -768,11 +768,13 @@ export interface AppNotification {
 }
 
 /**
- * Where a website lead is in the staff workflow (migration 52 CHECK).
- * There is no "converted" state, because every lead is linked to a
- * customer from the moment it arrives.
+ * Where a website lead is in the staff workflow (migration 53 CHECK), the
+ * same two states as an Inbox conversation: `new` is the work queue,
+ * `handled` is dealt with (by hand, or by sending a visit proposal). Spam
+ * is deleted rather than given a status. There is no "converted" state,
+ * because every lead is linked to a customer from the moment it arrives.
  */
-export type LeadStatus = 'new' | 'contacted' | 'archived';
+export type LeadStatus = 'new' | 'handled';
 
 /**
  * One row of `GET /api/leads`: exactly what the visitor typed into the
@@ -813,6 +815,21 @@ export interface Lead {
   customer: { id: string; first_name: string; last_name: string; deleted_at: string | null } | null;
   /** When the shop email went out; null if it failed or has not been sent. */
   email_sent_at: string | null;
+  /** When the lead was last marked handled; null while it is `new`. */
+  handled_at: string | null;
+  /** The estimate visit proposed from this lead (Propose visit), if any. */
+  appointment_id: string | null;
+  /**
+   * That visit's current time and the customer's answer (`proposed` until
+   * they confirm or ask for another time). Null when none was proposed, or
+   * the visit was removed from the calendar.
+   */
+  appointment: {
+    id: string;
+    appointment_date: string;
+    appointment_time: string;
+    status: AppointmentStatus;
+  } | null;
   created_at: string;
   updated_at: string;
 }

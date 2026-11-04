@@ -252,7 +252,7 @@
       '<div><h2 class="step-title" id="t4">Thanks, <span data-first></span>! Your request is in.</h2>' +
       '<p class="step-sub" style="margin:0">Here’s what happens next.</p></div></div>' +
       '<ol class="next">' +
-      '<li><strong>We’ll reach out within 1 business day</strong><span>By phone or text at <b data-phone-out></b> to pick a time that suits you.</span></li>' +
+      '<li><strong>We’ll reach out within 1 business day</strong><span>By email at <b data-email-out></b> or text message at <b data-phone-out></b> to pick a time that suits you.</span></li>' +
       '<li><strong>Free in-home consultation</strong><span>We bring samples, measure every window and answer your questions. No obligation.</span></li>' +
       '<li><strong>Your custom quote</strong><span>Made to measure for your windows and professionally installed.</span></li>' +
       '</ol>' +
@@ -685,6 +685,7 @@
 
     function onSuccess(body) {
       $('[data-first]').textContent = body.first_name;
+      $('[data-email-out]').textContent = body.email;
       $('[data-phone-out]').textContent = body.phone;
       $$('.steps li').forEach(function (li) { li.classList.add('is-done'); });
       host.dispatchEvent(new CustomEvent('bn:lead-submitted', { bubbles: true, detail: { coverings: body.coverings, window_count: body.window_count } }));

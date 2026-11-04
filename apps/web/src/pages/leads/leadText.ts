@@ -14,18 +14,26 @@
  * boundary.
  */
 
-import type { Lead, LeadStatus } from '../../types';
+import { format } from 'date-fns';
+import type { AppointmentStatus, Lead, LeadStatus } from '../../types';
 import type { LeadFilter } from '../../hooks/useLeads';
+import { fromIsoDate, visitWindow } from './visitTime';
 
-/** Pill / chip label per status. */
+/** Pill / chip label per status. Same words as the Inbox. */
 export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
   new: 'New',
-  contacted: 'Contacted',
-  archived: 'Archived',
+  handled: 'Handled',
 };
 
 /** Filter chips in display order. "New" comes first because it is the page's default. */
-export const LEAD_FILTERS: LeadFilter[] = ['new', 'contacted', 'archived', 'all'];
+export const LEAD_FILTERS: LeadFilter[] = ['new', 'handled', 'all'];
+
+/** The customer's answer to a proposed visit, as the lead card says it. */
+export const VISIT_STATUS_TEXT: Record<AppointmentStatus, string> = {
+  proposed: 'Waiting for their reply',
+  confirmed: 'Confirmed by the customer',
+  change_requested: 'They asked for another time',
+};
 
 /** Covering ids → labels, matching `COVERS` in `public/embed/lead-form.js`. Unknown ids pass through. */
 export const COVERING_LABELS: Record<string, string> = {
@@ -83,6 +91,16 @@ export function customerNote(lead: Pick<Lead, 'customer' | 'customer_match'>): s
  */
 export function emailMissing(lead: Pick<Lead, 'email_sent_at' | 'created_at'>, now = Date.now()): boolean {
   return !lead.email_sent_at && now - new Date(lead.created_at).getTime() > 2 * 60_000;
+}
+
+/**
+ * "Fri, Nov 6 · 10:00 AM – 11:00 AM" for the visit proposed from a lead, or
+ * '' when there is none (never proposed, or removed from the calendar).
+ */
+export function visitLine(lead: Pick<Lead, 'appointment'>): string {
+  const a = lead.appointment;
+  if (!a) return '';
+  return `${format(fromIsoDate(a.appointment_date), 'EEE, MMM d')} · ${visitWindow(a.appointment_time.slice(0, 5))}`;
 }
 
 /** The page the form was on, shown without the protocol or a trailing slash. '' when unknown. */

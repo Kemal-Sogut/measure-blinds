@@ -31,6 +31,9 @@ its backend. Spec `knowledge/specs/2026-11-04-website-lead-form-design.md` (supe
   Customers) with dot + count; Notifications row "New website lead" → `/leads`. Hooks `hooks/useLeads.ts` poll 60 s.
 - **Embed:** optional message box on step 2 (shown in the review), `fill_ms`, production fallback for the stylesheet
   URL when an optimiser hides `document.currentScript`, server error text shown on 400 (see bug_fixes 2026-11-04).
+  The confirmation step's first "what happens next" item reads "We'll reach out within 1 business day: by email at
+  <their email> or text message at <their phone>" (was "by phone or text"); long emails wrap
+  (`.next b { overflow-wrap: anywhere }`), checked at 1280 and 375 px with a 90-character address.
 - **Verified:** api 990 tests / web 656 tests, tsc clean, oxlint 0 warnings. Harness (deleted): Leads page in the
   real `Layout` at 1280 / 768 / 375 px with a 79-char name, 90-char email, 90-char unbroken message, all coverings,
   matched + created + deleted + null customer, unsent email; cards = container width, `scrollWidth == clientWidth`,
