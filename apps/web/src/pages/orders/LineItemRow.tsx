@@ -246,7 +246,7 @@ function RowMenu({
               onClick={() => choose(onToggleHidden)}
               disabled={postConfirm}
               title={postConfirm ? 'Visibility can only be changed before the order is confirmed' : undefined}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-13px text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             >
               {hidden ? 'Show' : 'Hide'}
             </button>
@@ -254,7 +254,7 @@ function RowMenu({
               type="button"
               role="menuitem"
               onClick={() => choose(onDuplicate)}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-text-primary hover:bg-surface-muted"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-13px text-text-primary hover:bg-surface-muted"
             >
               Duplicate
             </button>
@@ -263,7 +263,7 @@ function RowMenu({
               role="menuitem"
               onClick={() => choose(onMoveUp)}
               disabled={isFirst}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-13px text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             >
               Move up
             </button>
@@ -272,7 +272,7 @@ function RowMenu({
               role="menuitem"
               onClick={() => choose(onMoveDown)}
               disabled={isLast}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-13px text-text-primary hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
             >
               Move down
             </button>
@@ -464,7 +464,7 @@ export default function LineItemRow({
             struck price only imply: this line is on
             no document and in no total. */}
         {item.hidden && (
-          <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
+          <span className="mt-0.5 shrink-0 rounded-full border border-border px-2 py-0.5 text-10px font-semibold uppercase tracking-wide text-text-muted sm:mt-0">
             Hidden
           </span>
         )}
@@ -515,7 +515,7 @@ export default function LineItemRow({
             lets the intrinsic width collapse, so the
             card can never exceed its column.
           */}
-          <span className="min-w-0 flex-1 wrap-anywhere text-[13px] text-text-primary">
+          <span className="min-w-0 flex-1 wrap-anywhere text-13px text-text-primary">
             {name}
             {/*
               The blind type's own inputs, formatted by
@@ -552,7 +552,7 @@ export default function LineItemRow({
             */}
             {missing.length > 0 && (
               <span className="mt-1 block text-xs text-amber-800">
-                <span className="mr-1.5 inline-block whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide">
+                <span className="mr-1.5 inline-block whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 align-middle text-10px font-semibold uppercase tracking-wide">
                   Incomplete
                 </span>
                 {missing.join(', ')}
@@ -572,7 +572,7 @@ export default function LineItemRow({
           original on the documents, not this.
         */}
         <span
-          className={`flex shrink-0 items-center gap-1.5 font-mono text-[13px] text-text-primary${item.hidden ? ' line-through' : ''}`}
+          className={`flex shrink-0 items-center gap-1.5 font-mono text-13px text-text-primary${item.hidden ? ' line-through' : ''}`}
         >
           {price ? `$${price.total.toFixed(2)}` : '—'}
           {price && price.unit !== price.base && (

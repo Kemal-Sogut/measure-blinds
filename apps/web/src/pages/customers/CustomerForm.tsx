@@ -225,7 +225,7 @@ export default function CustomerForm() {
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
-            className="h-11 rounded-md border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
+            className="h-11 rounded-md border border-border-input bg-surface text-13px font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
           >
             {remove.isPending ? 'Deleting…' : 'Delete Customer'}
           </button>

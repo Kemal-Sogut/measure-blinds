@@ -30,21 +30,21 @@ export default function CustomerAppointmentsCard({ customerId }: { customerId: s
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border-light bg-surface p-4 shadow-md">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[15px] font-bold text-text-primary">Customer's appointments</h3>
+        <h3 className="text-15px font-bold text-text-primary">Customer's appointments</h3>
         <Link
           to="/calendar"
-          className="flex h-9 items-center rounded-md border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken"
+          className="flex h-9 items-center rounded-md border border-border-input px-3 text-13px font-medium text-text-secondary hover:bg-surface-sunken"
         >
           Open calendar
         </Link>
       </div>
       {!customerId && (
-        <p className="text-[13px] text-text-muted">Pick a customer to see their appointments.</p>
+        <p className="text-13px text-text-muted">Pick a customer to see their appointments.</p>
       )}
-      {isLoading && <p className="text-[13px] text-text-muted">Loading appointments…</p>}
-      {error && <p className="text-[13px] text-danger">{error.message}</p>}
+      {isLoading && <p className="text-13px text-text-muted">Loading appointments…</p>}
+      {error && <p className="text-13px text-danger">{error.message}</p>}
       {data && data.length === 0 && (
-        <p className="text-[13px] text-text-muted">No appointments booked for this customer.</p>
+        <p className="text-13px text-text-muted">No appointments booked for this customer.</p>
       )}
       {data && data.length > 0 && (
         <div className="flex flex-col gap-2">

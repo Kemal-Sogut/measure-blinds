@@ -274,7 +274,7 @@ export function OrderDatesCard({
               type="button"
               onClick={() => onExpiryPreset(p.id)}
               aria-pressed={expiryPreset === p.id}
-              className={`h-11 rounded-md border px-1 text-[13px] font-medium ${
+              className={`h-11 rounded-md border px-1 text-13px font-medium ${
                 expiryPreset === p.id
                   ? 'border-brand-600 bg-brand-100 text-brand-600'
                   : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'

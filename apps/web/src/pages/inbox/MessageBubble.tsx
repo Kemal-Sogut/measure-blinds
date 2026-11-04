@@ -45,13 +45,13 @@ export default function MessageBubble({ message }: { message: EmailMessage }) {
   return (
     <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
       <div className={`flex max-w-[85%] flex-col gap-1 sm:max-w-[75%] ${mine ? 'items-end' : 'items-start'}`}>
-        <div className="flex items-baseline gap-2 px-1 text-[12px] text-text-muted">
+        <div className="flex items-baseline gap-2 px-1 text-12px text-text-muted">
           <span className="font-semibold text-text-secondary">{senderLabel(message)}</span>
           <time dateTime={message.sent_at}>{format(new Date(message.sent_at), 'MMM d, h:mm a')}</time>
         </div>
 
         <div
-          className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2.5 text-[14px] leading-5 shadow-sm ${
+          className={`whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2.5 text-14px leading-5 shadow-sm ${
             mine
               ? 'rounded-br-md bg-brand-600 text-white'
               : 'rounded-bl-md border border-border-light bg-surface text-text-primary'
@@ -65,14 +65,14 @@ export default function MessageBubble({ message }: { message: EmailMessage }) {
                 onClick={() => setShowHistory((v) => !v)}
                 aria-expanded={showHistory}
                 aria-label={showHistory ? 'Hide earlier messages' : 'Show earlier messages'}
-                className={`mt-1 block rounded px-1.5 text-[13px] font-bold leading-4 ${
+                className={`mt-1 block rounded px-1.5 text-13px font-bold leading-4 ${
                   mine ? 'bg-white/20 hover:bg-white/30' : 'bg-surface-sunken text-text-secondary hover:bg-border-light'
                 }`}
               >
                 ···
               </button>
               {showHistory && (
-                <div className={`mt-2 border-t pt-2 text-[13px] ${mine ? 'border-white/30 text-white/80' : 'border-border-light text-text-muted'}`}>
+                <div className={`mt-2 border-t pt-2 text-13px ${mine ? 'border-white/30 text-white/80' : 'border-border-light text-text-muted'}`}>
                   <LinkifiedText text={history} linkClass={linkClass} />
                 </div>
               )}
@@ -81,7 +81,7 @@ export default function MessageBubble({ message }: { message: EmailMessage }) {
         </div>
 
         {message.attachments.length > 0 && (
-          <ul className="flex flex-col gap-0.5 px-1 text-[12px] text-text-muted">
+          <ul className="flex flex-col gap-0.5 px-1 text-12px text-text-muted">
             {message.attachments.map((a, i) => (
               <li key={i}>
                 Attachment: {a.filename} · {formatBytes(a.size)}

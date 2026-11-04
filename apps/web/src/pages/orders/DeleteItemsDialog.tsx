@@ -61,7 +61,7 @@ export default function DeleteItemsDialog({
         </>
       }
     >
-      <p className="text-[14px] text-text-secondary">
+      <p className="text-14px text-text-secondary">
         {single ? (
           <>
             Do you want to delete{' '}

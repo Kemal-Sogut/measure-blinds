@@ -128,7 +128,7 @@ export default function ThreadControls({ thread, onDeleted }: { thread: EmailThr
                   }}
                 >
                   <span className="truncate font-medium text-text-primary">{displayName(c)}</span>
-                  <span className="truncate text-[12px] text-text-muted">{c.email}</span>
+                  <span className="truncate text-12px text-text-muted">{c.email}</span>
                 </button>
               ))}
             </div>

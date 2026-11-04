@@ -137,7 +137,7 @@ export function MaterialUsageTrigger({
     <button
       type="button"
       onClick={onOpen}
-      className="flex min-h-11 w-full items-center justify-between gap-2 rounded-sm border border-border-light bg-surface-sunken px-3 text-left text-[13px] text-text-secondary hover:bg-surface"
+      className="flex min-h-11 w-full items-center justify-between gap-2 rounded-sm border border-border-light bg-surface-sunken px-3 text-left text-13px text-text-secondary hover:bg-surface"
     >
       <span>Material usage</span>
       <span className="flex items-center gap-1 font-mono text-text-primary">
@@ -253,15 +253,15 @@ function MaterialSection({
                 · <span className="font-mono">${row.rate.toFixed(2)}</span> / {unit}
               </span>
             </span>
-            <span className="block text-[12px] text-text-secondary">{lines(row.lineCount)}</span>
+            <span className="block text-12px text-text-secondary">{lines(row.lineCount)}</span>
           </span>
         </label>
-        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+        <span className="shrink-0 font-mono text-13px text-text-primary">
           {row.quantity.toFixed(2)} {unit}
         </span>
       </div>
 
-      <ul className="flex flex-col gap-1 border-t border-border-light pt-1 text-[12px]">
+      <ul className="flex flex-col gap-1 border-t border-border-light pt-1 text-12px">
         {row.lines.map((line) => (
           <li key={line.key}>
             <label className="flex min-h-9 items-center justify-between gap-3">
@@ -366,7 +366,7 @@ export function MaterialUsageDialog({
       }
     >
       <div className="flex flex-col gap-3">
-        <p className="px-1 text-[12px] text-text-secondary">
+        <p className="px-1 text-12px text-text-secondary">
           Total material this order uses, per material and per window. Ticking a window only adds
           it to the selected total below — it changes nothing on the order.
         </p>
@@ -382,13 +382,13 @@ export function MaterialUsageDialog({
           />
         ))}
 
-        <div className="flex items-baseline justify-between gap-3 px-1 text-[13px]">
+        <div className="flex items-baseline justify-between gap-3 px-1 text-13px">
           <span className="text-text-secondary">Total</span>
           <span className="font-mono text-text-primary">{quantityLine(summary.totals)}</span>
         </div>
 
         {summary.excludedCount > 0 && (
-          <p className="px-1 text-[12px] text-text-secondary">
+          <p className="px-1 text-12px text-text-secondary">
             {summary.excludedCount} item{summary.excludedCount === 1 ? '' : 's'} carry no material
             (preset, custom, or incomplete).
           </p>
@@ -398,11 +398,11 @@ export function MaterialUsageDialog({
             it stays readable while the windows being ticked are further
             up a long list. */}
         <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border border-border-light bg-surface px-3 py-2">
-          <span className="text-[13px] text-text-secondary">
+          <span className="text-13px text-text-secondary">
             Selected · {windows(selectedCount)}
           </span>
           <span className="flex items-center gap-2">
-            <span className="font-mono text-[13px] text-text-primary">{selectedLine ?? '—'}</span>
+            <span className="font-mono text-13px text-text-primary">{selectedLine ?? '—'}</span>
             {selectedCount > 0 ? (
               <Button size="sm" variant="ghost" onClick={() => onSelectedChange(new Set())}>
                 Clear

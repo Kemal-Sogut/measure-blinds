@@ -37,7 +37,7 @@ export default function EmptyState({
           </svg>
         )}
       </div>
-      <p className="text-[17px] font-bold text-text-primary">{title}</p>
+      <p className="text-17px font-bold text-text-primary">{title}</p>
       {hint && <p className="max-w-xs text-sm text-text-muted">{hint}</p>}
     </div>
   );

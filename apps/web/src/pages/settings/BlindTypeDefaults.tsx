@@ -264,7 +264,7 @@ function BlindTypeDefaultsCard({
 
   return (
     <section className="rounded-xl border border-border-light bg-surface shadow-md p-4">
-      <h2 className="mb-3 text-[15px] font-bold text-text-primary">{type.name}</h2>
+      <h2 className="mb-3 text-15px font-bold text-text-primary">{type.name}</h2>
       <div className="flex flex-col gap-3.5">
         <fieldset disabled={!hasMaterial || 'material_id' in pendingWrites} className="contents">
           <OptionSelect

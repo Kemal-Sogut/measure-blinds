@@ -50,15 +50,15 @@ function DetailRow({ label, value, href }: { label: string; value: string; href?
         href ? (
           <a
             href={href}
-            className="inline-flex items-center break-words text-[15px] text-brand-600 underline-offset-2 hover:underline"
+            className="inline-flex items-center break-words text-15px text-brand-600 underline-offset-2 hover:underline"
           >
             {text}
           </a>
         ) : (
-          <span className="break-words text-[15px] text-text-primary">{text}</span>
+          <span className="break-words text-15px text-text-primary">{text}</span>
         )
       ) : (
-        <span className="text-[15px] text-text-muted">—</span>
+        <span className="text-15px text-text-muted">—</span>
       )}
     </div>
   );
@@ -72,7 +72,7 @@ export default function CustomerDetailView({ customer }: { customer: Customer })
     <>
       {/* Contact */}
       <section className={SECTION_CLS}>
-        <h2 className="text-[15px] font-bold text-text-primary">Contact</h2>
+        <h2 className="text-15px font-bold text-text-primary">Contact</h2>
         <DetailRow label="First Name" value={customer.first_name ?? ''} />
         <DetailRow label="Last Name" value={customer.last_name ?? ''} />
         <DetailRow label="Email" value={email} href={email ? `mailto:${email}` : undefined} />
@@ -88,7 +88,7 @@ export default function CustomerDetailView({ customer }: { customer: Customer })
 
       {/* Shipping address */}
       <section className={SECTION_CLS}>
-        <h2 className="text-[15px] font-bold text-text-primary">Shipping Address</h2>
+        <h2 className="text-15px font-bold text-text-primary">Shipping Address</h2>
         <DetailRow label="Address Line 1" value={customer.shipping_address_line1 ?? ''} />
         <DetailRow label="Address Line 2" value={customer.shipping_address_line2 ?? ''} />
         <DetailRow label="City" value={customer.shipping_city ?? ''} />
@@ -100,9 +100,9 @@ export default function CustomerDetailView({ customer }: { customer: Customer })
           shipping, because repeating the same five rows under a second
           heading tells the reader nothing. */}
       <section className={SECTION_CLS}>
-        <h2 className="text-[15px] font-bold text-text-primary">Billing Address</h2>
+        <h2 className="text-15px font-bold text-text-primary">Billing Address</h2>
         {customer.billing_same_as_shipping ? (
-          <p className="text-[15px] text-text-secondary">Same as shipping address</p>
+          <p className="text-15px text-text-secondary">Same as shipping address</p>
         ) : (
           <>
             <DetailRow label="Address Line 1" value={customer.billing_address_line1 ?? ''} />

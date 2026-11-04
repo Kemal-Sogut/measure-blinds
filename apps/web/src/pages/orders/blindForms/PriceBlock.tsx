@@ -94,7 +94,7 @@ export function PriceBlock({
           </div>
           {overridden && (
             <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-              <label className="flex items-center gap-2 text-[13px] text-text-secondary">
+              <label className="flex items-center gap-2 text-13px text-text-secondary">
                 <input
                   type="checkbox"
                   checked={adjustments.show_original_price}
@@ -108,7 +108,7 @@ export function PriceBlock({
               <button
                 type="button"
                 onClick={() => onChange({ ...adjustments, unit_price_override: '' })}
-                className="rounded-md border border-border-input px-2.5 py-1.5 text-[13px] text-text-secondary hover:bg-surface-sunken"
+                className="rounded-md border border-border-input px-2.5 py-1.5 text-13px text-text-secondary hover:bg-surface-sunken"
               >
                 Reset to calculated
               </button>
@@ -175,13 +175,13 @@ export function PriceBlock({
               addons: [...adjustments.addons, { key: nextAddonKey(), label: '', price: '' }],
             })
           }
-          className="col-span-2 justify-self-start rounded-md border border-border-input px-2.5 py-1.5 text-[13px] text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+          className="col-span-2 justify-self-start rounded-md border border-border-input px-2.5 py-1.5 text-13px text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
         >
           + Add add-on
         </button>
       </div>
 
-      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-border-light pt-3 text-[13px]">
+      <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 border-t border-border-light pt-3 text-13px">
         <span className="text-text-muted">
           Unit: <span className="font-mono">{show(price?.unit)}</span>
         </span>

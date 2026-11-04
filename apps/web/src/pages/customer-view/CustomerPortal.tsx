@@ -61,7 +61,7 @@ export default function CustomerPortal() {
   if (failure) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface-muted p-6">
-        <p className="max-w-sm text-center text-[15px] text-text-secondary">{failure}</p>
+        <p className="max-w-sm text-center text-15px text-text-secondary">{failure}</p>
       </div>
     );
   }

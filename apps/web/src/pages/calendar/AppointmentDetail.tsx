@@ -112,7 +112,7 @@ export default function AppointmentDetail() {
         title={isInstall ? 'Installation' : 'Estimate appointment'}
         backTo="/calendar"
         right={
-          <span className={`text-[13px] font-semibold ${status?.cls ?? 'text-text-muted'}`}>
+          <span className={`text-13px font-semibold ${status?.cls ?? 'text-text-muted'}`}>
             {status?.text ?? appt.status}
           </span>
         }
@@ -121,11 +121,11 @@ export default function AppointmentDetail() {
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
         {/* Visit */}
         <section className="flex flex-col gap-1 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-          <h2 className="text-[15px] font-bold text-text-primary">Visit</h2>
+          <h2 className="text-15px font-bold text-text-primary">Visit</h2>
           <p className="text-sm text-text-secondary">
             {whenLabel(appt.appointment_date, appt.appointment_time)}
           </p>
-          <p className="text-[13px] text-text-muted">
+          <p className="text-13px text-text-muted">
             {isInstall
               ? 'Installation visit — tied to a ready order.'
               : 'Free in-home estimate visit.'}
@@ -134,7 +134,7 @@ export default function AppointmentDetail() {
 
         {/* Customer */}
         <section className="flex flex-col rounded-xl border border-border-light bg-surface p-4 shadow-md">
-          <h2 className="mb-2 text-[15px] font-bold text-text-primary">Customer</h2>
+          <h2 className="mb-2 text-15px font-bold text-text-primary">Customer</h2>
           <InfoRow label="Name">{fullName}</InfoRow>
           <InfoRow label="Email">
             {customer?.email ? (
@@ -178,7 +178,7 @@ export default function AppointmentDetail() {
               */}
               <Link
                 to={`/orders/new?customer=${customer.id}`}
-                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-brand-600 px-3 text-13px font-semibold text-white hover:bg-brand-700"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
@@ -187,7 +187,7 @@ export default function AppointmentDetail() {
               </Link>
               <Link
                 to={`/customers/${customer.id}`}
-                className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+                className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium leading-9 text-text-secondary hover:bg-surface-muted"
               >
                 View customer
               </Link>
@@ -196,7 +196,7 @@ export default function AppointmentDetail() {
                   href={mapsUrl(address)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium leading-9 text-text-secondary hover:bg-surface-muted"
                 >
                   Open in Google Maps
                 </a>
@@ -208,14 +208,14 @@ export default function AppointmentDetail() {
         {/* Order (installations only) */}
         {isInstall && appt.order && (
           <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-            <h2 className="text-[15px] font-bold text-text-primary">Order</h2>
+            <h2 className="text-15px font-bold text-text-primary">Order</h2>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm text-text-primary">{appt.order.order_number}</span>
-              <span className="text-[13px] text-text-muted capitalize">{appt.order.status}</span>
+              <span className="text-13px text-text-muted capitalize">{appt.order.status}</span>
             </div>
             <Link
               to={`/orders/${appt.order.id}`}
-              className="h-9 rounded-md border border-border-input bg-surface px-3 text-center text-[13px] font-medium leading-9 text-text-secondary hover:bg-surface-muted"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-center text-13px font-medium leading-9 text-text-secondary hover:bg-surface-muted"
             >
               View order
             </Link>

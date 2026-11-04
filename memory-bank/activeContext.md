@@ -6,6 +6,10 @@
 
 ## Where things stand
 
+**Also on this branch, uncommitted:** Settings → Display → **Text size** (per device; Default / Large / Extra
+large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns
+"Font sizes scale from one variable".
+
 **Current branch `feat/website-lead-form` (on `origin/main` `f66424c`; commit `037e6b5` plus uncommitted follow-ups,
 not deployed), web + api + MIGRATION 52 APPLIED BY HAND 2026-11-04, MIGRATION 53 WRITTEN, NOT APPLIED:** the website
 "Free Estimate" form gets its backend. `POST /intake/lead`

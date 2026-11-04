@@ -188,7 +188,7 @@ export default function LineItemList({
     <>
       {/* Item rows */}
       {items.length === 0 ? (
-        <p className="p-4 text-[13px] text-text-muted">No items yet — add one below.</p>
+        <p className="p-4 text-13px text-text-muted">No items yet — add one below.</p>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={items.map((it) => it.key)} strategy={verticalListSortingStrategy}>

@@ -90,6 +90,40 @@
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
+  /* ── Font sizes, scaled by the Text size setting ──
+     Every font-size in the app is a multiple of `--font-scale` (set on
+     :root by the Text size block below), so one setting enlarges ALL text
+     while spacing, icons and tap targets stay put.
+
+     Two families, both scaled:
+     - Tailwind's named steps (`text-xs` … `text-3xl`), re-declared with
+       their default rem values times the scale. Their default line-height
+       ratios are unitless, so they follow the larger size on their own.
+     - The design's px steps (`text-13px` etc.). These REPLACE the old
+       arbitrary `text-[13px]` classes: an arbitrary value compiles to a
+       literal `font-size: 13px` that nothing can scale. Like those, they
+       set no line-height (the inherited one applies).
+
+     These are plain (not `@theme inline`) on purpose: the utility emits
+     `font-size: var(--text-sm)`, and `--text-sm` resolves its
+     `var(--font-scale)` on :root, which is exactly where the setting lives.
+     A new px size must be added here, not written as `text-[Npx]`. */
+  --text-xs: calc(0.75rem * var(--font-scale));
+  --text-sm: calc(0.875rem * var(--font-scale));
+  --text-base: calc(1rem * var(--font-scale));
+  --text-lg: calc(1.125rem * var(--font-scale));
+  --text-xl: calc(1.25rem * var(--font-scale));
+  --text-2xl: calc(1.5rem * var(--font-scale));
+  --text-3xl: calc(1.875rem * var(--font-scale));
+  --text-10px: calc(10px * var(--font-scale));
+  --text-11px: calc(11px * var(--font-scale));
+  --text-12px: calc(12px * var(--font-scale));
+  --text-13px: calc(13px * var(--font-scale));
+  --text-14px: calc(14px * var(--font-scale));
+  --text-15px: calc(15px * var(--font-scale));
+  --text-17px: calc(17px * var(--font-scale));
+  --text-22px: calc(22px * var(--font-scale));
+
   /* ── Shadows ──
      Two-layer: a tight contact shadow plus a wide diffuse one, so card
      boundaries stay visible on low-contrast phone screens outdoors. */
@@ -190,8 +224,27 @@
   input,
   select,
   textarea {
-    font-size: 16px;
+    /* Scaled like all other text; the scale is never below 1, so this
+       never drops under the 16px iOS zoom threshold. */
+    font-size: calc(16px * var(--font-scale));
   }
+}
+
+/* ── Text size setting ──
+   `data-font-size` is stamped on <html> by `lib/fontSize.ts` (before the
+   first render, from this device's saved choice) and by the Settings
+   page's Text size control. The multipliers live ONLY here; the TS side
+   knows the option names, never the numbers. Every font-size token in
+   @theme above multiplies by `--font-scale`. Unlayered so no utility
+   can override it. */
+:root {
+  --font-scale: 1;
+}
+:root[data-font-size='large'] {
+  --font-scale: 1.125;
+}
+:root[data-font-size='xlarge'] {
+  --font-scale: 1.25;
 }
 
 /* ============================================================

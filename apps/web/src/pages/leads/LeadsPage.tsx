@@ -63,11 +63,11 @@ export default function LeadsPage() {
   }
 
   const segment = (active: boolean) =>
-    `min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold ${
+    `min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-13px font-semibold ${
       active ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'
     }`;
   const pagerButton =
-    'h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
+    'h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
 
   return (
     <div className="min-h-screen bg-surface-muted pb-16">
@@ -96,7 +96,7 @@ export default function LeadsPage() {
         {data && (
           <>
             {leads.length === 0 ? (
-              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
+              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-13px text-text-muted shadow-sm">
                 {page > 1 ? 'No leads on this page.' : EMPTY_TEXT[status]}
               </p>
             ) : (
@@ -112,7 +112,7 @@ export default function LeadsPage() {
                 <button type="button" onClick={() => go({ page: page - 1 })} disabled={page <= 1} className={pagerButton}>
                   ‹ Previous
                 </button>
-                <span className="text-[13px] text-text-secondary">
+                <span className="text-13px text-text-secondary">
                   Page {page} of {totalPages}
                 </span>
                 <button type="button" onClick={() => go({ page: page + 1 })} disabled={page >= totalPages} className={pagerButton}>

@@ -134,8 +134,8 @@ export default function Modal({
 
         <header className="flex items-start gap-3 px-4 pb-3 pt-4 lg:px-5">
           <div className="min-w-0 flex-1">
-            <h2 className="break-words text-[17px] font-bold text-text-primary">{title}</h2>
-            {subtitle && <p className="break-words text-[13px] text-text-muted">{subtitle}</p>}
+            <h2 className="break-words text-17px font-bold text-text-primary">{title}</h2>
+            {subtitle && <p className="break-words text-13px text-text-muted">{subtitle}</p>}
           </div>
           <button
             type="button"

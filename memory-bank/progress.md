@@ -6,6 +6,9 @@
 
 ## What Works
 
+**Text size setting (Settings → Display, per device; uncommitted on `feat/website-lead-form`, not
+deployed):** Default / Large / Extra large scale every font via `--font-scale`; see engine_features 2026-11-04.
+
 **Dual Shades, on `feat/dual-shades` (not merged, not deployed; migration 51 APPLIED to
 `lgbxxlwsdeuhdgzrjjen` on 2026-11-03 — the type is live in the DB, so deploy promptly):** a new blind type with a front and back fabric — priced as
 area x (front + back rate) with control and bottom-rail legs doubled, back fabric a required `materials`
@@ -315,6 +318,8 @@ alert row + shop email; `/leads` page with New / Handled / All filters and a sid
 Delete. The Inbox list has the same Handled / Delete icons.
 
 ## What's Left / Known Issues
+- **Text size:** at Extra large on 1024–1279px screens the Orders-list stat tiles truncate five-digit amounts;
+  the app has not been walked page by page at Extra large.
 - **Website leads:** apply migration 53 with the API deploy (52 is already applied), then deploy the web, paste the snippet into WordPress (Elementor HTML
   widget on `/free-estimate/`; exclude `lead-form.js` from JS-delay/combine optimisers), then submit one real test
   lead, propose a visit to yourself and confirm it, then delete the lead and the test visit. Never run tests

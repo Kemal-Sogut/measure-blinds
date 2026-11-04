@@ -217,11 +217,11 @@ export default function SendEstimatesDialog({
         </div>
       ) : sendable.isError ? (
         <div className="flex flex-col items-start gap-2">
-          <p className="text-[13px] text-danger">Could not load this customer&apos;s estimates.</p>
+          <p className="text-13px text-danger">Could not load this customer&apos;s estimates.</p>
           <button
             type="button"
             onClick={() => void sendable.refetch()}
-            className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken"
+            className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-13px font-semibold text-text-primary hover:bg-surface-sunken"
           >
             Try again
           </button>
@@ -250,11 +250,11 @@ export default function SendEstimatesDialog({
                     />
                     <span className="min-w-0 flex-1">
                       {r.title && (
-                        <span className="block truncate text-[14px] font-semibold text-text-primary">
+                        <span className="block truncate text-14px font-semibold text-text-primary">
                           {r.title}
                         </span>
                       )}
-                      <span className="block text-[13px] text-text-secondary">
+                      <span className="block text-13px text-text-secondary">
                         <span className="font-mono">{r.order_number}</span> · {shortDay(r.order_date)}
                       </span>
                       {r.status === 'sent' && (
@@ -267,7 +267,7 @@ export default function SendEstimatesDialog({
                       )}
                     </span>
                     {sendableRow ? (
-                      <span className="shrink-0 font-mono text-[13px] font-semibold text-text-primary">
+                      <span className="shrink-0 font-mono text-13px font-semibold text-text-primary">
                         {money.format(Number(r.total))}
                       </span>
                     ) : (
@@ -281,7 +281,7 @@ export default function SendEstimatesDialog({
             })}
           </ul>
           {hasSentRow && (
-            <p className="text-[12px] text-text-muted">
+            <p className="text-12px text-text-muted">
               A tick names the estimate in this email. Unticking one that is already on their page
               does not remove it from the page.
             </p>

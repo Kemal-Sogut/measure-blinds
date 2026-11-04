@@ -72,11 +72,11 @@ export default function EditRequestsCard({
             />
           </svg>
         </span>
-        <h2 className="text-[15px] font-bold text-warning">
+        <h2 className="text-15px font-bold text-warning">
           {open.length === 1 ? 'Change requested' : `${open.length} change requests`}
         </h2>
       </div>
-      <p className="text-[13px] text-text-secondary">
+      <p className="text-13px text-text-secondary">
         Sent by the customer from their estimate page. Edit the order, then mark each one
         resolved.
       </p>
@@ -90,17 +90,17 @@ export default function EditRequestsCard({
       <ul className="mt-3 flex flex-col gap-3">
         {open.map((req) => (
           <li key={req.id} className="rounded-sm bg-surface p-3">
-            <p className="mb-1.5 text-[11px] text-text-muted">
+            <p className="mb-1.5 text-11px text-text-muted">
               {new Date(req.created_at).toLocaleString()}
             </p>
-            <p className="text-[13px] break-words whitespace-pre-wrap text-text-secondary">
+            <p className="text-13px break-words whitespace-pre-wrap text-text-secondary">
               {req.message}
             </p>
             <button
               type="button"
               onClick={() => onResolve(req.id)}
               disabled={resolvingId !== null}
-              className="mt-2.5 h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
+              className="mt-2.5 h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
             >
               {resolvingId === req.id ? 'Resolving…' : 'Mark resolved'}
             </button>

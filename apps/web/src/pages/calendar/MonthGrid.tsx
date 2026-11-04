@@ -68,7 +68,7 @@ export default function MonthGrid({
         {WEEKDAY_LABELS.map((label) => (
           <div
             key={label}
-            className="px-1 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-text-muted"
+            className="px-1 py-2 text-center text-11px font-semibold uppercase tracking-wide text-text-muted"
           >
             {label}
           </div>
@@ -97,7 +97,7 @@ export default function MonthGrid({
               } ${today ? 'bg-brand-50' : ''}`}
             >
               <span
-                className={`self-start rounded-pill px-1.5 text-[11px] font-semibold ${
+                className={`self-start rounded-pill px-1.5 text-11px font-semibold ${
                   today
                     ? 'bg-brand-600 text-white'
                     : inMonth
@@ -112,7 +112,7 @@ export default function MonthGrid({
                   <EventChip key={`${ev.kind}-${ev.id}`} event={ev} />
                 ))}
                 {dayEvents.length > MAX_CHIPS_PER_DAY && (
-                  <span className="px-1 text-[10px] font-medium text-text-muted">
+                  <span className="px-1 text-10px font-medium text-text-muted">
                     +{dayEvents.length - MAX_CHIPS_PER_DAY} more
                   </span>
                 )}

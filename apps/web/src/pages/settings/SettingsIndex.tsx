@@ -3,7 +3,9 @@
 
 /**
  * Settings hub: a grid of destination tiles — BUSINESS (company info,
- * catalogs, terms) and ACCOUNT (sign out, danger-tinted). Blind types
+ * catalogs, terms), DISPLAY (the per-device Text size control, inline
+ * rather than a tile because it is one tap, not a page) and ACCOUNT
+ * (sign out, danger-tinted). Blind types
  * are managed inside Materials (the Materials landing page lists them),
  * so there is no separate Blind Types row.
  *
@@ -19,6 +21,7 @@ import { Link } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import { useAuth } from '../../hooks';
 import type { CardAccent } from '../../components/ui';
+import TextSizeSetting from './TextSizeSetting';
 
 /**
  * One settings destination: icon path data (24×24 stroked), label, a
@@ -143,8 +146,8 @@ function SettingsTile({ row }: { row: Row }) {
         </svg>
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px] font-bold text-text-primary">{row.label}</span>
-        <span className="block truncate text-[13px] text-text-muted">{row.desc}</span>
+        <span className="block truncate text-15px font-bold text-text-primary">{row.label}</span>
+        <span className="block truncate text-13px text-text-muted">{row.desc}</span>
       </span>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path
@@ -169,9 +172,9 @@ export default function SettingsIndex() {
         <PageHeader title="Settings" backTo="/" />
       </div>
       <div className="page-container py-4 md:py-6 lg:py-8">
-        <h1 className="mb-5 hidden text-[22px] font-bold text-text-primary lg:block">Settings</h1>
+        <h1 className="mb-5 hidden text-22px font-bold text-text-primary lg:block">Settings</h1>
 
-        <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-muted">
+        <p className="mb-2.5 text-11px font-semibold uppercase tracking-[0.05em] text-text-muted">
           Business
         </p>
         <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -180,7 +183,14 @@ export default function SettingsIndex() {
           ))}
         </div>
 
-        <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-muted">
+        <p className="mb-2.5 text-11px font-semibold uppercase tracking-[0.05em] text-text-muted">
+          Display
+        </p>
+        <div className="mb-6">
+          <TextSizeSetting />
+        </div>
+
+        <p className="mb-2.5 text-11px font-semibold uppercase tracking-[0.05em] text-text-muted">
           Account
         </p>
         <button
@@ -202,8 +212,8 @@ export default function SettingsIndex() {
             </svg>
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[15px] font-bold text-danger">Sign Out</span>
-            <span className="block text-[13px] text-text-muted">End this session on this device</span>
+            <span className="block text-15px font-bold text-danger">Sign Out</span>
+            <span className="block text-13px text-text-muted">End this session on this device</span>
           </span>
         </button>
       </div>

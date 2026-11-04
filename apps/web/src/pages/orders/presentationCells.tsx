@@ -48,7 +48,7 @@ export function Td({
 }) {
   return (
     <td
-      className={`px-3 py-2 text-[13px] text-text-secondary ${right ? 'text-right' : 'text-left'} ${mono ? 'whitespace-nowrap font-mono' : ''}`}
+      className={`px-3 py-2 text-13px text-text-secondary ${right ? 'text-right' : 'text-left'} ${mono ? 'whitespace-nowrap font-mono' : ''}`}
     >
       {children}
     </td>

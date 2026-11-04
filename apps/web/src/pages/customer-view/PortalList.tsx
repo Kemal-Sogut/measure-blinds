@@ -33,7 +33,7 @@ function PortalCard({
     <li className="flex items-center justify-between gap-3 rounded-2xl bg-surface-elevated p-4">
       <div className="min-w-0 text-sm">
         {item.title && (
-          <p className="truncate text-[15px] font-semibold text-text-primary">{item.title}</p>
+          <p className="truncate text-15px font-semibold text-text-primary">{item.title}</p>
         )}
         <p className="text-text-primary">
           {kind === 'estimate' ? 'Estimate' : 'Order'}{' '}
@@ -92,7 +92,7 @@ export default function PortalList({
         )}
 
         {payload.customer.first_name && payload.items.length > 0 && (
-          <p className="mb-4 text-[15px] text-text-secondary">
+          <p className="mb-4 text-15px text-text-secondary">
             Hi {payload.customer.first_name}, here is everything we have prepared for you.
           </p>
         )}

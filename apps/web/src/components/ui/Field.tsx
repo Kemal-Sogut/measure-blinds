@@ -26,7 +26,7 @@ import type { ReactNode } from 'react';
  * height, so neither is repeated here.
  */
 export const inputClass =
-  'w-full rounded-md border border-border-input bg-surface px-3 text-[15px] text-text-primary placeholder:text-text-muted';
+  'w-full rounded-md border border-border-input bg-surface px-3 text-15px text-text-primary placeholder:text-text-muted';
 
 export default function Field({
   label,
@@ -59,9 +59,9 @@ export default function Field({
       </label>
       {children}
       {error ? (
-        <p className="mt-1.5 text-[13px] text-danger">{error}</p>
+        <p className="mt-1.5 text-13px text-danger">{error}</p>
       ) : hint ? (
-        <p className="mt-1.5 text-[13px] text-text-muted">{hint}</p>
+        <p className="mt-1.5 text-13px text-text-muted">{hint}</p>
       ) : null}
     </div>
   );

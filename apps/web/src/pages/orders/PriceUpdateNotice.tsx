@@ -62,7 +62,7 @@ export function PriceUpdateNotice({
       <span className="min-w-0 font-mono text-sm font-semibold text-warning">
         {show(change.from)} → {show(change.to)}
       </span>
-      <span className="text-[11px] text-warning/80">
+      <span className="text-11px text-warning/80">
         {delta > 0 ? 'up' : 'down'} {show(Math.abs(delta))} since this estimate was sent
       </span>
       {onDismiss && (
@@ -72,7 +72,7 @@ export function PriceUpdateNotice({
           type="button"
           onClick={onDismiss}
           title="Dismiss — this figure is expected"
-          className="ml-auto shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-warning hover:bg-warning/10"
+          className="ml-auto shrink-0 rounded-md px-2 py-1 text-11px font-semibold text-warning hover:bg-warning/10"
         >
           Dismiss
         </button>

@@ -88,7 +88,7 @@ export default function OrderProgress({ status }: { status: string }) {
                   }`}
                 />
                 <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-11px font-semibold ${
                     current
                       ? 'bg-brand-600 text-white'
                       : done
@@ -105,7 +105,7 @@ export default function OrderProgress({ status }: { status: string }) {
                 />
               </div>
               <span
-                className={`w-full break-words text-center text-[10px] leading-tight ${
+                className={`w-full break-words text-center text-10px leading-tight ${
                   current ? 'font-semibold text-text-primary' : 'text-text-muted'
                 }`}
               >

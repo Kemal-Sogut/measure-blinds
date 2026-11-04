@@ -65,7 +65,7 @@ export default function OrderActionsMenu({ topActions, bottomActions }: OrderAct
       }}
       disabled={a.disabled}
       title={a.title}
-      className={`flex h-11 w-full items-center gap-2.5 px-3 text-left text-[14px] font-medium hover:bg-surface-sunken disabled:opacity-40 ${a.variant === 'danger' ? 'text-danger' : a.variant === 'primary' ? 'text-brand-600' : 'text-text-primary'
+      className={`flex h-11 w-full items-center gap-2.5 px-3 text-left text-14px font-medium hover:bg-surface-sunken disabled:opacity-40 ${a.variant === 'danger' ? 'text-danger' : a.variant === 'primary' ? 'text-brand-600' : 'text-text-primary'
         }`}
     >
       {a.icon}

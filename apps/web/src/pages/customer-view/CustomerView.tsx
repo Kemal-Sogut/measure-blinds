@@ -888,7 +888,7 @@ export default function CustomerView({
         {/* Order meta */}
         <section className="mb-4 rounded-2xl bg-surface-elevated p-4 text-sm">
           {estimate.title && (
-            <p className="mb-1 text-[15px] font-semibold text-text-primary">{estimate.title}</p>
+            <p className="mb-1 text-15px font-semibold text-text-primary">{estimate.title}</p>
           )}
           <div className="flex justify-between gap-2">
             <span className="font-semibold text-text-primary">
@@ -943,7 +943,7 @@ export default function CustomerView({
             <span className="text-text-secondary">
               HST 13%
               {c?.hst_number && (
-                <span className="ml-1 text-[10px] text-text-muted">HST# {c.hst_number}</span>
+                <span className="ml-1 text-10px text-text-muted">HST# {c.hst_number}</span>
               )}
             </span>
             <span>${Number(estimate.tax_amount).toFixed(2)}</span>
@@ -1099,7 +1099,7 @@ export default function CustomerView({
                 type="button"
                 onClick={() => setEditOpen(true)}
                 disabled={!canRequestEdit}
-                className="flex h-14 min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-2 text-[15px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+                className="flex h-14 min-w-0 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-2 text-15px font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
               >
                 <span className="truncate">Request Edit</span>
               </button>

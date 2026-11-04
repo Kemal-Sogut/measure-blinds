@@ -145,7 +145,7 @@ export default function OrderList() {
         */}
         <div className="mb-5 flex items-center gap-2">
           <SidebarToggle />
-          <h1 className="min-w-0 flex-1 truncate text-[22px] font-bold text-text-primary">
+          <h1 className="min-w-0 flex-1 truncate text-22px font-bold text-text-primary">
             Orders
           </h1>
         </div>
@@ -187,7 +187,7 @@ export default function OrderList() {
             <button
               key={t.key}
               onClick={() => selectTab(t.key)}
-              className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-3 py-2 text-[13px] transition-colors ${
+              className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-3 py-2 text-13px transition-colors ${
                 tab === t.key
                   ? 'bg-surface font-bold text-text-primary shadow-sm'
                   : 'font-medium text-text-muted hover:text-text-secondary'
@@ -219,7 +219,7 @@ export default function OrderList() {
               setTerm(e.target.value);
               setPage(1);
             }}
-            className="h-11 w-full rounded-md border border-border-input bg-surface pl-9 pr-3 text-[15px] text-text-primary placeholder:text-text-muted"
+            className="h-11 w-full rounded-md border border-border-input bg-surface pl-9 pr-3 text-15px text-text-primary placeholder:text-text-muted"
           />
         </div>
 
@@ -251,17 +251,17 @@ export default function OrderList() {
                   className="w-full rounded-xl border border-border-light bg-surface p-3.5 pr-24 text-left shadow-sm transition-shadow hover:shadow-md"
                 >
                   <span className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate text-[15px] font-bold text-text-primary">
+                    <span className="min-w-0 truncate text-15px font-bold text-text-primary">
                       {customerName(order)}
                     </span>
                     <StatusBadge status={order.status} />
                   </span>
-                  <span className="mt-0.5 block font-mono text-[13px] text-text-muted">
+                  <span className="mt-0.5 block font-mono text-13px text-text-muted">
                     {order.order_number}
                   </span>
                   <span className="mt-2 flex items-center justify-between">
                     <span className="text-xs text-text-muted">{shortDate(order.order_date)}</span>
-                    <span className="font-mono text-[15px] font-semibold text-text-primary">
+                    <span className="font-mono text-15px font-semibold text-text-primary">
                       {Number(order.incomplete_items ?? 0) > 0 ? (
                         <IncompleteBadge count={Number(order.incomplete_items)} />
                       ) : (
@@ -285,7 +285,7 @@ export default function OrderList() {
           <div className="hidden lg:block">
             <Card className="overflow-hidden">
               <CardBody flush>
-                <div className="grid grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] border-b border-border-light bg-surface-sunken px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-muted">
+                <div className="grid grid-cols-[1.2fr_1.6fr_1fr_1.1fr_0.6fr] border-b border-border-light bg-surface-sunken px-4 py-2.5 text-11px font-semibold uppercase tracking-[0.05em] text-text-muted">
                   <span>Order #</span>
                   <span>Customer</span>
                   <span>Date</span>
@@ -303,19 +303,19 @@ export default function OrderList() {
                       i > 0 ? 'border-t border-border-light' : ''
                     }`}
                   >
-                    <span className="font-mono text-[13px] text-text-primary">
+                    <span className="font-mono text-13px text-text-primary">
                       {order.order_number}
                     </span>
-                    <span className="text-[13px] font-semibold text-text-primary">
+                    <span className="text-13px font-semibold text-text-primary">
                       {customerName(order)}
                     </span>
-                    <span className="text-[13px] text-text-secondary">
+                    <span className="text-13px text-text-secondary">
                       {shortDate(order.order_date)}
                     </span>
                     <span>
                       <StatusBadge status={order.status} />
                     </span>
-                    <span className="text-right font-mono text-[13px] font-semibold text-text-primary">
+                    <span className="text-right font-mono text-13px font-semibold text-text-primary">
                       {Number(order.incomplete_items ?? 0) > 0 ? (
                         <IncompleteBadge count={Number(order.incomplete_items)} />
                       ) : (
@@ -345,7 +345,7 @@ export default function OrderList() {
             aria-label="Orders pagination"
             className="mt-4 flex items-center justify-end gap-2"
           >
-            <span className="mr-1 text-[13px] text-text-secondary">
+            <span className="mr-1 text-13px text-text-secondary">
               {(currentPage - 1) * PAGE_SIZE + 1}–
               {Math.min(currentPage * PAGE_SIZE, orders.length)} of {orders.length}
             </span>
@@ -354,11 +354,11 @@ export default function OrderList() {
               onClick={() => setPage(Math.max(1, currentPage - 1))}
               disabled={currentPage <= 1}
               aria-label="Previous page"
-              className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
             >
               ‹ Previous
             </button>
-            <span className="text-[13px] text-text-secondary" aria-current="page">
+            <span className="text-13px text-text-secondary" aria-current="page">
               Page {currentPage} of {totalPages}
             </span>
             <button
@@ -366,7 +366,7 @@ export default function OrderList() {
               onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage >= totalPages}
               aria-label="Next page"
-              className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+              className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
             >
               Next ›
             </button>

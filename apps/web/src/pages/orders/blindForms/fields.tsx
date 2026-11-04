@@ -80,7 +80,7 @@ export type BlindFormComponent = (props: BlindFormProps) => ReactNode;
 export function FormSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex min-w-0 flex-col gap-3.5">
-      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="text-11px font-semibold uppercase tracking-wide text-text-muted">
         {title}
       </h3>
       {children}
@@ -300,7 +300,7 @@ export function PanelWidths({ draft, onChange }: Pick<BlindFormProps, 'draft' | 
                     onChange({ ...draft, panels: draft.panels.filter((_, j) => j !== i) })
                   }
                   aria-label={`Remove panel ${i + 1}`}
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border-input bg-surface text-[10px] text-text-muted hover:text-danger"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-border-input bg-surface text-10px text-text-muted hover:text-danger"
                 >
                   ✕
                 </button>
@@ -311,7 +311,7 @@ export function PanelWidths({ draft, onChange }: Pick<BlindFormProps, 'draft' | 
         <button
           type="button"
           onClick={() => onChange({ ...draft, panels: [...draft.panels, ''] })}
-          className="h-11 w-[15%] shrink-0 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-brand-600"
+          className="h-11 w-[15%] shrink-0 rounded-sm border border-dashed border-border-input text-13px font-medium text-brand-600"
         >
           + Panel
         </button>

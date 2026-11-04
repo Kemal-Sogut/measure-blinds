@@ -31,10 +31,10 @@ export default function OrderActivityLog({ orderId }: { orderId: string }) {
 
   return (
     <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-      {isLoading && <p className="text-[13px] text-text-muted">Loading activity…</p>}
-      {error && <p className="text-[13px] text-danger">{error.message}</p>}
+      {isLoading && <p className="text-13px text-text-muted">Loading activity…</p>}
+      {error && <p className="text-13px text-danger">{error.message}</p>}
       {logs && logs.length === 0 && (
-        <p className="text-[13px] text-text-muted">No activity recorded yet.</p>
+        <p className="text-13px text-text-muted">No activity recorded yet.</p>
       )}
       {logs && logs.length > 0 && (
         <>
@@ -46,7 +46,7 @@ export default function OrderActivityLog({ orderId }: { orderId: string }) {
             {(expanded ? logs : logs.slice(0, LOG_PREVIEW_COUNT)).map((log) => (
               <li
                 key={log.id}
-                className={`flex justify-between gap-3 rounded-md px-2 py-1 text-[13px] ${log.source === 'customer' ? 'bg-info-tint' : ''
+                className={`flex justify-between gap-3 rounded-md px-2 py-1 text-13px ${log.source === 'customer' ? 'bg-info-tint' : ''
                   }`}
               >
                 <span className="min-w-0 break-words text-text-secondary">{log.message}</span>
@@ -61,7 +61,7 @@ export default function OrderActivityLog({ orderId }: { orderId: string }) {
               type="button"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
-              className="mt-0.5 self-start py-1 text-[13px] font-medium text-brand-600 hover:underline"
+              className="mt-0.5 self-start py-1 text-13px font-medium text-brand-600 hover:underline"
             >
               {expanded ? 'Show less' : `Show ${logs.length - LOG_PREVIEW_COUNT} more`}
             </button>

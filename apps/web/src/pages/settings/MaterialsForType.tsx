@@ -315,7 +315,7 @@ export default function MaterialsForType() {
 
         {/* Add material (linked to this type) */}
         <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
-          <h2 className="mb-3 text-[15px] font-bold text-text-primary">Add material</h2>
+          <h2 className="mb-3 text-15px font-bold text-text-primary">Add material</h2>
           <div className="flex flex-col gap-2">
             <input
               placeholder="Name"
@@ -383,7 +383,7 @@ export default function MaterialsForType() {
             className="mb-6 flex min-h-11 items-center justify-between gap-2 rounded-xl border border-border-light bg-surface px-4 py-3 shadow-md"
           >
             <span className="min-w-0">
-              <span className="block text-[15px] font-bold text-text-primary">Pleat Types</span>
+              <span className="block text-15px font-bold text-text-primary">Pleat Types</span>
               <span className="block text-xs text-text-muted">
                 Fullness ratios — how much fabric each pleat style uses
               </span>

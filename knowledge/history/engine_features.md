@@ -1,5 +1,25 @@
 # Engine Features / Feature History
 
+## 2026-11-04 — Settings: Text size (Default / Large / Extra large), per device
+Branch `feat/website-lead-form`, web only, not deployed.
+
+- **Settings → Display → Text size** (`pages/settings/TextSizeSetting.tsx`): a three-way choice (Default,
+  Large ×1.125, Extra large ×1.25) that rescales every font in the app on tap, with no save step. Stored on THIS
+  device (`localStorage` `bn.fontSize`, `lib/fontSize.ts`), not on the account, so a phone used outdoors can run
+  large while the desktop stays default. `initFontSize()` in `main.tsx` stamps `<html data-font-size>` before the
+  first render, so there is no flash at the default size. Spacing, icons and tap targets do not change.
+- **How it scales:** `index.css` maps `data-font-size` to `--font-scale` (the multipliers live only there), and
+  every font-size token in `@theme` multiplies by it: Tailwind's `--text-xs` … `--text-3xl` re-declared, plus new
+  px tokens `--text-10px` … `--text-22px`. All 373 arbitrary `text-[Npx]` classes (69 files) were swapped
+  mechanically for `text-Npx`. An arbitrary `text-[13px]` compiles to a literal `font-size: 13px` that nothing
+  can scale. **New px sizes must be added as a token in `@theme`, never written as `text-[Npx]`.** The phone
+  16px form-control rule and the toast font follow the scale too (still ≥ 16px, so no iOS focus zoom).
+- **Verified** in a harness (Settings page container): 375px phone and 1024px desktop pane. Default / Large /
+  Extra large give 13px → 14.6 → 16.25px and inputs 16 → 18 → 20px. The choice persists across a reload and the
+  card has no overflow. **Known trade-off:** at Extra large on a 1024–1279px screen, an Orders-list stat tile's
+  five-digit money value (`$12,480.00`) truncates by ~16px; Large fits everywhere measured. The whole app was
+  NOT walked page by page at Extra large: truncating rows will truncate sooner.
+
 ## 2026-11-04 — Leads: Propose visit, Handled / Delete icons (Leads and Inbox), migration 53
 Follow-up on the website lead form below. Branch `feat/website-lead-form`. **Migration 53 written, NOT applied;
 not deployed.** Migration 52 was applied by hand by the owner on 2026-11-04 (live then: 1 `new`, 1 `archived` lead).

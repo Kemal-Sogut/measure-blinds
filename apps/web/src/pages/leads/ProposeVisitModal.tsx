@@ -82,7 +82,7 @@ export default function ProposeVisitModal({ lead, onClose }: { lead: Lead; onClo
       }
     >
       <div className="flex flex-col gap-4">
-        <p className="text-[13px] text-text-secondary wrap-anywhere">
+        <p className="text-13px text-text-secondary wrap-anywhere">
           Emails a thank-you and this time to <span className="font-semibold text-text-primary">{lead.email}</span>.
           They confirm it or ask for another time from the email, and the lead is marked handled.
         </p>
@@ -115,7 +115,7 @@ export default function ProposeVisitModal({ lead, onClose }: { lead: Lead; onClo
                   role="radio"
                   aria-checked={time === t}
                   onClick={() => setTime(t)}
-                  className={`h-10 rounded-md border text-[13px] font-medium tabular-nums ${
+                  className={`h-10 rounded-md border text-13px font-medium tabular-nums ${
                     time === t
                       ? 'border-brand-600 bg-brand-100 text-brand-600'
                       : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'
@@ -140,7 +140,7 @@ export default function ProposeVisitModal({ lead, onClose }: { lead: Lead; onClo
           />
         </Field>
 
-        <p className="rounded-lg bg-surface-sunken p-2.5 text-[13px] text-text-secondary" aria-live="polite">
+        <p className="rounded-lg bg-surface-sunken p-2.5 text-13px text-text-secondary" aria-live="polite">
           {time ? (
             <>
               They will see: <span className="font-semibold text-text-primary">{format(day, 'EEEE, MMMM d')} · {visitWindow(time)}</span>

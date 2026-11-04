@@ -75,14 +75,14 @@ function EventMeta({ event }: { event: CalendarEvent }) {
         <span className="truncate text-sm font-medium text-text-primary">
           {customerName || event.order_number || 'Customer'}
         </span>
-        <span className={`shrink-0 text-[12px] font-semibold ${status?.cls ?? ''}`}>
+        <span className={`shrink-0 text-12px font-semibold ${status?.cls ?? ''}`}>
           {status?.text ?? event.schedule_status}
         </span>
       </span>
       <span className="mt-0.5 flex items-baseline justify-between gap-2">
-        <span className="text-[13px] text-text-secondary">{whenLabel(event.date, event.time)}</span>
+        <span className="text-13px text-text-secondary">{whenLabel(event.date, event.time)}</span>
         {event.order_number && (
-          <span className="font-mono text-[12px] text-text-muted">{event.order_number}</span>
+          <span className="font-mono text-12px text-text-muted">{event.order_number}</span>
         )}
       </span>
     </>
@@ -143,7 +143,7 @@ export default function ScheduleSections({
           <button
             type="button"
             onClick={() => navigate(`/orders/${event.order_id}`)}
-            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary hover:bg-surface-muted"
           >
             View order
           </button>
@@ -153,7 +153,7 @@ export default function ScheduleSections({
             type="button"
             onClick={() => confirm(event)}
             disabled={confirmMut.isPending}
-            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
+            className="h-9 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-success hover:bg-surface-muted disabled:opacity-40"
           >
             Confirm
           </button>
@@ -161,7 +161,7 @@ export default function ScheduleSections({
         <button
           type="button"
           onClick={() => onChange(event)}
-          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary hover:bg-surface-muted"
         >
           Change
         </button>
@@ -169,7 +169,7 @@ export default function ScheduleSections({
           type="button"
           onClick={() => remove(event)}
           disabled={deleteMut.isPending}
-          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
+          className="h-9 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-danger hover:bg-surface-muted disabled:opacity-40"
         >
           Remove
         </button>
@@ -178,7 +178,7 @@ export default function ScheduleSections({
   }
 
   const sectionCls = 'rounded-xl border border-border-light bg-surface p-4 shadow-md';
-  const emptyCls = 'text-[13px] text-text-muted';
+  const emptyCls = 'text-13px text-text-muted';
 
   /**
    * Heading badge for the two schedule sections. The hue matches what
@@ -204,7 +204,7 @@ export default function ScheduleSections({
           />
         </svg>
       </span>
-      <h2 className="text-[15px] font-bold text-text-primary">{title}</h2>
+      <h2 className="text-15px font-bold text-text-primary">{title}</h2>
     </div>
   );
 

@@ -95,7 +95,7 @@ export default function Materials() {
 
         {/* Add blind type */}
         <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
-          <h2 className="mb-3 text-[15px] font-bold text-text-primary">Add blind type</h2>
+          <h2 className="mb-3 text-15px font-bold text-text-primary">Add blind type</h2>
           <div className="flex gap-2">
             <input
               placeholder="e.g. Roller"

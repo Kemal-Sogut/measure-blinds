@@ -96,23 +96,23 @@ export default function PageHeader({
         </Link>
         <div className="min-w-0 flex-1">
           {eyebrow && (
-            <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-brand-600">
+            <p className="text-11px font-semibold uppercase tracking-[0.05em] text-brand-600">
               {eyebrow}
             </p>
           )}
           {titleAdornment ? (
             <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-lg font-bold text-text-primary lg:text-[22px]">
+              <h1 className="truncate text-lg font-bold text-text-primary lg:text-22px">
                 {title}
               </h1>
               {titleAdornment}
             </div>
           ) : (
-            <h1 className="truncate text-lg font-bold text-text-primary lg:text-[22px]">
+            <h1 className="truncate text-lg font-bold text-text-primary lg:text-22px">
               {title}
             </h1>
           )}
-          {subtitle && <p className="truncate text-[13px] text-text-muted">{subtitle}</p>}
+          {subtitle && <p className="truncate text-13px text-text-muted">{subtitle}</p>}
         </div>
         {right && <div className="flex min-w-0 items-center justify-end">{right}</div>}
       </div>
