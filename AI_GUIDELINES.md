@@ -89,6 +89,7 @@ The `memory-bank/` folder is the long-term project memory for all AI assistants.
 ## 9. Verification Standards
 
 - **Rule**: After any structural change run, in the affected workspace(s): `pnpm check` (tsc --noEmit), `pnpm test` (vitest), and `pnpm lint` (web: oxlint). Target: 0 errors / 0 warnings.
+- **Rule**: These prove nothing about layout. Any change that adds, moves or restyles something visible is ALSO bound by §11 — it is not done until it has been seen rendered as §11 describes.
 - **Rule**: If you touched pricing/totals, run BOTH web and api test suites.
 - **Rule**: Cowork-sandbox caveat: the mounted repo view has been observed stale/truncated; treat Read/Edit/Write tool results as ground truth and hand real compile/test verification to the dev machine when the sandbox misbehaves.
 - **Rule**: No placeholders — if an asset or value is needed, use a real representative one.
@@ -103,6 +104,29 @@ The `memory-bank/` folder is the long-term project memory for all AI assistants.
   ```
   (SQL files use `--` comments.)
 - **Rule**: Preserve this header during any modification. If a file is updated in a later year, extend the year (e.g. `2026-2027`).
+
+## 11. UI Layout & Visual Verification
+
+> Why this exists: on 2026-11-03 an "Incomplete" chip added beside a line item's name passed
+> tsc, 620 tests, lint, four code reviews and a harness check — then collapsed the name to one
+> letter per line in the real, narrower order card. The harness had used a wide box and a short
+> name. See `knowledge/history/bug_fixes.md` 2026-11-03.
+
+### Verifying a visible change
+
+- **Rule — render it in its real container.** Mount the component inside the same parent it lives in (same card / grid / column classes and padding), never in a free-standing wide box. If it sits in a side panel or grid column, measure that column's width at the viewports below and use it.
+- **Rule — at the real widths.** At minimum: desktop (≥1280px viewport, the component at its actual column width) and the narrowest supported phone (375px viewport, i.e. ~343px for a full-width card). Also check one width in between (~768px) when the layout has a breakpoint.
+- **Rule — with worst-case content.** Short fixture text hides overflow. Always include: a long name with spaces, a 60+ character unbroken string, the longest label that can appear (e.g. every missing field listed), empty values, and every optional badge/chip/icon the row can show at once (e.g. Hidden + Incomplete + lock).
+- **Rule — measure, don't just look.** At each width confirm programmatically: no row/card wider than its container (`scrollWidth <= clientWidth`), no text column squeezed below ~10 characters, no sibling overlap (compare `getBoundingClientRect`). Keep a screenshot as proof.
+- **Rule — never verify by saving through the real app.** `apps/web/.env` points at the LIVE Supabase project: saving, sending or deleting in a locally run app writes production data. Use a throwaway harness — `apps/web/harness.html` + `apps/web/src/harness.tsx` importing `./index.css` and mounting the component (or a page under `MemoryRouter` + `QueryClientProvider` with a pre-seeded query cache and `staleTime: Infinity`), served by the `web` launch config at `/harness.html`. Confirm zero `/api` requests in the network log. Delete both files before committing.
+- **Rule — report exactly what was seen.** Name the widths, the container and the content you rendered. A skipped or partial visual check is reported as "NOT visually verified at <widths/content>" — never as verified — and stays an open item in the task list, the handoff and the PR description until someone does it. A reviewer who sees "visual check skipped" treats it as an open finding, not a pass.
+- **Rule — plans and briefs for UI work** name the component's real container, the narrowest width it must hold, and the worst-case content to test it with. Reviewers of a UI diff check the layout classes (flex/grid shrink and wrap behaviour) against that width, not only the logic.
+
+### Layout patterns (locked)
+
+- **Never add a non-shrinking element beside a text column in a flex row.** A `shrink-0` badge/chip/label next to a `min-w-0 flex-1` name takes the row's width first and the name collapses. Put the new element INSIDE the text column as its own line (as `LineItemRow`'s attribute line and Incomplete line do), or make it able to shrink (`min-w-0` + `truncate`).
+- **Variable-length text never goes inside a non-shrinking element.** Field lists, user input and translated labels must be able to wrap or truncate; a pill or badge holds one short, fixed word.
+- **Read a component's layout comments before changing its rows.** They record measured failures (e.g. `LineItemRow`'s notes on `wrap-anywhere`, and why its extra lines are nested blocks rather than flex columns). A change that contradicts one needs a re-measurement at the widths above.
 
 ## Documentation Score Meaning
 
