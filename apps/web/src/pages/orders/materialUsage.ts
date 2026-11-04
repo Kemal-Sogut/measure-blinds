@@ -72,10 +72,11 @@ export function materialRowKey(materialId: string, unit: MaterialUnit): string {
  */
 export interface MaterialUsageLine {
   /**
-   * The draft's render key. Unique across the whole order, and — because
-   * a line carries exactly one material and therefore appears under
-   * exactly one row — unique across the summary too. That is what lets
-   * the dialog's selection be a flat set of these keys.
+   * Unique across the whole summary, which is what lets the dialog's
+   * selection be a flat set of these keys. The line for a window's front
+   * material uses the draft's render key; an extra fabric's line (Dual
+   * Shades' back fabric) uses `<draft key>:<attrKey>`, so a window that
+   * appears under two rows still gets a distinct key for each.
    */
   key: string;
   /** Room name, or the editor's own `Blind N` fallback when it is blank. */
@@ -206,28 +207,7 @@ export function summarizeMaterialUsage(
     const blindType = getBlindType(item.blinds_type);
     const usage = blindType.describeMaterialUsage(inputs);
     const qty = inputs.quantity;
-    // Per `unit`, not per m²: for Curtains this column is dollars per
-    // running metre. `blindDraftInputs` reads it off the catalog row, so
-    // it is the same number `MaterialsForType` edits.
-    const rate = inputs.material_price_per_sqm;
-    const key = materialRowKey(material.id, usage.unit);
-
-    const row = groups.get(key) ?? {
-      materialId: material.id,
-      materialName: material.name,
-      unit: usage.unit,
-      quantity: 0,
-      rate,
-      lineCount: 0,
-      lines: [],
-    };
-
-    row.lineCount += 1;
-    row.quantity += usage.quantity * qty;
-    // The same reading kept per window, so the breakdown cannot drift
-    // from the row it sits under: both are the one usage figure.
-    row.lines.push({
-      key: item.key,
+    const line = {
       // Matches the fallback the line-item list and the presentation
       // table already use, so one blank-roomed window is called the same
       // thing everywhere in the editor.
@@ -237,8 +217,46 @@ export function summarizeMaterialUsage(
       heightCm: inputs.height_cm,
       itemQuantity: qty,
       quantity: usage.quantity * qty,
-    });
-    groups.set(key, row);
+    };
+
+    /**
+     * Adds this window's one usage reading to `mat`'s row. Called for the
+     * front material and again for every extra fabric the type references
+     * from the `materials` catalog (Dual Shades' back roll), which covers
+     * the same area — so both rows get the same quantity.
+     */
+    const addTo = (mat: { id: string; name: string }, rate: number, lineKey: string) => {
+      const key = materialRowKey(mat.id, usage.unit);
+      const row = groups.get(key) ?? {
+        materialId: mat.id,
+        materialName: mat.name,
+        unit: usage.unit,
+        quantity: 0,
+        rate,
+        lineCount: 0,
+        lines: [],
+      };
+
+      row.lineCount += 1;
+      row.quantity += usage.quantity * qty;
+      // The same reading kept per window, so the breakdown cannot drift
+      // from the row it sits under: both are the one usage figure.
+      row.lines.push({ key: lineKey, ...line });
+      groups.set(key, row);
+    };
+
+    // Per `unit`, not per m²: for Curtains this column is dollars per
+    // running metre. `blindDraftInputs` reads it off the catalog row, so
+    // it is the same number `MaterialsForType` edits.
+    addTo(material, inputs.material_price_per_sqm, item.key);
+    for (const ref of blindType.catalogRefs) {
+      if (ref.table !== 'materials') continue;
+      const extra = catalogs.materials.find((m) => m.id === item.attributes[ref.attrKey]);
+      // `blindDraftInputs` already resolved this id, so a miss is not
+      // reachable; skipping keeps the summary total rather than throwing.
+      if (!extra) continue;
+      addTo(extra, Number(extra.price_per_sqm), `${item.key}:${ref.attrKey}`);
+    }
   }
 
   const rows = [...groups.values()].sort(

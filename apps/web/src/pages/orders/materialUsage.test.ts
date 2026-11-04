@@ -361,6 +361,35 @@ describe('summarizeMaterialUsage', () => {
     expect(summary.totals).toEqual({});
     expect(summary.excludedCount).toBe(0);
   });
+
+  it('adds a Dual window to both its front and its back fabric row', () => {
+    const DUAL = { id: 'bt-dual', name: 'Dual Shades', active: true, sort_order: 2 };
+    const FRONT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const BACK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+    const cats = catalogs({
+      blindTypes: [ROLLER, CURTAINS, DUAL],
+      materials: [
+        { id: FRONT, name: 'Blackout Ivory', price_per_sqm: 50, active: true, sort_order: 0, width_cm: null, blind_type_ids: [DUAL.id] },
+        { id: BACK, name: 'Linen Grey', price_per_sqm: 30, active: true, sort_order: 1, width_cm: null, blind_type_ids: [DUAL.id] },
+      ],
+      cassettes: [{ id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [DUAL.id] }],
+      bottomRails: [{ id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [DUAL.id] }],
+      controls: [{ id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [DUAL.id] }],
+    });
+    const summary = summarizeMaterialUsage(
+      [blind({ blinds_type: 'Dual Shades', material_id: FRONT, attributes: { back_material_id: BACK } })],
+      cats
+    );
+    const front = summary.rows.find((r) => r.materialId === FRONT);
+    const back = summary.rows.find((r) => r.materialId === BACK);
+    expect(front?.quantity).toBeCloseTo(2.8, 10);
+    expect(back?.quantity).toBeCloseTo(2.8, 10);
+    expect(back?.rate).toBe(30);
+    expect(back?.lines[0].key).toBe('d1:back_material_id');
+    expect(summary.totals.sqm).toBeCloseTo(5.6, 10);
+    // Line keys stay unique across the summary, so selection still works.
+    expect(new Set(allUsageLineKeys(summary)).size).toBe(2);
+  });
 });
 
 describe('selectedUsageTotals', () => {
