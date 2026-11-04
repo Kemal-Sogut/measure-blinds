@@ -3,15 +3,17 @@
 
 /**
  * TanStack Query hooks for website leads (`/api/leads`): the paged list
- * behind the Leads page, the new-lead count behind the sidebar badge, and
- * the status change.
+ * behind the Leads page, the new-lead count behind the sidebar badge, the
+ * status change (New / Handled), delete, and "Propose visit".
  *
  * Leads arrive from outside the app (a visitor on the WordPress site), so
  * no mutation here can announce them. The list and the count therefore
  * poll every minute and are always stale, so opening the page or
  * returning to the tab shows what came in. Everything lives under the
  * `['leads']` key, so one invalidation refreshes the list, its chips and
- * the sidebar together.
+ * the sidebar together. Delete also refreshes `['notifications']` (the
+ * lead's alert row cascades), and a proposal also refreshes
+ * `['appointments']` (it books a visit on the calendar).
  *
  * Imported directly rather than through the `hooks/index.ts` barrel,
  * matching `useNotifications` / `useInbox`.
@@ -84,5 +86,59 @@ export function useUpdateLeadStatus(): UseMutationResult<Lead, Error, { id: stri
     mutationFn: async ({ id, status }) =>
       (await apiFetch<{ data: Lead }>(`/api/leads/${id}`, { method: 'PUT', body: JSON.stringify({ status }) })).data,
     onSuccess: () => void qc.invalidateQueries({ queryKey: LEADS_KEY }),
+  });
+}
+
+/**
+ * Deletes a lead (`DELETE /api/leads/:id`): spam, duplicates, tests. The
+ * linked customer stays. The lead's "New website lead" alert is deleted
+ * with it, so the Notifications feed refreshes too.
+ */
+export function useDeleteLead(): UseMutationResult<{ id: string }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id) =>
+      (await apiFetch<{ data: { id: string } }>(`/api/leads/${id}`, { method: 'DELETE' })).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: LEADS_KEY });
+      void qc.invalidateQueries({ queryKey: ['notifications'] });
+    },
+  });
+}
+
+/** What the Propose visit dialog sends: a day, a 30-minute start slot, and an optional note. */
+export interface LeadProposalInput {
+  /** YYYY-MM-DD. */
+  appointment_date: string;
+  /** HH:MM, 24-hour. */
+  appointment_time: string;
+  message?: string;
+}
+
+/**
+ * Emails the visitor a thank-you with a proposed in-home estimate time and
+ * books it as a `proposed` estimate visit (`POST /api/leads/:id/propose`).
+ * The Worker marks the lead handled in the same request. Resolves with the
+ * updated lead and the address the email went to; a failed send rejects
+ * and nothing is booked.
+ */
+export function useProposeLeadVisit(): UseMutationResult<
+  { lead: Lead; emailedTo: string },
+  Error,
+  { id: string; input: LeadProposalInput }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, input }) => {
+      const res = await apiFetch<{ data: Lead; emailed_to: string }>(`/api/leads/${id}/propose`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+      return { lead: res.data, emailedTo: res.emailed_to };
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: LEADS_KEY });
+      void qc.invalidateQueries({ queryKey: ['appointments'] });
+    },
   });
 }

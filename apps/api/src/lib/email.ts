@@ -259,12 +259,12 @@ export function primaryButtonHtml(url: string, label: string): string {
 }
 
 /** Bordered secondary CTA button. */
-function secondaryButtonHtml(url: string, label: string): string {
+export function secondaryButtonHtml(url: string, label: string): string {
   return `<a href="${url}" style="display:block;background:#FFFFFF;border:1px solid ${C.secondaryBorder};border-radius:6px;padding:13px 0;text-align:center;font-size:15px;font-weight:600;color:${C.body};text-decoration:none;">${label}</a>`;
 }
 
 /** Primary + secondary buttons side by side (stacked via table cells). */
-function buttonPairHtml(primary: string, secondary: string): string {
+export function buttonPairHtml(primary: string, secondary: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr>
       <td width="50%" style="padding-right:6px;">${primary}</td>
       <td width="50%" style="padding-left:6px;">${secondary}</td>

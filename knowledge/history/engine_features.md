@@ -1,10 +1,44 @@
 # Engine Features / Feature History
 
+## 2026-11-04 — Leads: Propose visit, Handled / Delete icons (Leads and Inbox), migration 53
+Follow-up on the website lead form below. Branch `feat/website-lead-form`. **Migration 53 written, NOT applied;
+not deployed.** Migration 52 was applied by hand by the owner on 2026-11-04 (live then: 1 `new`, 1 `archived` lead).
+
+- **Propose visit** (calendar icon on each lead card, and a "Propose estimate visit" button in its details):
+  `ProposeVisitModal` with an inline day picker (opens on tomorrow, Monday after a Saturday; past days disabled),
+  20 half-hour start slots 8:00 AM–5:30 PM, an optional note, and a "They will see: …" preview.
+  `POST /api/leads/:id/propose` (`lib/leadProposal.ts`) emails the visitor at the address they typed a thank-you
+  with the proposed one-hour window and Confirm this time / Request another time buttons
+  (`buildLeadProposalHtml`), THEN books an ESTIMATE appointment in `proposed` status for the lead's customer
+  (email-then-persist: a failed send writes nothing, 502), THEN marks the lead handled and links
+  `leads.appointment_id`. The customer answers on the existing `/appointment/:token` page, which already handled a
+  proposed estimate visit; the shop gets the usual confirmed / change-requested email, and reminders start once it
+  is confirmed. A second proposal re-times the same visit and keeps its token. 409 when the lead's customer was
+  deleted (the calendar icon is disabled then). The card shows "Visit proposed: Fri, Nov 6 · 10:30 AM – 11:30 AM ·
+  Waiting for their reply / Confirmed by the customer / They asked for another time", and the details link to the
+  visit.
+- **Statuses now match the Inbox: `new` / `handled`** (migration 53: `contacted` and `archived` rows become
+  `handled`; new `handled_at`, stamped by PUT and cleared on Move back to New; `appointment_id` FK SET NULL).
+  Filter chips New · Handled · All. `?status=archived` / `contacted` in an old URL falls back to New.
+- **Row icons** (`components/RowIconButton.tsx`, fixed 36 px, gray at rest): a tick in a circle (green on hover;
+  solid green on a handled row, where it moves the row back to New), a bin (red on hover; asks first), and on leads
+  the calendar (brand blue on hover). On Leads: `DELETE /api/leads/:id` (its alert cascades; the customer and any
+  proposed visit stay). On the Inbox list: the existing `PUT` / `DELETE /api/inbox/:id`, same confirm text as the
+  thread page. The icons sit beside the row's main button (a button cannot nest in a button); the text column keeps
+  185 px (Leads, 3 icons) / 259 px (Inbox, 2 icons) on a 343 px phone card.
+- **Verified:** api 1010 / web 661 tests, tsc clean both sides, oxlint clean. Harness (deleted): Leads page and
+  Inbox list inside the real app-shell offset at 375 / 768 / 1280 px, and the Propose dialog at 375 and 1280 px,
+  with a 79-char name, 90-char unbroken email, all coverings, a change-requested visit, and a deleted customer;
+  no card or dialog wider than its container, no overlap between the text column and the icons, the delete confirm
+  renders, and no `/api` request left the page. Hover colours could not be seen in the scaled pane; the compiled
+  `hover:` rules were confirmed instead. NOT exercised against a live database or a real send.
+
 ## 2026-11-04 — Website lead form → Leads page, every lead becomes a customer
 The "Free Estimate" form for blindsnisa.com (the embed built 2026-10-05, served in demo mode until now) gets
 its backend. Spec `knowledge/specs/2026-11-04-website-lead-form-design.md` (supersedes the backend half of
 `knowledge/plans/2026-10-05-website-lead-capture.md`; SMS dropped). Branch `feat/website-lead-form` on
-`origin/main` `f66424c`. **Migration 52 written, NOT applied; not deployed.**
+`origin/main` `f66424c`. **Migration 52 applied by hand 2026-11-04; not deployed.** Statuses changed to
+new / handled by migration 53 (entry above).
 
 - **WordPress embed (paste as-is into an Elementor HTML widget):**
   `<div id="bn-lead-form" data-api="https://blinds-nisa-api.blindsnisa.workers.dev" data-phone="613-699-1837"
@@ -31,6 +65,9 @@ its backend. Spec `knowledge/specs/2026-11-04-website-lead-form-design.md` (supe
   Customers) with dot + count; Notifications row "New website lead" → `/leads`. Hooks `hooks/useLeads.ts` poll 60 s.
 - **Embed:** optional message box on step 2 (shown in the review), `fill_ms`, production fallback for the stylesheet
   URL when an optimiser hides `document.currentScript`, server error text shown on 400 (see bug_fixes 2026-11-04).
+  The confirmation step's first "what happens next" item reads "We'll reach out within 1 business day: by email at
+  <their email> or text message at <their phone>" (was "by phone or text"); long emails wrap
+  (`.next b { overflow-wrap: anywhere }`), checked at 1280 and 375 px with a 90-character address.
 - **Verified:** api 990 tests / web 656 tests, tsc clean, oxlint 0 warnings. Harness (deleted): Leads page in the
   real `Layout` at 1280 / 768 / 375 px with a 79-char name, 90-char email, 90-char unbroken message, all coverings,
   matched + created + deleted + null customer, unsent email; cards = container width, `scrollWidth == clientWidth`,

@@ -10,13 +10,19 @@
  *     and carries `new_count` plus the Notifications-style pager envelope
  *   - `/summary` answers the new count. It is a literal route, so it is
  *     never read as an id
- *   - `PUT /:id` changes only the status, 404s an unknown or malformed id,
- *     and 400s anything but a known status
+ *   - `PUT /:id` changes only the status (stamping or clearing
+ *     `handled_at`), 404s an unknown or malformed id, and 400s anything but
+ *     `new` / `handled` (the old `contacted` / `archived` are gone)
+ *   - `DELETE /:id` deletes by id and 404s an unknown one
+ *   - `POST /:id/propose` validates the time, passes the lib's error status
+ *     through untouched, and only on success marks the lead handled and links
+ *     the visit (the email/visit logic itself is pinned in `leadProposal.test.ts`)
  *
  * Auth is not exercised: `requireAuth` is applied in `index.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LeadProposalResult } from '../lib/leadProposal';
 
 /** Recorded chain calls per `from()` and the canned replies. */
 const db = {
@@ -32,7 +38,7 @@ function builder(table: string) {
   const op = { table, calls: [] as Array<[string, unknown[]]> };
   db.ops.push(op);
   const b: Record<string, unknown> = {};
-  for (const name of ['select', 'eq', 'order', 'range', 'update']) {
+  for (const name of ['select', 'eq', 'order', 'range', 'update', 'delete']) {
     b[name] = (...args: unknown[]) => {
       op.calls.push([name, args]);
       return b;
@@ -49,6 +55,18 @@ function builder(table: string) {
 
 vi.mock('../lib/supabase', () => ({
   createSupabaseAdmin: () => ({ from: (t: string) => builder(t) }),
+}));
+
+/** The proposal lib's scripted answer, and the inputs it was called with. */
+const proposal = {
+  result: { ok: true, appointmentId: 'appt-1', email: 'jane@example.com' } as LeadProposalResult,
+  calls: [] as unknown[][],
+};
+vi.mock('../lib/leadProposal', () => ({
+  sendLeadProposal: (...args: unknown[]) => {
+    proposal.calls.push(args);
+    return Promise.resolve(proposal.result);
+  },
 }));
 
 import leadsApp from './leads';
@@ -68,6 +86,8 @@ beforeEach(() => {
   db.total = 41;
   db.newCount = 3;
   db.updated = null;
+  proposal.result = { ok: true, appointmentId: 'appt-1', email: 'jane@example.com' };
+  proposal.calls = [];
 });
 
 /** The list chain (the one that is not the head-only count). */
@@ -85,12 +105,12 @@ describe('GET /api/leads', () => {
   });
 
   it('filters by status and pages', async () => {
-    await leadsApp.request('/?status=contacted&page=2', {}, ENV);
-    expect(listOp().calls).toContainEqual(['eq', ['status', 'contacted']]);
+    await leadsApp.request('/?status=handled&page=2', {}, ENV);
+    expect(listOp().calls).toContainEqual(['eq', ['status', 'handled']]);
     expect(listOp().calls).toContainEqual(['range', [20, 39]]);
   });
 
-  it.each(['?status=converted', '?page=0', '?size=50'])('rejects %s', async (q) => {
+  it.each(['?status=converted', '?status=archived', '?page=0', '?size=50'])('rejects %s', async (q) => {
     expect((await leadsApp.request(`/${q}`, {}, ENV)).status).toBe(400);
   });
 });
@@ -106,22 +126,98 @@ describe('PUT /api/leads/:id', () => {
   const put = (id: string, body: unknown) =>
     leadsApp.request(`/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, ENV);
 
-  it('updates only the status', async () => {
-    db.updated = { id: ID, status: 'contacted' };
-    const res = await put(ID, { status: 'contacted' });
+  it('marks handled with a timestamp, and back to new clears it', async () => {
+    db.updated = { id: ID, status: 'handled' };
+    const res = await put(ID, { status: 'handled' });
     expect(res.status).toBe(200);
-    const op = db.ops[0];
-    expect(op.calls).toContainEqual(['update', [{ status: 'contacted' }]]);
-    expect(op.calls).toContainEqual(['eq', ['id', ID]]);
+    const update = db.ops[0].calls.find(([n]) => n === 'update')![1][0] as Record<string, unknown>;
+    expect(Object.keys(update).sort()).toEqual(['handled_at', 'status']);
+    expect(update.status).toBe('handled');
+    expect(typeof update.handled_at).toBe('string');
+    expect(db.ops[0].calls).toContainEqual(['eq', ['id', ID]]);
+
+    db.ops = [];
+    await put(ID, { status: 'new' });
+    expect(db.ops[0].calls).toContainEqual(['update', [{ status: 'new', handled_at: null }]]);
   });
 
   it('404s an unknown or malformed id', async () => {
-    expect((await put(ID, { status: 'archived' })).status).toBe(404);
-    expect((await put('not-a-uuid', { status: 'archived' })).status).toBe(404);
+    expect((await put(ID, { status: 'handled' })).status).toBe(404);
+    expect((await put('not-a-uuid', { status: 'handled' })).status).toBe(404);
   });
 
-  it('400s an unknown status or extra fields', async () => {
+  it('400s an unknown or retired status, or extra fields', async () => {
     expect((await put(ID, { status: 'converted' })).status).toBe(400);
+    expect((await put(ID, { status: 'contacted' })).status).toBe(400);
+    expect((await put(ID, { status: 'archived' })).status).toBe(400);
     expect((await put(ID, { status: 'new', email: 'x@y.z' })).status).toBe(400);
+  });
+});
+
+describe('DELETE /api/leads/:id', () => {
+  it('deletes by id', async () => {
+    db.updated = { id: ID };
+    const res = await leadsApp.request(`/${ID}`, { method: 'DELETE' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.ops[0].table).toBe('leads');
+    expect(db.ops[0].calls.map(([n]) => n)).toEqual(['delete', 'eq', 'select']);
+    expect(db.ops[0].calls).toContainEqual(['eq', ['id', ID]]);
+  });
+
+  it('404s an unknown or malformed id', async () => {
+    expect((await leadsApp.request(`/${ID}`, { method: 'DELETE' }, ENV)).status).toBe(404);
+    expect((await leadsApp.request('/nope', { method: 'DELETE' }, ENV)).status).toBe(404);
+    expect(db.ops).toHaveLength(1);
+  });
+});
+
+describe('POST /api/leads/:id/propose', () => {
+  const propose = (id: string, body: unknown) =>
+    leadsApp.request(
+      `/${id}/propose`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      ENV
+    );
+  const VALID = { appointment_date: '2026-11-06', appointment_time: '10:00', message: 'See you soon' };
+
+  it('sends, then marks the lead handled and links the visit', async () => {
+    db.updated = { id: ID, status: 'handled', appointment_id: 'appt-1' };
+    const res = await propose(ID, VALID);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ data: { status: 'handled' }, emailed_to: 'jane@example.com' });
+    expect(proposal.calls[0].slice(2)).toEqual([ID, VALID]);
+    const update = db.ops[0].calls.find(([n]) => n === 'update')![1][0] as Record<string, unknown>;
+    expect(update).toMatchObject({ status: 'handled', appointment_id: 'appt-1' });
+    expect(typeof update.handled_at).toBe('string');
+  });
+
+  it.each([404, 409, 502] as const)('passes a %i from the proposal through and leaves the lead alone', async (status) => {
+    proposal.result = { ok: false, status, error: 'nope' };
+    const res = await propose(ID, VALID);
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error: 'nope' });
+    expect(db.ops).toHaveLength(0);
+  });
+
+  it('says the proposal went out when only the lead update fails', async () => {
+    db.updated = null;
+    const res = await propose(ID, VALID);
+    expect(res.status).toBe(500);
+    expect(((await res.json()) as { error: string }).error).toMatch(/proposal was sent/);
+  });
+
+  it.each([
+    { appointment_date: '6 Nov', appointment_time: '10:00' },
+    { appointment_date: '2026-11-06', appointment_time: '25:00' },
+    { appointment_date: '2026-11-06', appointment_time: '10:00', status: 'handled' },
+    { appointment_date: '2026-11-06', appointment_time: '10:00', message: 'x'.repeat(1001) },
+  ])('400s a bad payload %#', async (body) => {
+    expect((await propose(ID, body)).status).toBe(400);
+    expect(proposal.calls).toHaveLength(0);
+  });
+
+  it('404s a malformed id without calling the lib', async () => {
+    expect((await propose('nope', VALID)).status).toBe(404);
+    expect(proposal.calls).toHaveLength(0);
   });
 });

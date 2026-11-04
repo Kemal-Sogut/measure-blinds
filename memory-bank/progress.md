@@ -307,16 +307,19 @@ Written best-effort (never blocks the event) on customer confirm, customer edit 
 ingested e-Transfer (applied or pending); order alerts link to the order, payment alerts don't.
 Table `notifications`, migration 43. No read/unread state. Website leads add `lead_received` (migration 52).
 
-**Website leads (branch `feat/website-lead-form`, migration 52 not applied, not deployed):** the embeddable
-Free Estimate form (`apps/web/public/embed/lead-form.js`) posts to `POST /intake/lead`; each lead is linked to
-the email-matched customer (blank fields filled, nothing overwritten) or creates one; staff alert row + shop
-email; `/leads` page with New/Contacted/Archived filters and a sidebar count.
+**Website leads (branch `feat/website-lead-form`, migration 52 applied by hand, migration 53 not applied, not
+deployed):** the embeddable Free Estimate form (`apps/web/public/embed/lead-form.js`) posts to `POST /intake/lead`;
+each lead is linked to the email-matched customer (blank fields filled, nothing overwritten) or creates one; staff
+alert row + shop email; `/leads` page with New / Handled / All filters and a sidebar count. Row icons: Propose visit
+(thank-you email with a proposed in-home estimate time → `proposed` estimate appointment → lead handled), Handled,
+Delete. The Inbox list has the same Handled / Delete icons.
 
 ## What's Left / Known Issues
-- **Website leads:** apply migration 52, deploy API then web, paste the snippet into WordPress (Elementor HTML
+- **Website leads:** apply migration 53 with the API deploy (52 is already applied), then deploy the web, paste the snippet into WordPress (Elementor HTML
   widget on `/free-estimate/`; exclude `lead-form.js` from JS-delay/combine optimisers), then submit one real test
-  lead and archive it. Never run against the live DB. Optional later: Turnstile (`TURNSTILE_SECRET` +
-  `data-sitekey`), visitor auto-reply, book-a-visit from a lead, UTM capture.
+  lead, propose a visit to yourself and confirm it, then delete the lead and the test visit. Never run tests
+  against the live DB. Optional later: Turnstile (`TURNSTILE_SECRET` + `data-sitekey`), visitor auto-reply, UTM
+  capture.
 - **Dual Shades: migration 51 is applied (2026-11-03); deploy the Worker, then the web, promptly** — until then
   the deployed build offers Dual Shades but prices it with the default single-fabric formula. Not yet exercised in a real
   browser against a backend; v1 limits listed in the history entry (front-only labels/PDF material, no bulk-edit

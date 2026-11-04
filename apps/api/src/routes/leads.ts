@@ -6,9 +6,18 @@
  * behind `requireAuth`.
  *
  * Endpoints:
- *   GET /summary   `{ new_count }` for the sidebar dot and count
- *   GET /          one page of leads, newest first, with optional `?status=`
- *   PUT /:id       `{ status }` (move a lead between new / contacted / archived)
+ *   GET    /summary      `{ new_count }` for the sidebar dot and count
+ *   GET    /             one page of leads, newest first, with optional `?status=`
+ *   PUT    /:id          `{ status }`: `new` or `handled` (stamps / clears `handled_at`)
+ *   DELETE /:id          removes the lead (spam, duplicates). Its alert row
+ *                        cascades; the linked customer and any booked visit stay.
+ *   POST   /:id/propose  `{ appointment_date, appointment_time, message? }`:
+ *                        emails the visitor a thank-you and a proposed estimate
+ *                        visit, books it as a `proposed` estimate appointment
+ *                        (`lib/leadProposal.ts`), then marks the lead handled
+ *
+ * Statuses match the Inbox (migration 53): `new` is the work queue, `handled`
+ * is everything dealt with.
  *
  * Rows are written only by the public form intake (`routes/leadIntake.ts`).
  * Staff never create or edit a lead's submitted details here: the lead is
@@ -22,6 +31,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { createSupabaseAdmin } from '../lib/supabase';
+import { sendLeadProposal } from '../lib/leadProposal';
 import type { AuthVariables } from '../middleware/auth';
 import type { Env } from '../index';
 
@@ -30,8 +40,8 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 /** Leads per page. It is fixed and is not a client parameter. */
 export const LEADS_PAGE_SIZE = 20;
 
-/** The statuses `leads.status` accepts (migration 52 CHECK). */
-export const LEAD_STATUSES = ['new', 'contacted', 'archived'] as const;
+/** The statuses `leads.status` accepts (migration 53 CHECK). */
+export const LEAD_STATUSES = ['new', 'handled'] as const;
 
 /**
  * `?status=` (one status, or `all`, the default) and `?page=`. The schema is
@@ -48,15 +58,29 @@ const listQuerySchema = z
 const updateSchema = z.object({ status: z.enum(LEAD_STATUSES) }).strict();
 
 /**
- * Lead columns plus the linked customer's id, name and soft-delete stamp.
- * The Leads page uses those to link to the customer, or to say the
- * customer was deleted.
+ * Body of `POST /:id/propose`. Same date / time rules as the Calendar's
+ * booking (`routes/appointments.ts`), and the same 1000-character note.
+ */
+const proposeSchema = z
+  .object({
+    appointment_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD'),
+    appointment_time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:MM'),
+    message: z.string().max(1000).optional(),
+  })
+  .strict();
+
+/**
+ * Lead columns plus the linked customer's id, name and soft-delete stamp
+ * (the Leads page links to the customer, or says it was deleted), and the
+ * proposed visit's time and status (the card shows "Visit proposed …" and
+ * the customer's answer).
  */
 const LEAD_SELECT =
   'id, status, first_name, last_name, email, phone, street, unit, city, province, postal_code, ' +
   'coverings, window_count, message, consent, source_url, customer_id, customer_match, ' +
-  'email_sent_at, created_at, updated_at, ' +
-  'customer:customers(id, first_name, last_name, deleted_at)';
+  'email_sent_at, handled_at, appointment_id, created_at, updated_at, ' +
+  'customer:customers(id, first_name, last_name, deleted_at), ' +
+  'appointment:appointments(id, appointment_date, appointment_time, status)';
 
 /** UUID shape. Junk ids are rejected before the database is touched. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -111,7 +135,10 @@ app.get('/', async (c) => {
   });
 });
 
-/** Moves one lead to another status. 404 when the id matches no lead. */
+/**
+ * Moves one lead to another status. `handled` stamps `handled_at`, `new`
+ * clears it. 404 when the id matches no lead.
+ */
 app.put('/:id', async (c) => {
   const id = c.req.param('id');
   if (!UUID_RE.test(id)) return c.json({ error: 'Lead not found' }, 404);
@@ -120,13 +147,71 @@ app.put('/:id', async (c) => {
 
   const { data, error } = await createSupabaseAdmin(c.env)
     .from('leads')
-    .update({ status: parsed.data.status })
+    .update({
+      status: parsed.data.status,
+      handled_at: parsed.data.status === 'handled' ? new Date().toISOString() : null,
+    })
     .eq('id', id)
     .select(LEAD_SELECT)
     .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Lead not found' }, 404);
   return c.json({ data });
+});
+
+/**
+ * Deletes one lead for good. The `lead_received` alert row cascades
+ * (migration 52). The customer the lead created or matched is NOT touched,
+ * and neither is a visit proposed from it: both are real records by then.
+ */
+app.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'Lead not found' }, 404);
+  const { data, error } = await createSupabaseAdmin(c.env)
+    .from('leads')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data) return c.json({ error: 'Lead not found' }, 404);
+  return c.json({ data });
+});
+
+/**
+ * Proposes an in-home estimate visit to the lead (email first, then the
+ * visit; see `lib/leadProposal.ts` for the 404 / 409 / 502 cases), then
+ * marks the lead handled and links it to the visit. Returns the updated
+ * lead plus `emailed_to`, the address the proposal went to.
+ */
+app.post('/:id/propose', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'Lead not found' }, 404);
+  const parsed = proposeSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return c.json({ error: issue ? `${issue.path.join('.') || 'payload'}: ${issue.message}` : 'Invalid payload' }, 400);
+  }
+
+  const sb = createSupabaseAdmin(c.env);
+  const result = await sendLeadProposal(c.env, sb, id, parsed.data);
+  if (!result.ok) return c.json({ error: result.error }, result.status);
+
+  const { data, error } = await sb
+    .from('leads')
+    .update({ status: 'handled', handled_at: new Date().toISOString(), appointment_id: result.appointmentId })
+    .eq('id', id)
+    .select(LEAD_SELECT)
+    .maybeSingle();
+  // The email went out and the visit is booked; only the lead's own
+  // bookkeeping failed. Say so, so staff do not send a second proposal.
+  if (error || !data) {
+    return c.json(
+      { error: `The proposal was sent and the visit booked, but the lead could not be updated: ${error?.message ?? 'not found'}` },
+      500
+    );
+  }
+  return c.json({ data, emailed_to: result.email });
 });
 
 export default app;
