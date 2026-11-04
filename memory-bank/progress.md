@@ -6,7 +6,7 @@
 
 ## What Works
 
-**Text size setting (Settings → Display, per device; uncommitted on `feat/website-lead-form`, not
+**Text size setting (Settings → Display, per device; commit `45c82de` on `feat/website-lead-form`, not
 deployed):** Default / Large / Extra large scale every font via `--font-scale`; see engine_features 2026-11-04.
 
 **Dual Shades, on `feat/dual-shades` (not merged, not deployed; migration 51 APPLIED to

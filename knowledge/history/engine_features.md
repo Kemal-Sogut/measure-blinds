@@ -1,5 +1,12 @@
 # Engine Features / Feature History
 
+## 2026-11-04 — Muted text darker: `--color-text-muted` #8a93a6 → #667085
+Web only, not deployed. The gray used for descriptions, hints and explanations (275 `text-text-muted` uses)
+read too faint: 3.1:1 on white, below WCAG AA. It is now the matching step of the same gray family, #667085:
+5.0:1 on cards and 4.6:1 on the `#f6f7f9` page background. That is still a clear step lighter than
+`text-secondary` #475467 (7.7:1). The solid neutral Pill (white on muted) also improves, to 5.0:1. One token
+change in `index.css`; no markup touched. Seen rendered side by side with the old shade.
+
 ## 2026-11-04 — Settings: Text size (Default / Large / Extra large), per device
 Branch `feat/website-lead-form`, web only, not deployed.
 

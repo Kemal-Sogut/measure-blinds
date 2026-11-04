@@ -6,7 +6,7 @@
 
 ## Where things stand
 
-**Also on this branch, uncommitted:** Settings → Display → **Text size** (per device; Default / Large / Extra
+**Also on this branch (commit `45c82de`):** Settings → Display → **Text size** (per device; Default / Large / Extra
 large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns
 "Font sizes scale from one variable".
 
