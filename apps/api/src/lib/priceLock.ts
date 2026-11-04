@@ -116,16 +116,24 @@ function attrValue(value: unknown): string {
  * (`pleat_name`, `pleat_multiplier`). Only the id is an input — the
  * snapshots are output, and a catalog edit that moves a multiplier must
  * NOT count as the consultant having changed the item.
+ *
+ * Display-only keys (`displayOnlyKeys`, a Dual Shades colour) are dropped
+ * the same way: they are printed, never priced, so editing one must not
+ * break the price lock.
  */
 function inputAttributes(
   blindsType: string,
   attributes: Record<string, unknown>
 ): [string, unknown][] {
-  const snapshots = new Set(
-    getBlindType(blindsType).catalogRefs.flatMap((ref) => [ref.nameKey, ref.valueKey])
-  );
+  const blindType = getBlindType(blindsType);
+  // Output keys (catalog snapshots) and display-only keys (a colour) are
+  // not inputs: neither may count as the consultant having repriced the item.
+  const ignored = new Set([
+    ...blindType.catalogRefs.flatMap((ref) => [ref.nameKey, ref.valueKey]),
+    ...blindType.displayOnlyKeys,
+  ]);
   return Object.entries(attributes)
-    .filter(([key]) => !snapshots.has(key))
+    .filter(([key]) => !ignored.has(key))
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 }
 

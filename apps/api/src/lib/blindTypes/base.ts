@@ -347,6 +347,15 @@ export class BaseBlindType {
   }
 
   /**
+   * Attribute keys that are DISPLAY-ONLY — printed on documents, never
+   * priced (Dual Shades' `back_color`). Both `priceLock.ts` twins drop
+   * them from the pricing fingerprint, so editing one on a confirmed order
+   * does not break its price lock, exactly as the front `color` column
+   * never has. A key listed here must not feed any cost hook.
+   */
+  readonly displayOnlyKeys: readonly string[] = [];
+
+  /**
    * Attribute keys this type accepts FROM A CLIENT — the keys declared in
    * `attributeSchema`, which by construction excludes every key the
    * Worker writes itself.

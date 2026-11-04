@@ -109,6 +109,16 @@ describe('pricingFingerprint — blinds', () => {
     const after = blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: 'p2' } });
     expect(pricingFingerprint(before)).not.toBe(pricingFingerprint(after));
   });
+
+  it('treats every attribute of a type with no display-only keys as an input', () => {
+    // Curtains declares no display-only keys: changing its pleat id must
+    // still move the fingerprint (Task 2 must not widen what is ignored).
+    const curtain = (pleat: string) =>
+      blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: pleat } });
+    expect(pricingFingerprint(curtain('66666666-6666-4666-8666-666666666666'))).not.toBe(
+      pricingFingerprint(curtain('77777777-7777-4777-8777-777777777777'))
+    );
+  });
 });
 
 describe('pricingFingerprint — preset and custom items', () => {

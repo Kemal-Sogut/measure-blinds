@@ -207,4 +207,8 @@ describe('generic extension points', () => {
     expect(t.missingRequiredAttribute({ widget_id: 5 })).toBeNull();
     expect(t.missingRequiredAttribute({ widget_id: null })).toEqual({ key: 'widget_id', noun: 'widget' });
   });
+
+  it('defaults to no display-only keys', () => {
+    expect(new BaseBlindType().displayOnlyKeys).toEqual([]);
+  });
 });
