@@ -127,6 +127,7 @@ begin
   select id into v_roller
     from public.blind_types
    where name = 'Roller'
+     and archived_at is null
    order by created_at
    limit 1;
 
@@ -174,6 +175,7 @@ begin
       from public.materials m
       join public.material_blind_types mbt on mbt.material_id = m.id
      where mbt.blind_type_id = v_roller
+       and m.archived_at is null   -- retired in Settings (migration 49): not copied
      order by m.sort_order, m.name
   loop
     insert into public.materials (name, price_per_sqm, width_cm, active, sort_order)
