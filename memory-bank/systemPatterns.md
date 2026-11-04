@@ -427,6 +427,11 @@ section as the reference implementation for future collapsible UI.
   Bots get the same 201 as people. The response never reveals whether an email matched a customer.
 - A lead is linked to a customer at birth. On an email match only BLANK customer fields are filled; the lead
   row keeps exactly what the visitor typed.
+- Propose visit from a lead is email-then-persist (like every customer-facing announcement): email → estimate
+  appointment in `proposed` status (the visitor never chose the time, so unlike a Calendar booking it is not
+  confirmed at once) → lead `handled` + `appointment_id`. Re-proposing re-times the same visit and keeps its token.
+- Lead statuses are the Inbox's `new` / `handled`. List rows' quick actions use `components/RowIconButton.tsx`
+  (fixed 36 px icons in a `shrink-0` group BESIDE the row's main button, never inside it).
 
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates

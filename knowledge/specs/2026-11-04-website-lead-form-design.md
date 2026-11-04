@@ -46,7 +46,7 @@ Decisions confirmed with the owner on 2026-11-04 are marked (D).
 - `GET /api/leads?status=&page=`: newest first, 20 per page, the same pager envelope as
   Notifications, plus `new_count`. Each row carries `customer` (id, name, deleted flag).
 - `GET /api/leads/summary` → `{ new_count }` for the sidebar (registered before `/:id`).
-- `PATCH /api/leads/:id` `{ status }`: strict.
+- `PUT /api/leads/:id` `{ status }`: strict. (Statuses and further endpoints: see the follow-up below.)
 
 ## Web
 
@@ -60,8 +60,27 @@ Decisions confirmed with the owner on 2026-11-04 are marked (D).
 
 ## Out of scope
 
-SMS alerts (the earlier Twilio plan), an auto-reply to the visitor, booking a visit from a lead,
-and UTM capture.
+SMS alerts (the earlier Twilio plan), an auto-reply to the visitor, and UTM capture. (Booking a
+visit from a lead was added afterwards; see the follow-up below.)
+
+## Follow-up: handled, delete, propose a visit (2026-11-04, migration 53)
+
+Asked by the owner after the first version:
+
+1. **Propose visit.** One dialog on the Leads page: pick a day and a 30-minute start time, add an
+   optional note, Send. The visitor gets a thank-you email with the proposed in-home estimate window
+   and Confirm / Request another time buttons (`lib/leadProposal.ts`). The visit is booked as an
+   ESTIMATE appointment in `proposed` status (unlike a Calendar booking, which is confirmed at once,
+   because the visitor never chose this time), and the lead is marked handled. Email first, then the
+   visit, then the lead. A second proposal re-times the same visit (same link).
+2. **Row icons on Leads and on the Inbox list**: Handled (a tick in a circle, gray, green on hover) and
+   Delete (a bin, gray, red on hover). Leads also get the calendar icon for Propose visit.
+3. **Statuses** become the Inbox's `new` / `handled`; `contacted` and `archived` are folded into
+   `handled`, and spam is deleted instead. `handled_at` and `appointment_id` are added.
+
+API: `PUT /api/leads/:id { status: 'new' | 'handled' }`, `DELETE /api/leads/:id`,
+`POST /api/leads/:id/propose { appointment_date, appointment_time, message? }` → `{ data, emailed_to }`.
+
 
 ## WordPress snippet (paste into an Elementor **HTML** widget)
 
@@ -78,8 +97,11 @@ Optional later: add `data-sitekey="<Turnstile site key>"` to the `<div>` **and**
 
 ## Go-live order
 
-1. Apply migration 52 (`supabase/migrations/20261104000052_leads.sql`).
+1. Migration 52 (`supabase/migrations/20261104000052_leads.sql`) was applied by hand on 2026-11-04.
+   Apply migration 53 (`20261104000053_leads_handled_proposal.sql`) together with the API deploy: it
+   changes the status CHECK, so an API that still writes `contacted` / `archived` would be refused.
 2. Deploy the API (`blinds-nisa-api`), then the web (`measure-blinds`, which serves the embed and the Leads page).
 3. Paste the snippet. If a caching or optimiser plugin delays or combines JS, exclude `lead-form.js`.
-4. Submit one real test lead. Check the Leads page, the Notifications row and the shop email, then archive it.
+4. Submit one real test lead. Check the Leads page, the Notifications row and the shop email, then
+   propose a visit to yourself and confirm it from the email, then delete the lead (and the test visit).
    The test also creates a customer, so delete that one if it is not wanted.
