@@ -240,20 +240,7 @@ export default function LeadCard({ lead, defaultOpen = false }: { lead: Lead; de
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="primary" disabled={!canPropose} onClick={() => setProposing(true)}>
-              {lead.appointment ? 'Propose a new time' : 'Propose estimate visit'}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={update.isPending}
-              disabled={busy}
-              onClick={() => move(handled ? 'new' : 'handled')}
-            >
-              {handled ? 'Move back to New' : 'Mark handled'}
-            </Button>
-          </div>
+
         </div>
       )}
 
