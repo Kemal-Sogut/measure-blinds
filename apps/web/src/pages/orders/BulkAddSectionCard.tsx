@@ -475,6 +475,8 @@ export function SectionCard({
 }) {
   const label = section.config.blinds_type || 'New section';
   const rowCount = section.rows.length;
+  // A Dual window has a BACK pair too; name the front pair to match.
+  const isDual = getBlindType(section.config.blinds_type) instanceof DualShadesBlindType;
 
   return (
     <div className="overflow-hidden rounded-xl border border-border-strong bg-surface shadow-md">
@@ -517,14 +519,14 @@ export function SectionCard({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <SectionTypeSelect config={section.config} catalogs={catalogs} onChange={onConfigChange} />
             <OptionSelect
-              label="Material"
+              label={isDual ? 'Front fabric' : 'Material'}
               value={section.config.material_id}
               onChange={(id) => onConfigChange({ ...section.config, material_id: id })}
               options={materialsForType(catalogs, section.config.blinds_type)}
               placeholder={section.config.blinds_type ? 'Select…' : 'Pick a blind type first'}
             />
             <label className="min-w-0">
-              <span className={LABEL}>Color</span>
+              <span className={LABEL}>{isDual ? 'Front color' : 'Color'}</span>
               <input
                 placeholder="e.g. White, Oak, Charcoal"
                 value={section.config.color}

@@ -50,7 +50,7 @@ begin
    order by created_at
    limit 1;
 
-  -- No Roller row (a database seeded differently): Dual Shades is created
+  -- No live Roller row (a database seeded differently): Dual Shades is created
   -- unscoped and with no fabrics; the shop configures it in Settings.
   if v_roller is null then
     return;

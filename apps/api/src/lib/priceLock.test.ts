@@ -112,7 +112,7 @@ describe('pricingFingerprint — blinds', () => {
 
   it('treats every attribute of a type with no display-only keys as an input', () => {
     // Curtains declares no display-only keys: changing its pleat id must
-    // still move the fingerprint (Task 2 must not widen what is ignored).
+    // still move the fingerprint (this must not widen what is ignored).
     const curtain = (pleat: string) =>
       blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: pleat } });
     expect(pricingFingerprint(curtain('66666666-6666-4666-8666-666666666666'))).not.toBe(

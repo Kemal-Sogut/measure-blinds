@@ -8,8 +8,9 @@
  * `material_id` / `color` columns, relabelled) and the BACK fabric +
  * colour (`attributes.back_material_id` / `back_color`, declared in
  * `lib/blindTypes/dualShades.ts`). Both dropdowns list the same Dual
- * Shades materials. The back fabric is required: the price stays blank
- * and the save is blocked until it is chosen.
+ * Shades materials. The back fabric is required: until it is chosen the
+ * price stays blank and, on a draft, the line saves as INCOMPLETE ($0,
+ * Incomplete marker); Send, stage moves and the PDF are refused.
  *
  * Hardware is the shared `HardwareRow`; the doubled control and bottom
  * rail are pricing, not UI, and live in the type module.

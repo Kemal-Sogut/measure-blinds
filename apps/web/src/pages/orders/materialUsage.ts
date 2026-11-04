@@ -293,10 +293,10 @@ export function summarizeMaterialUsage(
  * one LINE — one window's contribution to one row (see
  * {@link MaterialUsageLine.key}). A window can have a line in two rows
  * (Dual Shades: front and back fabric), so a window is not always one key;
- * {@link selectedWindowCount} counts windows. Keys
- * that match nothing are ignored rather than treated as zero-quantity
- * lines, so a stale tick left behind by an edited or deleted line cannot
- * survive as a phantom entry in the total.
+ * {@link selectedWindowCount} counts windows. Keys that match nothing are
+ * ignored rather than treated as zero-quantity lines, so a stale tick left
+ * behind by an edited or deleted line cannot survive as a phantom entry in
+ * the total.
  *
  * Units stay separate for the same reason rows do: adding a running metre
  * to a square metre produces a number that means nothing. A unit appears
