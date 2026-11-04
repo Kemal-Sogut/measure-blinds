@@ -5,8 +5,9 @@
  * Write side of the staff Alerts feed (`public.notifications`, migrations
  * 43 and 46). The producers — customer confirm and customer edit request
  * in `routes/public.ts`, the e-Transfer webhook in `routes/webhook.ts`,
- * and the Titan inbox sync (`lib/inbox/store.ts`, one alert per stored
- * incoming email) — call `recordNotification` AFTER their own event has
+ * the Titan inbox sync (`lib/inbox/store.ts`, one alert per stored
+ * incoming email) and the website lead intake (`routes/leadIntake.ts`,
+ * migration 52) — call `recordNotification` AFTER their own event has
  * persisted, so an alert never announces something that did not happen.
  *
  * Best effort by contract: every error (thrown or returned by PostgREST)
@@ -20,7 +21,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** The event kinds the table's CHECK constraint accepts. */
-export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received' | 'email_received';
+export type NotificationKind =
+  | 'edit_request'
+  | 'order_confirmed'
+  | 'etransfer_received'
+  | 'email_received'
+  | 'lead_received';
 
 /**
  * One alert to record. Name, order number and amount are display
@@ -46,8 +52,16 @@ export interface NotificationInput {
    * deleting the conversation removes its alerts.
    */
   emailThreadId?: string | null;
-  /** Email subject snapshot for `email_received`; '' otherwise. */
+  /**
+   * Snapshot text under the heading: the email subject for
+   * `email_received`, the visitor's city for `lead_received`; '' otherwise.
+   */
   subject?: string | null;
+  /**
+   * The website lead a `lead_received` alert is about (migration 52).
+   * Cascades: deleting the lead removes its alert.
+   */
+  leadId?: string | null;
 }
 
 /**
@@ -67,6 +81,7 @@ export async function recordNotification(
       amount: input.amount ?? null,
       email_thread_id: input.emailThreadId ?? null,
       subject: input.subject ?? '',
+      lead_id: input.leadId ?? null,
     });
     if (error) console.error(`Notification (${input.kind}) not recorded:`, error.message);
   } catch (e) {

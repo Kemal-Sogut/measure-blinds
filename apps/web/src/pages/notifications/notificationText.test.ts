@@ -22,6 +22,7 @@ function alert(over: Partial<AppNotification> = {}): AppNotification {
     amount: null,
     email_thread_id: null,
     subject: '',
+    lead_id: null,
     created_at: '2026-09-16T12:00:00.000Z',
     ...over,
   };
@@ -95,5 +96,20 @@ describe('notificationDetail', () => {
       amount: 100,
     });
     expect(notificationDetail(n)).toBe('$100.00 — waiting to be assigned to an order.');
+  });
+});
+
+describe('lead_received alerts', () => {
+  const lead = (over: Partial<AppNotification> = {}) =>
+    alert({ kind: 'lead_received', order_id: null, order_number: '', lead_id: 'l1', subject: 'Ottawa', ...over });
+
+  it('is titled and opens the Leads page', () => {
+    expect(NOTIFICATION_TITLES.lead_received).toBe('New website lead');
+    expect(notificationHref(lead())).toBe('/leads');
+  });
+
+  it('names the visitor and city, and degrades when either is blank', () => {
+    expect(notificationDetail(lead())).toBe('Jane Doe in Ottawa asked for a free estimate.');
+    expect(notificationDetail(lead({ customer_name: '', subject: '' }))).toBe('Someone asked for a free estimate.');
   });
 });

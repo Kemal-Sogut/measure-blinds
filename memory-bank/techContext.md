@@ -62,6 +62,8 @@ that is pnpm's built-in workspace-deploy command.
 - `TITAN_IMAP_USER`, `TITAN_IMAP_PASSWORD` — Titan mailbox login for the inbox sync (every minute
   08:00–22:00 Toronto, every 10 min otherwise; Workers FREE plan, 10 ms CPU per cron run)
   (`TITAN_IMAP_HOST` / `TITAN_IMAP_PORT` are committed `[vars]`); the sync skips while unset
+- `TURNSTILE_SECRET` — OPTIONAL bot check for the website lead form (`/intake/lead`). Unset = honeypot +
+  fill time + rate limit only; once set, the WordPress embed needs the matching `data-sitekey`
 
 ### Frontend (.env)
 - `VITE_SUPABASE_URL`

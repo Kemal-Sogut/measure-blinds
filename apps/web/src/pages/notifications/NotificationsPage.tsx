@@ -31,6 +31,7 @@ const KIND_DOT: Record<NotificationKind, string> = {
   order_confirmed: 'bg-success',
   etransfer_received: 'bg-brand-600',
   email_received: 'bg-scheduled',
+  lead_received: 'bg-success',
 };
 
 /** Reads `?page=` as a positive integer, defaulting to 1. */

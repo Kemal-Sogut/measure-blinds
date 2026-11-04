@@ -24,6 +24,7 @@ export const NOTIFICATION_TITLES: Record<NotificationKind, string> = {
   order_confirmed: 'Order confirmed',
   etransfer_received: 'New e-Transfer payment',
   email_received: 'New email',
+  lead_received: 'New website lead',
 };
 
 /**
@@ -47,12 +48,17 @@ export function notificationDetail(n: AppNotification): string {
     }
     case 'email_received':
       return `${who || 'Someone'}: ${n.subject.trim() || '(no subject)'}`;
+    case 'lead_received': {
+      const city = n.subject.trim();
+      return `${who || 'Someone'}${city ? ` in ${city}` : ''} asked for a free estimate.`;
+    }
   }
 }
 
 /**
  * Where tapping the row navigates: the linked order page for the two
- * order events, the Inbox conversation for a received email, and `null`
+ * order events, the Inbox conversation for a received email, the Leads
+ * page for a website lead, and `null`
  * for e-Transfer alerts, which are deliberately not clickable (an
  * unmatched transfer has no order, and a matched one is already recorded
  * on it). An alert whose order or conversation was deleted never reaches
@@ -60,6 +66,7 @@ export function notificationDetail(n: AppNotification): string {
  */
 export function notificationHref(n: AppNotification): string | null {
   if (n.kind === 'email_received') return n.email_thread_id ? `/inbox/${n.email_thread_id}` : null;
+  if (n.kind === 'lead_received') return '/leads';
   if (n.kind === 'etransfer_received' || !n.order_id) return null;
   return `/orders/${n.order_id}`;
 }

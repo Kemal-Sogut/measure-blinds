@@ -1,5 +1,17 @@
 # Bug Fixes History
 
+## 2026-11-04 — Lead form showed "couldn't reach our server" for every failed submit
+Embed `apps/web/public/embed/lead-form.js` (never live: it ran in demo mode until the backend landed). Branch
+`feat/website-lead-form`.
+- **Issue:** `submitLead` threw plain `Error`s for 400/403/429/5xx, but its `catch` only shows messages from errors
+  flagged by `userError()` (`bnUser`), and `userError` was never called (the long-standing oxlint
+  `no-unused-vars` warning). Every failure, a bad field or a rate limit included, read as a network problem.
+- **Fix:** the branches throw `userError(...)`; a 400 now reads the Worker's `{ error }` and shows it ("Some
+  details didn't go through: Enter a valid email address. Please press Edit…"). The 403 branch resets Turnstile
+  only when a widget exists. Verified in the browser against a stubbed 400.
+- **Also:** the new message `<textarea>` rendered in the UA monospace font; the shadow stylesheet's
+  `button, input, select { font: inherit }` reset now includes `textarea`.
+
 ## 2026-11-03 — "Incomplete" chip squeezed the item name to one letter per line
 Branch `feat/incomplete-draft-items` (PR #66); not deployed. Reported from the real app.
 - **Issue:** in the order editor's items list, an incomplete blind's amber chip

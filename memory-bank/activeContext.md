@@ -6,6 +6,16 @@
 
 ## Where things stand
 
+**Current branch `feat/website-lead-form` (on `origin/main` `f66424c`; not committed, not deployed), web + api +
+MIGRATION 52 WRITTEN, NOT APPLIED:** the website "Free Estimate" form gets its backend. `POST /intake/lead`
+(public, rate-limited, honeypot + fill-time, optional Turnstile) stores a `leads` row and links it to the customer
+with the same email (filling only blank fields) or creates one; adds a `lead_received` Notifications row and emails
+`company_settings.email`. Staff work leads on `/leads` (sidebar dot + count). The WordPress snippet is in
+`knowledge/history/engine_features.md` 2026-11-04. Verified by tests and a throwaway harness at 1280/768/375 px;
+not exercised against the live DB. **Deploy order:** apply migration 52, deploy the API, then the web, then paste
+the snippet. Live DB checked read-only 2026-11-04: migrations 50 and 51 are applied, and the API Worker was last
+deployed 2026-11-04 04:39 UTC (PR #68's merge).
+
 **Current branch `feat/dual-shades` (not merged to main, not deployed), web + api + migration 51 (APPLIED to
 `lgbxxlwsdeuhdgzrjjen` 2026-11-03 — the type is live in the DB; deploy Worker then web promptly):** **Dual Shades blind type** — a
 front and a back fabric on one headrail. Price = area x (front + back rate); control and bottom-rail legs doubled,

@@ -29,3 +29,6 @@ TITAN_IMAP_PORT = "993"
 # ETRANSFER_WEBHOOK_SECRET  (shared with the Gmail Apps Script)
 # TITAN_IMAP_USER           (e.g. "info@blindsnisa.com" — the inbox sync)
 # TITAN_IMAP_PASSWORD       (that mailbox's password; sync is skipped until set)
+# TURNSTILE_SECRET          (OPTIONAL — website lead form bot check; while unset the
+#                            form relies on honeypot + fill time + rate limit. Once
+#                            set, the embed must carry the matching data-sitekey.)

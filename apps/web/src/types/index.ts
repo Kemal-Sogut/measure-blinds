@@ -726,7 +726,13 @@ export interface CompanySettings {
  * `email_received` added by migration 46 — one per incoming email the
  * Titan inbox sync stores).
  */
-export type NotificationKind = 'edit_request' | 'order_confirmed' | 'etransfer_received' | 'email_received';
+export type NotificationKind =
+  | 'edit_request'
+  | 'order_confirmed'
+  | 'etransfer_received'
+  | 'email_received'
+  /** A website lead form submission (migration 52); opens the Leads page. */
+  | 'lead_received';
 
 /**
  * One row of `GET /api/notifications` — an event that happened without
@@ -750,10 +756,65 @@ export interface AppNotification {
   amount: number | null;
   /** The Inbox conversation an `email_received` alert opens; null for every other kind. */
   email_thread_id: string | null;
-  /** Email subject snapshot for `email_received`; '' for every other kind. */
+  /**
+   * Snapshot text: the email subject for `email_received`, the visitor's
+   * city for `lead_received`; '' for every other kind.
+   */
   subject: string;
+  /** The website lead a `lead_received` alert is about; null for every other kind. */
+  lead_id: string | null;
   /** ISO timestamp of the event. */
   created_at: string;
+}
+
+/**
+ * Where a website lead is in the staff workflow (migration 52 CHECK).
+ * There is no "converted" state, because every lead is linked to a
+ * customer from the moment it arrives.
+ */
+export type LeadStatus = 'new' | 'contacted' | 'archived';
+
+/**
+ * One row of `GET /api/leads`: exactly what the visitor typed into the
+ * website "Free Estimate" form (`apps/web/public/embed/lead-form.js`), plus
+ * the customer the Worker linked it to. The submitted details are NOT live:
+ * a matched customer keeps its own saved details, and only its blank fields
+ * were filled from the lead.
+ */
+export interface Lead {
+  id: string;
+  status: LeadStatus;
+  first_name: string;
+  last_name: string;
+  /** Lower-cased by the Worker. */
+  email: string;
+  /** Formatted `(613) 555-0123`. */
+  phone: string;
+  street: string;
+  /** Apt / suite; '' when not given. */
+  unit: string;
+  city: string;
+  /** Two-letter province code, e.g. `ON`. */
+  province: string;
+  postal_code: string;
+  /** Covering ids from the form (`zebra`, `roller`, … `unsure`). */
+  coverings: string[];
+  /** Window-count bucket: `1-5`, `5-15` or `15+`. */
+  window_count: string;
+  /** Optional free text from the visitor; '' when blank. */
+  message: string;
+  consent: boolean;
+  /** The page the form was embedded on. */
+  source_url: string;
+  customer_id: string | null;
+  /** `created`: this lead created the customer. `matched`: the email already belonged to one. */
+  customer_match: 'created' | 'matched';
+  /** The linked customer (null if it was hard-deleted). `deleted_at` set means soft-deleted. */
+  customer: { id: string; first_name: string; last_name: string; deleted_at: string | null } | null;
+  /** When the shop email went out; null if it failed or has not been sent. */
+  email_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /**
