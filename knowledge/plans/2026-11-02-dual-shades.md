@@ -10,7 +10,7 @@ as a copy of Roller's.
 Front fabric is the existing `material_id` column; Back fabric is a `catalogRefs` attribute
 (`back_material_id` → `materials.price_per_sqm`) that the Worker resolves and snapshots, so
 `orders.ts` needs only one generic "required attribute" gate. Two small generic extension points
-are added to `BaseBlindType`: `requiredAttributes` and `displayOnlyKeys`. Migration 48 creates
+are added to `BaseBlindType`: `requiredAttributes` and `displayOnlyKeys`. Migration 51 creates
 the type and copies Roller's hardware scoping and fabrics into NEW rows.
 
 **Tech Stack:** TypeScript, Zod 3, Hono 4 (Worker), React 19 + Tailwind 4, Vitest, Supabase Postgres.
@@ -42,13 +42,13 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 - Files ≤ 800 lines (standing exceptions: `orders.ts`, `OrderDetail.tsx` — add only what is needed).
 - Commands: `pnpm --filter ./apps/api test|check`, `pnpm --filter ./apps/web test|check|lint`.
   Target 0 errors / 0 warnings.
-- Do NOT apply migration 48 to the live project without the user's explicit go-ahead.
+- Do NOT apply migration 51 to the live project without the user's explicit go-ahead.
 
 ## File map
 
 | File | Change |
 |---|---|
-| `supabase/migrations/20261102000048_dual_shades_blind_type.sql` | Create: type row, Roller scoping/defaults copy, fabric copy |
+| `supabase/migrations/20261103000051_dual_shades_blind_type.sql` | Create: type row, Roller scoping/defaults copy, fabric copy |
 | `supabase/seed.sql` | Add `('Dual Shades', 12)` |
 | `apps/{api,web}/src/lib/blindTypes/base.ts` | Add `displayOnlyKeys` (`requiredAttributes` already on main) |
 | `apps/{api,web}/src/lib/priceLock.ts` | Exclude `displayOnlyKeys` from the fingerprint |
@@ -69,10 +69,10 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 
 ---
 
-### Task 1: Migration 48 — Dual Shades type and its own fabric list
+### Task 1: Migration 51 — Dual Shades type and its own fabric list
 
 **Files:**
-- Create: `supabase/migrations/20261102000048_dual_shades_blind_type.sql`
+- Create: `supabase/migrations/20261103000051_dual_shades_blind_type.sql`
 - Modify: `supabase/seed.sql` (blind_types insert list, after `('Sheer', 11)`)
 
 **Interfaces:**
@@ -85,7 +85,7 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Copyright (c) 2026 Blinds Nisa. All rights reserved.
 --
--- Migration 48: the "Dual Shades" blind type.
+-- Migration 51: the "Dual Shades" blind type.
 --
 -- A Dual Shade is one headrail carrying two independent rolls -- a FRONT
 -- and a BACK fabric -- each with its own control and bottom rail. Pricing
@@ -215,8 +215,8 @@ Expected: `dual_fabrics = roller_fabrics`, `shared_rows = 0`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20261102000048_dual_shades_blind_type.sql supabase/seed.sql
-git commit -m "feat(db): migration 48 — Dual Shades type with its own copy of Roller fabrics"
+git add supabase/migrations/20261103000051_dual_shades_blind_type.sql supabase/seed.sql
+git commit -m "feat(db): migration 51 — Dual Shades type with its own copy of Roller fabrics"
 ```
 
 ---
@@ -1188,7 +1188,7 @@ Delete both harness files before committing.
 
 - [ ] **Step 3: Docs** — append a dated `## 2026-11-02 — "Dual Shades" blind type` entry to
 `knowledge/history/engine_features.md` (pricing formula, doubled legs, catalogRef back fabric,
-`requiredAttributes` / `displayOnlyKeys`, migration 48 + MUST-apply note, tests). Update
+`requiredAttributes` / `displayOnlyKeys`, migration 51 + MUST-apply note, tests). Update
 `memory-bank/systemPatterns.md` (blind-type section: Dual Shades, the two new extension points, the
 `materials` catalog-ref rule in the usage panel), `activeContext.md` and `progress.md` (overwrite
 current-state sections; link the history entry).
@@ -1200,6 +1200,6 @@ git add knowledge memory-bank
 git commit -m "docs: Dual Shades — history and memory bank"
 ```
 
-- [ ] **Step 5: Apply migration 48** to `lgbxxlwsdeuhdgzrjjen` via Supabase MCP `apply_migration`
+- [ ] **Step 5: Apply migration 51** to `lgbxxlwsdeuhdgzrjjen` via Supabase MCP `apply_migration`
 — ONLY after the user explicitly approves. Then re-run the Task 1 Step 4 count query (without the
-transaction) and record "migration 48 applied" in `engine_features.md` + commit.
+transaction) and record "migration 51 applied" in `engine_features.md` + commit.

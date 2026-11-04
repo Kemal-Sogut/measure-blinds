@@ -32,7 +32,7 @@ so a Dual Shade cannot be quoted today.
 
 ## Design
 
-### 1. Data — migration 48 (`supabase/migrations/20261102000048_dual_shades_blind_type.sql`)
+### 1. Data — migration 51 (`supabase/migrations/20261103000051_dual_shades_blind_type.sql`)
 
 Modelled on migration 44 (Sheer). RE-RUNNABLE and ONE-SHOT: everything happens only on
 the run that creates the `Dual Shades` row; once it exists a re-run is a no-op, so it can
@@ -147,7 +147,7 @@ row-equals-sum-of-lines identity holds for both rows.
 
 ### 7. Rollout
 
-1. Apply migration 48 to `lgbxxlwsdeuhdgzrjjen` (via Supabase MCP, after review).
+1. Apply migration 51 to `lgbxxlwsdeuhdgzrjjen` (via Supabase MCP, after review).
 2. Deploy the Worker before the web app — an old web build cannot select Dual Shades, so
    ordering is safe either way, but the Worker must know the type before any Dual save.
 3. Record in `knowledge/history/engine_features.md` and the memory bank.
