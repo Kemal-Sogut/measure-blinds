@@ -182,18 +182,40 @@ function footerHtml(brand: CompanyBrand): string {
 }
 
 /**
+ * Phone overrides for the shell, keyed on the `bn-*` classes below. The
+ * desktop layout stays in inline styles (what every client honours); on a
+ * screen up to 600px wide the 640px card becomes full width (a table's
+ * `max-width:100%` alone does not shrink it in every client), its 40px side
+ * padding drops to 20px, the
+ * page gutter to 6px, the tinted summary card to 16px, and its label column
+ * narrows, so a phone has room for the date, the time and the address
+ * instead of wrapping them word by word. `!important` is required to beat
+ * the inline styles. Clients that ignore `<style>` (some webmail) simply
+ * keep the desktop padding.
+ */
+const MOBILE_CSS = `@media only screen and (max-width:600px){
+  .bn-outer{padding:12px 6px !important;}
+  .bn-wrap{width:100% !important;}
+  .bn-pad{padding-left:20px !important;padding-right:20px !important;}
+  .bn-card{padding:18px 16px !important;}
+  .bn-label{width:76px !important;padding-right:10px !important;}
+}`;
+
+/**
  * Wraps template body content in the shared card shell: warm-gray page,
- * white bordered card with logo header, body, and tinted footer.
+ * white bordered card with logo header, body, and tinted footer. Side
+ * padding tightens on phones (`MOBILE_CSS`).
  */
 export function brandedShell(brand: CompanyBrand, bodyHtml: string): string {
   return `<!doctype html>
-<html><body style="margin:0;padding:0;background:${C.pageBg};">
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>${MOBILE_CSS}</style></head>
+<body style="margin:0;padding:0;background:${C.pageBg};">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.pageBg};">
-    <tr><td align="center" style="padding:32px 12px;">
-      <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:100%;background:#FFFFFF;border:1px solid ${C.cardBorder};border-radius:10px;font-family:${FONT};">
-        <tr><td style="padding:32px 40px 0;">${headerHtml(brand)}</td></tr>
-        <tr><td style="padding:28px 40px 36px;">${bodyHtml}</td></tr>
-        <tr><td style="background:${C.footerBg};border-top:1px solid ${C.footerBorder};border-radius:0 0 10px 10px;padding:24px 40px 26px;">${footerHtml(brand)}</td></tr>
+    <tr><td align="center" class="bn-outer" style="padding:32px 12px;">
+      <table role="presentation" width="640" cellpadding="0" cellspacing="0" class="bn-wrap" style="width:640px;max-width:100%;background:#FFFFFF;border:1px solid ${C.cardBorder};border-radius:10px;font-family:${FONT};">
+        <tr><td class="bn-pad" style="padding:32px 40px 0;">${headerHtml(brand)}</td></tr>
+        <tr><td class="bn-pad" style="padding:28px 40px 36px;">${bodyHtml}</td></tr>
+        <tr><td class="bn-pad" style="background:${C.footerBg};border-top:1px solid ${C.footerBorder};border-radius:0 0 10px 10px;padding:24px 40px 26px;">${footerHtml(brand)}</td></tr>
       </table>
     </td></tr>
   </table>
@@ -212,7 +234,7 @@ export function introHtml(html: string): string {
 
 /** One label/value pair inside the tinted summary card (pre-escaped). */
 function detailRowHtml(label: string, valueHtml: string): string {
-  return `<tr><td style="padding:3px 16px 3px 0;font-size:14px;color:${C.faint};width:110px;vertical-align:top;">${label}</td><td style="padding:3px 0;font-size:14px;font-weight:500;color:${C.heading};">${valueHtml}</td></tr>`;
+  return `<tr><td class="bn-label" style="padding:3px 16px 3px 0;font-size:14px;color:${C.faint};width:110px;vertical-align:top;">${label}</td><td style="padding:3px 0;font-size:14px;font-weight:500;color:${C.heading};">${valueHtml}</td></tr>`;
 }
 
 export interface SummaryCardOpts {
@@ -250,7 +272,7 @@ export function summaryCardHtml(opts: SummaryCardOpts): string {
         <td align="right" style="padding-top:12px;font-family:${MONO};font-size:20px;font-weight:600;color:${C.heading};">$${formatMoney(opts.total.amount)}</td>
       </tr></table>`
     : '';
-  return `<div style="background:${C.tintBg};border-radius:8px;padding:22px 24px;margin:0 0 20px;">${eyebrowRow}${headline}${rows}${total}</div>`;
+  return `<div class="bn-card" style="background:${C.tintBg};border-radius:8px;padding:22px 24px;margin:0 0 20px;">${eyebrowRow}${headline}${rows}${total}</div>`;
 }
 
 /** Full-width primary CTA button. */
@@ -264,7 +286,7 @@ export function secondaryButtonHtml(url: string, label: string): string {
 }
 
 /** Primary + secondary buttons side by side (stacked via table cells). */
-export function buttonPairHtml(primary: string, secondary: string): string {
+function buttonPairHtml(primary: string, secondary: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;"><tr>
       <td width="50%" style="padding-right:6px;">${primary}</td>
       <td width="50%" style="padding-left:6px;">${secondary}</td>

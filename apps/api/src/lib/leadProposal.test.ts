@@ -115,6 +115,22 @@ describe('buildLeadProposalHtml', () => {
     expect(html).toContain('12 Elm St, Ottawa');
   });
 
+  it('puts the time on its own unbreakable line and stacks the buttons', () => {
+    const html = buildLeadProposalHtml(base);
+    const nw = (t: string) => `<span style="white-space:nowrap;">${t}</span>`;
+    expect(html).toContain(`${nw('Friday,')} ${nw('November 6, 2026')}<br>${nw('10:00 AM &ndash; 11:00 AM')}`);
+    // One button per row: two separate blocks, no side-by-side table cells.
+    expect(html).not.toContain('width="50%"');
+    expect(html.indexOf('Confirm this time')).toBeLessThan(html.indexOf('Request another time'));
+  });
+
+  it('tightens the side padding on phones', () => {
+    const html = buildLeadProposalHtml(base);
+    expect(html).toContain('@media only screen and (max-width:600px)');
+    expect(html).toContain('class="bn-pad"');
+    expect(html).toContain('class="bn-card"');
+  });
+
   it('escapes visitor text and drops a blank location row', () => {
     const html = buildLeadProposalHtml({
       ...base,
