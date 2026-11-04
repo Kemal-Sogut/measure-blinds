@@ -79,6 +79,13 @@ export interface MaterialUsageLine {
    * appears under two rows still gets a distinct key for each.
    */
   key: string;
+  /**
+   * The draft's own key — the SAME on a window's front line and on its
+   * extra-fabric line (Dual Shades' back fabric). `key` identifies the
+   * LINE (one row's contribution); `windowKey` identifies the WINDOW, so
+   * callers counting windows rather than lines can de-duplicate on it.
+   */
+  windowKey: string;
   /** Room name, or the editor's own `Blind N` fallback when it is blank. */
   label: string;
   /** The line's blind type, so a material used by two types still reads. */
@@ -208,6 +215,7 @@ export function summarizeMaterialUsage(
     const usage = blindType.describeMaterialUsage(inputs);
     const qty = inputs.quantity;
     const line = {
+      windowKey: item.key,
       // Matches the fallback the line-item list and the presentation
       // table already use, so one blank-roomed window is called the same
       // thing everywhere in the editor.
@@ -282,7 +290,10 @@ export function summarizeMaterialUsage(
  * without the order noticing.
  *
  * Selection is a flat set of line keys because a key identifies exactly
- * one window in exactly one row (see {@link MaterialUsageLine.key}). Keys
+ * one LINE — one window's contribution to one row (see
+ * {@link MaterialUsageLine.key}). A window can have a line in two rows
+ * (Dual Shades: front and back fabric), so a window is not always one key;
+ * {@link selectedWindowCount} counts windows. Keys
  * that match nothing are ignored rather than treated as zero-quantity
  * lines, so a stale tick left behind by an edited or deleted line cannot
  * survive as a phantom entry in the total.
@@ -317,4 +328,30 @@ export function selectedUsageTotals(
  */
 export function allUsageLineKeys(summary: MaterialUsageSummary): string[] {
   return summary.rows.flatMap((row) => row.lines.map((line) => line.key));
+}
+
+/**
+ * How many distinct WINDOWS a line selection covers.
+ *
+ * Selection is a set of line keys, and a Dual Shades window owns two
+ * lines (front and back fabric, under different rows), so counting keys
+ * would report one window as two. This walks the summary and counts the
+ * distinct {@link MaterialUsageLine.windowKey}s among lines whose `key` is
+ * selected: ticking either or both lines of a window counts it once.
+ * Walking the summary, not the set, means stale keys that match no line
+ * are ignored, exactly as in {@link selectedUsageTotals}. Backs the
+ * dialog's "Selected · N windows" label; the totals stay line-level.
+ */
+export function selectedWindowCount(
+  summary: MaterialUsageSummary,
+  selected: ReadonlySet<string>
+): number {
+  const windows = new Set<string>();
+  if (selected.size === 0) return 0;
+  for (const row of summary.rows) {
+    for (const line of row.lines) {
+      if (selected.has(line.key)) windows.add(line.windowKey);
+    }
+  }
+  return windows.size;
 }

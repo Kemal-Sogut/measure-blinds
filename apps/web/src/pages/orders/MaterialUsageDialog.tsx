@@ -56,6 +56,7 @@ import {
   allUsageLineKeys,
   materialRowKey,
   selectedUsageTotals,
+  selectedWindowCount,
   type MaterialUsageLine,
   type MaterialUsageRow,
   type MaterialUsageSummary,
@@ -328,7 +329,7 @@ export function MaterialUsageDialog({
   // Counted off the summary rather than off the set's size, so a tick
   // left behind by a since-deleted line is not reported as a window.
   const selectedCount = useMemo(
-    () => allUsageLineKeys(summary).filter((key) => selected.has(key)).length,
+    () => selectedWindowCount(summary, selected),
     [summary, selected]
   );
   const allCount = useMemo(() => allUsageLineKeys(summary).length, [summary]);

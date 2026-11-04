@@ -18,6 +18,7 @@ import {
   summarizeMaterialUsage,
   selectedUsageTotals,
   allUsageLineKeys,
+  selectedWindowCount,
   materialRowKey,
 } from './materialUsage';
 import type { BlindDraft, Catalogs, FlatDraft, ItemDraft } from './lineItemDrafts';
@@ -386,6 +387,8 @@ describe('summarizeMaterialUsage', () => {
     expect(back?.quantity).toBeCloseTo(2.8, 10);
     expect(back?.rate).toBe(30);
     expect(back?.lines[0].key).toBe('d1:back_material_id');
+    expect(front?.lines[0].windowKey).toBe('d1');
+    expect(back?.lines[0].windowKey).toBe('d1');
     expect(summary.totals.sqm).toBeCloseTo(5.6, 10);
     // Line keys stay unique across the summary, so selection still works.
     expect(new Set(allUsageLineKeys(summary)).size).toBe(2);
@@ -457,6 +460,47 @@ describe('selectedUsageTotals', () => {
   it('counts a ticked line at its full line quantity', () => {
     const summary = summarizeMaterialUsage([blind({ quantity: '3' })], catalogs());
     expect(selectedUsageTotals(summary, new Set(['d1'])).sqm).toBeCloseTo(8.4, 10);
+  });
+});
+
+describe('selectedWindowCount', () => {
+  const FRONT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const BACK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+  const DUAL = { id: 'bt-dual', name: 'Dual Shades', active: true, sort_order: 2 };
+  const cats = catalogs({
+    blindTypes: [ROLLER, CURTAINS, DUAL],
+    materials: [
+      { id: FRONT, name: 'Blackout Ivory', price_per_sqm: 50, active: true, sort_order: 0, width_cm: null, blind_type_ids: [DUAL.id, ROLLER.id] },
+      { id: BACK, name: 'Linen Grey', price_per_sqm: 30, active: true, sort_order: 1, width_cm: null, blind_type_ids: [DUAL.id] },
+    ],
+    cassettes: [{ id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [DUAL.id, ROLLER.id] }],
+    bottomRails: [{ id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: [DUAL.id, ROLLER.id] }],
+    controls: [{ id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: [DUAL.id, ROLLER.id] }],
+  });
+  const dual = () =>
+    blind({ blinds_type: 'Dual Shades', material_id: FRONT, attributes: { back_material_id: BACK } });
+
+  it('counts a Dual window once when both its lines are selected', () => {
+    const summary = summarizeMaterialUsage([dual()], cats);
+    expect(selectedWindowCount(summary, new Set(['d1', 'd1:back_material_id']))).toBe(1);
+  });
+
+  it('counts a Dual window once when only its back line is selected', () => {
+    const summary = summarizeMaterialUsage([dual()], cats);
+    expect(selectedWindowCount(summary, new Set(['d1:back_material_id']))).toBe(1);
+  });
+
+  it('counts two ordinary windows as two', () => {
+    const summary = summarizeMaterialUsage(
+      [blind({ material_id: FRONT }), blind({ key: 'd2', material_id: FRONT })],
+      cats
+    );
+    expect(selectedWindowCount(summary, new Set(['d1', 'd2']))).toBe(2);
+  });
+
+  it('ignores a stale key that matches no line', () => {
+    const summary = summarizeMaterialUsage([dual()], cats);
+    expect(selectedWindowCount(summary, new Set(['gone']))).toBe(0);
   });
 });
 
