@@ -145,7 +145,7 @@ section as the reference implementation for future collapsible UI.
   until 2026-08-09) — a concrete `BaseBlindType` holds the shared "main" formula (material +
   cassette + bottom rail + control with the width/height minimums) exposed via granular
   override hooks (`materialCost`, `cassetteCost`, `bottomRailCost`, `controlCost`,
-  `applyWidthMinimum`, `applyHeightMinimum`). Each of the canonical types (eleven since Dual Shades) has its own
+  `applyWidthMinimum`, `applyHeightMinimum`). Each of the twelve canonical types (the original ten, Sheer and Dual Shades) has its own
   file that `extends` the base. Nine still inherit it unchanged; **Curtains overrides
   `calculateUnitPrice` outright (2026-08-10)** because its shape genuinely differs — fabric
   is priced per running metre × pleat fullness and height does not enter at all, so no
@@ -153,7 +153,7 @@ section as the reference implementation for future collapsible UI.
   fork `calculateUnitPrice` only when the formula's SHAPE changes, not its coefficients.
   (2026-07-12) **Sheer (2026-10-10) subclasses `CurtainsBlindType`** and only relabels — so
   "prices like Curtains" checks are `instanceof CurtainsBlindType`, never a name compare.
-- **Dual Shades (2026-11-03)** is the eleventh type: area x (front + back rate), with the control and
+- **Dual Shades (2026-11-03)** is the twelfth type: area x (front + back rate), with the control and
   bottom-rail legs DOUBLED in `describeUnitCosts` (cassette/installation once). Front fabric is the ordinary
   `material_id`; the back fabric is a `catalogRefs` entry on `materials`, required through `requiredAttributes`.
   Two extension points came with it:

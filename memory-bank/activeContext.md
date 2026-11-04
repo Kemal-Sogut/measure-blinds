@@ -18,7 +18,7 @@ production labels, presentation filter and PDF/customer "Material:" show the fro
 set the back fabric. Write-up: `knowledge/history/engine_features.md` 2026-11-03; spec
 `knowledge/specs/2026-11-02-dual-shades-design.md`.
 
-**Underneath it, incomplete draft items (branch `feat/incomplete-draft-items`, no migration of its own, with
+**Already on main (merged in PRs #66/#67), incomplete draft items (no migration of its own, with
 `origin/main` PRs #55–#65 merged in):** **incomplete draft items.** A draft estimate saves with
 blank blind type / material / height / panel width / cassette / bottom rail / control / installation / required
 attribute (stored at `line_total 0`, add-ons and override kept). Completeness is judged only when the order tries
