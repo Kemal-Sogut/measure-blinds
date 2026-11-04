@@ -10,7 +10,7 @@ as a copy of Roller's.
 Front fabric is the existing `material_id` column; Back fabric is a `catalogRefs` attribute
 (`back_material_id` → `materials.price_per_sqm`) that the Worker resolves and snapshots, so
 `orders.ts` needs only one generic "required attribute" gate. Two small generic extension points
-are added to `BaseBlindType`: `requiredAttributes` and `displayOnlyKeys`. Migration 48 creates
+are added to `BaseBlindType`: `requiredAttributes` and `displayOnlyKeys`. Migration 51 creates
 the type and copies Roller's hardware scoping and fabrics into NEW rows.
 
 **Tech Stack:** TypeScript, Zod 3, Hono 4 (Worker), React 19 + Tailwind 4, Vitest, Supabase Postgres.
@@ -19,13 +19,16 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 
 ## Global Constraints
 
-> **Superseded in part by `knowledge/plans/2026-11-02-incomplete-draft-items.md`.** If that plan
-> has landed: Task 2's `requiredAttributes` / `missingRequiredAttribute` already exist (skip their
-> steps); Task 4's hard 400 in `resolveLineItems` and Task 5's `buildPayload` guard are NOT added —
-> declaring `requiredAttributes = [{ key: 'back_material_id', noun: 'back fabric' }]` on
-> `DualShadesBlindType` is enough, because `lib/lineItemCompleteness.ts` makes a Dual line without a
-> back fabric incomplete (savable on a draft, refused at send). Task 5's preview gate in
-> `blindDraftInputs` is also already covered (it calls `draftMissingFields`).
+> **Revised 2026-11-03 — the incomplete-draft-items plan has LANDED** (PRs #66/#67). Already on
+> main and NOT to be re-added: `RequiredAttribute`, `BaseBlindType.requiredAttributes` and
+> `missingRequiredAttribute()` (both base twins); `lib/lineItemCompleteness.ts` (twins), whose
+> `missingFields` appends every `requiredAttributes` noun. Consequences: a Dual line without a back
+> fabric is INCOMPLETE — savable on a draft at $0, refused (shared message "Item N: choose a back
+> fabric.") by every route that leaves draft. No hard 400 in `resolveLineItems`, no `buildPayload`
+> guard, and no extra `blindDraftInputs` gate (`blindDraftPrice` already returns null when
+> `draftMissingFields` is non-empty). Tasks 2, 4 and 5 below are written against that state.
+> UI work is also bound by AI_GUIDELINES §11 (visual verification in the real container at 375 px
+> and desktop widths, worst-case content, never through the live app).
 
 - Every new source file starts with:
   `// SPDX-License-Identifier: GPL-3.0-only` / `// Copyright (c) 2026 Blinds Nisa. All rights reserved.` (`--` in SQL).
@@ -39,25 +42,24 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 - Files ≤ 800 lines (standing exceptions: `orders.ts`, `OrderDetail.tsx` — add only what is needed).
 - Commands: `pnpm --filter ./apps/api test|check`, `pnpm --filter ./apps/web test|check|lint`.
   Target 0 errors / 0 warnings.
-- Do NOT apply migration 48 to the live project without the user's explicit go-ahead.
+- Do NOT apply migration 51 to the live project without the user's explicit go-ahead.
 
 ## File map
 
 | File | Change |
 |---|---|
-| `supabase/migrations/20261102000048_dual_shades_blind_type.sql` | Create: type row, Roller scoping/defaults copy, fabric copy |
+| `supabase/migrations/20261103000051_dual_shades_blind_type.sql` | Create: type row, Roller scoping/defaults copy, fabric copy |
 | `supabase/seed.sql` | Add `('Dual Shades', 12)` |
-| `apps/{api,web}/src/lib/blindTypes/base.ts` | Add `RequiredAttribute`, `requiredAttributes`, `missingRequiredAttribute()`, `displayOnlyKeys` |
+| `apps/{api,web}/src/lib/blindTypes/base.ts` | Add `displayOnlyKeys` (`requiredAttributes` already on main) |
 | `apps/{api,web}/src/lib/priceLock.ts` | Exclude `displayOnlyKeys` from the fingerprint |
 | `apps/{api,web}/src/lib/blindTypes/dualShades.ts` | Create: the pricing module |
 | `apps/{api,web}/src/lib/blindTypes/{registry,index}.ts` | Register + export |
 | `apps/{api,web}/src/lib/blindTypes/attributes.test.ts` | CANONICAL + Dual cases |
 | `apps/{api,web}/src/lib/pricing.test.ts` | Dual block + parity row (combined rate) |
 | `apps/{api,web}/src/lib/priceLock.test.ts` | back_color does not move the fingerprint |
-| `apps/api/src/routes/orders.ts` | Required-attribute gate in `resolveLineItems` |
-| `apps/api/src/routes/orders.routes.test.ts` | Dual line items block |
-| `apps/web/src/pages/orders/lineItemDrafts.ts` | `materials` in `catalogResolver`; required-attr gate in `blindDraftInputs` |
-| `apps/web/src/pages/orders/OrderDetail.tsx` | Required-attr message in `buildPayload` |
+| `apps/api/src/routes/orders.routes.test.ts` | Dual line items block (no `orders.ts` change expected) |
+| `apps/{api,web}/src/lib/lineItemCompleteness.test.ts` | Dual back fabric is an open field |
+| `apps/web/src/pages/orders/lineItemDrafts.ts` | `materials` in `catalogResolver` |
 | `apps/web/src/pages/orders/blindForms/fields.tsx` | `MaterialAndColor` label props; new `AttributeMaterialAndColor` |
 | `apps/web/src/pages/orders/blindForms/DualShadesForm.tsx` | Create |
 | `apps/web/src/pages/orders/blindForms/{index,blindForms.test}.ts` | Register + test |
@@ -67,10 +69,10 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 
 ---
 
-### Task 1: Migration 48 — Dual Shades type and its own fabric list
+### Task 1: Migration 51 — Dual Shades type and its own fabric list
 
 **Files:**
-- Create: `supabase/migrations/20261102000048_dual_shades_blind_type.sql`
+- Create: `supabase/migrations/20261103000051_dual_shades_blind_type.sql`
 - Modify: `supabase/seed.sql` (blind_types insert list, after `('Sheer', 11)`)
 
 **Interfaces:**
@@ -83,7 +85,7 @@ Spec: `knowledge/specs/2026-11-02-dual-shades-design.md`.
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Copyright (c) 2026 Blinds Nisa. All rights reserved.
 --
--- Migration 48: the "Dual Shades" blind type.
+-- Migration 51: the "Dual Shades" blind type.
 --
 -- A Dual Shade is one headrail carrying two independent rolls -- a FRONT
 -- and a BACK fabric -- each with its own control and bottom rail. Pricing
@@ -125,6 +127,7 @@ begin
   select id into v_roller
     from public.blind_types
    where name = 'Roller'
+     and archived_at is null
    order by created_at
    limit 1;
 
@@ -172,6 +175,7 @@ begin
       from public.materials m
       join public.material_blind_types mbt on mbt.material_id = m.id
      where mbt.blind_type_id = v_roller
+       and m.archived_at is null   -- retired in Settings (migration 49): not copied
      order by m.sort_order, m.name
   loop
     insert into public.materials (name, price_per_sqm, width_cm, active, sort_order)
@@ -213,13 +217,13 @@ Expected: `dual_fabrics = roller_fabrics`, `shared_rows = 0`.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add supabase/migrations/20261102000048_dual_shades_blind_type.sql supabase/seed.sql
-git commit -m "feat(db): migration 48 — Dual Shades type with its own copy of Roller fabrics"
+git add supabase/migrations/20261103000051_dual_shades_blind_type.sql supabase/seed.sql
+git commit -m "feat(db): migration 51 — Dual Shades type with its own copy of Roller fabrics"
 ```
 
 ---
 
-### Task 2: Base extension points — required attributes and display-only keys
+### Task 2: Display-only attribute keys (price lock ignores them)
 
 **Files:**
 - Modify: `apps/api/src/lib/blindTypes/base.ts`, `apps/web/src/lib/blindTypes/base.ts` (identical change)
@@ -227,69 +231,41 @@ git commit -m "feat(db): migration 48 — Dual Shades type with its own copy of 
 - Test: `apps/{api,web}/src/lib/blindTypes/attributes.test.ts`, `apps/{api,web}/src/lib/priceLock.test.ts`
 
 **Interfaces:**
-- Produces (on `BaseBlindType`):
-  - `export interface RequiredAttribute { readonly key: string; readonly noun: string }`
-  - `readonly requiredAttributes: readonly RequiredAttribute[]` (default `[]`)
-  - `missingRequiredAttribute(attrs: Record<string, unknown>): RequiredAttribute | null`
-  - `readonly displayOnlyKeys: readonly string[]` (default `[]`)
+- Already on main (do NOT add again): `RequiredAttribute`, `requiredAttributes`, `missingRequiredAttribute()`.
+- Produces (on `BaseBlindType`): `readonly displayOnlyKeys: readonly string[]` (default `[]`).
 
-- [ ] **Step 1: Write failing tests** — append to the `generic extension points` describe in BOTH
+- [ ] **Step 1: Failing test** — append to the `generic extension points` describe in BOTH
 `attributes.test.ts` files:
 
 ```ts
-  it('defaults to no required attributes and no display-only keys', () => {
-    const t = new BaseBlindType();
-    expect(t.requiredAttributes).toEqual([]);
-    expect(t.displayOnlyKeys).toEqual([]);
-    expect(t.missingRequiredAttribute({})).toBeNull();
-  });
-
-  it('reports the first required attribute that is absent or blank', () => {
-    class ReqBlindType extends BaseBlindType {
-      readonly blindType = 'ReqTest';
-      readonly requiredAttributes = [{ key: 'widget_id', noun: 'widget' }];
-    }
-    const t = new ReqBlindType();
-    expect(t.missingRequiredAttribute({})).toEqual({ key: 'widget_id', noun: 'widget' });
-    expect(t.missingRequiredAttribute({ widget_id: '  ' })).toEqual({ key: 'widget_id', noun: 'widget' });
-    expect(t.missingRequiredAttribute({ widget_id: ID })).toBeNull();
+  it('defaults to no display-only keys', () => {
+    expect(new BaseBlindType().displayOnlyKeys).toEqual([]);
   });
 ```
 
-- [ ] **Step 2: Run** `pnpm --filter ./apps/api test -- attributes` — Expected: FAIL (`requiredAttributes` undefined).
-
-- [ ] **Step 3: Implement in BOTH `base.ts` files.** Add the interface beside `CatalogRef`:
+and to BOTH `priceLock.test.ts` files (inside `describe('pricingFingerprint — blinds')`), a test with a
+throwaway subclass so it does not depend on Task 3. `pricingFingerprint` resolves the type through
+`getBlindType(blinds_type)`, so instead exercise the exported behaviour through a real registered type
+only in Task 3; here assert the no-op for existing types:
 
 ```ts
-/**
- * An attribute a blind type cannot be saved without. `noun` completes the
- * shared save message "Item N: choose a <noun>." — the SAME wording on the
- * editor's save guard (`buildPayload`) and the Worker (`resolveLineItems`),
- * so the consultant sees one message whichever side catches it.
- *
- * Declared here rather than by making the schema field non-optional,
- * because `attributeSchema` must still accept `{}` (every historical row
- * and `defaultAttributes()` parse through it).
- */
-export interface RequiredAttribute {
-  /** Attribute key, declared in the type's `attributeSchema`. */
-  readonly key: string;
-  /** Human noun for the error message, e.g. "back fabric". */
-  readonly noun: string;
-}
+  it('treats every attribute of a type with no display-only keys as an input', () => {
+    // Curtains declares no display-only keys: changing its pleat id must
+    // still move the fingerprint (Task 2 must not widen what is ignored).
+    const curtain = (pleat: string) =>
+      blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: pleat } });
+    expect(pricingFingerprint(curtain('66666666-6666-4666-8666-666666666666'))).not.toBe(
+      pricingFingerprint(curtain('77777777-7777-4777-8777-777777777777'))
+    );
+  });
 ```
 
-and in the class, after `catalogRefs`:
+- [ ] **Step 2: Run** `pnpm --filter ./apps/api test -- attributes` — Expected: the `displayOnlyKeys`
+test FAILS (undefined); the priceLock test passes already (it pins the no-op).
+
+- [ ] **Step 3: Implement in BOTH `base.ts`**, directly after `missingRequiredAttribute()`:
 
 ```ts
-  /**
-   * Attributes this type cannot be saved without. Empty for every type
-   * except those that declare one (Dual Shades' back fabric). Enforced by
-   * the Worker after the strict parse and by the editor before the
-   * request; the live preview also stays blank while one is missing.
-   */
-  readonly requiredAttributes: readonly RequiredAttribute[] = [];
-
   /**
    * Attribute keys that are DISPLAY-ONLY — printed on documents, never
    * priced (Dual Shades' `back_color`). Both `priceLock.ts` twins drop
@@ -298,50 +274,10 @@ and in the class, after `catalogRefs`:
    * never has. A key listed here must not feed any cost hook.
    */
   readonly displayOnlyKeys: readonly string[] = [];
-
-  /**
-   * The first {@link requiredAttributes} entry whose value in `attrs` is
-   * absent or a blank string, or null when all are present. Accepts the
-   * raw draft map (strings) as well as a parsed blob.
-   */
-  missingRequiredAttribute(attrs: Record<string, unknown>): RequiredAttribute | null {
-    return (
-      this.requiredAttributes.find((r) => {
-        const v = attrs[r.key];
-        return typeof v !== 'string' || v.trim() === '';
-      }) ?? null
-    );
-  }
 ```
 
-Export `type RequiredAttribute` from both `blindTypes/index.ts` alongside `BlindPricingInputs`.
-
-- [ ] **Step 4: Run** attributes tests in both workspaces — Expected: PASS.
-
-- [ ] **Step 5: Failing price-lock test** — add to BOTH `priceLock.test.ts` files (inside
-`describe('pricingFingerprint — blinds')`). It uses a throwaway registry-free path: it relies on
-Task 3's Dual type, so add it now marked `it.todo` ONLY if Task 3 is not yet merged; otherwise:
-
-```ts
-  it('ignores a type\'s display-only attributes (Dual Shades back colour)', () => {
-    const dual = (attributes: Record<string, string>) =>
-      blind({ blinds_type: 'Dual Shades', attributes });
-    const backId = '44444444-4444-4444-8444-444444444444';
-    expect(pricingFingerprint(dual({ back_material_id: backId, back_color: 'White' }))).toBe(
-      pricingFingerprint(dual({ back_material_id: backId, back_color: 'Grey' }))
-    );
-    // …while the back FABRIC is a real pricing input.
-    expect(pricingFingerprint(dual({ back_material_id: backId }))).not.toBe(
-      pricingFingerprint(dual({ back_material_id: '55555555-5555-4555-8555-555555555555' }))
-    );
-  });
-```
-
-(Implementation order: do Task 3 before running this step's test; the `inputAttributes` change
-below is safe to land first because every existing type's `displayOnlyKeys` is `[]`.)
-
-- [ ] **Step 6: Implement in BOTH `priceLock.ts`** — in `inputAttributes`, replace the
-`snapshots` set construction:
+- [ ] **Step 4: Implement in BOTH `priceLock.ts`** — in `inputAttributes`, replace the `snapshots`
+set construction and filter:
 
 ```ts
   const blindType = getBlindType(blindsType);
@@ -356,16 +292,17 @@ below is safe to land first because every existing type's `displayOnlyKeys` is `
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 ```
 
-Update the function's JSDoc to mention display-only keys.
+Extend the function's JSDoc with one sentence on display-only keys.
 
-- [ ] **Step 7: Run** `pnpm --filter ./apps/api test` and `pnpm --filter ./apps/web test` — existing
-priceLock suites (incl. the pinned wire-format case) PASS unchanged.
+- [ ] **Step 5: Run** `pnpm --filter ./apps/api test`, `pnpm --filter ./apps/web test`,
+`pnpm --filter ./apps/api check`, `pnpm --filter ./apps/web check` — all PASS / 0 errors (the pinned
+wire-format fingerprint case must be unchanged).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/lib/blindTypes apps/web/src/lib/blindTypes apps/api/src/lib/priceLock.ts apps/web/src/lib/priceLock.ts
-git commit -m "feat(pricing): blind types can declare required and display-only attributes"
+git commit -m "feat(pricing): blind types can declare display-only attributes the price lock ignores"
 ```
 
 ---
@@ -380,7 +317,7 @@ git commit -m "feat(pricing): blind types can declare required and display-only 
 - Test: both `pricing.test.ts`, both `attributes.test.ts`
 
 **Interfaces:**
-- Consumes: Task 2's `requiredAttributes`, `displayOnlyKeys`.
+- Consumes: `RequiredAttribute` / `requiredAttributes` (already on main), Task 2's `displayOnlyKeys`.
 - Produces: `DualShadesBlindType` with `blindType = 'Dual Shades'`, attribute keys
   `back_material_id` (input, uuid), `back_color` (input, ≤100 chars), `back_material_name`,
   `back_material_price_per_sqm` (Worker snapshots).
@@ -516,6 +453,46 @@ describe('Dual Shades attributes', () => {
 });
 ```
 
+Add to BOTH `apps/{api,web}/src/lib/lineItemCompleteness.test.ts` (use that file's existing scope
+fixture/helpers; a scope whose `isKnownType` is false is enough, since required attributes are read
+for any non-blank type):
+
+```ts
+  it('lists the Dual Shades back fabric as an open field until it is chosen', () => {
+    const dual = {
+      item_type: 'blind' as const,
+      blinds_type: 'Dual Shades',
+      panels: [100],
+      height_cm: 200,
+      material_id: '11111111-1111-4111-8111-111111111111',
+      attributes: {},
+    };
+    const scope = { isKnownType: () => false, usesSlot: () => false };
+    expect(missingFields(dual, scope)).toEqual(['back fabric']);
+    expect(incompleteMessage(0, dual, ['back fabric'])).toBe('Item 1: choose a back fabric.');
+    expect(
+      missingFields({ ...dual, attributes: { back_material_id: '44444444-4444-4444-8444-444444444444' } }, scope)
+    ).toEqual([]);
+  });
+```
+
+And to BOTH `priceLock.test.ts` (inside `describe('pricingFingerprint — blinds')`):
+
+```ts
+  it("ignores a type's display-only attributes (Dual Shades back colour)", () => {
+    const dual = (attributes: Record<string, string>) =>
+      blind({ blinds_type: 'Dual Shades', attributes });
+    const backId = '44444444-4444-4444-8444-444444444444';
+    expect(pricingFingerprint(dual({ back_material_id: backId, back_color: 'White' }))).toBe(
+      pricingFingerprint(dual({ back_material_id: backId, back_color: 'Grey' }))
+    );
+    // …while the back FABRIC is a real pricing input.
+    expect(pricingFingerprint(dual({ back_material_id: backId }))).not.toBe(
+      pricingFingerprint(dual({ back_material_id: '55555555-5555-4555-8555-555555555555' }))
+    );
+  });
+```
+
 - [ ] **Step 3: Run** both suites — Expected: FAIL (Dual resolves to the default type).
 
 - [ ] **Step 4: Create `apps/api/src/lib/blindTypes/dualShades.ts`** (web twin identical except the
@@ -544,8 +521,9 @@ last header paragraph, which reads "Twin of the AUTHORITATIVE `apps/api/src/lib/
  * `attributeSchema`, so a client that sends one is rejected with a 400.
  *
  * The schema field is optional (every type must parse `{}`), so presence
- * is enforced through `requiredAttributes` — by the Worker after the
- * strict parse and by the editor before the request.
+ * is declared through `requiredAttributes`: `lib/lineItemCompleteness.ts`
+ * then treats a Dual line without a back fabric as INCOMPLETE — savable on
+ * a draft at $0, refused by every route that takes the order out of draft.
  *
  * `back_color` is free text, printed beside the back fabric and never
  * priced; it is listed in `displayOnlyKeys` so editing it does not break a
@@ -566,6 +544,7 @@ import {
   BaseBlindType,
   type BlindAttributes,
   type BlindPricingInputs,
+  type RequiredAttribute,
   type UnitCostBreakdown,
 } from './base';
 
@@ -595,9 +574,13 @@ export class DualShadesBlindType extends BaseBlindType {
     },
   ] as const;
 
-  readonly requiredAttributes = [{ key: 'back_material_id', noun: 'back fabric' }] as const;
+  /** Read by `lib/lineItemCompleteness.ts`: no back fabric = incomplete (draft-only, $0). */
+  readonly requiredAttributes: readonly RequiredAttribute[] = [
+    { key: 'back_material_id', noun: 'back fabric' },
+  ];
 
-  readonly displayOnlyKeys = ['back_color'] as const;
+  /** Printed, never priced: excluded from the price-lock fingerprint. */
+  readonly displayOnlyKeys: readonly string[] = ['back_color'];
 
   /**
    * Back fabric (snapshot name) then back colour, each only when present.
@@ -652,10 +635,7 @@ Note: `Number(undefined)` is NaN → fallback 0. `describeAttributes` in the emp
 - [ ] **Step 5: Register** in both `registry.ts` and export from both `index.ts` (see Files).
 
 - [ ] **Step 6: Run** `pnpm --filter ./apps/api test` and `pnpm --filter ./apps/web test` — Expected:
-PASS, including Task 2 Step 5's price-lock test. Run `pnpm --filter ./apps/api check` and
-`pnpm --filter ./apps/web check` — 0 errors (if `as const` arrays fail assignability to the base's
-`readonly RequiredAttribute[]` / `readonly string[]`, annotate:
-`readonly requiredAttributes: readonly RequiredAttribute[] = [...]`).
+PASS. Run `pnpm --filter ./apps/api check` and `pnpm --filter ./apps/web check` — 0 errors.
 
 - [ ] **Step 7: Commit**
 
@@ -666,15 +646,19 @@ git commit -m "feat(pricing): Dual Shades — front + back fabric, doubled contr
 
 ---
 
-### Task 4: Worker gate — a Dual line without a back fabric is a 400
+### Task 4: Worker route tests — Dual line items end to end
+
+No production code is expected to change: `resolveLineItems` is already driven by `catalogRefs`
+(back-fabric lookup + snapshot) and by `lineItemCompleteness` (incomplete-on-draft). This task PROVES
+that with route tests. If a test fails, fix the smallest thing in `orders.ts` and say so in the report.
 
 **Files:**
-- Modify: `apps/api/src/routes/orders.ts` (in `resolveLineItems`, right after the
-  `parsedAttrs.success` check, before `resolveCatalogRefs`)
 - Test: `apps/api/src/routes/orders.routes.test.ts` (new describe after `Curtains line items`)
 
 **Interfaces:**
-- Consumes: `BaseBlindType.missingRequiredAttribute` (Task 2), Dual module (Task 3).
+- Consumes: Dual module (Task 3). The existing describes `incomplete draft items — saving` /
+  `— leaving draft is gated` (around lines 3387–3510) show how a draft vs a sent order is set up;
+  mirror them for the two incomplete cases.
 
 - [ ] **Step 1: Failing route tests**
 
@@ -752,11 +736,23 @@ describe('Dual Shades line items', () => {
     expect(rows[0].unit_price).toBe(220);
   });
 
-  it('rejects a Dual line without a back fabric', async () => {
+  it('saves a Dual draft without a back fabric as incomplete, charging nothing', async () => {
+    // POST creates a DRAFT, where incomplete items are allowed (spec
+    // 2026-11-02). Mirror the existing incomplete-draft tests if the
+    // create route needs anything extra to be treated as a draft.
     const res = await create(dualPayload({ attributes: {} }));
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toContain('choose a back fabric');
-    expect(db.calls).not.toContain('orders.insert');
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].unit_price).toBe(0);
+    expect(rows[0].line_total).toBe(0);
+  });
+
+  it('refuses a Dual line without a back fabric on a sent order', async () => {
+    // Copy the arrange step of `PUT on a sent order refuses an incomplete
+    // item and writes nothing` (incomplete draft items — saving), swapping
+    // its line item for dualPayload({ attributes: {} }).line_items[0].
+    // Expected: 400, error === 'Item 1 (Bedroom): choose a back fabric.',
+    // and no line_items write.
   });
 
   it('rejects a client-supplied back fabric price', async () => {
@@ -769,38 +765,28 @@ describe('Dual Shades line items', () => {
 });
 ```
 
-- [ ] **Step 2: Run** `pnpm --filter ./apps/api test -- orders.routes` — Expected: first and third PASS
-(the generic catalogRef path already works), second FAILS (201).
+The sent-order test is written out in full by the implementer from the referenced existing test —
+it must contain real assertions (status 400, the exact message, no write), not the comment above.
 
-If the first test fails because the fake does not answer `blind_type_defaults` or another table,
-read the error and add the missing `db.responses[...]` key in this describe's `beforeEach`.
+- [ ] **Step 2: Run** `pnpm --filter ./apps/api test -- orders.routes` — Expected: all PASS without
+production changes. If the fake db lacks a response a Dual save needs, add the missing
+`db.responses[...]` key in this describe's `beforeEach` (test-only change).
 
-- [ ] **Step 3: Implement** in `orders.ts`, directly after the `if (!parsedAttrs.success) { … }` block:
+- [ ] **Step 3: Run** the full api suite and `pnpm --filter ./apps/api check` — PASS / 0 errors.
 
-```ts
-    // Presence, which the schema cannot express (every field must stay
-    // optional so `{}` parses): a Dual Shade without a back fabric would
-    // price and print as a single roll. Same wording as the editor's guard.
-    const missing = blindType.missingRequiredAttribute(parsedAttrs.data as Record<string, unknown>);
-    if (missing) throw new Error(`Item ${position + 1}: choose a ${missing.noun}.`);
-```
-
-- [ ] **Step 4: Run** the api suite — Expected: PASS. `pnpm --filter ./apps/api check` — 0 errors.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add apps/api/src/routes/orders.ts apps/api/src/routes/orders.routes.test.ts
-git commit -m "feat(api): reject a blind line missing a type's required attribute"
+git add apps/api/src/routes/orders.routes.test.ts
+git commit -m "test(api): Dual Shades line items — back fabric snapshot, incomplete on draft, refused when sent"
 ```
 
 ---
 
-### Task 5: Editor — resolver, preview/save guards, Dual form, bulk-add picker
+### Task 5: Editor — back-fabric resolver, Dual form, bulk-add picker
 
 **Files:**
-- Modify: `apps/web/src/pages/orders/lineItemDrafts.ts` (`catalogResolver`, `blindDraftInputs`)
-- Modify: `apps/web/src/pages/orders/OrderDetail.tsx` (`buildPayload` blind branch)
+- Modify: `apps/web/src/pages/orders/lineItemDrafts.ts` (`catalogResolver` only)
 - Modify: `apps/web/src/pages/orders/blindForms/fields.tsx`
 - Create: `apps/web/src/pages/orders/blindForms/DualShadesForm.tsx`
 - Modify: `apps/web/src/pages/orders/blindForms/index.ts`, `blindForms.test.ts`
@@ -808,7 +794,9 @@ git commit -m "feat(api): reject a blind line missing a type's required attribut
 - Test: `apps/web/src/pages/orders/lineItemDrafts.test.ts`
 
 **Interfaces:**
-- Consumes: Dual module, `missingRequiredAttribute`.
+- Consumes: Dual module (Task 3). Completeness is already handled: `draftMissingFields` lists
+  "back fabric" and `blindDraftPrice` returns null for an incomplete draft — do NOT add guards to
+  `blindDraftInputs` or `buildOrderPayload`.
 - Produces: `AttributeMaterialAndColor` (fields.tsx) with props
   `BlindFormProps & { materialKey: string; colorKey: string; materialLabel: string; colorLabel: string }`.
 
@@ -824,8 +812,10 @@ describe('Dual Shades drafts', () => {
     expect(inputs?.attributes.back_material_price_per_sqm).toBe(30);
   });
 
-  it('shows no price while the back fabric is empty', () => {
-    expect(blindDraftInputs(dualDraft({ attributes: {} }), dualCatalogs())).toBeNull();
+  it('reports the back fabric as open and shows no price until it is chosen', () => {
+    const draft = dualDraft({ attributes: {} });
+    expect(draftMissingFields(draft, dualCatalogs())).toEqual(['back fabric']);
+    expect(blindDraftPrice(draft, dualCatalogs())).toBeNull();
   });
 });
 ```
@@ -836,7 +826,9 @@ where `dualCatalogs()` = the file's catalog fixture plus
 cassette/rail/control linked to `bt-dual`; `dualDraft()` = the file's blind draft fixture with
 `blinds_type: 'Dual Shades'`, `material_id: 'm-front'`. Write both helpers in the test file.
 
-- [ ] **Step 2: Run** `pnpm --filter ./apps/web test -- lineItemDrafts` — Expected: FAIL.
+- [ ] **Step 2: Run** `pnpm --filter ./apps/web test -- lineItemDrafts` — Expected: the first test
+FAILS (the resolver has no `materials` entry, so `blindDraftInputs` returns null); the second may
+already pass (it pins existing behaviour for Dual).
 
 - [ ] **Step 3: Implement in `lineItemDrafts.ts`.** In `catalogResolver`, before `return undefined;`:
 
@@ -849,28 +841,11 @@ cassette/rail/control linked to `bt-dual`; `dualDraft()` = the file's blind draf
     }
 ```
 
-and update its JSDoc ("Pleat types and materials are the only entries…"). In `blindDraftInputs`,
-right after `if (attributes === null) return null;`:
-
-```ts
-  // A required attribute (Dual Shades' back fabric) still empty: the
-  // Worker would refuse the save, so the preview shows no price.
-  if (blindType.missingRequiredAttribute(draft.attributes)) return null;
-```
+and update its JSDoc ("Pleat types and materials are the only entries…").
 
 - [ ] **Step 4: Run** — Expected: PASS.
 
-- [ ] **Step 5: Save guard** — in `OrderDetail.tsx` `buildPayload`, directly after
-`if (!it.material_id) return \`Item ${i + 1}: choose a material.\`;`:
-
-```ts
-        const missing = getBlindType(it.blinds_type).missingRequiredAttribute(it.attributes);
-        if (missing) return `Item ${i + 1}: choose a ${missing.noun}.`;
-```
-
-Add `getBlindType` to the file's `lib/blindTypes` import if it is not already imported.
-
-- [ ] **Step 6: Fields** — in `fields.tsx`:
+- [ ] **Step 5: Fields** — in `fields.tsx`:
 
 (a) Give `MaterialAndColor` optional labels (defaults keep every other form unchanged):
 
@@ -943,7 +918,7 @@ export function AttributeMaterialAndColor({
 `BlindFormProps` includes `footer`; if TS complains when `SectionAttributes` omits it, type the
 props as `Pick<BlindFormProps, 'draft' | 'catalogs' | 'onChange'> & {…}` instead.
 
-- [ ] **Step 7: Create `DualShadesForm.tsx`**
+- [ ] **Step 6: Create `DualShadesForm.tsx`**
 
 ```tsx
 // SPDX-License-Identifier: GPL-3.0-only
@@ -1032,7 +1007,7 @@ export default function DualShadesForm({ draft, catalogs, onChange, footer }: Bl
 
 (Add a JSDoc above the default export if the repo's other form files have one; match `RollerForm.tsx`.)
 
-- [ ] **Step 8: Register + test the form** — `index.ts`: `import DualShadesForm from './DualShadesForm';`
+- [ ] **Step 7: Register + test the form** — `index.ts`: `import DualShadesForm from './DualShadesForm';`
 and `[normalizeBlindType('Dual Shades'), DualShadesForm],`. `blindForms.test.ts`: append
 `'Dual Shades'` to `CANONICAL` and, in the aliases test,
 `expect(getBlindForm('dual')).toBe(getBlindForm('Dual Shades'));` plus a new case:
@@ -1044,7 +1019,7 @@ and `[normalizeBlindType('Dual Shades'), DualShadesForm],`. `blindForms.test.ts`
   });
 ```
 
-- [ ] **Step 9: Bulk add** — in `BulkAddSectionCard.tsx` `SectionAttributes`, replace the single
+- [ ] **Step 8: Bulk add** — in `BulkAddSectionCard.tsx` `SectionAttributes`, replace the single
 Curtains early-return with:
 
 ```tsx
@@ -1069,7 +1044,15 @@ Import `DualShadesBlindType` beside `CurtainsBlindType` and `AttributeMaterialAn
 `./blindForms/fields`. Update the component JSDoc: Curtains/Sheer (pleat) and Dual Shades (back
 fabric) are the cases.
 
-- [ ] **Step 10: Run** `pnpm --filter ./apps/web test`, `check`, `lint` — 0 errors / 0 warnings.
+- [ ] **Step 9: Run** `pnpm --filter ./apps/web test`, `check`, `lint` — 0 errors / 0 warnings.
+
+- [ ] **Step 10: Layout self-check (AI_GUIDELINES §11)** — read the classes you used against the real
+containers: the item edit form (find where `getBlindForm(...)` output is mounted) and the bulk-add
+section card, at a 343 px-wide card (375 px phone). `AttributeMaterialAndColor` copies
+`MaterialAndColor`'s `grid-cols-1 sm:grid-cols-2` + `min-w-0` exactly, so a long fabric name must
+truncate/wrap inside its select, never widen the row. Report the containers you found. Do NOT run
+the real app (its `.env` points at the live database); the controller does the rendered check in
+Task 7.
 
 - [ ] **Step 11: Commit**
 
@@ -1196,14 +1179,18 @@ pnpm --filter ./apps/web check && pnpm --filter ./apps/web test && pnpm --filter
 ```
 Expected: 0 errors / 0 warnings, all tests pass.
 
-- [ ] **Step 2: Browser check** (per memory: no `apps/web/.env` → full app renders blank; use a
-throwaway Vite harness in the scratchpad rendering `DualShadesForm` with fixture catalogs) — confirm
-Front fabric/color and Back fabric/color render, the price is blank until the back fabric is chosen,
-then shows the expected figure.
+- [ ] **Step 2: Rendered check (AI_GUIDELINES §11)** — throwaway `apps/web/harness.html` +
+`apps/web/src/harness.tsx` (imports `./index.css`), served by the `web` launch config at
+`/harness.html`, mounting `DualShadesForm` inside the same container classes as the real item editor
+and the bulk-add section card with fixture catalogs. Widths: 375 px viewport and ≥1280 px desktop
+(component at its real column width), plus ~768 px. Worst-case content: a long spaced fabric name,
+a 60+ char unbroken fabric name, empty back fabric (price "—" + Incomplete listing "back fabric").
+Measure `scrollWidth <= clientWidth` on the form rows; screenshot as proof; zero `/api` requests.
+Delete both harness files before committing.
 
 - [ ] **Step 3: Docs** — append a dated `## 2026-11-02 — "Dual Shades" blind type` entry to
 `knowledge/history/engine_features.md` (pricing formula, doubled legs, catalogRef back fabric,
-`requiredAttributes` / `displayOnlyKeys`, migration 48 + MUST-apply note, tests). Update
+`requiredAttributes` / `displayOnlyKeys`, migration 51 + MUST-apply note, tests). Update
 `memory-bank/systemPatterns.md` (blind-type section: Dual Shades, the two new extension points, the
 `materials` catalog-ref rule in the usage panel), `activeContext.md` and `progress.md` (overwrite
 current-state sections; link the history entry).
@@ -1215,6 +1202,6 @@ git add knowledge memory-bank
 git commit -m "docs: Dual Shades — history and memory bank"
 ```
 
-- [ ] **Step 5: Apply migration 48** to `lgbxxlwsdeuhdgzrjjen` via Supabase MCP `apply_migration`
+- [ ] **Step 5: Apply migration 51** to `lgbxxlwsdeuhdgzrjjen` via Supabase MCP `apply_migration`
 — ONLY after the user explicitly approves. Then re-run the Task 1 Step 4 count query (without the
-transaction) and record "migration 48 applied" in `engine_features.md` + commit.
+transaction) and record "migration 51 applied" in `engine_features.md` + commit.

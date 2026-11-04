@@ -17,9 +17,11 @@ import { pricingFingerprint } from '../../lib/priceLock';
 import { applyServerFields } from './lineItemHydration';
 import {
   applyTypeDefaults,
+  blindDraftInputs,
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
+  draftDisplayAttributes,
   draftMissingFields,
   firstIncompleteDraftMessage,
   flatDraftPrice,
@@ -1138,5 +1140,111 @@ describe('archived catalog rows and unknown price bases (migration 49)', () => {
       ],
     });
     expect(blindDraftPrice(draft(), odd)).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Dual Shades                                                         */
+/* ------------------------------------------------------------------ */
+
+describe('Dual Shades drafts', () => {
+  /** `back_material_id` is a uuid in the type's schema, so the back fabric needs a real-shaped id. */
+  const BACK_ID = '77777777-7777-4777-8777-777777777777';
+  const DUAL = { id: 'bt-dual', name: 'Dual Shades', active: true, sort_order: 0 };
+
+  /** Catalogs where the Dual type has a $20 front and a $30 back fabric and a complete hardware set. */
+  function dualCatalogs(): Catalogs {
+    const link = [DUAL.id];
+    return {
+      blindTypes: [DUAL],
+      materials: [
+        { id: 'm-front', name: 'Front', price_per_sqm: 20, active: true, sort_order: 0, width_cm: null, blind_type_ids: link },
+        { id: BACK_ID, name: 'Back', price_per_sqm: 30, active: true, sort_order: 1, width_cm: null, blind_type_ids: link },
+      ],
+      cassettes: [
+        { id: 'c1', name: 'Standard', price: 20, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: link },
+      ],
+      bottomRails: [
+        { id: 'b1', name: 'Regular', price: 0, price_basis: 'per_m', active: true, sort_order: 0, blind_type_ids: link },
+      ],
+      controls: [
+        { id: 'ct1', name: 'Chain', price: 0, price_basis: 'per_panel', active: true, sort_order: 0, blind_type_ids: link },
+      ],
+      pleatTypes: [],
+      defaults: [],
+      installationOptions: [],
+    };
+  }
+
+  /** A Dual Shades draft with the front fabric chosen. */
+  function dualDraft(overrides: Partial<BlindDraft> = {}): BlindDraft {
+    return draft({
+      blinds_type: 'Dual Shades',
+      material_id: 'm-front',
+      panels: ['100'],
+      height_cm: '200',
+      ...overrides,
+    });
+  }
+
+  it('prices the back fabric from the cached materials list', () => {
+    const d = dualDraft({ attributes: { back_material_id: BACK_ID } });
+    const inputs = blindDraftInputs(d, dualCatalogs());
+    expect(inputs?.attributes.back_material_price_per_sqm).toBe(30);
+  });
+
+  it('reports the back fabric as open and shows no price until it is chosen', () => {
+    const d = dualDraft({ attributes: {} });
+    expect(draftMissingFields(d, dualCatalogs())).toEqual(['back fabric']);
+    expect(blindDraftPrice(d, dualCatalogs())).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* draftDisplayAttributes                                              */
+/* ------------------------------------------------------------------ */
+
+describe('draftDisplayAttributes', () => {
+  const BACK_ID = '99999999-9999-4999-8999-999999999991';
+  const PLEAT_ID = '66666666-6666-4666-8666-666666666666';
+  const cats = {
+    blindTypes: [],
+    materials: [
+      { id: BACK_ID, name: 'Linen Grey', price_per_sqm: 45, active: true, sort_order: 0, width_cm: null, blind_type_ids: [] },
+    ],
+    cassettes: [],
+    bottomRails: [],
+    controls: [],
+    pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
+    defaults: [],
+    installationOptions: [],
+  } as Catalogs;
+
+  it('names the Dual back fabric, then the back colour', () => {
+    const d = draft({ blinds_type: 'Dual Shades', attributes: { back_material_id: BACK_ID, back_color: 'Grey' } });
+    expect(getBlindType('Dual Shades').describeAttributes(draftDisplayAttributes(d, cats))).toEqual([
+      { label: 'Back fabric', value: 'Linen Grey' },
+      { label: 'Back color', value: 'Grey' },
+    ]);
+  });
+
+  it('names the Curtains pleat', () => {
+    const d = draft({ blinds_type: 'Curtains', attributes: { pleat_type_id: PLEAT_ID } });
+    const lines = getBlindType('Curtains').describeAttributes(draftDisplayAttributes(d, cats));
+    expect(lines.map((l) => l.value).join(' ')).toContain('Pinch');
+  });
+
+  it('does not throw on an id missing from the catalog, and omits the back fabric', () => {
+    const d = draft({
+      blinds_type: 'Dual Shades',
+      attributes: { back_material_id: '99999999-9999-4999-8999-999999999992', back_color: 'Grey' },
+    });
+    const lines = getBlindType('Dual Shades').describeAttributes(draftDisplayAttributes(d, cats));
+    expect(lines).toEqual([{ label: 'Back color', value: 'Grey' }]);
+  });
+
+  it('returns an empty blob when the attributes do not parse', () => {
+    const d = draft({ blinds_type: 'Dual Shades', attributes: { back_material_id: 'not-a-uuid' } });
+    expect(draftDisplayAttributes(d, cats)).toEqual({});
   });
 });

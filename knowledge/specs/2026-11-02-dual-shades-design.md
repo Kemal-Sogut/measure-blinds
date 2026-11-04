@@ -32,7 +32,7 @@ so a Dual Shade cannot be quoted today.
 
 ## Design
 
-### 1. Data — migration 48 (`supabase/migrations/20261102000048_dual_shades_blind_type.sql`)
+### 1. Data — migration 51 (`supabase/migrations/20261103000051_dual_shades_blind_type.sql`)
 
 Modelled on migration 44 (Sheer). RE-RUNNABLE and ONE-SHOT: everything happens only on
 the run that creates the `Dual Shades` row; once it exists a re-run is a no-op, so it can
@@ -65,18 +65,17 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
   noun: 'back fabric' }`.
   The Worker resolves and snapshots name + price itself; a client sending
   `back_material_name` / `back_material_price_per_sqm` is a 400 from the strict schema.
-  No change to `orders.ts` is needed — `resolveLineItems` is already driven by
-  `catalogRefs`.
+  The unlocked path of `resolveLineItems` is already driven by `catalogRefs`; the
+  price-locked branch needs one small change (see "`back_color` is display-only").
 - `attributes.back_color`: optional free text, max 100 chars (matches the front Color
   field), no price effect.
 - Schema fields are `.optional()` so `defaultAttributes()` (`{}`) round-trips. Presence of
-  `back_material_id` is enforced separately:
-  - Worker: `resolveLineItems` rejects a Dual line without a back fabric with a readable
-    400 ("Pick a back fabric for the Dual Shades blind."). Implemented as a type-declared
-    rule (`requiredAttributes(): string[]` on `BaseBlindType`, `[]` by default) so
-    `orders.ts` gains no `blinds_type` branch.
-  - Web: the editor's save guard uses the same `requiredAttributes()` so the button is
-    blocked with the same message before the request.
+  `back_material_id` is declared through the existing `requiredAttributes` hook
+  (`[{ key: 'back_material_id', noun: 'back fabric' }]`). *(Revised 2026-11-03: the
+  incomplete-draft-items work landed first.)* `lib/lineItemCompleteness.ts` therefore treats a
+  Dual line without a back fabric as INCOMPLETE — savable on a draft at $0, shown with the
+  Incomplete marker, and refused with "Item N: choose a back fabric." by every route that
+  leaves draft (send, stage moves, PDF, saving a non-draft order). No Dual-specific gate is added.
 - `materialCost(item, w, h)` = `(w × h × (front_rate + back_rate)) / 10000`, where
   `back_rate = numericOr(attributes.back_material_price_per_sqm, 0)`.
 - `describeUnitCosts(item)` = `super.describeUnitCosts(item)` with the `control` and
@@ -91,7 +90,11 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
 - **`back_color` is display-only.** `BaseBlindType` gains `displayOnlyKeys: string[]`
   (`[]` by default). Both `priceLock.ts` twins drop those keys from the fingerprint, the same
   way they drop catalog snapshot keys, so editing a back colour on a confirmed order does not
-  break its price lock — exactly as editing the front `color` column never has.
+  break its price lock. Because a locked line is otherwise written back from the STORED row,
+  the locked branch of `resolveLineItems` parses the payload attributes through the type's
+  `attributeSchema` and carries ONLY the `displayOnlyKeys` through
+  (`lib/lockedAttributes.ts`): a changed back colour is written, a cleared one is dropped,
+  and pricing inputs and snapshots stay frozen. Types with no display-only keys are untouched.
 
 ### 3. Documents
 
@@ -148,7 +151,7 @@ row-equals-sum-of-lines identity holds for both rows.
 
 ### 7. Rollout
 
-1. Apply migration 48 to `lgbxxlwsdeuhdgzrjjen` (via Supabase MCP, after review).
+1. Apply migration 51 to `lgbxxlwsdeuhdgzrjjen` (via Supabase MCP, after review).
 2. Deploy the Worker before the web app — an old web build cannot select Dual Shades, so
    ordering is safe either way, but the Worker must know the type before any Dual save.
 3. Record in `knowledge/history/engine_features.md` and the memory bank.

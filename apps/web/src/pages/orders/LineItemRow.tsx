@@ -31,9 +31,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { getBlindType } from '../../lib/blindTypes';
 import {
   blindDraftPrice,
+  draftDisplayAttributes,
   flatDraftPrice,
   isPriceLocked,
-  parseDraftAttributes,
   slotsForType,
   type BlindDraft,
   type FlatDraft,
@@ -77,7 +77,7 @@ function blindDetailLines(item: BlindDraft, catalogs: Catalogs): string[] {
     uses.has('control') && control ? `Control: ${control.name}` : '',
     uses.has('installation') && installation ? `Installation: ${installation.name}` : '',
     ...getBlindType(item.blinds_type)
-      .describeAttributes(parseDraftAttributes(item) ?? {})
+      .describeAttributes(draftDisplayAttributes(item, catalogs))
       .map((a) => `${a.label}: ${a.value}`),
     item.note.trim() ? `Note: ${item.note.trim()}` : '',
     price
@@ -374,7 +374,7 @@ export default function LineItemRow({
   const attrLine =
     item.item_type === 'blind'
       ? getBlindType(item.blinds_type)
-          .describeAttributes(parseDraftAttributes(item) ?? {})
+          .describeAttributes(draftDisplayAttributes(item, catalogs))
           .map((a) => `${a.label}: ${a.value}`)
           .join(' · ')
       : '';
@@ -663,7 +663,7 @@ export default function LineItemRow({
           `CustomerView`'s panel avoids the same way. */}
       <div id={detailsId} hidden={!expanded} className="w-full pl-6 sm:basis-full">
         {detailLines.map((line, i) => (
-          <p key={i} className="text-xs text-text-muted">
+          <p key={i} className="text-xs wrap-anywhere text-text-muted">
             {line}
           </p>
         ))}

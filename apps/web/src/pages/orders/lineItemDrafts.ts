@@ -700,9 +700,10 @@ export function parseDraftAttributes(draft: BlindDraft): BlindAttributes | null 
  * lives here rather than in a blind-type module because the modules are
  * api/web twins and must not know how either side stores its catalogs.
  *
- * Pleat types are the only entry: they are the last catalog still
- * referenced from `attributes`. Installation used to be here too, until
- * migration 35 promoted it to a real hardware slot resolved from a column.
+ * Pleat types and materials are the only entries: they are the catalogs
+ * referenced from `attributes` (the pleat for Curtains, the back fabric
+ * for Dual Shades). Installation used to be here too, until migration 35
+ * promoted it to a real hardware slot resolved from a column.
  */
 function catalogResolver(catalogs: Catalogs): CatalogResolver {
   return (table, id) => {
@@ -710,8 +711,37 @@ function catalogResolver(catalogs: Catalogs): CatalogResolver {
       const hit = catalogs.pleatTypes.find((p) => p.id === id);
       return hit ? { name: hit.name, value: Number(hit.multiplier) } : undefined;
     }
+    if (table === 'materials') {
+      // Dual Shades' back fabric: a second material referenced from
+      // attributes, priced from the same column as the front one.
+      const hit = catalogs.materials.find((m) => m.id === id);
+      return hit ? { name: hit.name, value: Number(hit.price_per_sqm) } : undefined;
+    }
     return undefined;
   };
+}
+
+/**
+ * The draft's attributes in the form the READ-ONLY surfaces describe:
+ * parsed, with each catalog reference resolved to its display name.
+ *
+ * `parseDraftAttributes` keeps INPUT keys only, so on its own a row would
+ * never carry the Worker's snapshot names (a Dual Shades back fabric, a
+ * Curtains pleat) and `describeAttributes` would print the colour without
+ * the fabric. This resolves the ids against the cached catalogs exactly
+ * as the price preview does, so the editor row (`LineItemRow`) reads like
+ * the PDF. If an id no longer resolves (the row was deleted from the
+ * catalog) the unresolved blob is returned so the rest still prints, and
+ * an unparseable draft yields `{}`. Never used for pricing or payloads.
+ */
+export function draftDisplayAttributes(draft: BlindDraft, catalogs: Catalogs): BlindAttributes {
+  const parsed = parseDraftAttributes(draft);
+  if (!parsed) return {};
+  try {
+    return getBlindType(draft.blinds_type).resolveCatalogRefs(parsed, catalogResolver(catalogs));
+  } catch {
+    return parsed;
+  }
 }
 
 /**

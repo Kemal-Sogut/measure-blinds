@@ -145,7 +145,7 @@ section as the reference implementation for future collapsible UI.
   until 2026-08-09) — a concrete `BaseBlindType` holds the shared "main" formula (material +
   cassette + bottom rail + control with the width/height minimums) exposed via granular
   override hooks (`materialCost`, `cassetteCost`, `bottomRailCost`, `controlCost`,
-  `applyWidthMinimum`, `applyHeightMinimum`). Each of the ten canonical types has its own
+  `applyWidthMinimum`, `applyHeightMinimum`). Each of the twelve canonical types (the original ten, Sheer and Dual Shades) has its own
   file that `extends` the base. Nine still inherit it unchanged; **Curtains overrides
   `calculateUnitPrice` outright (2026-08-10)** because its shape genuinely differs — fabric
   is priced per running metre × pleat fullness and height does not enter at all, so no
@@ -153,6 +153,20 @@ section as the reference implementation for future collapsible UI.
   fork `calculateUnitPrice` only when the formula's SHAPE changes, not its coefficients.
   (2026-07-12) **Sheer (2026-10-10) subclasses `CurtainsBlindType`** and only relabels — so
   "prices like Curtains" checks are `instanceof CurtainsBlindType`, never a name compare.
+- **Dual Shades (2026-11-03)** is the twelfth type: area x (front + back rate), with the control and
+  bottom-rail legs DOUBLED in `describeUnitCosts` (cassette/installation once). Front fabric is the ordinary
+  `material_id`; the back fabric is a `catalogRefs` entry on `materials`, required through `requiredAttributes`.
+  Two extension points came with it:
+  - **`BaseBlindType.displayOnlyKeys`** (twins): attribute keys excluded from the price-lock fingerprint
+    (`back_color`), so editing them never breaks a confirmed order. The locked-line branch of `resolveLineItems`
+    carries them through from the payload (`lib/lockedAttributes.ts`); without that an edit is silently
+    dropped. A display-only key must NEVER feed a cost hook.
+  - **Any `materials` catalogRef is an extra fabric in Material usage** (`materialUsage.ts`): it gets its own row
+    at the SAME usage quantity as the front fabric, no per-type branch. Lines carry `windowKey` so the dialog
+    counts windows (`selectedWindowCount`), not lines.
+  - **`draftDisplayAttributes`** (`lineItemDrafts.ts`) resolves catalog-ref names via `catalogResolver` before
+    `describeAttributes`; editor rows/detail lines must use it, because the snapshot name keys do not exist
+    client-side until saved. Write-up: `knowledge/history/engine_features.md` 2026-11-03.
 - **A blind type owns more than a formula (2026-08-09).** `BaseBlindType` also carries
   `attributeSchema` (a `.strict()` Zod contract for that type's extra inputs; base accepts
   only `{}`), `defaultAttributes()`, and `describeAttributes()` → `{label, value}[]`. The

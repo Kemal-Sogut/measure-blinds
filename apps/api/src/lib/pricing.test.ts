@@ -642,6 +642,78 @@ describe('Sheer', () => {
   });
 });
 
+/** Builds a baseline blind input; individual tests override single fields. */
+function blind(overrides: Partial<BlindPricingInputs> = {}): BlindPricingInputs {
+  return {
+    panels: [140],
+    height_cm: 200,
+    material_price_per_sqm: 50,
+    hardware: {},
+    attributes: {},
+    ...overrides,
+  };
+}
+
+describe('Dual Shades', () => {
+  const T = 'Dual Shades';
+
+  it('resolves by name and aliases', () => {
+    expect(getBlindType('Dual Shades').blindType).toBe(T);
+    expect(getBlindType('dual').blindType).toBe(T);
+    expect(getBlindType('Dual Shade').blindType).toBe(T);
+  });
+
+  it('charges both fabrics on the area and doubles control and bottom rail', () => {
+    // 100 cm x 200 cm = 2 m² (at or above both minimums).
+    // fabric 2 x (20 + 30) = 100; motor 2 x 150 = 300; rail 2 x 10 = 20;
+    // cassette 25 once → $445.00
+    const item = blind({
+      panels: [100],
+      height_cm: 200,
+      material_price_per_sqm: 20,
+      attributes: { back_material_price_per_sqm: 30 },
+      hardware: {
+        cassette: { price: 25, basis: 'per_unit' },
+        bottom_rail: { price: 10, basis: 'per_unit' },
+        control: { price: 150, basis: 'per_unit' },
+      },
+    });
+    expect(calculateBlindUnitPriceForType(T, item)).toBe(445);
+  });
+
+  it('doubles a per-panel control but not cassette or installation', () => {
+    // 120 cm x 250 cm = 3 m²: fabric 3 x (40 + 10) = 150; cassette 1.2 m x 20 = 24;
+    // control 2 panels x 10 x 2 = 40; installation 45 once → $259.00
+    const item = blind({
+      panels: [60, 60],
+      height_cm: 250,
+      material_price_per_sqm: 40,
+      attributes: { back_material_price_per_sqm: 10 },
+      hardware: {
+        cassette: { price: 20, basis: 'per_m' },
+        control: { price: 10, basis: 'per_panel' },
+        installation: { price: 45, basis: 'per_unit' },
+      },
+    });
+    const legs = getBlindType(T).describeUnitCosts(item);
+    expect(legs.material).toBeCloseTo(150, 10);
+    expect(legs.cassette).toBeCloseTo(24, 10);
+    expect(legs.control).toBeCloseTo(40, 10);
+    expect(legs.installation).toBeCloseTo(45, 10);
+    expect(calculateBlindUnitPriceForType(T, item)).toBe(259);
+  });
+
+  it('prices a missing back snapshot at 0 rather than NaN', () => {
+    const item = blind({ panels: [60, 60], height_cm: 250, material_price_per_sqm: 40, hardware: {} });
+    expect(calculateBlindUnitPriceForType(T, item)).toBe(120);
+  });
+
+  it('reports one roll of area as material usage', () => {
+    const item = blind({ panels: [100], height_cm: 200, material_price_per_sqm: 20 });
+    expect(getBlindType(T).describeMaterialUsage(item)).toEqual({ unit: 'sqm', quantity: 2, measured: 2 });
+  });
+});
+
 describe('describeMaterialUsage agrees with the material leg it reports on', () => {
   /**
    * The spec (§4.2) deliberately does NOT derive `materialCost` from
@@ -669,13 +741,18 @@ describe('describeMaterialUsage agrees with the material leg it reports on', () 
     { type: 'Curtains', item: { panels: [420], height_cm: 280, material_price_per_sqm: 88.5, hardware: {}, attributes: {} } },
     { type: 'Sheer', item: { panels: [300], height_cm: 200, material_price_per_sqm: 40, hardware: {}, attributes: { pleat_multiplier: 2.5 } } },
     { type: 'Sheer', item: { panels: [150, 150], height_cm: 240, material_price_per_sqm: 31.5, hardware: {}, attributes: {} } },
+    { type: 'Dual Shades', item: blind({ panels: [100], height_cm: 200, material_price_per_sqm: 20, attributes: { back_material_price_per_sqm: 30 } }) },
+    { type: 'Dual Shades', item: blind({ panels: [70, 90], height_cm: 140, material_price_per_sqm: 33.33, attributes: { back_material_price_per_sqm: 19.99 } }) },
   ];
 
   it.each(CASES)('$type: material leg equals usage x rate', ({ type, item }) => {
     const blindType = getBlindType(type);
     const usage = blindType.describeMaterialUsage(item);
     const leg = blindType.describeUnitCosts(item).material;
-    expect(usage.quantity * item.material_price_per_sqm).toBeCloseTo(leg, 6);
+    // Dual Shades charges the same area at front + back rate; every other
+    // type carries no back price, so this is the front rate alone.
+    const rate = item.material_price_per_sqm + Number(item.attributes.back_material_price_per_sqm ?? 0);
+    expect(usage.quantity * rate).toBeCloseTo(leg, 6);
   });
 });
 

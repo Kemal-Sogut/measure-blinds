@@ -72,12 +72,20 @@ export function materialRowKey(materialId: string, unit: MaterialUnit): string {
  */
 export interface MaterialUsageLine {
   /**
-   * The draft's render key. Unique across the whole order, and — because
-   * a line carries exactly one material and therefore appears under
-   * exactly one row — unique across the summary too. That is what lets
-   * the dialog's selection be a flat set of these keys.
+   * Unique across the whole summary, which is what lets the dialog's
+   * selection be a flat set of these keys. The line for a window's front
+   * material uses the draft's render key; an extra fabric's line (Dual
+   * Shades' back fabric) uses `<draft key>:<attrKey>`, so a window that
+   * appears under two rows still gets a distinct key for each.
    */
   key: string;
+  /**
+   * The draft's own key — the SAME on a window's front line and on its
+   * extra-fabric line (Dual Shades' back fabric). `key` identifies the
+   * LINE (one row's contribution); `windowKey` identifies the WINDOW, so
+   * callers counting windows rather than lines can de-duplicate on it.
+   */
+  windowKey: string;
   /** Room name, or the editor's own `Blind N` fallback when it is blank. */
   label: string;
   /** The line's blind type, so a material used by two types still reads. */
@@ -206,28 +214,8 @@ export function summarizeMaterialUsage(
     const blindType = getBlindType(item.blinds_type);
     const usage = blindType.describeMaterialUsage(inputs);
     const qty = inputs.quantity;
-    // Per `unit`, not per m²: for Curtains this column is dollars per
-    // running metre. `blindDraftInputs` reads it off the catalog row, so
-    // it is the same number `MaterialsForType` edits.
-    const rate = inputs.material_price_per_sqm;
-    const key = materialRowKey(material.id, usage.unit);
-
-    const row = groups.get(key) ?? {
-      materialId: material.id,
-      materialName: material.name,
-      unit: usage.unit,
-      quantity: 0,
-      rate,
-      lineCount: 0,
-      lines: [],
-    };
-
-    row.lineCount += 1;
-    row.quantity += usage.quantity * qty;
-    // The same reading kept per window, so the breakdown cannot drift
-    // from the row it sits under: both are the one usage figure.
-    row.lines.push({
-      key: item.key,
+    const line = {
+      windowKey: item.key,
       // Matches the fallback the line-item list and the presentation
       // table already use, so one blank-roomed window is called the same
       // thing everywhere in the editor.
@@ -237,8 +225,46 @@ export function summarizeMaterialUsage(
       heightCm: inputs.height_cm,
       itemQuantity: qty,
       quantity: usage.quantity * qty,
-    });
-    groups.set(key, row);
+    };
+
+    /**
+     * Adds this window's one usage reading to `mat`'s row. Called for the
+     * front material and again for every extra fabric the type references
+     * from the `materials` catalog (Dual Shades' back roll), which covers
+     * the same area — so both rows get the same quantity.
+     */
+    const addTo = (mat: { id: string; name: string }, rate: number, lineKey: string) => {
+      const key = materialRowKey(mat.id, usage.unit);
+      const row = groups.get(key) ?? {
+        materialId: mat.id,
+        materialName: mat.name,
+        unit: usage.unit,
+        quantity: 0,
+        rate,
+        lineCount: 0,
+        lines: [],
+      };
+
+      row.lineCount += 1;
+      row.quantity += usage.quantity * qty;
+      // The same reading kept per window, so the breakdown cannot drift
+      // from the row it sits under: both are the one usage figure.
+      row.lines.push({ key: lineKey, ...line });
+      groups.set(key, row);
+    };
+
+    // Per `unit`, not per m²: for Curtains this column is dollars per
+    // running metre. `blindDraftInputs` reads it off the catalog row, so
+    // it is the same number `MaterialsForType` edits.
+    addTo(material, inputs.material_price_per_sqm, item.key);
+    for (const ref of blindType.catalogRefs) {
+      if (ref.table !== 'materials') continue;
+      const extra = catalogs.materials.find((m) => m.id === item.attributes[ref.attrKey]);
+      // `blindDraftInputs` already resolved this id, so a miss is not
+      // reachable; skipping keeps the summary total rather than throwing.
+      if (!extra) continue;
+      addTo(extra, Number(extra.price_per_sqm), `${item.key}:${ref.attrKey}`);
+    }
   }
 
   const rows = [...groups.values()].sort(
@@ -264,10 +290,13 @@ export function summarizeMaterialUsage(
  * without the order noticing.
  *
  * Selection is a flat set of line keys because a key identifies exactly
- * one window in exactly one row (see {@link MaterialUsageLine.key}). Keys
- * that match nothing are ignored rather than treated as zero-quantity
- * lines, so a stale tick left behind by an edited or deleted line cannot
- * survive as a phantom entry in the total.
+ * one LINE — one window's contribution to one row (see
+ * {@link MaterialUsageLine.key}). A window can have a line in two rows
+ * (Dual Shades: front and back fabric), so a window is not always one key;
+ * {@link selectedWindowCount} counts windows. Keys that match nothing are
+ * ignored rather than treated as zero-quantity lines, so a stale tick left
+ * behind by an edited or deleted line cannot survive as a phantom entry in
+ * the total.
  *
  * Units stay separate for the same reason rows do: adding a running metre
  * to a square metre produces a number that means nothing. A unit appears
@@ -299,4 +328,30 @@ export function selectedUsageTotals(
  */
 export function allUsageLineKeys(summary: MaterialUsageSummary): string[] {
   return summary.rows.flatMap((row) => row.lines.map((line) => line.key));
+}
+
+/**
+ * How many distinct WINDOWS a line selection covers.
+ *
+ * Selection is a set of line keys, and a Dual Shades window owns two
+ * lines (front and back fabric, under different rows), so counting keys
+ * would report one window as two. This walks the summary and counts the
+ * distinct {@link MaterialUsageLine.windowKey}s among lines whose `key` is
+ * selected: ticking either or both lines of a window counts it once.
+ * Walking the summary, not the set, means stale keys that match no line
+ * are ignored, exactly as in {@link selectedUsageTotals}. Backs the
+ * dialog's "Selected · N windows" label; the totals stay line-level.
+ */
+export function selectedWindowCount(
+  summary: MaterialUsageSummary,
+  selected: ReadonlySet<string>
+): number {
+  const windows = new Set<string>();
+  if (selected.size === 0) return 0;
+  for (const row of summary.rows) {
+    for (const line of row.lines) {
+      if (selected.has(line.key)) windows.add(line.windowKey);
+    }
+  }
+  return windows.size;
 }

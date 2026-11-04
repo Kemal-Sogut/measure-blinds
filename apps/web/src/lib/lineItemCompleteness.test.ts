@@ -12,6 +12,7 @@ import {
   countIncomplete,
   firstIncompleteMessage,
   measuredWidths,
+  incompleteMessage,
   missingFields,
   type CompletenessInput,
   type CompletenessScope,
@@ -74,6 +75,23 @@ describe('missingFields', () => {
   it("reports a type's required attribute when blank", () => {
     expect(missingFields(roller({ blinds_type: 'ReqTest', attributes: {} }), scope)).toEqual(['widget']);
     expect(missingFields(roller({ blinds_type: 'ReqTest', attributes: { widget_id: ID } }), scope)).toEqual([]);
+  });
+
+  it('lists the Dual Shades back fabric as an open field until it is chosen', () => {
+    const dual = {
+      item_type: 'blind' as const,
+      blinds_type: 'Dual Shades',
+      panels: [100],
+      height_cm: 200,
+      material_id: '11111111-1111-4111-8111-111111111111',
+      attributes: {},
+    };
+    const scope = { isKnownType: () => false, usesSlot: () => false };
+    expect(missingFields(dual, scope)).toEqual(['back fabric']);
+    expect(incompleteMessage(0, dual, ['back fabric'])).toBe('Item 1: choose a back fabric.');
+    expect(
+      missingFields({ ...dual, attributes: { back_material_id: '44444444-4444-4444-8444-444444444444' } }, scope)
+    ).toEqual([]);
   });
 
   it('never reports a preset or custom item', () => {

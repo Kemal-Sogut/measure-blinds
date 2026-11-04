@@ -6,8 +6,20 @@
 
 ## Where things stand
 
-**Current branch `feat/incomplete-draft-items` (not merged to main, not deployed, NO migration of its own),
-web + api, with `origin/main` (PRs #55–#65) merged in:** **incomplete draft items.** A draft estimate saves with
+**Current branch `feat/dual-shades` (not merged to main, not deployed), web + api + migration 51 (APPLIED to
+`lgbxxlwsdeuhdgzrjjen` 2026-11-03 — the type is live in the DB; deploy Worker then web promptly):** **Dual Shades blind type** — a
+front and a back fabric on one headrail. Price = area x (front + back rate); control and bottom-rail legs doubled,
+cassette/installation once (worked example $445). The back fabric is a `materials` catalogRef
+(`back_material_id`), required before the order leaves draft; `back_color` is display-only
+(`displayOnlyKeys`, excluded from the price lock but carried through on confirmed orders). Editor form, bulk-add
+picker, Material usage back-fabric row and window count are in. api 938 / web 647 tests pass; rendered layout
+checked in a throwaway harness (375/768/1280 px); NOT exercised against a real backend. Known v1 limits:
+production labels, presentation filter and PDF/customer "Material:" show the front fabric only; bulk edit cannot
+set the back fabric. Write-up: `knowledge/history/engine_features.md` 2026-11-03; spec
+`knowledge/specs/2026-11-02-dual-shades-design.md`.
+
+**Already on main (merged in PRs #66/#67), incomplete draft items (no migration of its own, with
+`origin/main` PRs #55–#65 merged in):** **incomplete draft items.** A draft estimate saves with
 blank blind type / material / height / panel width / cassette / bottom rail / control / installation / required
 attribute (stored at `line_total 0`, add-ons and override kept). Completeness is judged only when the order tries
 to LEAVE draft, and only while it is `draft`: the multi-estimate send (`POST /api/customers/:id/send-estimates`

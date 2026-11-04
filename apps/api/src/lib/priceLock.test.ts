@@ -109,6 +109,29 @@ describe('pricingFingerprint — blinds', () => {
     const after = blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: 'p2' } });
     expect(pricingFingerprint(before)).not.toBe(pricingFingerprint(after));
   });
+
+  it('treats every attribute of a type with no display-only keys as an input', () => {
+    // Curtains declares no display-only keys: changing its pleat id must
+    // still move the fingerprint (this must not widen what is ignored).
+    const curtain = (pleat: string) =>
+      blind({ blinds_type: 'Curtains', attributes: { pleat_type_id: pleat } });
+    expect(pricingFingerprint(curtain('66666666-6666-4666-8666-666666666666'))).not.toBe(
+      pricingFingerprint(curtain('77777777-7777-4777-8777-777777777777'))
+    );
+  });
+
+  it("ignores a type's display-only attributes (Dual Shades back colour)", () => {
+    const dual = (attributes: Record<string, string>) =>
+      blind({ blinds_type: 'Dual Shades', attributes });
+    const backId = '44444444-4444-4444-8444-444444444444';
+    expect(pricingFingerprint(dual({ back_material_id: backId, back_color: 'White' }))).toBe(
+      pricingFingerprint(dual({ back_material_id: backId, back_color: 'Grey' }))
+    );
+    // …while the back FABRIC is a real pricing input.
+    expect(pricingFingerprint(dual({ back_material_id: backId }))).not.toBe(
+      pricingFingerprint(dual({ back_material_id: '55555555-5555-4555-8555-555555555555' }))
+    );
+  });
 });
 
 describe('pricingFingerprint — preset and custom items', () => {

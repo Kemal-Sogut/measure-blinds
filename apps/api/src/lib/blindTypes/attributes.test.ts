@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { BaseBlindType, type BlindPricingInputs } from './base';
 import { getBlindType } from './registry';
 
-/** The canonical type names (the original ten plus Sheer), as stored in `line_items.blinds_type`. */
+/** The canonical type names (the original ten plus Sheer and Dual Shades), as stored in `line_items.blinds_type`. */
 const CANONICAL = [
   'Roller',
   'Zebra',
@@ -34,6 +34,7 @@ const CANONICAL = [
   'Vertical Roller',
   'Curtains',
   'Sheer',
+  'Dual Shades',
 ] as const;
 
 describe('attribute contract', () => {
@@ -206,5 +207,47 @@ describe('generic extension points', () => {
     // Same blank rule as the completeness check: a present non-string is not missing.
     expect(t.missingRequiredAttribute({ widget_id: 5 })).toBeNull();
     expect(t.missingRequiredAttribute({ widget_id: null })).toEqual({ key: 'widget_id', noun: 'widget' });
+  });
+
+  it('defaults to no display-only keys', () => {
+    expect(new BaseBlindType().displayOnlyKeys).toEqual([]);
+  });
+});
+
+describe('Dual Shades attributes', () => {
+  const t = getBlindType('Dual Shades');
+  const BACK = '44444444-4444-4444-8444-444444444444';
+
+  it('accepts a back fabric id and colour, and rejects a client-sent back price', () => {
+    expect(t.attributeSchema.parse({ back_material_id: BACK, back_color: 'Grey' })).toEqual({
+      back_material_id: BACK,
+      back_color: 'Grey',
+    });
+    expect(() => t.attributeSchema.parse({ back_material_price_per_sqm: 1 })).toThrow();
+    expect(() => t.attributeSchema.parse({ back_material_name: 'x' })).toThrow();
+  });
+
+  it('requires a back fabric and treats the back colour as display-only', () => {
+    expect(t.missingRequiredAttribute({})).toEqual({ key: 'back_material_id', noun: 'back fabric' });
+    expect(t.missingRequiredAttribute({ back_material_id: BACK })).toBeNull();
+    expect(t.displayOnlyKeys).toEqual(['back_color']);
+  });
+
+  it('snapshots the back fabric from the materials catalog', () => {
+    const out = t.resolveCatalogRefs({ back_material_id: BACK }, (table, id) =>
+      table === 'materials' && id === BACK ? { name: 'Linen Grey', value: 30 } : undefined
+    );
+    expect(out).toEqual({
+      back_material_id: BACK,
+      back_material_name: 'Linen Grey',
+      back_material_price_per_sqm: 30,
+    });
+  });
+
+  it('describes the back fabric and colour for documents', () => {
+    expect(t.describeAttributes({ back_material_name: 'Linen Grey', back_color: 'Grey' })).toEqual([
+      { label: 'Back fabric', value: 'Linen Grey' },
+      { label: 'Back color', value: 'Grey' },
+    ]);
   });
 });

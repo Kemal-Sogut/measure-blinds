@@ -19,7 +19,7 @@
  * remove control), whereas `PanelWidths` keeps its "+ Panel" button
  * alongside the same shorthand — a bulk-add row is meant to be typed fast
  * across many windows, so there is no per-row button to tap.
- * `SectionAttributes` — the Curtains-pleat extension point — lives here for
+ * `SectionAttributes` — the per-type attribute extension point (Curtains pleat, Dual Shades back fabric) — lives here for
  * the same reason as the other two.
  *
  * A THIRD duplication, added alongside this file's contrast/layout pass:
@@ -64,6 +64,7 @@ import {
 import type { BulkMeasureRow, BulkSection } from './bulkAdd';
 import { insertPanelSeparator, parsePanelInput } from './panelInput';
 import {
+  AttributeMaterialAndColor,
   AttributeSelect,
   FormSplitter,
   HardwareRow,
@@ -71,7 +72,7 @@ import {
   LABEL,
   OptionSelect,
 } from './blindForms/fields';
-import { CurtainsBlindType, getBlindType } from '../../lib/blindTypes';
+import { CurtainsBlindType, DualShadesBlindType, getBlindType } from '../../lib/blindTypes';
 
 /** Shared chevron path for the section card's expand/collapse control. */
 const CHEVRON_PATH = 'm6 9 6 6 6-6';
@@ -124,10 +125,12 @@ function SectionTypeSelect({
  * A section's type-specific attribute inputs — the extension point for "a
  * section whose blind type has attributes must expose them".
  *
- * Curtains — and Sheer, which subclasses it and shares its form — is the
- * only blind type with a UI-editable attribute today (its Pleat picker,
- * `pleat_type_id` — see `CurtainsForm.tsx`), so this is the only case
- * below, gated by `instanceof` so both types get it. There is no generic,
+ * Two cases, each gated by `instanceof`: Curtains — and Sheer, which
+ * subclasses it and shares its form — gets its Pleat picker
+ * (`pleat_type_id`, see `CurtainsForm.tsx`); Dual Shades gets its back
+ * fabric + colour pair (`back_material_id` / `back_color`, see
+ * `DualShadesForm.tsx`), which it needs because the back fabric is
+ * required and a bulk-added row would otherwise land incomplete. There is no generic,
  * declarative registry of "attribute key → label → catalog list" to drive
  * this from (each
  * per-type form file hand-writes its own `AttributeSelect`/`AttributeText`
@@ -150,7 +153,21 @@ function SectionAttributes({
   catalogs: Catalogs;
   onChange: (next: BlindDraft) => void;
 }) {
-  if (!(getBlindType(config.blinds_type) instanceof CurtainsBlindType)) return null;
+  const blindType = getBlindType(config.blinds_type);
+  if (blindType instanceof DualShadesBlindType) {
+    return (
+      <AttributeMaterialAndColor
+        draft={config}
+        catalogs={catalogs}
+        onChange={onChange}
+        materialKey="back_material_id"
+        colorKey="back_color"
+        materialLabel="Back fabric"
+        colorLabel="Back color"
+      />
+    );
+  }
+  if (!(blindType instanceof CurtainsBlindType)) return null;
   return (
     <AttributeSelect
       draft={config}
@@ -458,6 +475,8 @@ export function SectionCard({
 }) {
   const label = section.config.blinds_type || 'New section';
   const rowCount = section.rows.length;
+  // A Dual window has a BACK pair too; name the front pair to match.
+  const isDual = getBlindType(section.config.blinds_type) instanceof DualShadesBlindType;
 
   return (
     <div className="overflow-hidden rounded-xl border border-border-strong bg-surface shadow-md">
@@ -500,14 +519,14 @@ export function SectionCard({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <SectionTypeSelect config={section.config} catalogs={catalogs} onChange={onConfigChange} />
             <OptionSelect
-              label="Material"
+              label={isDual ? 'Front fabric' : 'Material'}
               value={section.config.material_id}
               onChange={(id) => onConfigChange({ ...section.config, material_id: id })}
               options={materialsForType(catalogs, section.config.blinds_type)}
               placeholder={section.config.blinds_type ? 'Select…' : 'Pick a blind type first'}
             />
             <label className="min-w-0">
-              <span className={LABEL}>Color</span>
+              <span className={LABEL}>{isDual ? 'Front color' : 'Color'}</span>
               <input
                 placeholder="e.g. White, Oak, Charcoal"
                 value={section.config.color}

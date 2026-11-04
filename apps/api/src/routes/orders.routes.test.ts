@@ -1571,6 +1571,110 @@ describe('Curtains line items', () => {
   });
 });
 
+describe('Dual Shades line items', () => {
+  const TYPE_DUAL = { id: '88888888-8888-4888-8888-888888888883', name: 'Dual Shades' };
+  const BACK = { id: '99999999-9999-4999-8999-999999999991', name: 'Linen Grey', price_per_sqm: 45 };
+  const json = { 'Content-Type': 'application/json' };
+
+  /** One Dual item; Roller-like hardware (cassette, rail, control). */
+  function dualPayload(overrides: Record<string, unknown> = {}) {
+    const p = payload() as unknown as { line_items: Record<string, unknown>[] };
+    p.line_items = [
+      {
+        item_type: 'blind',
+        room_name: 'Bedroom',
+        blinds_type: 'Dual Shades',
+        panels: [100],
+        height_cm: 200,
+        material_id: MATERIAL.id,
+        cassette_id: CASSETTE.id,
+        bottom_rail_id: BOTTOM_RAIL.id,
+        control_id: CONTROL.id,
+        color: 'White',
+        note: '',
+        attributes: { back_material_id: BACK.id, back_color: 'Grey' },
+        quantity: 1,
+        ...overrides,
+      },
+    ];
+    return p;
+  }
+
+  /** POSTs a payload to the create route (creates a draft) with a successful order insert. */
+  function create(body: unknown) {
+    db.orderInsertResults = [{ data: { id: 'd1', subtotal: 0 } }];
+    return ordersApp.request('/', { method: 'POST', headers: json, body: JSON.stringify(body) }, ENV);
+  }
+
+  beforeEach(() => {
+    // The fake returns the whole list for any `.in()` filter; both the
+    // front lookup and the back catalog-ref lookup read it by id.
+    db.responses['materials.select'] = [MATERIAL, BACK];
+    db.responses['blind_types.select'] = [TYPE_ROLLER, TYPE_CURTAINS, TYPE_DUAL];
+    db.responses['cassette_option_blind_types.select'] = [
+      { cassette_option_id: CASSETTE.id, blind_type_id: TYPE_ROLLER.id },
+      { cassette_option_id: CASSETTE.id, blind_type_id: TYPE_DUAL.id },
+    ];
+    db.responses['bottom_rail_option_blind_types.select'] = [
+      { bottom_rail_option_id: BOTTOM_RAIL.id, blind_type_id: TYPE_ROLLER.id },
+      { bottom_rail_option_id: BOTTOM_RAIL.id, blind_type_id: TYPE_DUAL.id },
+    ];
+    db.responses['control_option_blind_types.select'] = [
+      { control_option_id: CONTROL.id, blind_type_id: TYPE_ROLLER.id },
+      { control_option_id: CONTROL.id, blind_type_id: TYPE_CURTAINS.id },
+      { control_option_id: CONTROL.id, blind_type_id: TYPE_DUAL.id },
+    ];
+  });
+
+  it('snapshots the back fabric and prices both fabrics', async () => {
+    const res = await create(dualPayload());
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].attributes).toEqual({
+      back_material_id: BACK.id,
+      back_color: 'Grey',
+      back_material_name: 'Linen Grey',
+      back_material_price_per_sqm: 45,
+    });
+    expect(rows[0].material_name).toBe('Blackout White');
+    // 2 m² x (55 + 45) = 200; cassette per_m 20 x 1 m = 20; rail and
+    // control are $0 (doubling covered by pricing.test.ts) → 220.
+    expect(rows[0].unit_price).toBe(220);
+  });
+
+  it('saves a Dual draft without a back fabric as incomplete, charging nothing', async () => {
+    const res = await create(dualPayload({ attributes: {} }));
+    expect(res.status).toBe(201);
+    const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
+    expect(rows[0].unit_price).toBe(0);
+    expect(rows[0].line_total).toBe(0);
+    expect(rows[0].attributes).toEqual({});
+  });
+
+  it('refuses a Dual line without a back fabric on a sent order', async () => {
+    const future = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    db.responses['orders.select'] = [{ id: 's1', status: 'sent', expiry_date: future, line_items: [] }];
+    const p = dualPayload({ attributes: {} }) as unknown as { order_date: string; expiry_date: string };
+    p.order_date = today;
+    p.expiry_date = future;
+    const res = await ordersApp.request('/s1', { method: 'PUT', body: JSON.stringify(p), headers: json }, ENV);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'Item 1 (Bedroom): choose a back fabric.' });
+    expect(db.calls).not.toContain('line_items.delete');
+    expect(db.calls).not.toContain('line_items.insert');
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('rejects a client-supplied back fabric price', async () => {
+    const res = await create(
+      dualPayload({ attributes: { back_material_id: BACK.id, back_material_price_per_sqm: 0 } })
+    );
+    expect(res.status).toBe(400);
+    expect(db.calls).not.toContain('orders.insert');
+  });
+});
+
 /**
  * Line-item adjustment schemas: the three named money fields a client may
  * send, and the cross-field rules that no single field can express.
@@ -2354,6 +2458,68 @@ describe('per-item price lock (migration 39)', () => {
     const res = await put(editPayload());
     expect(res.status).toBe(200);
     expect(savedRows()[0].unit_price).toBe(182);
+  });
+
+  describe('Dual Shades display-only back colour', () => {
+    const DUAL_ID = '88888888-8888-4888-8888-888888888883';
+    const BACK_ID = '99999999-9999-4999-8999-999999999991';
+    const frozen = {
+      back_material_id: BACK_ID,
+      back_material_name: 'Linen Grey',
+      back_material_price_per_sqm: 45,
+      back_color: 'Grey',
+    };
+
+    /** A confirmed Dual line (frozen at 220/unit) plus the editable payload for it. */
+    function seedDual() {
+      const row = lockedBlindRow({ blinds_type: 'Dual Shades', panels: [100], attributes: frozen, color: 'White' });
+      const locked = {
+        ...row,
+        locked_base_price: 220,
+        unit_price: 220,
+        locked_inputs_fingerprint: pricingFingerprint(
+          lockInputFromRow({ ...row, locked_base_price: 220, unit_price: 220 })
+        ),
+      };
+      seedExisting('awaiting_payment', [locked, lockedPresetRow()]);
+      db.responses['blind_types.select'] = [
+        ...(db.responses['blind_types.select'] ?? []),
+        { id: DUAL_ID, name: 'Dual Shades' },
+      ];
+      const body = editPayload();
+      Object.assign(body.line_items[0] as Record<string, unknown>, {
+        blinds_type: 'Dual Shades',
+        panels: [100],
+        color: 'White',
+        attributes: { back_material_id: BACK_ID, back_color: 'Grey' },
+      });
+      return body;
+    }
+
+    it('writes a changed back colour and keeps the frozen price and snapshots', async () => {
+      const body = seedDual();
+      ((body.line_items[0] as Record<string, unknown>).attributes as Record<string, unknown>).back_color = 'Charcoal';
+      const res = await put(body);
+      expect(res.status).toBe(200);
+      const [blind] = savedRows();
+      expect(blind.locked_base_price).toBe(220);
+      expect(blind.unit_price).toBe(220);
+      expect(blind.attributes).toEqual({ ...frozen, back_color: 'Charcoal' });
+    });
+
+    it('drops the back colour when the consultant clears it', async () => {
+      const body = seedDual();
+      (body.line_items[0] as Record<string, unknown>).attributes = { back_material_id: BACK_ID };
+      const res = await put(body);
+      expect(res.status).toBe(200);
+      const [blind] = savedRows();
+      expect(blind.locked_base_price).toBe(220);
+      expect(blind.attributes).toEqual({
+        back_material_id: BACK_ID,
+        back_material_name: 'Linen Grey',
+        back_material_price_per_sqm: 45,
+      });
+    });
   });
 
   it('prices an item added after confirmation from the current catalog, then locks it', async () => {

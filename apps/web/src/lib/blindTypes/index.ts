@@ -27,3 +27,4 @@ export { VerticalPanelBlindType } from './verticalPanel';
 export { VerticalRollerBlindType } from './verticalRoller';
 export { CurtainsBlindType } from './curtains';
 export { SheerBlindType } from './sheer';
+export { DualShadesBlindType } from './dualShades';

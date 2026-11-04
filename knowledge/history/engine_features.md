@@ -1,5 +1,63 @@
 # Engine Features / Feature History
 
+## 2026-11-03 — "Dual Shades" blind type (front + back fabric, two controls, two bottom rails)
+New blind type **Dual Shades**: one headrail carrying two independent rolls. Spec
+`knowledge/specs/2026-11-02-dual-shades-design.md`, plan `knowledge/plans/2026-11-02-dual-shades.md`. Branch
+`feat/dual-shades` (base `873e3fc`), **not merged to main, not deployed.**
+
+> **Migration 51 APPLIED to `lgbxxlwsdeuhdgzrjjen` on 2026-11-03** (via Supabase MCP `apply_migration`, name
+> `dual_shades_blind_type`), after a rolled-back dry run. Verified live: one `Dual Shades` row (sort 12), 36
+> materials copied from the 36 live Roller fabrics with 0 rows shared, Roller's hardware scoping (5 cassette /
+> 4 bottom rail / 6 control / 4 installation links) and 1 defaults row copied. **The type is now visible in the
+> production editor before this code is deployed** — deploy the Worker, then the web, promptly; until then the
+> deployed build prices a Dual line with the default single-fabric formula.
+
+- **Pricing.** `DualShadesBlindType` (`apps/{api,web}/src/lib/blindTypes/dualShades.ts`, twinned): material =
+  area (width/height minimums applied) x (front rate + back rate). The bottom-rail and control legs are DOUBLED on
+  whatever basis they are charged (per unit, per panel, per m...) via `describeUnitCosts`; cassette and
+  installation are charged once. The doubled legs reach the unit price, the line total and the per-option document
+  amounts (`optionBreakdown.optionLineAmounts` dispatches `describeUnitCosts`). Worked example (1 panel, 100 x 200
+  cm, front $20/m2, back $30/m2, motor $150, rail $10, cassette $25): 2 m2 x 50 = 100 + control 300 + rail 20 +
+  cassette 25 = **$445**. A missing back price (old snapshot) prices that leg at 0, never NaN.
+- **Back fabric = a `catalogRefs` entry on `materials`.** `attributes.back_material_id` is the only client-sent
+  key; the Worker snapshots `back_material_name` and `back_material_price_per_sqm` (snapshot keys are not in
+  `attributeSchema`, so a client-sent price is a 400). The front fabric is the existing `material_id`, so every
+  existing surface (snapshot columns, documents, bulk edit) keeps working.
+- **Required via `requiredAttributes`.** A Dual line with no back fabric is incomplete: saved at $0 on a draft
+  (amber Incomplete chip, "back fabric" listed), refused when the order leaves draft with
+  `Item N (Room): choose a back fabric.`
+- **New extension point `BaseBlindType.displayOnlyKeys`** (both `base.ts` twins). Keys listed there are excluded
+  from the price-lock fingerprint (`priceLock.ts`), so editing them never breaks a confirmed order's lock.
+  `back_color` is display-only. Caught in final review: the locked-line write path in `resolveLineItems` ignored
+  the payload's attributes, so an edited back colour on a confirmed order was silently dropped. It now carries
+  display-only keys from the payload (`apps/api/src/lib/lockedAttributes.ts`, wired in `orders.ts`). Rule: a
+  display-only key must never feed a cost hook.
+- **Editor (web).** `DualShadesForm` (Front fabric / Front color / Back fabric / Back color) using the new
+  `AttributeMaterialAndColor` field; `lineItemDrafts.ts` `catalogResolver` now resolves `materials`; bulk-add
+  shows a Dual picker with Front/Back labels. New `draftDisplayAttributes` resolves catalog-ref names before
+  `describeAttributes`, so editor rows and detail lines show "Back fabric: X" (this also fixes the Curtains pleat
+  name, which never showed in editor rows). Expanded detail lines in `LineItemRow` use `wrap-anywhere` (a 60+ char
+  unbroken value used to overflow at 375 px).
+- **Material usage.** `materialUsage.ts` adds a generic extra row for ANY `materials` catalogRef at the same usage
+  quantity as the front (so Dual's back fabric gets its own row). `MaterialUsageLine.windowKey` +
+  `selectedWindowCount` make the dialog count windows, not lines (a Dual window is two lines, one window).
+- **Data - migration 51** (`supabase/migrations/20261103000051_dual_shades_blind_type.sql`): inserts the `Dual
+  Shades` `blind_types` row (sort 12); copies Roller's hardware scoping links and hardware defaults (not default
+  material); copies every LIVE (non-archived) Roller fabric into NEW `materials` rows linked ONLY to Dual, so the
+  two types' prices evolve independently. One-shot and re-runnable (no-op once the row exists).
+- **Tests.** api 938, web 647 passing. Added: pricing worked example, doubled legs/parity-table rows and
+  missing-back-price in both `pricing.test.ts`; attribute/priceLock/lineItemCompleteness cases in both twins;
+  `lockedAttributes.test.ts`; `orders.routes.test.ts` (snapshot, client-price 400, incomplete draft, leave-draft
+  refusal, locked back colour); `lineItemDrafts.test.ts`; `materialUsage.test.ts`. Rendered check in a throwaway
+  harness at 375 / 768 / 1280 px: no overflow, zero network requests.
+
+### Known v1 limits
+- Production labels (`apps/web/src/lib/labels.ts`), the presentation material filter and the PDF / customer-view
+  "Material:" label cover the FRONT fabric only.
+- Documents show the doubled control charge beside a single control name.
+- Bulk edit cannot set the back fabric: rows converted to Dual stay incomplete until edited individually.
+- `supabase/seed.sql`'s Dual row is never reached (migrations seed `blind_types` first).
+
 ## 2026-11-02 — Incomplete draft items: drafts save with open choices, completeness is checked on the way out of draft
 A draft estimate can now be saved with a blind that still has a blank blind type, material, height, panel width,
 cassette, bottom rail, control or installation choice (and with a blank required type attribute). The consultant
