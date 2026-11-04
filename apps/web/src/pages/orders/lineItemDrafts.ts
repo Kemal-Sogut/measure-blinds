@@ -700,15 +700,22 @@ export function parseDraftAttributes(draft: BlindDraft): BlindAttributes | null 
  * lives here rather than in a blind-type module because the modules are
  * api/web twins and must not know how either side stores its catalogs.
  *
- * Pleat types are the only entry: they are the last catalog still
- * referenced from `attributes`. Installation used to be here too, until
- * migration 35 promoted it to a real hardware slot resolved from a column.
+ * Pleat types and materials are the only entries: they are the catalogs
+ * referenced from `attributes` (the pleat for Curtains, the back fabric
+ * for Dual Shades). Installation used to be here too, until migration 35
+ * promoted it to a real hardware slot resolved from a column.
  */
 function catalogResolver(catalogs: Catalogs): CatalogResolver {
   return (table, id) => {
     if (table === 'pleat_types') {
       const hit = catalogs.pleatTypes.find((p) => p.id === id);
       return hit ? { name: hit.name, value: Number(hit.multiplier) } : undefined;
+    }
+    if (table === 'materials') {
+      // Dual Shades' back fabric: a second material referenced from
+      // attributes, priced from the same column as the front one.
+      const hit = catalogs.materials.find((m) => m.id === id);
+      return hit ? { name: hit.name, value: Number(hit.price_per_sqm) } : undefined;
     }
     return undefined;
   };

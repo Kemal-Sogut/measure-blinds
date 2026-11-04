@@ -33,6 +33,7 @@ const CANONICAL = [
   'Vertical Roller',
   'Curtains',
   'Sheer',
+  'Dual Shades',
 ] as const;
 
 describe('getBlindForm', () => {
@@ -56,11 +57,17 @@ describe('getBlindForm', () => {
     expect(getBlindForm('Sun-screen/Solar')).toBe(getBlindForm('Sunscreen'));
     expect(getBlindForm('curtain')).toBe(getBlindForm('Curtains'));
     expect(getBlindForm('sheers')).toBe(getBlindForm('Sheer'));
+    expect(getBlindForm('dual')).toBe(getBlindForm('Dual Shades'));
   });
 
   it('gives every canonical type its own form', () => {
     for (const name of CANONICAL) {
       expect(getBlindForm(name), `${name} has no form of its own`).not.toBe(DefaultForm);
     }
+  });
+
+  it('gives Dual Shades its own form', () => {
+    expect(getBlindForm('Dual Shades')).not.toBe(getBlindForm('Roller'));
+    expect(getBlindForm('Dual Shades')).not.toBe(DefaultForm);
   });
 });

@@ -35,6 +35,7 @@ import VerticalSheerForm from './VerticalSheerForm';
 import VerticalPanelForm from './VerticalPanelForm';
 import VerticalRollerForm from './VerticalRollerForm';
 import CurtainsForm from './CurtainsForm';
+import DualShadesForm from './DualShadesForm';
 
 /**
  * Canonical blind-type label → form component.
@@ -60,6 +61,7 @@ const byKey = new Map<string, BlindFormComponent>([
   // same inputs (widths, height, material, pleat, hardware), so it reuses
   // the Curtains form rather than duplicating it.
   [normalizeBlindType('Sheer'), CurtainsForm],
+  [normalizeBlindType('Dual Shades'), DualShadesForm],
 ]);
 
 /**

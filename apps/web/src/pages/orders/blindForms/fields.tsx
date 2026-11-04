@@ -339,20 +339,28 @@ export function HeightField({ draft, onChange }: Pick<BlindFormProps, 'draft' | 
  * Material + Color on one row. Colour is free text with no price effect;
  * it is shown on the item, the PDF and the customer view. The Material
  * list is scoped to the selected blind type, so it reads as empty with a
- * "Pick a blind type first" hint until a type is chosen.
+ * "Pick a blind type first" hint until a type is chosen. The labels default
+ * to "Material" / "Color"; Dual Shades renders it as "Front fabric" /
+ * "Front color" so the pair reads against its back-fabric twin.
  */
-export function MaterialAndColor({ draft, catalogs, onChange }: BlindFormProps) {
+export function MaterialAndColor({
+  draft,
+  catalogs,
+  onChange,
+  materialLabel = 'Material',
+  colorLabel = 'Color',
+}: BlindFormProps & { materialLabel?: string; colorLabel?: string }) {
   return (
     <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2">
       <OptionSelect
-        label="Material"
+        label={materialLabel}
         value={draft.material_id}
         onChange={(id) => onChange({ ...draft, material_id: id })}
         options={materialsForType(catalogs, draft.blinds_type)}
         placeholder={draft.blinds_type ? 'Select…' : 'Pick a blind type first'}
       />
       <label className="min-w-0">
-        <span className={LABEL}>Color</span>
+        <span className={LABEL}>{colorLabel}</span>
         <input
           placeholder="e.g. White, Oak, Charcoal"
           value={draft.color}
@@ -559,5 +567,55 @@ export function AttributeSelect({
       options={options}
       placeholder={placeholder}
     />
+  );
+}
+
+/**
+ * A second fabric + colour pair stored in the ATTRIBUTE blob rather than
+ * the `material_id` / `color` columns — Dual Shades' back roll. Visually
+ * identical to {@link MaterialAndColor} and listing the SAME type-scoped
+ * materials, so front and back offer one fabric list.
+ *
+ * Writes only the material's ID: the Worker resolves its price through the
+ * type's `catalogRefs` (table `materials`). `materialKey` and `colorKey`
+ * MUST be declared in the type's `attributeSchema`, or the save is a 400.
+ * Also rendered by the bulk-add sheet's `SectionAttributes`.
+ */
+export function AttributeMaterialAndColor({
+  draft,
+  catalogs,
+  onChange,
+  materialKey,
+  colorKey,
+  materialLabel,
+  colorLabel,
+}: Pick<BlindFormProps, 'draft' | 'catalogs' | 'onChange'> & {
+  materialKey: string;
+  colorKey: string;
+  materialLabel: string;
+  colorLabel: string;
+}) {
+  const set = (key: string, value: string) =>
+    onChange({ ...draft, attributes: { ...draft.attributes, [key]: value } });
+  return (
+    <div className="grid min-w-0 grid-cols-1 gap-3.5 sm:grid-cols-2">
+      <OptionSelect
+        label={materialLabel}
+        value={draft.attributes[materialKey] ?? ''}
+        onChange={(id) => set(materialKey, id)}
+        options={materialsForType(catalogs, draft.blinds_type)}
+        placeholder={draft.blinds_type ? 'Select…' : 'Pick a blind type first'}
+      />
+      <label className="min-w-0">
+        <span className={LABEL}>{colorLabel}</span>
+        <input
+          placeholder="e.g. White, Oak, Charcoal"
+          value={draft.attributes[colorKey] ?? ''}
+          onChange={(e) => set(colorKey, e.target.value)}
+          maxLength={100}
+          className={INPUT}
+        />
+      </label>
+    </div>
   );
 }
