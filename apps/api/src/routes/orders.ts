@@ -73,7 +73,9 @@ import { ORDER_TITLE_MAX, normalizeOrderTitle, titlePatch } from '../lib/orderTi
 import { groupOrdersByCustomer } from '../lib/orderGroups';
 import { calculateBlindUnitPriceForType } from '../lib/pricing';
 import { getBlindType } from '../lib/blindTypes';
+import { carryDisplayOnlyAttributes } from '../lib/lockedAttributes';
 import type {
+  BlindAttributes,
   CatalogResolver,
   CatalogSlot,
   HardwareCharge,
@@ -789,6 +791,25 @@ async function resolveLineItems(
         addons: it.addons as Addon[],
       });
       const snap = lock.snapshot;
+      // Pricing inputs and snapshots stay frozen; only the type's
+      // display-only keys (Dual Shades' back colour) flow from the payload,
+      // so a recoloured line prints the colour the consultant just typed.
+      // Types without such keys skip the parse and keep today's behaviour.
+      const lockedType = getBlindType(it.blinds_type);
+      let lockedAttributes = snap.attributes;
+      if (lockedType.displayOnlyKeys.length > 0) {
+        const parsed = lockedType.attributeSchema.safeParse(it.attributes);
+        if (!parsed.success) {
+          throw new Error(
+            `Item ${position + 1}: ${it.blinds_type || 'this blind type'} does not accept those options.`
+          );
+        }
+        lockedAttributes = carryDisplayOnlyAttributes(
+          snap.attributes,
+          parsed.data as BlindAttributes,
+          lockedType.displayOnlyKeys
+        );
+      }
       return {
         item_type: 'blind',
         position,
@@ -822,7 +843,7 @@ async function resolveLineItems(
         description: '',
         note: it.note,
         color: it.color,
-        attributes: snap.attributes,
+        attributes: lockedAttributes,
         quantity: it.quantity,
         show_original_price: it.show_original_price,
         unit_price: adjusted.unit_price,

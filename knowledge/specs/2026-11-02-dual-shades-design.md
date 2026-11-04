@@ -65,8 +65,8 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
   noun: 'back fabric' }`.
   The Worker resolves and snapshots name + price itself; a client sending
   `back_material_name` / `back_material_price_per_sqm` is a 400 from the strict schema.
-  No change to `orders.ts` is needed — `resolveLineItems` is already driven by
-  `catalogRefs`.
+  The unlocked path of `resolveLineItems` is already driven by `catalogRefs`; the
+  price-locked branch needs one small change (see "`back_color` is display-only").
 - `attributes.back_color`: optional free text, max 100 chars (matches the front Color
   field), no price effect.
 - Schema fields are `.optional()` so `defaultAttributes()` (`{}`) round-trips. Presence of
@@ -90,7 +90,11 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
 - **`back_color` is display-only.** `BaseBlindType` gains `displayOnlyKeys: string[]`
   (`[]` by default). Both `priceLock.ts` twins drop those keys from the fingerprint, the same
   way they drop catalog snapshot keys, so editing a back colour on a confirmed order does not
-  break its price lock — exactly as editing the front `color` column never has.
+  break its price lock. Because a locked line is otherwise written back from the STORED row,
+  the locked branch of `resolveLineItems` parses the payload attributes through the type's
+  `attributeSchema` and carries ONLY the `displayOnlyKeys` through
+  (`lib/lockedAttributes.ts`): a changed back colour is written, a cleared one is dropped,
+  and pricing inputs and snapshots stay frozen. Types with no display-only keys are untouched.
 
 ### 3. Documents
 

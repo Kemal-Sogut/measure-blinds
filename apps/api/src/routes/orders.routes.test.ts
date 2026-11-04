@@ -1648,6 +1648,7 @@ describe('Dual Shades line items', () => {
     const rows = db.insertPayloads['line_items']?.[0] as Record<string, unknown>[];
     expect(rows[0].unit_price).toBe(0);
     expect(rows[0].line_total).toBe(0);
+    expect(rows[0].attributes).toEqual({});
   });
 
   it('refuses a Dual line without a back fabric on a sent order', async () => {
@@ -2457,6 +2458,68 @@ describe('per-item price lock (migration 39)', () => {
     const res = await put(editPayload());
     expect(res.status).toBe(200);
     expect(savedRows()[0].unit_price).toBe(182);
+  });
+
+  describe('Dual Shades display-only back colour', () => {
+    const DUAL_ID = '88888888-8888-4888-8888-888888888883';
+    const BACK_ID = '99999999-9999-4999-8999-999999999991';
+    const frozen = {
+      back_material_id: BACK_ID,
+      back_material_name: 'Linen Grey',
+      back_material_price_per_sqm: 45,
+      back_color: 'Grey',
+    };
+
+    /** A confirmed Dual line (frozen at 220/unit) plus the editable payload for it. */
+    function seedDual() {
+      const row = lockedBlindRow({ blinds_type: 'Dual Shades', panels: [100], attributes: frozen, color: 'White' });
+      const locked = {
+        ...row,
+        locked_base_price: 220,
+        unit_price: 220,
+        locked_inputs_fingerprint: pricingFingerprint(
+          lockInputFromRow({ ...row, locked_base_price: 220, unit_price: 220 })
+        ),
+      };
+      seedExisting('awaiting_payment', [locked, lockedPresetRow()]);
+      db.responses['blind_types.select'] = [
+        ...(db.responses['blind_types.select'] ?? []),
+        { id: DUAL_ID, name: 'Dual Shades' },
+      ];
+      const body = editPayload();
+      Object.assign(body.line_items[0] as Record<string, unknown>, {
+        blinds_type: 'Dual Shades',
+        panels: [100],
+        color: 'White',
+        attributes: { back_material_id: BACK_ID, back_color: 'Grey' },
+      });
+      return body;
+    }
+
+    it('writes a changed back colour and keeps the frozen price and snapshots', async () => {
+      const body = seedDual();
+      ((body.line_items[0] as Record<string, unknown>).attributes as Record<string, unknown>).back_color = 'Charcoal';
+      const res = await put(body);
+      expect(res.status).toBe(200);
+      const [blind] = savedRows();
+      expect(blind.locked_base_price).toBe(220);
+      expect(blind.unit_price).toBe(220);
+      expect(blind.attributes).toEqual({ ...frozen, back_color: 'Charcoal' });
+    });
+
+    it('drops the back colour when the consultant clears it', async () => {
+      const body = seedDual();
+      (body.line_items[0] as Record<string, unknown>).attributes = { back_material_id: BACK_ID };
+      const res = await put(body);
+      expect(res.status).toBe(200);
+      const [blind] = savedRows();
+      expect(blind.locked_base_price).toBe(220);
+      expect(blind.attributes).toEqual({
+        back_material_id: BACK_ID,
+        back_material_name: 'Linen Grey',
+        back_material_price_per_sqm: 45,
+      });
+    });
   });
 
   it('prices an item added after confirmation from the current catalog, then locks it', async () => {
