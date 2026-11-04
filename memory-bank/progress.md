@@ -6,8 +6,8 @@
 
 ## What Works
 
-**Dual Shades, on `feat/dual-shades` (not merged, not deployed; migration 51 written, NOT YET APPLIED to
-`lgbxxlwsdeuhdgzrjjen` and must be before deploying):** a new blind type with a front and back fabric — priced as
+**Dual Shades, on `feat/dual-shades` (not merged, not deployed; migration 51 APPLIED to
+`lgbxxlwsdeuhdgzrjjen` on 2026-11-03 — the type is live in the DB, so deploy promptly):** a new blind type with a front and back fabric — priced as
 area x (front + back rate) with control and bottom-rail legs doubled, back fabric a required `materials`
 catalogRef, display-only `back_color`, editor form + bulk-add picker, Material usage back-fabric row and window
 count. Tests pass (api 938, web 647); layout checked in a harness. v1 limits: labels/presentation filter/PDF
@@ -308,8 +308,8 @@ ingested e-Transfer (applied or pending); order alerts link to the order, paymen
 Table `notifications`, migration 43. No read/unread state.
 
 ## What's Left / Known Issues
-- **Dual Shades: apply migration 51 first**
-  (`20261103000051_dual_shades_blind_type.sql`), then deploy Worker, then web. Not yet exercised in a real
+- **Dual Shades: migration 51 is applied (2026-11-03); deploy the Worker, then the web, promptly** — until then
+  the deployed build offers Dual Shades but prices it with the default single-fabric formula. Not yet exercised in a real
   browser against a backend; v1 limits listed in the history entry (front-only labels/PDF material, no bulk-edit
   back fabric, doubled control shown beside one control name).
 - **Incomplete draft items is not merged to main or deployed, and the merged build has never been seen in a

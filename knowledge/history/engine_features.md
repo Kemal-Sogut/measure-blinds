@@ -5,8 +5,12 @@ New blind type **Dual Shades**: one headrail carrying two independent rolls. Spe
 `knowledge/specs/2026-11-02-dual-shades-design.md`, plan `knowledge/plans/2026-11-02-dual-shades.md`. Branch
 `feat/dual-shades` (base `873e3fc`), **not merged to main, not deployed.**
 
-> **MIGRATION 51 IS NOT YET APPLIED to `lgbxxlwsdeuhdgzrjjen`. It MUST be applied before the Worker/web are
-> deployed** (the new type has no row, no scoping and no materials until then).
+> **Migration 51 APPLIED to `lgbxxlwsdeuhdgzrjjen` on 2026-11-03** (via Supabase MCP `apply_migration`, name
+> `dual_shades_blind_type`), after a rolled-back dry run. Verified live: one `Dual Shades` row (sort 12), 36
+> materials copied from the 36 live Roller fabrics with 0 rows shared, Roller's hardware scoping (5 cassette /
+> 4 bottom rail / 6 control / 4 installation links) and 1 defaults row copied. **The type is now visible in the
+> production editor before this code is deployed** — deploy the Worker, then the web, promptly; until then the
+> deployed build prices a Dual line with the default single-fabric formula.
 
 - **Pricing.** `DualShadesBlindType` (`apps/{api,web}/src/lib/blindTypes/dualShades.ts`, twinned): material =
   area (width/height minimums applied) x (front rate + back rate). The bottom-rail and control legs are DOUBLED on

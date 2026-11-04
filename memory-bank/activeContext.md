@@ -6,8 +6,8 @@
 
 ## Where things stand
 
-**Current branch `feat/dual-shades` (not merged to main, not deployed), web + api + MIGRATION 51 WRITTEN, NOT YET
-APPLIED to `lgbxxlwsdeuhdgzrjjen` (must be applied before the Worker/web deploy):** **Dual Shades blind type** — a
+**Current branch `feat/dual-shades` (not merged to main, not deployed), web + api + migration 51 (APPLIED to
+`lgbxxlwsdeuhdgzrjjen` 2026-11-03 — the type is live in the DB; deploy Worker then web promptly):** **Dual Shades blind type** — a
 front and a back fabric on one headrail. Price = area x (front + back rate); control and bottom-rail legs doubled,
 cassette/installation once (worked example $445). The back fabric is a `materials` catalogRef
 (`back_material_id`), required before the order leaves draft; `back_color` is display-only
