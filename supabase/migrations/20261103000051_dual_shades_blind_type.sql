@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Copyright (c) 2026 Blinds Nisa. All rights reserved.
 --
--- Migration 48: the "Dual Shades" blind type.
+-- Migration 51: the "Dual Shades" blind type.
 --
 -- A Dual Shade is one headrail carrying two independent rolls -- a FRONT
 -- and a BACK fabric -- each with its own control and bottom rail. Pricing
@@ -14,6 +14,9 @@
 -- material linked to Roller: new materials rows (same name, price, width,
 -- active flag, sort order) linked ONLY to Dual Shades. Nothing is shared,
 -- so editing or deleting a Dual fabric in Settings never touches Roller.
+-- Only LIVE Roller fabrics are copied: an archived Roller fabric (archived
+-- in Settings, migration 49) is retired and is NOT copied. The Roller row
+-- itself is also resolved only when live.
 --
 -- Hardware: the new type inherits Roller's CURRENT scoping (cassette,
 -- bottom rail, control, installation -- migration 35: an option with no
@@ -43,6 +46,7 @@ begin
   select id into v_roller
     from public.blind_types
    where name = 'Roller'
+     and archived_at is null
    order by created_at
    limit 1;
 
@@ -90,6 +94,7 @@ begin
       from public.materials m
       join public.material_blind_types mbt on mbt.material_id = m.id
      where mbt.blind_type_id = v_roller
+       and m.archived_at is null
      order by m.sort_order, m.name
   loop
     insert into public.materials (name, price_per_sqm, width_cm, active, sort_order)
