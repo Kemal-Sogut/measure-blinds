@@ -30,7 +30,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-import { Button, Pill, useConfirm } from '../../components/ui';
+import {Pill, useConfirm } from '../../components/ui';
 import RowIconButton, { BinIcon, CalendarIcon, TickCircleIcon } from '../../components/RowIconButton';
 import { useDeleteLead, useUpdateLeadStatus } from '../../hooks/useLeads';
 import type { Lead, LeadStatus } from '../../types';
