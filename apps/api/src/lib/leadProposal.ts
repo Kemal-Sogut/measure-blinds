@@ -27,7 +27,6 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   brandFromSettings,
   brandedShell,
-  buttonPairHtml,
   escapeHtml,
   finePrintHtml,
   headingHtml,
@@ -79,11 +78,32 @@ export function leadProposalSubject(dateText: string): string {
   return `Thank you! Your free in-home estimate: proposed for ${dateText}`;
 }
 
+/** Unbreakable span (pre-escaped content). */
+const nowrap = (html: string) => `<span style="white-space:nowrap;">${html}</span>`;
+
+/**
+ * "Wednesday, September 30, 2026" → two unbreakable parts with one break
+ * opportunity after the weekday. A date without a comma stays one part.
+ * The result is escaped HTML.
+ */
+function headlineDate(dateText: string): string {
+  const cut = dateText.indexOf(', ');
+  if (cut < 0) return nowrap(escapeHtml(dateText));
+  return `${nowrap(escapeHtml(dateText.slice(0, cut + 1)))} ${nowrap(escapeHtml(dateText.slice(cut + 2)))}`;
+}
+
 /**
  * Builds the visitor's proposal email: thanks for the request, the proposed
- * one-hour window in the tinted summary card, an optional note, and paired
- * Confirm / Request another time buttons to the public appointment page.
- * Same branded shell and blocks as the installation proposal.
+ * one-hour window in the tinted summary card, an optional note, and Confirm /
+ * Request another time buttons to the public appointment page. Same branded
+ * shell and blocks as the installation proposal, with two phone-first
+ * choices (owner feedback, 2026-11-04):
+ *   - the card puts the date and the time on separate lines, and the time
+ *     never breaks inside itself (`nowrap`), so it reads at a glance. The
+ *     date may break only after the weekday ("Wednesday," / "September 30,
+ *     2026"), never leaving the year alone on a line;
+ *   - the buttons are stacked full width, one per row, instead of a
+ *     side-by-side pair whose labels wrapped on a phone.
  */
 export function buildLeadProposalHtml(i: LeadProposalEmailInputs): string {
   const company = escapeHtml(i.company.name);
@@ -98,11 +118,12 @@ export function buildLeadProposalHtml(i: LeadProposalEmailInputs): string {
     ${introHtml(`Hi ${name} &mdash; thank you for asking ${company} for a free in-home estimate. We would love to visit between <strong>${startText}</strong> and <strong>${endText}</strong> on <strong>${dateText}</strong>, if that works for you.`)}
     ${summaryCardHtml({
       eyebrow: 'Proposed estimate visit',
-      headline: `${dateText} &middot; ${startText} &ndash; ${endText}`,
+      headline: `${headlineDate(i.dateText)}<br>${nowrap(`${startText} &ndash; ${endText}`)}`,
       rows,
     })}
     ${messageBlockHtml(i.message)}
-    ${buttonPairHtml(primaryButtonHtml(url, 'Confirm this time'), secondaryButtonHtml(url, 'Request another time'))}
+    <div style="margin:0 0 12px;">${primaryButtonHtml(url, 'Confirm this time')}</div>
+    <div style="margin:0 0 24px;">${secondaryButtonHtml(url, 'Request another time')}</div>
     ${finePrintHtml(`The visit takes about an hour &mdash; we measure your windows, show samples, and leave you with a written estimate. No obligation. Prefer a different time? Use the buttons above or reply to this email.`)}
     ${linkFallbackHtml(url)}`;
   return brandedShell(i.company, body);

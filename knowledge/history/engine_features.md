@@ -26,6 +26,13 @@ not deployed.** Migration 52 was applied by hand by the owner on 2026-11-04 (liv
   proposed visit stay). On the Inbox list: the existing `PUT` / `DELETE /api/inbox/:id`, same confirm text as the
   thread page. The icons sit beside the row's main button (a button cannot nest in a button); the text column keeps
   185 px (Leads, 3 icons) / 259 px (Inbox, 2 icons) on a 343 px phone card.
+- **Proposal email, phone layout** (owner feedback after a real send to Gmail on iPhone): the two buttons are
+  stacked full width, one per row (labels wrapped in the side-by-side pair); the summary card shows the date and the
+  time on separate lines, the time never breaks, and the date breaks only after the weekday (no lone year). The
+  shared email shell (`brandedShell`, every customer email) gains a `<style>` block for screens ≤ 600 px: the 640 px
+  card becomes full width (a table's `max-width:100%` did not shrink it outside Gmail; the page was 652 px wide at a
+  375 px viewport), side padding 40 → 20 px, page gutter 12 → 6 px, summary card 24 → 16 px, label column 110 →
+  76 px. Desktop is unchanged. Rendered at 375 and 1280 px: no horizontal overflow at either.
 - **Verified:** api 1010 / web 661 tests, tsc clean both sides, oxlint clean. Harness (deleted): Leads page and
   Inbox list inside the real app-shell offset at 375 / 768 / 1280 px, and the Propose dialog at 375 and 1280 px,
   with a 79-char name, 90-char unbroken email, all coverings, a change-requested visit, and a deleted customer;
