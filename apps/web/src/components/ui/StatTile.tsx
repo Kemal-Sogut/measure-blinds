@@ -56,7 +56,7 @@ export default function StatTile({
         <span className="block truncate font-mono text-xl font-semibold leading-7 text-text-primary">
           {value}
         </span>
-        <span className="block truncate text-[13px] leading-[18px] text-text-muted">
+        <span className="block truncate text-13px leading-[18px] text-text-muted">
           {label}
         </span>
       </span>

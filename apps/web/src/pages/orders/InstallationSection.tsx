@@ -189,7 +189,7 @@ export default function InstallationSection({
 
   const response = appt ? RESPONSE_LABEL[appt.status] : undefined;
   const smallBtn =
-    'h-10 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium disabled:opacity-40';
+    'h-10 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium disabled:opacity-40';
 
   const panel = (
     <section className="flex flex-col gap-2 rounded-xl border border-border-light bg-surface p-4 shadow-md">
@@ -208,11 +208,11 @@ export default function InstallationSection({
             />
           </svg>
         </span>
-        <h2 className="text-[15px] font-bold text-text-primary">Installation</h2>
+        <h2 className="text-15px font-bold text-text-primary">Installation</h2>
       </div>
       {!appt && (
         <>
-          <p className="text-[13px] text-text-muted">
+          <p className="text-13px text-text-muted">
             {orderStatus === 'ready'
               ? 'No installation scheduled yet.'
               : 'No installation time was recorded.'}
@@ -220,7 +220,7 @@ export default function InstallationSection({
           {orderStatus === 'ready' && (
             <button
               onClick={onOpenSheet}
-              className="mt-1 h-10 rounded-md border border-border-input bg-surface text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+              className="mt-1 h-10 rounded-md border border-border-input bg-surface text-13px font-medium text-brand-600 hover:bg-surface-muted"
             >
               Propose Installation
             </button>
@@ -230,19 +230,19 @@ export default function InstallationSection({
       {appt && (
         <>
           <div className="flex justify-between gap-2">
-            <span className="text-[13px] text-text-secondary">Scheduled time</span>
-            <span className="text-right font-mono text-[13px] text-text-primary">
+            <span className="text-13px text-text-secondary">Scheduled time</span>
+            <span className="text-right font-mono text-13px text-text-primary">
               {appt.appointment_date} · {installWindowText(appt.appointment_time)}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[13px] text-text-secondary">Status</span>
-            <span className={`text-[13px] font-semibold ${response?.cls ?? ''}`}>
+            <span className="text-13px text-text-secondary">Status</span>
+            <span className={`text-13px font-semibold ${response?.cls ?? ''}`}>
               {response?.text ?? appt.status}
             </span>
           </div>
           {appt.status === 'change_requested' && appt.response_note && (
-            <p className="rounded-sm bg-surface-sunken p-2 text-[13px] text-text-secondary">
+            <p className="rounded-sm bg-surface-sunken p-2 text-13px text-text-secondary">
               &ldquo;{appt.response_note}&rdquo;
             </p>
           )}
@@ -275,7 +275,7 @@ export default function InstallationSection({
         <button
           onClick={handleMarkInstalled}
           disabled={installedMut.isPending}
-          className="mt-1 h-10 rounded-md border border-border-input bg-surface text-[13px] font-medium text-success hover:bg-surface-muted disabled:opacity-40"
+          className="mt-1 h-10 rounded-md border border-border-input bg-surface text-13px font-medium text-success hover:bg-surface-muted disabled:opacity-40"
         >
           {installedMut.isPending ? 'Saving…' : 'Mark Installed'}
         </button>
@@ -301,7 +301,7 @@ export default function InstallationSection({
         <h2 className="mb-1 text-sm font-semibold text-text-primary">
           {appt ? 'Change installation time' : 'Propose installation time'}
         </h2>
-        <p className="mb-3 text-[13px] text-text-muted">
+        <p className="mb-3 text-13px text-text-muted">
           We&apos;ll email {customerEmail ?? 'the customer'} a one-hour arrival window and a link
           to confirm or request another time.
         </p>
@@ -318,7 +318,7 @@ export default function InstallationSection({
               className="h-11 w-full rounded-md border border-border-input bg-surface px-3 font-mono text-sm"
             />
           </label>
-          <p className="text-[13px] text-text-secondary">
+          <p className="text-13px text-text-secondary">
             Customer will see: <span className="font-medium">between {installWindowText(time)}</span> on{' '}
             {format(date, 'EEEE, MMMM d, yyyy')}.
           </p>
@@ -338,7 +338,7 @@ export default function InstallationSection({
           <div className="mt-1 flex gap-2">
             <button
               onClick={onCloseSheet}
-              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
             >
               Cancel
             </button>

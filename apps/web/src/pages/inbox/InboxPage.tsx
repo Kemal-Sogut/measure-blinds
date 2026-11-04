@@ -139,30 +139,30 @@ function ThreadRow({
             </span>
             {unread && <span className="sr-only">(unread)</span>}
           </span>
-          <time dateTime={thread.last_message_at} className="shrink-0 text-[12px] text-text-muted">
+          <time dateTime={thread.last_message_at} className="shrink-0 text-12px text-text-muted">
             {formatThreadTime(thread.last_message_at)}
           </time>
         </span>
         <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-[13px] font-medium text-text-secondary">
+          <span className="truncate text-13px font-medium text-text-secondary">
             {thread.subject || '(no subject)'}
           </span>
           {thread.message_count > 1 && (
-            <span className="shrink-0 rounded-pill bg-surface-sunken px-1.5 text-[11px] font-semibold text-text-secondary">
+            <span className="shrink-0 rounded-pill bg-surface-sunken px-1.5 text-11px font-semibold text-text-secondary">
               {thread.message_count}
             </span>
           )}
         </span>
-        <span className="truncate text-[13px] text-text-muted">{snippetLine(thread)}</span>
+        <span className="truncate text-13px text-text-muted">{snippetLine(thread)}</span>
         {(showCategory || thread.customer) && (
           <span className="mt-1 flex flex-wrap gap-1.5">
             {showCategory && (
-              <span className="rounded-pill bg-surface-sunken px-2 py-0.5 text-[11px] font-semibold text-text-secondary">
+              <span className="rounded-pill bg-surface-sunken px-2 py-0.5 text-11px font-semibold text-text-secondary">
                 {CATEGORY_LABELS[thread.category]}
               </span>
             )}
             {thread.customer && (
-              <span className="rounded-pill bg-info-tint px-2 py-0.5 text-[11px] font-semibold text-info">
+              <span className="rounded-pill bg-info-tint px-2 py-0.5 text-11px font-semibold text-info">
                 {displayName(thread.customer)}
               </span>
             )}
@@ -195,11 +195,11 @@ export default function InboxPage() {
   }
 
   const segment = (active: boolean) =>
-    `min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold ${
+    `min-h-9 flex-1 whitespace-nowrap rounded-md px-3 text-13px font-semibold ${
       active ? 'bg-surface text-text-primary shadow-sm' : 'text-text-secondary hover:text-text-primary'
     }`;
   const pagerButton =
-    'h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
+    'h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
 
   return (
     <div className="min-h-screen bg-surface-muted pb-16">
@@ -250,7 +250,7 @@ export default function InboxPage() {
         {data && (
           <>
             {threads.length === 0 ? (
-              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
+              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-13px text-text-muted shadow-sm">
                 {state.page > 1
                   ? 'No conversations on this page.'
                   : `No ${state.status === 'new' ? 'new' : 'handled'} ${
@@ -275,7 +275,7 @@ export default function InboxPage() {
                 <button type="button" className={pagerButton} disabled={state.page <= 1} onClick={() => go({ page: state.page - 1 })}>
                   ‹ Previous
                 </button>
-                <span className="text-[13px] text-text-secondary">
+                <span className="text-13px text-text-secondary">
                   Page {state.page} of {totalPages}
                 </span>
                 <button type="button" className={pagerButton} disabled={state.page >= totalPages} onClick={() => go({ page: state.page + 1 })}>

@@ -58,8 +58,8 @@ const STATUS_STYLE: Record<LeadStatus, { dot: string; tone: PillTone }> = {
 function Detail({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <dt className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">{label}</dt>
-      <dd className="text-[13px] text-text-primary wrap-anywhere">{children}</dd>
+      <dt className="text-11px font-semibold uppercase tracking-wide text-text-muted">{label}</dt>
+      <dd className="text-13px text-text-primary wrap-anywhere">{children}</dd>
     </div>
   );
 }
@@ -127,18 +127,18 @@ export default function LeadCard({ lead, defaultOpen = false }: { lead: Lead; de
             {/* Wraps rather than truncating: on a phone the date drops under the name. */}
             <span className="flex flex-wrap items-baseline justify-between gap-x-2">
               <span className="min-w-0 text-sm font-semibold text-text-primary wrap-anywhere">{name}</span>
-              <time dateTime={lead.created_at} className="text-[12px] text-text-muted">
+              <time dateTime={lead.created_at} className="text-12px text-text-muted">
                 {format(new Date(lead.created_at), 'MMM d, yyyy · h:mm a')}
               </time>
             </span>
-            {wants && <span className="text-[13px] text-text-secondary wrap-anywhere">{wants}</span>}
+            {wants && <span className="text-13px text-text-secondary wrap-anywhere">{wants}</span>}
             {visit && lead.appointment && (
-              <span className="text-[12px] text-text-secondary">
+              <span className="text-12px text-text-secondary">
                 <span className="font-semibold text-brand-700">Visit proposed:</span> {visit} ·{' '}
                 {VISIT_STATUS_TEXT[lead.appointment.status]}
               </span>
             )}
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-[12px] text-text-muted">
+            <span className="flex flex-wrap items-center gap-x-2 gap-y-1 pt-0.5 text-12px text-text-muted">
               <Pill tone={style.tone}>{LEAD_STATUS_LABELS[lead.status]}</Pill>
               {lead.customer_match === 'created' && <Pill tone="brand">New customer</Pill>}
               {lead.city && <span className="min-w-0 wrap-anywhere">{lead.city}</span>}
@@ -210,7 +210,7 @@ export default function LeadCard({ lead, defaultOpen = false }: { lead: Lead; de
           )}
 
           {lead.appointment && (
-            <div className="flex flex-col gap-0.5 rounded-lg bg-brand-100 p-2.5 text-[13px]">
+            <div className="flex flex-col gap-0.5 rounded-lg bg-brand-100 p-2.5 text-13px">
               <span className="font-semibold text-text-primary">Estimate visit: {visit}</span>
               <span className="text-text-secondary">{VISIT_STATUS_TEXT[lead.appointment.status]}</span>
               <Link
@@ -222,7 +222,7 @@ export default function LeadCard({ lead, defaultOpen = false }: { lead: Lead; de
             </div>
           )}
 
-          <div className="flex flex-col gap-0.5 rounded-lg bg-surface-sunken p-2.5 text-[13px]">
+          <div className="flex flex-col gap-0.5 rounded-lg bg-surface-sunken p-2.5 text-13px">
             {lead.customer && !lead.customer.deleted_at ? (
               <Link
                 to={`/customers/${lead.customer.id}`}
@@ -235,7 +235,7 @@ export default function LeadCard({ lead, defaultOpen = false }: { lead: Lead; de
           </div>
 
           {emailMissing(lead) && (
-            <p className="text-[12px] text-warning">
+            <p className="text-12px text-warning">
               The shop email for this lead did not go out. The lead is saved; check the email settings.
             </p>
           )}

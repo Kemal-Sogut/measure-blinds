@@ -97,11 +97,11 @@ export function CardHeader({
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h2 className="truncate text-[17px] font-bold leading-6 text-text-primary">
+        <h2 className="truncate text-17px font-bold leading-6 text-text-primary">
           {title}
         </h2>
         {subtitle && (
-          <p className="truncate text-[13px] leading-[18px] text-text-muted">{subtitle}</p>
+          <p className="truncate text-13px leading-[18px] text-text-muted">{subtitle}</p>
         )}
       </div>
       {right && <div className="shrink-0">{right}</div>}

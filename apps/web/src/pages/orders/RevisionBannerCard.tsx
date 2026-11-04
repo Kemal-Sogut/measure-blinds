@@ -54,13 +54,13 @@ function money(n: number): string {
 function ChangeList({ changes }: { changes: string[] }) {
   const more = changes.length - MAX_LISTED;
   return (
-    <ul className="mt-1.5 flex min-w-0 list-disc flex-col gap-0.5 pl-4 text-[12px] text-warning">
+    <ul className="mt-1.5 flex min-w-0 list-disc flex-col gap-0.5 pl-4 text-12px text-warning">
       {changes.slice(0, MAX_LISTED).map((line, i) => (
         <li key={i} className="min-w-0 break-words">
           {line}
         </li>
       ))}
-      {more > 0 && <li className="list-none text-[11px] text-warning/80">and {more} more</li>}
+      {more > 0 && <li className="list-none text-11px text-warning/80">and {more} more</li>}
     </ul>
   );
 }
@@ -82,8 +82,8 @@ function History({
 }) {
   const latest = Math.max(...revisions.map((r) => r.rev_no));
   return (
-    <details className="min-w-0 text-[12px] text-text-secondary">
-      <summary className="cursor-pointer select-none py-1 text-[11px] font-semibold text-text-muted">
+    <details className="min-w-0 text-12px text-text-secondary">
+      <summary className="cursor-pointer select-none py-1 text-11px font-semibold text-text-muted">
         Revision history ({revisions.length})
       </summary>
       <ul className="flex min-w-0 flex-col divide-y divide-border-light rounded-lg border border-border-light bg-surface">
@@ -101,7 +101,7 @@ function History({
                 type="button"
                 onClick={() => onRestore(r)}
                 disabled={Boolean(restoringId)}
-                className="shrink-0 rounded-md border border-border-light px-2 py-0.5 text-[11px] font-semibold text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
+                className="shrink-0 rounded-md border border-border-light px-2 py-0.5 text-11px font-semibold text-text-secondary hover:bg-surface-sunken disabled:opacity-50"
               >
                 {restoringId === r.id ? 'Loading…' : 'Restore'}
               </button>
@@ -120,7 +120,7 @@ function History({
 function RestoredStrip({ revNo, onDismiss }: { revNo: number; onDismiss?: () => void }) {
   return (
     <div
-      className="flex min-w-0 items-start gap-2 rounded-xl border border-info/30 bg-info-tint px-3 py-2 text-[12px] text-info"
+      className="flex min-w-0 items-start gap-2 rounded-xl border border-info/30 bg-info-tint px-3 py-2 text-12px text-info"
       role="status"
     >
       <span className="min-w-0 flex-1 break-words">
@@ -195,7 +195,7 @@ export function RevisionBanner({
   if (state.kind === 'in_sync') {
     main = (
       <div
-        className="inline-flex min-w-0 max-w-full self-start rounded-full bg-surface-sunken px-3 py-1 text-[12px] text-text-secondary"
+        className="inline-flex min-w-0 max-w-full self-start rounded-full bg-surface-sunken px-3 py-1 text-12px text-text-secondary"
         role="status"
       >
         <span className="min-w-0 break-words">
@@ -206,7 +206,7 @@ export function RevisionBanner({
   } else if (state.kind === 'legacy') {
     main = (
       <div
-        className="min-w-0 rounded-xl bg-surface-sunken px-3 py-2 text-[12px] text-text-muted"
+        className="min-w-0 rounded-xl bg-surface-sunken px-3 py-2 text-12px text-text-muted"
         role="status"
       >
         Sent before revision tracking — next send creates Rev 1
@@ -229,7 +229,7 @@ export function RevisionBanner({
             <button
               type="button"
               onClick={onSendUpdate}
-              className="ml-auto shrink-0 rounded-md bg-warning px-2.5 py-1 text-[11px] font-semibold text-white hover:opacity-90"
+              className="ml-auto shrink-0 rounded-md bg-warning px-2.5 py-1 text-11px font-semibold text-white hover:opacity-90"
             >
               Send update
             </button>

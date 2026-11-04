@@ -22,7 +22,7 @@ export default function IncompleteBadge({ count }: { count: number }): ReactNode
   return (
     <span
       title={`${count} item${count === 1 ? '' : 's'} incomplete`}
-      className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800"
+      className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-11px font-semibold uppercase tracking-wide text-amber-800"
     >
       Incomplete
     </span>

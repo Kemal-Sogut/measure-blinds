@@ -82,19 +82,19 @@ export default function CalendarPage() {
 
       <div className="page-container py-4 md:py-6 lg:py-8">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h1 className="hidden text-[22px] font-semibold text-text-primary lg:block">Calendar</h1>
+          <h1 className="hidden text-22px font-semibold text-text-primary lg:block">Calendar</h1>
           <div className="flex flex-1 flex-wrap items-center justify-between gap-2 lg:flex-none lg:justify-end">
             <div className="flex items-center gap-2">
               <Link
                 to="/appointments"
-                className="flex h-9 items-center rounded-md border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+                className="flex h-9 items-center rounded-md border border-border-input px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted"
               >
                 See All
               </Link>
               <button
                 type="button"
                 onClick={() => setWizard({ day: new Date() })}
-                className="h-9 rounded-md shadow-sm bg-brand-600 px-3 text-[13px] font-semibold text-white hover:bg-brand-700"
+                className="h-9 rounded-md shadow-sm bg-brand-600 px-3 text-13px font-semibold text-white hover:bg-brand-700"
               >
                 + New Appointment
               </button>
@@ -122,7 +122,7 @@ export default function CalendarPage() {
               <button
                 type="button"
                 onClick={() => setMonth(new Date())}
-                className="ml-1 h-9 rounded-md border border-border-input px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted"
+                className="ml-1 h-9 rounded-md border border-border-input px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted"
               >
                 Today
               </button>

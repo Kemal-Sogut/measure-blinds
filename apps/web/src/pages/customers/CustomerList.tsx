@@ -51,10 +51,10 @@ export default function CustomerList() {
       <div className="page-container py-4 md:py-6 lg:py-8">
         {/* Desktop header row */}
         <div className="mb-5 hidden items-center justify-between lg:flex">
-          <h1 className="text-[22px] font-bold text-text-primary">Customers</h1>
+          <h1 className="text-22px font-bold text-text-primary">Customers</h1>
           <Link
             to="/customers/new"
-            className="flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-brand-700"
+            className="flex h-11 items-center gap-2 rounded-md bg-brand-600 px-4 text-13px font-semibold text-white shadow-sm hover:bg-brand-700"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
@@ -81,7 +81,7 @@ export default function CustomerList() {
             placeholder="Search name, phone, email, address…"
             value={term}
             onChange={(e) => setTerm(e.target.value)}
-            className="h-11 w-full rounded-md border border-border-input bg-surface pl-9 pr-3 text-[15px] text-text-primary placeholder:text-text-muted"
+            className="h-11 w-full rounded-md border border-border-input bg-surface pl-9 pr-3 text-15px text-text-primary placeholder:text-text-muted"
           />
         </div>
 
@@ -105,19 +105,19 @@ export default function CustomerList() {
                 >
                   <span
                     aria-hidden="true"
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[13px] font-bold text-brand-700"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-13px font-bold text-brand-700"
                   >
                     {initials(cust)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[15px] font-bold text-text-primary">
+                    <span className="block truncate text-15px font-bold text-text-primary">
                       {displayName(cust)}
                     </span>
-                    <span className="block truncate text-[13px] text-text-secondary">
+                    <span className="block truncate text-13px text-text-secondary">
                       {[cust.phone, cust.email].filter(Boolean).join(' · ') || 'No contact info'}
                     </span>
                     {cust.shipping_city && (
-                      <span className="block truncate text-[13px] text-text-muted">
+                      <span className="block truncate text-13px text-text-muted">
                         {cust.shipping_city}
                       </span>
                     )}
@@ -133,7 +133,7 @@ export default function CustomerList() {
           <div className="hidden lg:block">
             <Card className="overflow-hidden">
               <CardBody flush>
-                <div className="grid grid-cols-[1.4fr_1fr_1.4fr_1fr] border-b border-border-light bg-surface-sunken px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.05em] text-text-muted">
+                <div className="grid grid-cols-[1.4fr_1fr_1.4fr_1fr] border-b border-border-light bg-surface-sunken px-4 py-2.5 text-11px font-semibold uppercase tracking-[0.05em] text-text-muted">
                   <span>Name</span>
                   <span>Phone</span>
                   <span>Email</span>
@@ -150,21 +150,21 @@ export default function CustomerList() {
                     <span className="flex min-w-0 items-center gap-2.5">
                       <span
                         aria-hidden="true"
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[11px] font-bold text-brand-700"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-11px font-bold text-brand-700"
                       >
                         {initials(cust)}
                       </span>
-                      <span className="truncate text-[13px] font-semibold text-text-primary">
+                      <span className="truncate text-13px font-semibold text-text-primary">
                         {displayName(cust)}
                       </span>
                     </span>
-                    <span className="font-mono text-[13px] text-text-secondary">
+                    <span className="font-mono text-13px text-text-secondary">
                       {cust.phone || '—'}
                     </span>
-                    <span className="truncate text-[13px] text-text-secondary">
+                    <span className="truncate text-13px text-text-secondary">
                       {cust.email || '—'}
                     </span>
-                    <span className="text-[13px] text-text-secondary">
+                    <span className="text-13px text-text-secondary">
                       {cust.shipping_city || '—'}
                     </span>
                   </button>

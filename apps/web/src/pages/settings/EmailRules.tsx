@@ -111,7 +111,7 @@ export default function EmailRules() {
       <div className="page-container flex flex-col gap-4 py-4 md:py-6 lg:py-8 [--page-max:48rem]">
         <Card>
           <CardHeader title="Mail sync" subtitle="info@blindsnisa.com" />
-          <CardBody className="flex flex-col gap-1 text-[13px]">
+          <CardBody className="flex flex-col gap-1 text-13px">
             <p className="mb-1 text-text-muted">Checked every minute from 8 AM to 10 PM, every 10 minutes overnight.</p>
             {statusQuery.isLoading && <p className="text-text-muted">Loading…</p>}
             {statusQuery.data?.length === 0 && <p className="text-text-muted">Not synced yet.</p>}
@@ -126,7 +126,7 @@ export default function EmailRules() {
         <Card>
           <CardHeader title="Rules" subtitle="First match wins" />
           <CardBody flush>
-            <p className="border-b border-border-light px-4 py-3 text-[13px] text-text-muted">
+            <p className="border-b border-border-light px-4 py-3 text-13px text-text-muted">
               Checked top to bottom for each new conversation. No match → Other.
             </p>
             {rulesQuery.isLoading && (
@@ -135,7 +135,7 @@ export default function EmailRules() {
               </div>
             )}
             {!rulesQuery.isLoading && rules.length === 0 && (
-              <p className="px-4 py-4 text-[13px] text-text-muted">No rules yet. Everything goes to Other until you add one.</p>
+              <p className="px-4 py-4 text-13px text-text-muted">No rules yet. Everything goes to Other until you add one.</p>
             )}
             <ul className="divide-y divide-border-light">
               {rules.map((rule, index) => (

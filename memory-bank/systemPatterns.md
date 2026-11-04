@@ -497,6 +497,13 @@ amber=payment owed, emerald=ready/paid, rose=expired/destructive, slate=draft.
   and `Layout` picks the value by stamping `data-rail="icons|expanded"` on `.app-shell`.
   There is no second copy to keep in sync. Do not reintroduce a literal rail width.
 
+## Font sizes scale from one variable (2026-11-04)
+- Every font size multiplies by `--font-scale`, which the per-device Text size setting sets on `<html>`
+  (`data-font-size`, `lib/fontSize.ts`). Use `text-xs` … `text-3xl` or the px tokens `text-10px` … `text-22px`.
+  **Never write `text-[Npx]`**: an arbitrary value is a fixed `font-size` the setting cannot reach. Need a new
+  size? Add `--text-Npx: calc(Npx * var(--font-scale))` to `@theme` in `index.css`. Inline `fontSize` styles
+  likewise use `var(--text-…)`.
+
 ## App shell & responsive layout (2026-08-03)
 - **One nav component for every width.** `Sidebar` renders a collapsible rail at `md+` and a
   full-screen overlay below it. `BottomNav` and `Layout`'s `nav` prop were DELETED — the

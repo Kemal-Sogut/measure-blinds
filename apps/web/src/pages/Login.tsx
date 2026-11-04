@@ -60,7 +60,7 @@ export default function Login() {
             <path d="M3 9h18M8 4v5M16 4v5" stroke="#fff" strokeWidth="1.75" strokeLinecap="round" />
           </svg>
         </div>
-        <h1 className="mb-1 text-center text-[22px] font-bold text-text-primary">Blinds Nisa</h1>
+        <h1 className="mb-1 text-center text-22px font-bold text-text-primary">Blinds Nisa</h1>
         <p className="mb-7 text-center text-sm text-text-muted">Sign in to your estimator account</p>
 
         <form onSubmit={handleSubmit} noValidate>
@@ -94,7 +94,7 @@ export default function Login() {
           {error && (
             <p
               role="alert"
-              className="mb-4 rounded-md border border-danger/20 bg-danger-tint px-3 py-2 text-[13px] text-danger"
+              className="mb-4 rounded-md border border-danger/20 bg-danger-tint px-3 py-2 text-13px text-danger"
             >
               {error}
             </p>

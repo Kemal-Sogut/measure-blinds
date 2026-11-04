@@ -66,7 +66,7 @@ export default function InboxThreadPage() {
                 <MessageBubble key={m.id} message={m} />
               ))}
             </div>
-            <p className="text-center text-[12px] text-text-muted">
+            <p className="text-center text-12px text-text-muted">
               Reply from Titan. Your reply shows up here within a couple of minutes (up to 10 overnight).
             </p>
             <div ref={endRef} />

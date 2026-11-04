@@ -168,7 +168,7 @@ function Brand({ showName }: { showName: boolean }) {
         <div className="h-9 w-9 shrink-0 rounded-md bg-brand-600" />
       )}
       {showName && (
-        <span className="truncate text-[15px] font-bold text-text-primary">
+        <span className="truncate text-15px font-bold text-text-primary">
           {company?.company_name || 'Blinds Nisa'}
         </span>
       )}
@@ -186,12 +186,12 @@ function UserChip({ showEmail }: { showEmail: boolean }) {
     >
       <span
         aria-hidden="true"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-[13px] font-bold text-brand-700"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-pill bg-brand-100 text-13px font-bold text-brand-700"
       >
         {(email?.[0] ?? '?').toUpperCase()}
       </span>
       {showEmail && (
-        <span className="truncate text-[13px] text-text-secondary">{email ?? 'Signed in'}</span>
+        <span className="truncate text-13px text-text-secondary">{email ?? 'Signed in'}</span>
       )}
     </div>
   );
@@ -230,7 +230,7 @@ export default function Sidebar() {
     item.to === '/leads' && newLeads > 0 ? (
       <span
         aria-hidden="true"
-        className={`ml-auto rounded-pill px-1.5 text-[11px] font-bold tabular-nums leading-5 ${
+        className={`ml-auto rounded-pill px-1.5 text-11px font-bold tabular-nums leading-5 ${
           active ? 'bg-white/20 text-white' : 'bg-brand-100 text-brand-700'
         }`}
       >
@@ -373,7 +373,7 @@ export default function Sidebar() {
                 end={item.end}
                 onClick={closeMobile}
                 className={({ isActive }) =>
-                  itemClass(isActive, 'min-h-14 gap-3.5 px-4 text-[15px]')
+                  itemClass(isActive, 'min-h-14 gap-3.5 px-4 text-15px')
                 }
               >
                 {({ isActive }) => (

@@ -40,7 +40,7 @@ const PAGE_SIZE = 15;
 
 /** Shared look for the two pager buttons. */
 const PAGER_BUTTON =
-  'h-11 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
+  'h-11 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
 
 export default function EstimatesPage() {
   const [tab, setTab] = useState<EstimateTab>('all');
@@ -74,12 +74,12 @@ export default function EstimatesPage() {
             hamburger is the only route to the other sections. */}
         <div className="mb-5 flex items-center gap-2">
           <SidebarToggle />
-          <h1 className="min-w-0 flex-1 truncate text-[22px] font-bold text-text-primary">
+          <h1 className="min-w-0 flex-1 truncate text-22px font-bold text-text-primary">
             Estimates
           </h1>
           <Link
             to="/orders/new"
-            className="flex h-11 shrink-0 items-center gap-2 rounded-md bg-brand-600 px-4 text-[13px] font-semibold text-white shadow-sm hover:bg-brand-700"
+            className="flex h-11 shrink-0 items-center gap-2 rounded-md bg-brand-600 px-4 text-13px font-semibold text-white shadow-sm hover:bg-brand-700"
           >
             + New Estimate
           </Link>
@@ -95,7 +95,7 @@ export default function EstimatesPage() {
                 setTab(t.key);
                 setPage(1);
               }}
-              className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-3 py-2 text-[13px] transition-colors ${
+              className={`min-h-10 flex-1 whitespace-nowrap rounded-md px-3 py-2 text-13px transition-colors ${
                 tab === t.key
                   ? 'bg-surface font-bold text-text-primary shadow-sm'
                   : 'font-medium text-text-muted hover:text-text-secondary'
@@ -115,7 +115,7 @@ export default function EstimatesPage() {
             setTerm(e.target.value);
             setPage(1);
           }}
-          className="mb-3.5 h-11 w-full max-w-md rounded-md border border-border-input bg-surface px-3 text-[15px] text-text-primary placeholder:text-text-muted"
+          className="mb-3.5 h-11 w-full max-w-md rounded-md border border-border-input bg-surface px-3 text-15px text-text-primary placeholder:text-text-muted"
         />
 
         {isLoading && <ListSkeleton />}
@@ -150,7 +150,7 @@ export default function EstimatesPage() {
             aria-label="Estimates pagination"
             className="mt-4 flex items-center justify-end gap-2"
           >
-            <span className="mr-1 text-[13px] text-text-secondary">
+            <span className="mr-1 text-13px text-text-secondary">
               {(currentPage - 1) * PAGE_SIZE + 1}–
               {Math.min(currentPage * PAGE_SIZE, groups.length)} of {groups.length} customers
             </span>
@@ -163,7 +163,7 @@ export default function EstimatesPage() {
             >
               ‹ Previous
             </button>
-            <span className="text-[13px] text-text-secondary" aria-current="page">
+            <span className="text-13px text-text-secondary" aria-current="page">
               Page {currentPage} of {totalPages}
             </span>
             <button

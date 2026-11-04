@@ -145,7 +145,7 @@ function Badge({ badge }: { badge: OrderSectionBadge }) {
     return <span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${DOT_TONES[badge.tone]}`} />;
   }
   return (
-    <span className={`shrink-0 rounded-full px-1.5 py-px font-mono text-[10px] font-semibold ${BADGE_TONES[badge.tone]}`}>
+    <span className={`shrink-0 rounded-full px-1.5 py-px font-mono text-10px font-semibold ${BADGE_TONES[badge.tone]}`}>
       {badge.text}
     </span>
   );
@@ -269,7 +269,7 @@ export function OrderSectionRail({
                 aria-current={current ? 'page' : undefined}
                 aria-label={s.label}
                 title={sectionTitle(s.label, available)}
-                className={`relative flex items-center gap-2.5 rounded-md text-[13px] disabled:cursor-not-allowed disabled:opacity-40 ${collapsed ? 'h-10 w-10 justify-center' : 'h-10 w-full px-3'
+                className={`relative flex items-center gap-2.5 rounded-md text-13px disabled:cursor-not-allowed disabled:opacity-40 ${collapsed ? 'h-10 w-10 justify-center' : 'h-10 w-full px-3'
                   } ${current
                     ? 'bg-brand-100 font-semibold text-brand-600'
                     : 'font-medium text-text-secondary hover:bg-surface-sunken'
@@ -355,7 +355,7 @@ export function OrderSectionTabs({ active, isSaved, onSelect, badges }: SectionM
             aria-haspopup="listbox"
             aria-expanded={open}
             aria-controls={open ? listId : undefined}
-            className="flex h-10 w-full items-center gap-2.5 rounded-md border border-border-light bg-surface px-3 text-[14px] font-semibold text-text-primary hover:bg-surface-sunken"
+            className="flex h-10 w-full items-center gap-2.5 rounded-md border border-border-light bg-surface px-3 text-14px font-semibold text-text-primary hover:bg-surface-sunken"
           >
             <span className="text-brand-600">
               <Glyph size={16}>{SECTION_ICONS[current.id]}</Glyph>
@@ -397,7 +397,7 @@ export function OrderSectionTabs({ active, isSaved, onSelect, badges }: SectionM
                       }}
                       disabled={!available}
                       title={sectionTitle(s.label, available)}
-                      className={`flex h-11 w-full items-center gap-2.5 px-3 text-left text-[14px] disabled:opacity-40 ${selected
+                      className={`flex h-11 w-full items-center gap-2.5 px-3 text-left text-14px disabled:opacity-40 ${selected
                         ? 'bg-brand-100 font-semibold text-brand-600'
                         : 'font-medium text-text-primary hover:bg-surface-sunken'
                         }`}
@@ -405,7 +405,7 @@ export function OrderSectionTabs({ active, isSaved, onSelect, badges }: SectionM
                       <Glyph size={16}>{SECTION_ICONS[s.id]}</Glyph>
                       <span className="min-w-0 flex-1 truncate">{s.label}</span>
                       {badge && <Badge badge={badge} />}
-                      {!available && <span className="text-[12px] font-normal text-text-muted">Save first</span>}
+                      {!available && <span className="text-12px font-normal text-text-muted">Save first</span>}
                     </button>
                   </li>
                 );

@@ -211,7 +211,7 @@ export function BulkEditForm({
   const activeTypes = catalogs.blindTypes.filter((t) => t.active);
   return (
     <div className="flex min-w-0 flex-col gap-3.5">
-      <p className="text-[13px] text-text-muted">
+      <p className="text-13px text-text-muted">
         Only the selected fields will be changed; leave one on "No change" to keep each item's
         current value. Choosing a blind type resets each item's options to that type's defaults
         before anything else here is applied. Changing the type, material or a hardware option
@@ -252,7 +252,7 @@ export function BulkEditForm({
         first", which is the actual state.
       */}
       {!effectiveType ? (
-        <p className="text-[13px] text-text-muted">
+        <p className="text-13px text-text-muted">
           {mixed
             ? 'The selected items are of different blind types. Pick one above to move them all onto it — its default options are applied to every selected item, and its own material and hardware dropdowns appear here. Left on "No change", each item keeps its type and only the colour is edited.'
             : 'The selected items have no blind type yet. Pick one above to set it on all of them and edit that type’s material and options here.'}
@@ -305,7 +305,7 @@ export function BulkEditForm({
             )}
           </div>
           {materials.length === 0 && uses.size === 0 && (
-            <p className="text-[13px] text-text-muted">
+            <p className="text-13px text-text-muted">
               No materials or options are set up for {effectiveType} — add them under Settings
               first.
             </p>

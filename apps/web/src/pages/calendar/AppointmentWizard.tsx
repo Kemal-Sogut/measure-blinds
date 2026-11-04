@@ -175,7 +175,7 @@ export default function AppointmentWizard({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[15px] font-bold text-text-primary">
+          <h2 className="text-15px font-bold text-text-primary">
             {title} — Step {stepIdx + 1} of {steps.length}
           </h2>
           <button
@@ -200,7 +200,7 @@ export default function AppointmentWizard({
 
         {step === 'kind' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13px] text-text-muted">What kind of visit is this?</p>
+            <p className="text-13px text-text-muted">What kind of visit is this?</p>
             {(
               [
                 {
@@ -226,7 +226,7 @@ export default function AppointmentWizard({
                 }`}
               >
                 <span className="block text-sm font-semibold text-text-primary">{opt.title}</span>
-                <span className="mt-0.5 block text-[13px] text-text-secondary">{opt.body}</span>
+                <span className="mt-0.5 block text-13px text-text-secondary">{opt.body}</span>
               </button>
             ))}
           </div>
@@ -234,14 +234,14 @@ export default function AppointmentWizard({
 
         {step === 'day' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13px] text-text-muted">Pick the day of the visit.</p>
+            <p className="text-13px text-text-muted">Pick the day of the visit.</p>
             <DatePicker label="Day" value={day} onChange={setDay} />
           </div>
         )}
 
         {step === 'time' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13px] text-text-muted">
+            <p className="text-13px text-text-muted">
               Pick the arrival start time (30-minute slots, 8 AM – 6 PM). The customer sees the
               derived one-hour visit window.
             </p>
@@ -251,7 +251,7 @@ export default function AppointmentWizard({
                   key={t}
                   type="button"
                   onClick={() => setTime(t)}
-                  className={`h-11 rounded-md border text-[13px] font-medium ${
+                  className={`h-11 rounded-md border text-13px font-medium ${
                     time === t
                       ? 'border-brand-600 bg-brand-100 text-brand-600'
                       : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'
@@ -262,7 +262,7 @@ export default function AppointmentWizard({
               ))}
             </div>
             {time && (
-              <p className="text-[13px] text-text-secondary">
+              <p className="text-13px text-text-secondary">
                 Customer will see: <span className="font-medium">{windowLabel(time)}</span> on{' '}
                 {format(day, 'EEEE, MMMM d, yyyy')}.
               </p>
@@ -272,7 +272,7 @@ export default function AppointmentWizard({
 
         {step === 'target' && kind === 'estimate' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13px] text-text-muted">Pick the customer to visit.</p>
+            <p className="text-13px text-text-muted">Pick the customer to visit.</p>
             <div className="flex gap-2">
               <input
                 type="search"
@@ -284,14 +284,14 @@ export default function AppointmentWizard({
               <button
                 type="button"
                 onClick={() => setAddingCustomer(true)}
-                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-brand-600 hover:bg-surface-muted"
               >
                 + Add customer
               </button>
             </div>
-            {customersQ.isLoading && <p className="text-[13px] text-text-muted">Loading…</p>}
+            {customersQ.isLoading && <p className="text-13px text-text-muted">Loading…</p>}
             {customersQ.data && customersQ.data.length === 0 && (
-              <p className="text-[13px] text-text-muted">
+              <p className="text-13px text-text-muted">
                 No customers found — use “+ Add customer” to create one.
               </p>
             )}
@@ -322,10 +322,10 @@ export default function AppointmentWizard({
 
         {step === 'target' && kind === 'installation' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[13px] text-text-muted">Pick one ready order to install.</p>
-            {readyOrdersQ.isLoading && <p className="text-[13px] text-text-muted">Loading…</p>}
+            <p className="text-13px text-text-muted">Pick one ready order to install.</p>
+            {readyOrdersQ.isLoading && <p className="text-13px text-text-muted">Loading…</p>}
             {readyOrdersQ.data && readyOrdersQ.data.length === 0 && (
-              <p className="text-[13px] text-text-muted">
+              <p className="text-13px text-text-muted">
                 No orders are currently in Ready status.
               </p>
             )}
@@ -353,7 +353,7 @@ export default function AppointmentWizard({
                       )}
                     </span>
                   </span>
-                  <span className="mt-0.5 block text-[13px] text-text-secondary">
+                  <span className="mt-0.5 block text-13px text-text-secondary">
                     {o.customer ? displayName(o.customer) : '—'}
                   </span>
                 </button>
@@ -367,7 +367,7 @@ export default function AppointmentWizard({
             <button
               type="button"
               onClick={() => setStepIdx((i) => i - 1)}
-              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
             >
               Back
             </button>

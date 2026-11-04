@@ -167,7 +167,7 @@ export default function App() {
             style: {
               borderRadius: '0.5rem',
               padding: '0.75rem 1rem',
-              fontSize: '0.875rem',
+              fontSize: 'var(--text-sm)', // follows the Text size setting
             },
           }}
         />

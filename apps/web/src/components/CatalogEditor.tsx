@@ -339,7 +339,7 @@ export default function CatalogEditor({ config }: { config: CatalogEditorConfig 
     <div className="page-container py-4 md:py-6 [--page-max:48rem]">
       {/* Add form */}
       <div className="mb-6 rounded-xl border border-border-light bg-surface shadow-md p-4">
-        <h2 className="mb-3 text-[15px] font-bold text-text-primary">
+        <h2 className="mb-3 text-15px font-bold text-text-primary">
           Add {config.noun}
         </h2>
         <div className="flex flex-col gap-2">

@@ -1810,7 +1810,7 @@ export default function OrderDetail() {
   /** Shared discount control (mobile totals card + desktop rail). */
   const discountControl = (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[13px] text-text-secondary">Discount</span>
+      <span className="text-13px text-text-secondary">Discount</span>
       <span className="flex items-center gap-2">
         <span className="flex rounded-sm bg-surface-sunken p-0.5">
           {(['fixed', 'percent'] as const).map((t) => (
@@ -1830,7 +1830,7 @@ export default function OrderDetail() {
           value={discountValue}
           onChange={(e) => setDiscountValue(e.target.value)}
           placeholder="0"
-          className="h-9 min-h-9 w-20 rounded-md border border-border-input bg-surface px-2 text-right font-mono text-[13px]"
+          className="h-9 min-h-9 w-20 rounded-md border border-border-input bg-surface px-2 text-right font-mono text-13px"
           aria-label="Discount value"
         />
       </span>
@@ -1877,31 +1877,31 @@ export default function OrderDetail() {
   const totalsRows = (
     <>
       <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">Subtotal</span>
-        <span className="font-mono text-[13px] text-text-primary">${totals.subtotal.toFixed(2)}</span>
+        <span className="text-13px text-text-secondary">Subtotal</span>
+        <span className="font-mono text-13px text-text-primary">${totals.subtotal.toFixed(2)}</span>
       </div>
       {totals.discount_amount > 0 && (
         <>
           <div className="flex justify-between text-text-muted">
-            <span className="text-[13px]">Discount applied</span>
-            <span className="font-mono text-[13px]">−${totals.discount_amount.toFixed(2)}</span>
+            <span className="text-13px">Discount applied</span>
+            <span className="font-mono text-13px">−${totals.discount_amount.toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-[13px] text-text-secondary">Taxable amount</span>
-            <span className="font-mono text-[13px] text-text-primary">
+            <span className="text-13px text-text-secondary">Taxable amount</span>
+            <span className="font-mono text-13px text-text-primary">
               ${totals.taxable_amount.toFixed(2)}
             </span>
           </div>
         </>
       )}
       <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">
+        <span className="text-13px text-text-secondary">
           HST 13%
           {company?.hst_number && (
-            <span className="ml-1 text-[10px] text-text-muted">HST# {company.hst_number}</span>
+            <span className="ml-1 text-10px text-text-muted">HST# {company.hst_number}</span>
           )}
         </span>
-        <span className="font-mono text-[13px] text-text-primary">${totals.tax_amount.toFixed(2)}</span>
+        <span className="font-mono text-13px text-text-primary">${totals.tax_amount.toFixed(2)}</span>
       </div>
       <div className="flex items-baseline justify-between border-t border-border-light pt-2.5">
         <span className="text-sm font-semibold text-text-primary">Total</span>
@@ -1910,7 +1910,7 @@ export default function OrderDetail() {
         </span>
       </div>
       {incompleteVisible > 0 && (
-        <p className="text-[12px] font-medium text-amber-700">
+        <p className="text-12px font-medium text-amber-700">
           Total excludes {incompleteVisible} incomplete item{incompleteVisible === 1 ? '' : 's'}
         </p>
       )}
@@ -1942,16 +1942,16 @@ export default function OrderDetail() {
   const warrantyStrip = postConfirm && balance <= 0.005 && (
     <div className="mt-2 flex flex-col gap-1.5 border-t border-border-light pt-2.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] font-semibold text-text-primary">Warranty</span>
+        <span className="text-13px font-semibold text-text-primary">Warranty</span>
         {existing?.warranty_sent_at ? (
-          <span className="text-[11px] text-success" title="Warranty certificate emailed">
+          <span className="text-11px text-success" title="Warranty certificate emailed">
             ✓ Issued {new Date(existing.warranty_sent_at).toLocaleDateString()}
           </span>
         ) : (
-          <span className="text-[11px] text-text-muted">Not sent yet</span>
+          <span className="text-11px text-text-muted">Not sent yet</span>
         )}
       </div>
-      <p className="text-[11px] leading-snug text-text-muted">
+      <p className="text-11px leading-snug text-text-muted">
         The certificate is emailed automatically when the balance clears — 10 years on
         products; motorization-related products are excluded.
       </p>
@@ -1961,14 +1961,14 @@ export default function OrderDetail() {
           onClick={openWarranty}
           disabled={warrantyMut.isPending || !customer?.email}
           title={customer?.email ? undefined : 'This customer has no email address.'}
-          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-[12px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-12px font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
         >
           {existing?.warranty_sent_at ? 'Resend warranty' : 'Send warranty'}
         </button>
         <button
           type="button"
           onClick={handleDownloadWarranty}
-          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-[12px] font-semibold text-text-primary hover:bg-surface-sunken"
+          className="flex h-9 flex-1 items-center justify-center rounded-sm border border-border-light text-12px font-semibold text-text-primary hover:bg-surface-sunken"
         >
           Download
         </button>
@@ -1997,24 +1997,24 @@ export default function OrderDetail() {
           accent={status === 'awaiting_payment' ? 'warning' : 'success'}
           d="M2 8h20 M4 5h16a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V7a2 2 0 012-2z M6 15h4"
         />
-        <h3 className="flex-1 text-[15px] font-bold text-text-primary">Balance &amp; ledger</h3>
+        <h3 className="flex-1 text-15px font-bold text-text-primary">Balance &amp; ledger</h3>
         <StatusBadge status={status} />
       </div>
       <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">Order total</span>
-        <span className="font-mono text-[13px] text-text-primary">${orderTotal.toFixed(2)}</span>
+        <span className="text-13px text-text-secondary">Order total</span>
+        <span className="font-mono text-13px text-text-primary">${orderTotal.toFixed(2)}</span>
       </div>
       {(existing?.payments ?? []).map((p) => (
         <div key={p.id} className="flex items-center justify-between gap-2 text-text-muted">
-          <span className="min-w-0 flex-1 truncate text-[13px]">
+          <span className="min-w-0 flex-1 truncate text-13px">
             {p.paid_on}
             {p.note ? ` · ${p.note}` : ''}
             {p.receipt_sent_at && (
-              <span className="text-[11px]" title="Receipt sent"> · ✓ Receipt sent</span>
+              <span className="text-11px" title="Receipt sent"> · ✓ Receipt sent</span>
             )}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
-            <span className="font-mono text-[13px]">−${Number(p.amount).toFixed(2)}</span>
+            <span className="font-mono text-13px">−${Number(p.amount).toFixed(2)}</span>
             <button
               type="button"
               onClick={() => openReceipt(p)}
@@ -2056,8 +2056,8 @@ export default function OrderDetail() {
         </div>
       ))}
       <div className="flex justify-between">
-        <span className="text-[13px] text-text-secondary">Amount paid</span>
-        <span className="font-mono text-[13px] text-text-primary">${amountPaid.toFixed(2)}</span>
+        <span className="text-13px text-text-secondary">Amount paid</span>
+        <span className="font-mono text-13px text-text-primary">${amountPaid.toFixed(2)}</span>
       </div>
       <div className="flex items-baseline justify-between border-t border-border-light pt-2.5">
         <span className="text-sm font-semibold text-text-primary">Balance due</span>
@@ -2071,7 +2071,7 @@ export default function OrderDetail() {
         type="button"
         onClick={openPayment}
         disabled={paymentMut.isPending}
-        className="mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-sm bg-brand-600 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
+        className="mt-1 flex h-11 w-full items-center justify-center gap-2 rounded-sm bg-brand-600 text-13px font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
       >
         {ICONS.payment}
         Record Payment
@@ -2100,14 +2100,14 @@ export default function OrderDetail() {
           accent="danger"
           d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z M12 9v4 M12 17h.01"
         />
-        <h2 className="text-[15px] font-bold text-danger">Cancellation requested</h2>
+        <h2 className="text-15px font-bold text-danger">Cancellation requested</h2>
       </div>
-      <p className="text-[13px] text-text-secondary">
+      <p className="text-13px text-text-secondary">
         The customer asked to cancel their confirmation on{' '}
         {new Date(existing.cancel_requested_at).toLocaleDateString()}.
       </p>
       {existing.cancel_request_note?.trim() && (
-        <p className="mt-2 rounded-sm bg-surface p-2.5 text-[13px] break-words whitespace-pre-wrap text-text-secondary">
+        <p className="mt-2 rounded-sm bg-surface p-2.5 text-13px break-words whitespace-pre-wrap text-text-secondary">
           {existing.cancel_request_note.trim()}
         </p>
       )}
@@ -2116,7 +2116,7 @@ export default function OrderDetail() {
           type="button"
           onClick={handleAcceptCancel}
           disabled={resolveCancelMut.isPending}
-          className="h-10 flex-1 rounded-sm bg-danger text-[13px] font-semibold text-white hover:opacity-90 disabled:opacity-40"
+          className="h-10 flex-1 rounded-sm bg-danger text-13px font-semibold text-white hover:opacity-90 disabled:opacity-40"
         >
           Confirm
         </button>
@@ -2124,7 +2124,7 @@ export default function OrderDetail() {
           type="button"
           onClick={openCancelDeny}
           disabled={resolveCancelMut.isPending}
-          className="h-10 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
+          className="h-10 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary hover:bg-surface-sunken disabled:opacity-40"
         >
           Deny
         </button>
@@ -2147,7 +2147,7 @@ export default function OrderDetail() {
           accent={status === 'expired' ? 'danger' : 'scheduled'}
           d="M12 22a10 10 0 100-20 10 10 0 000 20z M12 6v6l4 2"
         />
-        <h2 className="flex-1 text-[15px] font-bold text-text-primary">Progress</h2>
+        <h2 className="flex-1 text-15px font-bold text-text-primary">Progress</h2>
         {status === 'expired' && <StatusBadge status="expired" />}
       </div>
       {/*
@@ -2169,7 +2169,7 @@ export default function OrderDetail() {
               <div className="flex w-full items-center">
                 <span className={`h-0.5 flex-1 ${i === 0 ? 'invisible' : done || current ? 'bg-brand-600' : 'bg-border'}`} />
                 <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${current
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-11px font-semibold ${current
                     ? 'bg-brand-600 text-white'
                     : done
                       ? 'bg-brand-100 text-brand-600'
@@ -2180,7 +2180,7 @@ export default function OrderDetail() {
                 </span>
                 <span className={`h-0.5 flex-1 ${i === STAGES.length - 1 ? 'invisible' : i < curIdx ? 'bg-brand-600' : 'bg-border'}`} />
               </div>
-              <span className={`w-full break-words text-center text-[10px] leading-tight ${current ? 'font-semibold text-text-primary' : 'text-text-muted'}`}>
+              <span className={`w-full break-words text-center text-10px leading-tight ${current ? 'font-semibold text-text-primary' : 'text-text-muted'}`}>
                 {stage.label}
               </span>
               {i !== curIdx ? (
@@ -2271,7 +2271,7 @@ export default function OrderDetail() {
           type="button"
           onClick={stagePrimary.onClick}
           disabled={stagePrimary.disabled}
-          className="inline-flex h-10 items-center justify-center gap-2 rounded-sm bg-brand-600 px-4 text-[13px] font-semibold text-white hover:bg-brand-700 disabled:opacity-40 max-sm:w-full"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-sm bg-brand-600 px-4 text-13px font-semibold text-white hover:bg-brand-700 disabled:opacity-40 max-sm:w-full"
         >
           {stagePrimary.icon}
           {stagePrimary.label}
@@ -2283,7 +2283,7 @@ export default function OrderDetail() {
           type="button"
           onClick={a.onClick}
           disabled={a.disabled}
-          className={`inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-3 text-[13px] font-medium hover:bg-surface-sunken disabled:opacity-40 sm:flex-none ${a.tone ?? 'text-text-secondary'}`}
+          className={`inline-flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-3 text-13px font-medium hover:bg-surface-sunken disabled:opacity-40 sm:flex-none ${a.tone ?? 'text-text-secondary'}`}
         >
           {a.icon}
           <span className="truncate">{a.label}</span>
@@ -2403,10 +2403,10 @@ export default function OrderDetail() {
   const railSummary = (
     <div className="flex flex-col items-start gap-1">
       <StatusBadge status={status} />
-      <p className="w-full truncate text-[13px] font-semibold text-text-primary">
+      <p className="w-full truncate text-13px font-semibold text-text-primary">
         {customer ? displayName(customer) : 'No customer yet'}
       </p>
-      <p className="text-[12px] text-text-muted">{format(orderDate, 'MMM d, yyyy')}</p>
+      <p className="text-12px text-text-muted">{format(orderDate, 'MMM d, yyyy')}</p>
     </div>
   );
 
@@ -2416,7 +2416,7 @@ export default function OrderDetail() {
 
   /** Outlined add-item button for the Items section toolbar. */
   const addBtnCls =
-    'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken max-sm:flex-1';
+    'inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-sunken max-sm:flex-1';
 
   /** Totals card for the Items section wherever the pricing panel is not showing them. */
   const inlineTotalsCard = (
@@ -2468,11 +2468,11 @@ export default function OrderDetail() {
       )}
       {items.length === 0 ? (
         <section className="rounded-xl border border-dashed border-border-input bg-surface p-6 text-center">
-          <p className="text-[13px] text-text-muted">No items yet.</p>
+          <p className="text-13px text-text-muted">No items yet.</p>
           <button
             type="button"
             onClick={addBlind}
-            className="mt-3 inline-flex h-10 items-center gap-2 rounded-sm bg-brand-600 px-4 text-[13px] font-semibold text-white hover:bg-brand-700"
+            className="mt-3 inline-flex h-10 items-center gap-2 rounded-sm bg-brand-600 px-4 text-13px font-semibold text-white hover:bg-brand-700"
           >
             Add Standard Blind
           </button>
@@ -2521,7 +2521,7 @@ export default function OrderDetail() {
                 {/* The reason bulk edit is unavailable rides on the count
                     line as well as the button's `title`: a phone has no
                     hover, so a tooltip alone would explain nothing. */}
-                <span className="min-w-0 flex-1 truncate text-[12px] text-text-muted">
+                <span className="min-w-0 flex-1 truncate text-12px text-text-muted">
                   {selected.size === 0
                     ? `${items.length} item${items.length !== 1 ? 's' : ''}`
                     : `${selected.size} selected · ${bulkCountNote}`}
@@ -2531,7 +2531,7 @@ export default function OrderDetail() {
                   onClick={openBulkEdit}
                   disabled={!canBulkEdit}
                   title={bulkEditHint}
-                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-12px font-medium text-text-secondary hover:bg-surface-sunken disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -2543,7 +2543,7 @@ export default function OrderDetail() {
                   type="button"
                   onClick={handleBulkDelete}
                   disabled={!canBulkDelete}
-                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-[12px] font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
+                  className="flex h-8 items-center gap-1.5 rounded-md border border-border-input px-2.5 text-12px font-medium text-text-secondary hover:bg-surface-sunken hover:text-danger disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -2631,7 +2631,7 @@ export default function OrderDetail() {
       case 'payments':
         return (
           paymentsPanel || (
-            <section className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-md">
+            <section className="rounded-xl border border-border-light bg-surface p-6 text-center text-13px text-text-muted shadow-md">
               Payments can be recorded once the customer confirms the order.
             </section>
           )
@@ -2650,7 +2650,7 @@ export default function OrderDetail() {
               />
             )}
             {status !== 'ready' && status !== 'installed' && (
-              <p className="rounded-xl border border-border-light bg-surface px-4 py-3 text-[13px] text-text-muted shadow-md">
+              <p className="rounded-xl border border-border-light bg-surface px-4 py-3 text-13px text-text-muted shadow-md">
                 An installation can be proposed once the order is marked Ready.
               </p>
             )}
@@ -2660,7 +2660,7 @@ export default function OrderDetail() {
       case 'manufacturer':
         return (
           <section className="flex flex-col gap-3 rounded-xl border border-border-light bg-surface p-4 shadow-md">
-            <p className="text-[13px] text-text-muted">
+            <p className="text-13px text-text-muted">
               Workshop paperwork for this order. Each opens in a new tab and reads the SAVED
               order — save first if you have changed items.
             </p>
@@ -2668,7 +2668,7 @@ export default function OrderDetail() {
               <button
                 type="button"
                 onClick={() => window.open(existing ? orderPath(existing, 'manufacturer') : `/orders/${id}/manufacturer`, '_blank', 'noopener')}
-                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-13px font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
               >
                 {ICONS.manufacturer}
                 Cut Sheet
@@ -2676,7 +2676,7 @@ export default function OrderDetail() {
               <button
                 type="button"
                 onClick={() => window.open(existing ? orderPath(existing, 'labels') : `/orders/${id}/labels`, '_blank', 'noopener')}
-                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-[13px] font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
+                className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-sm border border-border-input bg-surface px-4 text-13px font-medium text-text-secondary hover:bg-surface-sunken sm:flex-none"
               >
                 {ICONS.labels}
                 Labels
@@ -2792,7 +2792,7 @@ export default function OrderDetail() {
                 <path d="M15 3v18M10 15l-3-3 3-3" />
               </svg>
             </button>
-            <span className="rotate-180 font-mono text-[13px] font-semibold text-text-primary [writing-mode:vertical-rl]">
+            <span className="rotate-180 font-mono text-13px font-semibold text-text-primary [writing-mode:vertical-rl]">
               {postConfirm ? 'Balance' : 'Total'} ${(postConfirm ? balance : totals.total).toFixed(2)}
             </span>
             <button
@@ -2828,7 +2828,7 @@ export default function OrderDetail() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               {items.length === 0 && (
-                <p className="text-[13px] text-text-muted">Add a line item to see pricing.</p>
+                <p className="text-13px text-text-muted">Add a line item to see pricing.</p>
               )}
               {items.length > 0 && (
                 <>
@@ -2839,7 +2839,7 @@ export default function OrderDetail() {
                     aria-controls="pricing-items-list"
                     className="-mx-2 flex w-[calc(100%+1rem)] items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-surface-sunken"
                   >
-                    <span className="text-[13px] font-semibold text-text-primary">
+                    <span className="text-13px font-semibold text-text-primary">
                       Items <span className="font-normal text-text-muted">({items.length})</span>
                     </span>
                     <svg
@@ -2864,10 +2864,10 @@ export default function OrderDetail() {
                         {/* Wraps rather than truncates — the label is how two
                             similar lines are told apart. `wrap-anywhere` keeps
                             the panel's width from growing with the longest one. */}
-                        <span className="min-w-0 wrap-anywhere text-[13px] text-text-secondary">
+                        <span className="min-w-0 wrap-anywhere text-13px text-text-secondary">
                           {draftLabel(it, i)}
                         </span>
-                        <span className="shrink-0 font-mono text-[13px] text-text-primary">
+                        <span className="shrink-0 font-mono text-13px text-text-primary">
                           {itemPrices[i] ? `$${itemPrices[i].toFixed(2)}` : '—'}
                         </span>
                       </div>
@@ -2882,7 +2882,7 @@ export default function OrderDetail() {
                 {totalsRows}
                 {postConfirm && (
                   <div className="mt-2 flex items-baseline justify-between border-t border-border-light pt-2.5">
-                    <span className="text-[13px] text-text-secondary">Balance due</span>
+                    <span className="text-13px text-text-secondary">Balance due</span>
                     <span
                       className={`font-mono text-sm font-semibold ${balance <= 0 ? 'text-success' : 'text-text-primary'}`}
                     >
@@ -2922,7 +2922,7 @@ export default function OrderDetail() {
       >
         <div className={`${PAGE_CONTAINER} flex items-center justify-between gap-3`}>
           <div className="flex min-w-0 flex-col">
-            <span className="text-[12px] text-text-secondary">
+            <span className="text-12px text-text-secondary">
               {postConfirm ? 'Balance due' : 'Running total'}
             </span>
             <span className="font-mono text-xl font-semibold text-text-primary">
@@ -2959,7 +2959,7 @@ export default function OrderDetail() {
               />
               <button
                 onClick={() => setAddingCustomer(true)}
-                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-brand-600 hover:bg-surface-muted"
+                className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-brand-600 hover:bg-surface-muted"
               >
                 + Add customer
               </button>
@@ -2977,7 +2977,7 @@ export default function OrderDetail() {
                     <span className="block text-sm font-medium text-text-primary">
                       {displayName(cust)}
                     </span>
-                    <span className="block text-[13px] text-text-muted">
+                    <span className="block text-13px text-text-muted">
                       {[cust.phone, cust.email].filter(Boolean).join(' · ')}
                     </span>
                   </button>
@@ -3053,10 +3053,10 @@ export default function OrderDetail() {
                       <span>
                         <span className="block text-sm font-medium text-text-primary">{p.name}</span>
                         {p.description && (
-                          <span className="block text-[13px] text-text-muted">{p.description}</span>
+                          <span className="block text-13px text-text-muted">{p.description}</span>
                         )}
                       </span>
-                      <span className="font-mono text-[13px] font-medium text-text-secondary">
+                      <span className="font-mono text-13px font-medium text-text-secondary">
                         ${Number(p.unit_price).toFixed(2)}
                       </span>
                     </button>
@@ -3075,14 +3075,14 @@ export default function OrderDetail() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="mb-1 text-sm font-semibold text-text-primary">Record payment</h2>
-            <p className="mb-3 text-[13px] text-text-muted">
+            <p className="mb-3 text-13px text-text-muted">
               Balance due <span className="font-mono">${balance.toFixed(2)}</span>
             </p>
 
             {/* Unmatched e-Transfers — tap one to autofill the form below */}
             {(pendingEtransfersQ.data?.length ?? 0) > 0 && (
               <div className="mb-3 rounded-md border border-border-light bg-surface-sunken p-2.5">
-                <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+                <p className="mb-2 px-1 text-11px font-semibold uppercase tracking-wider text-text-muted">
                   Received e-Transfers ({pendingEtransfersQ.data!.length})
                 </p>
                 <ul className="flex flex-col gap-1.5">
@@ -3100,20 +3100,20 @@ export default function OrderDetail() {
                           className="min-w-0 flex-1 text-left"
                         >
                           <span className="flex items-baseline justify-between gap-2">
-                            <span className="font-mono text-[13px] font-semibold text-text-primary">
+                            <span className="font-mono text-13px font-semibold text-text-primary">
                               ${t.amount.toFixed(2)}
                             </span>
-                            <span className="truncate text-[12px] text-text-secondary">
+                            <span className="truncate text-12px text-text-secondary">
                               {t.sender || 'Unknown sender'}
                             </span>
                           </span>
-                          <span className="mt-0.5 block truncate text-[11px] text-text-muted">
+                          <span className="mt-0.5 block truncate text-11px text-text-muted">
                             {new Date(t.received_at).toLocaleDateString()}
                             {t.reference_message ? ` · ${t.reference_message}` : ''}
                           </span>
                         </button>
                         {selected && (
-                          <span className="shrink-0 rounded-sm bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700">
+                          <span className="shrink-0 rounded-sm bg-brand-100 px-1.5 py-0.5 text-10px font-semibold text-brand-700">
                             Selected
                           </span>
                         )}
@@ -3131,7 +3131,7 @@ export default function OrderDetail() {
                     );
                   })}
                 </ul>
-                <p className="mt-2 px-1 text-[11px] text-text-muted">
+                <p className="mt-2 px-1 text-11px text-text-muted">
                   Tap one to fill this form, then Record payment.
                 </p>
               </div>
@@ -3164,7 +3164,7 @@ export default function OrderDetail() {
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -3191,7 +3191,7 @@ export default function OrderDetail() {
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
               Deny cancellation request
             </h2>
-            <p className="mb-3 text-[13px] text-text-muted">
+            <p className="mb-3 text-13px text-text-muted">
               {customer?.email
                 ? `The order stays confirmed and we'll email ${customer.email} to let them know.`
                 : 'The order stays confirmed. This customer has no email address on file, so they will not be notified.'}
@@ -3214,7 +3214,7 @@ export default function OrderDetail() {
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -3241,7 +3241,7 @@ export default function OrderDetail() {
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
               Send invoice
             </h2>
-            <p className="mb-3 text-[13px] text-text-muted">
+            <p className="mb-3 text-13px text-text-muted">
               We&apos;ll email {customer?.email ?? 'the customer'} the invoice PDF and a link to view the order online.
             </p>
             <div className="flex flex-col gap-3">
@@ -3275,7 +3275,7 @@ export default function OrderDetail() {
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -3315,7 +3315,7 @@ export default function OrderDetail() {
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
               {receiptPayment.receipt_sent_at ? 'Resend receipt' : 'Send receipt'}
             </h2>
-            <p className="mb-3 text-[13px] text-text-muted">
+            <p className="mb-3 text-13px text-text-muted">
               We&apos;ll email {customer?.email ?? 'the customer'} a receipt for the{' '}
               <span className="font-mono">${Number(receiptPayment.amount).toFixed(2)}</span> payment
               received on {receiptPayment.paid_on}, with the order&apos;s balance summary.
@@ -3338,7 +3338,7 @@ export default function OrderDetail() {
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -3365,7 +3365,7 @@ export default function OrderDetail() {
             <h2 className="mb-1 text-sm font-semibold text-text-primary">
               {existing?.warranty_sent_at ? 'Resend warranty' : 'Send warranty'}
             </h2>
-            <p className="mb-3 text-[13px] text-text-muted">
+            <p className="mb-3 text-13px text-text-muted">
               We&apos;ll email {customer?.email ?? 'the customer'} the warranty certificate for
               this order as a PDF. Coverage runs from the date the order was paid in full and
               the dates never change on a resend.
@@ -3388,7 +3388,7 @@ export default function OrderDetail() {
               <div className="mt-1 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>
@@ -3417,7 +3417,7 @@ export default function OrderDetail() {
           <div className="mt-4 flex gap-2">
             <button
               onClick={cancelEdit}
-              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+              className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
             >
               Cancel
             </button>
@@ -3481,7 +3481,7 @@ export default function OrderDetail() {
               onClick={(e) => e.stopPropagation()}
             >
               <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk edit options</h2>
-              <p className="mb-4 text-[13px] text-text-muted">
+              <p className="mb-4 text-13px text-text-muted">
                 {selection.blindsType
                   ? `Editing ${count} ${selection.blindsType} item${plural}.`
                   : selection.mixed
@@ -3498,7 +3498,7 @@ export default function OrderDetail() {
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={() => setSheet('none')}
-                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+                  className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
                 >
                   Cancel
                 </button>

@@ -33,7 +33,7 @@ export default function BreakdownToggle({
       onClick={() => onChange(!value)}
       className="flex items-center gap-2 print:hidden"
     >
-      <span className="text-[13px] font-medium text-text-secondary">Price breakdown</span>
+      <span className="text-13px font-medium text-text-secondary">Price breakdown</span>
       <span
         className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
           value ? 'bg-brand-600' : 'bg-border-input'

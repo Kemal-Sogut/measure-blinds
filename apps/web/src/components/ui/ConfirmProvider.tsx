@@ -95,7 +95,7 @@ export default function ConfirmProvider({ children }: { children: ReactNode }) {
           }
         >
           {options?.message && (
-            <p className="text-[14px] text-text-secondary">{options.message}</p>
+            <p className="text-14px text-text-secondary">{options.message}</p>
           )}
         </Modal>
       </div>

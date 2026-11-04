@@ -86,7 +86,7 @@ export default function EstimateGroup({
           <path d="m9 6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[15px] font-bold text-text-primary">
+          <span className="block truncate text-15px font-bold text-text-primary">
             {displayName(customer)}
           </span>
           <span className="block text-xs text-text-muted">
@@ -111,17 +111,17 @@ export default function EstimateGroup({
                 >
                   <span className="min-w-0">
                     {o.title && (
-                      <span className="block truncate text-[14px] font-semibold text-text-primary">
+                      <span className="block truncate text-14px font-semibold text-text-primary">
                         {o.title}
                       </span>
                     )}
-                    <span className="block text-[13px] text-text-secondary">
+                    <span className="block text-13px text-text-secondary">
                       <span className="font-mono">{o.order_number}</span> · {shortDay(o.order_date)}
                     </span>
                   </span>
                   <span className="flex shrink-0 flex-col items-end gap-1">
                     <StatusBadge status={o.status} />
-                    <span className="font-mono text-[13px] font-semibold text-text-primary">
+                    <span className="font-mono text-13px font-semibold text-text-primary">
                       {Number(o.incomplete_items ?? 0) > 0 ? (
                         <IncompleteBadge count={Number(o.incomplete_items)} />
                       ) : (
@@ -141,7 +141,7 @@ export default function EstimateGroup({
           <div className="mt-2.5 flex flex-wrap gap-2 px-1">
             <Link
               to={`/orders/new?customer=${customer.id}`}
-              className="flex h-11 items-center rounded-md bg-brand-600 px-3.5 text-[13px] font-semibold text-white hover:bg-brand-700"
+              className="flex h-11 items-center rounded-md bg-brand-600 px-3.5 text-13px font-semibold text-white hover:bg-brand-700"
             >
               + New Estimate
             </Link>
@@ -150,7 +150,7 @@ export default function EstimateGroup({
               onClick={() => setSendOpen(true)}
               disabled={!customer.email}
               title={customer.email ? undefined : 'This customer has no email address'}
-              className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+              className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-13px font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
             >
               Send estimates
             </button>
@@ -158,13 +158,13 @@ export default function EstimateGroup({
               type="button"
               onClick={copyLink}
               disabled={link.isPending}
-              className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
+              className="h-11 rounded-md border border-border-input bg-surface px-3.5 text-13px font-semibold text-text-primary hover:bg-surface-sunken disabled:opacity-40"
             >
               Copy customer link
             </button>
             <Link
               to={`/customers/${customer.id}`}
-              className="flex h-11 items-center rounded-md border border-border-input bg-surface px-3.5 text-[13px] font-semibold text-text-primary hover:bg-surface-sunken"
+              className="flex h-11 items-center rounded-md border border-border-input bg-surface px-3.5 text-13px font-semibold text-text-primary hover:bg-surface-sunken"
             >
               Customer details
             </Link>

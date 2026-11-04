@@ -391,7 +391,7 @@ function RowFields({
         />
       </div>
 
-      <p className="pl-0.5 text-[11px] text-text-muted">
+      <p className="pl-0.5 text-11px text-text-muted">
         Panels total: <span className="font-mono">{panelSum > 0 ? panelSum : '—'}</span>
       </p>
     </div>
@@ -500,7 +500,7 @@ export function SectionCard({
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">
             {label}
           </span>
-          <span className="shrink-0 text-[12px] text-text-muted">
+          <span className="shrink-0 text-12px text-text-muted">
             {rowCount} row{rowCount !== 1 ? 's' : ''}
           </span>
         </button>
@@ -556,7 +556,7 @@ export function SectionCard({
             <button
               type="button"
               onClick={onAddRow}
-              className="h-11 rounded-sm border border-dashed border-border-input text-[13px] font-medium text-brand-600"
+              className="h-11 rounded-sm border border-dashed border-border-input text-13px font-medium text-brand-600"
             >
               + Row
             </button>

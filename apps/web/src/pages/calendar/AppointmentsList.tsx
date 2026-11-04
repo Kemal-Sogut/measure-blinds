@@ -74,24 +74,24 @@ export function AppointmentRow({ event, onOpen }: { event: CalendarEvent; onOpen
         <span className="truncate text-sm font-medium text-text-primary">
           {customerName || event.order_number || 'Customer'}
         </span>
-        <span className={`shrink-0 text-[12px] font-semibold ${status?.cls ?? ''}`}>
+        <span className={`shrink-0 text-12px font-semibold ${status?.cls ?? ''}`}>
           {status?.text ?? event.schedule_status}
         </span>
       </span>
       <span className="flex items-baseline justify-between gap-2">
-        <span className="text-[13px] text-text-secondary">
+        <span className="text-13px text-text-secondary">
           {whenLabel(event.date, event.time)}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           <span
-            className={`rounded-pill px-2 py-0.5 text-[11px] font-semibold ${
+            className={`rounded-pill px-2 py-0.5 text-11px font-semibold ${
               isInstall ? 'bg-scheduled-tint text-scheduled' : 'bg-success-tint text-success'
             }`}
           >
             {isInstall ? 'Installation' : 'Estimate'}
           </span>
           {event.order_number && (
-            <span className="font-mono text-[12px] text-text-muted">{event.order_number}</span>
+            <span className="font-mono text-12px text-text-muted">{event.order_number}</span>
           )}
         </span>
       </span>
@@ -127,7 +127,7 @@ export default function AppointmentsList() {
               key={f.value}
               type="button"
               onClick={() => selectKind(f.value)}
-              className={`h-9 rounded-md border px-3 text-[13px] font-medium ${
+              className={`h-9 rounded-md border px-3 text-13px font-medium ${
                 kind === f.value
                   ? 'border-brand-600 bg-brand-100 text-brand-600'
                   : 'border-border-input bg-surface text-text-secondary hover:bg-surface-muted'
@@ -144,7 +144,7 @@ export default function AppointmentsList() {
         {!isLoading && !error && (
           <>
             {events.length === 0 ? (
-              <p className="rounded-xl border border-border-light bg-surface p-6 shadow-sm text-center text-[13px] text-text-muted">
+              <p className="rounded-xl border border-border-light bg-surface p-6 shadow-sm text-center text-13px text-text-muted">
                 No appointments{kind === 'all' ? '' : ` of this type`} yet.
               </p>
             ) : (
@@ -170,18 +170,18 @@ export default function AppointmentsList() {
                   type="button"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page <= 1}
-                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
                 >
                   ‹ Previous
                 </button>
-                <span className="text-[13px] text-text-secondary">
+                <span className="text-13px text-text-secondary">
                   Page {page} of {totalPages}
                 </span>
                 <button
                   type="button"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page >= totalPages}
-                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+                  className="h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
                 >
                   Next ›
                 </button>

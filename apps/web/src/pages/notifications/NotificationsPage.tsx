@@ -52,11 +52,11 @@ function RowBody({ n }: { n: AppNotification }) {
           <span className="text-sm font-semibold text-text-primary">
             {NOTIFICATION_TITLES[n.kind]}
           </span>
-          <time dateTime={n.created_at} className="shrink-0 text-[12px] text-text-muted">
+          <time dateTime={n.created_at} className="shrink-0 text-12px text-text-muted">
             {format(new Date(n.created_at), 'MMM d, yyyy · h:mm a')}
           </time>
         </span>
-        <span className="text-[13px] text-text-secondary">{notificationDetail(n)}</span>
+        <span className="text-13px text-text-secondary">{notificationDetail(n)}</span>
       </span>
     </>
   );
@@ -96,7 +96,7 @@ export default function NotificationsPage() {
   }
 
   const pagerButton =
-    'h-9 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
+    'h-9 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40';
 
   return (
     <div className="min-h-screen bg-surface-muted pb-16">
@@ -109,7 +109,7 @@ export default function NotificationsPage() {
         {!isLoading && !error && (
           <>
             {alerts.length === 0 ? (
-              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-[13px] text-text-muted shadow-sm">
+              <p className="rounded-xl border border-border-light bg-surface p-6 text-center text-13px text-text-muted shadow-sm">
                 {page > 1 ? 'No notifications on this page.' : 'No notifications yet.'}
               </p>
             ) : (
@@ -132,7 +132,7 @@ export default function NotificationsPage() {
                 >
                   ‹ Previous
                 </button>
-                <span className="text-[13px] text-text-secondary">
+                <span className="text-13px text-text-secondary">
                   Page {page} of {totalPages}
                 </span>
                 <button

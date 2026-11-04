@@ -33,9 +33,9 @@ const VARIANTS = {
 } as const;
 
 const SIZES = {
-  sm: 'min-h-11 px-3 text-[13px]',
+  sm: 'min-h-11 px-3 text-13px',
   md: 'min-h-11 px-4 text-sm',
-  lg: 'min-h-12 px-5 text-[15px]',
+  lg: 'min-h-12 px-5 text-15px',
 } as const;
 
 export default function Button({

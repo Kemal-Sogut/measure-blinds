@@ -207,7 +207,7 @@ export default function AddressAutocomplete({
         className={INPUT_CLS}
       />
       {loading && open && (
-        <span className="absolute right-3 top-9 text-[11px] text-text-muted">…</span>
+        <span className="absolute right-3 top-9 text-11px text-text-muted">…</span>
       )}
       {open && suggestions.length > 0 && (
         <ul

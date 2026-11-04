@@ -40,7 +40,7 @@ const FILLED: Record<PillTone, string> = {
 };
 
 const SIZES = {
-  sm: 'px-2 py-0.5 text-[11px] leading-4',
+  sm: 'px-2 py-0.5 text-11px leading-4',
   md: 'px-2.5 py-1 text-xs leading-4',
 } as const;
 

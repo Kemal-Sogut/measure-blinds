@@ -219,7 +219,7 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
     >
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <h2 className="mb-1 text-sm font-semibold text-text-primary">Bulk add blinds</h2>
-        <p className="mb-4 text-[13px] text-text-muted">
+        <p className="mb-4 text-13px text-text-muted">
           Configure a section per blind type, then add a row for every window that shares it. Type,
           material and hardware can be left blank for now, but the order can't be saved until
           they're filled in.
@@ -271,7 +271,7 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
           <button
             type="button"
             onClick={addSection}
-            className="flex h-11 items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-[13px] font-semibold text-brand-600"
+            className="flex h-11 items-center justify-center gap-2 rounded-sm border border-dashed border-border-input text-13px font-semibold text-brand-600"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -280,12 +280,12 @@ export default function BulkAddSheet({ open, catalogs, onCancel, onAdd }: BulkAd
           </button>
         </div>
 
-        {error && <p className="mt-3 text-[13px] text-danger">{error}</p>}
+        {error && <p className="mt-3 text-13px text-danger">{error}</p>}
 
         <div className="mt-4 flex gap-2">
           <button
             onClick={handleCancel}
-            className="h-11 flex-1 rounded-md border border-border-input bg-surface text-[13px] font-medium text-text-secondary"
+            className="h-11 flex-1 rounded-md border border-border-input bg-surface text-13px font-medium text-text-secondary"
           >
             Cancel
           </button>

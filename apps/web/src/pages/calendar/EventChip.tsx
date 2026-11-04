@@ -63,7 +63,7 @@ export default function EventChip({ event }: { event: CalendarEvent }) {
         navigate(`/appointments/${event.id}`);
       }}
       title={`${event.order_number || customerName || 'Customer'} — ${customerName || 'Customer'} (${kindLabel}, ${event.schedule_status})`}
-      className={`block w-full truncate rounded-md px-1.5 py-0.5 text-left text-[10px] font-semibold leading-tight ${cls}`}
+      className={`block w-full truncate rounded-md px-1.5 py-0.5 text-left text-10px font-semibold leading-tight ${cls}`}
     >
       {shortTime(event.time)} {customerName || event.order_number}
     </button>

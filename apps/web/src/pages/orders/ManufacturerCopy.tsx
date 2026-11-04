@@ -97,7 +97,7 @@ function Card({ children }: { children: ReactNode }) {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[11px] uppercase tracking-wide text-text-muted">{label}</span>
+      <span className="text-11px uppercase tracking-wide text-text-muted">{label}</span>
       <span className="text-sm font-semibold text-text-primary">{value}</span>
     </div>
   );

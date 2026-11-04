@@ -101,7 +101,7 @@ export default function CopyLinkField({ label, value, hint, error }: CopyLinkFie
     return (
       <div>
         <span className="mb-1.5 block text-xs font-medium text-text-secondary">{label}</span>
-        <p className="text-[13px] text-danger">{error}</p>
+        <p className="text-13px text-danger">{error}</p>
       </div>
     );
   }
@@ -117,25 +117,25 @@ export default function CopyLinkField({ label, value, hint, error }: CopyLinkFie
             value={value ?? ''}
             placeholder="Preparing link…"
             onFocus={selectAll}
-            className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface-muted px-3 text-[13px] text-text-secondary"
+            className="h-11 min-w-0 flex-1 rounded-md border border-border-input bg-surface-muted px-3 text-13px text-text-secondary"
           />
           <button
             type="button"
             onClick={handleCopy}
             disabled={!value}
             aria-label={`Copy ${label.toLowerCase()}`}
-            className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-[13px] font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
+            className="h-11 shrink-0 rounded-md border border-border-input bg-surface px-3 text-13px font-medium text-text-secondary hover:bg-surface-muted disabled:opacity-40"
           >
             {state === 'copied' ? 'Copied' : 'Copy'}
           </button>
         </div>
       </label>
       {state === 'manual' ? (
-        <p className="mt-1.5 text-[12px] text-text-muted">
+        <p className="mt-1.5 text-12px text-text-muted">
           Copying is blocked in this browser — the link is selected, press Ctrl/Cmd+C.
         </p>
       ) : hint ? (
-        <p className="mt-1.5 text-[12px] text-text-muted">{hint}</p>
+        <p className="mt-1.5 text-12px text-text-muted">{hint}</p>
       ) : null}
     </div>
   );

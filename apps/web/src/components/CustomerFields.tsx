@@ -131,7 +131,7 @@ export default function CustomerFields({
     <>
       {/* Contact */}
       <section className={sectionCls}>
-        <h2 className="text-[15px] font-bold text-text-primary">Contact</h2>
+        <h2 className="text-15px font-bold text-text-primary">Contact</h2>
         <div className="grid grid-cols-2 gap-3.5">
           {/* Neither name is required — see `validateCustomerForm`. */}
           <Field
@@ -160,7 +160,7 @@ export default function CustomerFields({
 
       {/* Shipping address */}
       <section className={sectionCls}>
-        <h2 className="text-[15px] font-bold text-text-primary">Shipping Address</h2>
+        <h2 className="text-15px font-bold text-text-primary">Shipping Address</h2>
         <AddressAutocomplete
           label="Address Line 1"
           value={value.shipping_address_line1}
