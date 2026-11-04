@@ -70,13 +70,12 @@ registry's normaliser strips non-alphanumerics and a trailing "blind").
 - `attributes.back_color`: optional free text, max 100 chars (matches the front Color
   field), no price effect.
 - Schema fields are `.optional()` so `defaultAttributes()` (`{}`) round-trips. Presence of
-  `back_material_id` is enforced separately:
-  - Worker: `resolveLineItems` rejects a Dual line without a back fabric with a readable
-    400 ("Pick a back fabric for the Dual Shades blind."). Implemented as a type-declared
-    rule (`requiredAttributes(): string[]` on `BaseBlindType`, `[]` by default) so
-    `orders.ts` gains no `blinds_type` branch.
-  - Web: the editor's save guard uses the same `requiredAttributes()` so the button is
-    blocked with the same message before the request.
+  `back_material_id` is declared through the existing `requiredAttributes` hook
+  (`[{ key: 'back_material_id', noun: 'back fabric' }]`). *(Revised 2026-11-03: the
+  incomplete-draft-items work landed first.)* `lib/lineItemCompleteness.ts` therefore treats a
+  Dual line without a back fabric as INCOMPLETE — savable on a draft at $0, shown with the
+  Incomplete marker, and refused with "Item N: choose a back fabric." by every route that
+  leaves draft (send, stage moves, PDF, saving a non-draft order). No Dual-specific gate is added.
 - `materialCost(item, w, h)` = `(w × h × (front_rate + back_rate)) / 10000`, where
   `back_rate = numericOr(attributes.back_material_price_per_sqm, 0)`.
 - `describeUnitCosts(item)` = `super.describeUnitCosts(item)` with the `control` and
