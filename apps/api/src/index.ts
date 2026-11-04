@@ -24,6 +24,8 @@ import publicRoutes from './routes/public';
 import webhookRoutes from './routes/webhook';
 import notificationsRoutes from './routes/notifications';
 import inboxRoutes from './routes/inbox';
+import leadIntakeRoutes from './routes/leadIntake';
+import leadsRoutes from './routes/leads';
 import { createSupabaseAdmin } from './lib/supabase';
 import { runDailyEmailJobs } from './lib/reminders';
 import { runInboxSync } from './lib/inbox/run';
@@ -50,34 +52,57 @@ export interface Env {
   TITAN_IMAP_HOST?: string;
   /** IMAP TLS port, default "993" ([vars]). */
   TITAN_IMAP_PORT?: string;
+  /**
+   * Cloudflare Turnstile secret for the website lead form. Optional: while
+   * unset, `/intake/lead` relies on its honeypot, fill-time and rate-limit
+   * checks alone; once set, every submission needs a valid token, so the
+   * embed must carry the widget's `data-sitekey`.
+   */
+  TURNSTILE_SECRET?: string;
 }
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 /**
- * Global CORS middleware.
- * In production, origin should be locked to the Pages deployment domain.
- * During development, localhost is permitted.
+ * CORS for the public website lead form (`/intake/*`), which is embedded
+ * on the WordPress site, a different origin from the staff app. It allows
+ * ANY origin: the route takes no credentials and returns nothing private,
+ * and CORS would not stop a non-browser bot anyway. Allowing any origin
+ * keeps the form working if the site moves to another domain or a staging
+ * copy. Registered BEFORE the global middleware, which skips this prefix.
  */
-app.use(
-  '*',
-  cors({
-    origin: (origin) => {
-      if (!origin) return '';
-      if (
-        origin.includes('localhost') ||
-        origin.includes('127.0.0.1') ||
-        origin === 'https://measure-blinds.blindsnisa.workers.dev'
-      ) {
-        return origin;
-      }
-      return '';
-    },
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
-    maxAge: 86400,
-  })
-);
+app.use('/intake/*', cors({ origin: '*', allowMethods: ['POST', 'OPTIONS'], allowHeaders: ['Content-Type'], maxAge: 86400 }));
+
+/**
+ * The staff-app and customer-page CORS policy: only the deployed web
+ * Worker and localhost. Applied to every path except `/intake/*` by the
+ * middleware below.
+ */
+const staffCors = cors({
+  origin: (origin) => {
+    if (!origin) return '';
+    if (
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin === 'https://measure-blinds.blindsnisa.workers.dev'
+    ) {
+      return origin;
+    }
+    return '';
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400,
+});
+
+/**
+ * Global CORS middleware. `/intake/*` has its own any-origin policy
+ * (registered above) and is skipped here so the two never both answer.
+ */
+app.use('*', async (c, next) => {
+  if (c.req.path.startsWith('/intake/')) return next();
+  return staffCors(c, next);
+});
 
 /**
  * Global security headers middleware.
@@ -102,6 +127,12 @@ app.get('/api/health', (c) => {
  * by the Gmail Apps Script.
  */
 app.route('/webhooks', webhookRoutes);
+
+/**
+ * Website lead form intake — public, rate-limited, outside both /api/*
+ * (no JWT) and /public/* (no maintenance gate). See routes/leadIntake.ts.
+ */
+app.route('/intake', leadIntakeRoutes);
 
 /**
  * JWT verification on every /api/* route registered below this point.
@@ -139,6 +170,9 @@ app.route('/api/notifications', notificationsRoutes);
 
 /** Staff Inbox — Titan conversations, triage and filter rules. */
 app.route('/api/inbox', inboxRoutes);
+
+/** Website leads — list, new-lead count, status changes. */
+app.route('/api/leads', leadsRoutes);
 
 /** Public customer view + confirm — token-gated, rate-limited (Phase 9). */
 app.route('/public', publicRoutes);

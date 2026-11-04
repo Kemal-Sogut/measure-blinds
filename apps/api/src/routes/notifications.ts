@@ -5,7 +5,8 @@
  * Staff Alerts feed (authenticated, mounted at `/api/notifications`).
  *
  * Read-only: rows are written by `lib/notifications.ts` from the public
- * confirm / edit-request routes and the e-Transfer webhook. This module
+ * confirm / edit-request routes, the e-Transfer webhook, the inbox sync
+ * and the website lead intake (`lead_id` set for `lead_received`). This module
  * only pages through them for the sidebar's Alerts page — newest first,
  * 15 per page, with the same pager envelope as `GET /api/appointments`
  * (`page`, `page_size`, `total`, `total_pages`) so the client renders the
@@ -50,7 +51,7 @@ app.get('/', async (c) => {
   const sb = createSupabaseAdmin(c.env);
   const { data, count, error } = await sb
     .from('notifications')
-    .select('id, kind, order_id, order_number, customer_name, amount, email_thread_id, subject, created_at', {
+    .select('id, kind, order_id, order_number, customer_name, amount, email_thread_id, subject, lead_id, created_at', {
       count: 'exact',
     })
     .order('created_at', { ascending: false })

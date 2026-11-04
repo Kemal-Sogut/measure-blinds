@@ -13,8 +13,9 @@
  *        data-email="info@blindsnisa.com"></div>
  *   <script src="https://<web-worker-host>/embed/lead-form.js" defer></script>
  *
- * Four steps: (1) contact details, (2) window coverings + window count,
- * (3) review + SMS/email consent + Confirm, (4) confirmation and next steps.
+ * Four steps: (1) contact details, (2) window coverings + window count +
+ * an optional message, (3) review + SMS/email consent + Confirm,
+ * (4) confirmation and next steps.
  * The form renders inside a shadow root with its own stylesheet
  * (lead-form.css, resolved next to this script), so the host theme cannot
  * restyle it. The scene beside the form is a window whose shade rises as
@@ -23,17 +24,29 @@
  * prefers-reduced-motion.
  *
  * On Confirm it POSTs JSON to `${data-api}/intake/lead` (see
- * knowledge/plans/2026-10-05-website-lead-capture.md). Validation here is
- * only for the visitor's convenience. The Worker re-validates everything
- * strictly. On success it dispatches a `bn:lead-submitted` event on the
+ * knowledge/specs/2026-11-04-website-lead-form-design.md). The Worker
+ * stores the lead, links or creates the customer, and emails the shop.
+ * Validation here is only for the visitor's convenience: the Worker
+ * re-validates everything strictly (`apps/api/src/lib/leadSchema.ts`
+ * mirrors RULES below, so change both together). Bot signals sent with
+ * every lead: the hidden `website` honeypot and `fill_ms`, the time from
+ * the form rendering to Confirm. On success it dispatches a `bn:lead-submitted` event on the
  * host element and, when Google Analytics is on the page, a
  * `generate_lead` gtag event.
  */
 (function () {
   'use strict';
 
+  /**
+   * Where lead-form.css lives: next to this script. WordPress optimiser
+   * plugins (WP Rocket "delay JS", Autoptimize, …) can run the script in a
+   * way that leaves `document.currentScript` null, so in that case it falls
+   * back to the production host rather than to a relative URL on the
+   * WordPress site, which would 404 and leave the form unstyled.
+   */
+  var PROD_BASE = 'https://measure-blinds.blindsnisa.workers.dev/embed/';
   var SCRIPT = document.currentScript;
-  var BASE = SCRIPT && SCRIPT.src ? SCRIPT.src.replace(/[^/?#]*([?#].*)?$/, '') : '';
+  var BASE = SCRIPT && SCRIPT.src ? SCRIPT.src.replace(/[^/?#]*([?#].*)?$/, '') : PROD_BASE;
   var REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   /** Shade position per step: 1 = fully down, 0 = fully open. */
@@ -200,6 +213,11 @@
       '<span class="group-label" id="g-count">How many windows?</span>' +
       '<div class="counts">' + counts + '</div>' +
       '<p class="err" id="e-window_count" aria-live="polite" style="margin-top:8px"></p></div>' +
+      '<div class="field" style="margin-top:18px">' +
+      '<label for="f-message">Anything else we should know? <span class="opt">(optional)</span></label>' +
+      '<textarea id="f-message" name="message" rows="3" maxlength="1000" aria-describedby="c-message" ' +
+      'placeholder="A bay window, a skylight, the best time to call…"></textarea>' +
+      '<p class="count" id="c-message" aria-live="off">0 / 1000</p></div>' +
       '<div class="actions"><button type="button" class="btn btn-ghost" data-back>Back</button>' +
       '<button type="submit" class="btn btn-primary" data-next>Continue ' + ARROW + '</button></div>' +
       '</section>'
@@ -320,7 +338,8 @@
     var slatWrap = $('.slats');
     var slats = $$('.slat');
 
-    var state = { step: 1, busy: false, reviewing: false, token: '', widget: null };
+    // startedAt: when the form became usable, for the `fill_ms` bot signal.
+    var state = { step: 1, busy: false, reviewing: false, token: '', widget: null, startedAt: Date.now() };
 
     // Reveal once the shadow stylesheet has loaded, so there is no flash of unstyled form.
     var link = root.querySelector('link');
@@ -396,6 +415,7 @@
       var t = e.target;
       if (t.name === 'phone' && t.selectionStart === t.value.length) t.value = formatPhone(t.value);
       if (t.name === 'postal_code') t.value = t.value.toUpperCase();
+      if (t.name === 'message') root.getElementById('c-message').textContent = t.value.length + ' / 1000';
       if (RULES[t.name] && t.getAttribute('aria-invalid') === 'true') validateField(t.name);
     });
 
@@ -539,6 +559,7 @@
         ['Window coverings', covers.join(', '), 2],
         ['Windows', count ? count.label.replace(/ /g, '') + ' (' + count.hint.toLowerCase() + ')' : '', 2],
       ];
+      if (v('message')) rows.push(['Message', v('message'), 2]);
       dl.textContent = '';
       rows.forEach(function (r) {
         var row = document.createElement('div');
@@ -607,10 +628,12 @@
         postal_code: v('postal_code').toUpperCase(),
         coverings: $$('input[name="coverings"]:checked').map(function (c) { return c.value; }),
         window_count: ($('input[name="window_count"]:checked') || {}).value || '',
+        message: v('message').slice(0, 1000),
         consent: input('consent').checked,
         source_url: location.href.slice(0, 500),
         turnstile_token: state.token,
         website: input('website').value,
+        fill_ms: Date.now() - state.startedAt,
       };
     }
 
@@ -637,14 +660,19 @@
 
       request.then(function (res) {
         if (res.ok) return onSuccess(body);
-        if (res.status === 403 && window.turnstile && state.widget) {
-          window.turnstile.reset(state.widget);
+        if (res.status === 403) {
+          if (window.turnstile && state.widget) window.turnstile.reset(state.widget);
           state.token = '';
-          throw new Error('Verification failed. Please try the check again and press Confirm.');
+          throw userError('Verification failed. Please try the check again and press Confirm.');
         }
-        if (res.status === 400) throw new Error('Some details didn’t go through. Please press Edit to review them and try again.');
-        if (res.status === 429) throw new Error('Too many attempts. Please wait a few minutes or call us at ' + cfg.phone + '.');
-        throw new Error('We couldn’t send your request. Please call us at ' + cfg.phone + '.');
+        if (res.status === 400) {
+          // The Worker names the first failing rule; show it so the visitor knows what to Edit.
+          return res.json().catch(function () { return {}; }).then(function (j) {
+            throw userError('Some details didn’t go through' + (j && j.error ? ': ' + j.error : '.') + ' Please press Edit to fix it and try again.');
+          });
+        }
+        if (res.status === 429) throw userError('Too many attempts. Please wait a minute or call us at ' + cfg.phone + '.');
+        throw userError('We couldn’t send your request. Please call us at ' + cfg.phone + '.');
       }).catch(function (err) {
         showAlert(err && err.bnUser
           ? err.message

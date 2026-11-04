@@ -531,6 +531,7 @@ describe('POST /public/estimate/:token/confirm', () => {
         amount: null,
         email_thread_id: null,
         subject: '',
+        lead_id: null,
       },
     ]);
   });
@@ -828,6 +829,7 @@ describe('POST /public/estimate/:token/edit-request', () => {
         amount: null,
         email_thread_id: null,
         subject: '',
+        lead_id: null,
       },
     ]);
   });

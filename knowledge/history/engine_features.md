@@ -1,5 +1,43 @@
 # Engine Features / Feature History
 
+## 2026-11-04 — Website lead form → Leads page, every lead becomes a customer
+The "Free Estimate" form for blindsnisa.com (the embed built 2026-10-05, served in demo mode until now) gets
+its backend. Spec `knowledge/specs/2026-11-04-website-lead-form-design.md` (supersedes the backend half of
+`knowledge/plans/2026-10-05-website-lead-capture.md`; SMS dropped). Branch `feat/website-lead-form` on
+`origin/main` `f66424c`. **Migration 52 written, NOT applied; not deployed.**
+
+- **WordPress embed (paste as-is into an Elementor HTML widget):**
+  `<div id="bn-lead-form" data-api="https://blinds-nisa-api.blindsnisa.workers.dev" data-phone="613-699-1837"
+  data-email="info@blindsnisa.com"></div>` + `<script src="https://measure-blinds.blindsnisa.workers.dev/embed/lead-form.js" defer></script>`.
+  Needs no account set up: Turnstile is optional (on only when the Worker has `TURNSTILE_SECRET` and the embed has
+  `data-sitekey`).
+- **Migration 52** `leads` (submitted fields, `coverings text[]`, `window_count`, `message`, `customer_id` SET NULL,
+  `customer_match` created|matched, `status` new|contacted|archived, `email_sent_at`). `notifications` gains kind
+  `lead_received` + `lead_id` (cascade).
+- **`POST /intake/lead`** (`routes/leadIntake.ts`): public, rate-limited 5/min/IP, mounted OUTSIDE `/public` (no
+  maintenance gate) and `/api` (no JWT). Any-origin CORS for `/intake/*` (no credentials), set in `index.ts` ahead
+  of the staff CORS, which now skips that prefix. Strict Zod (`lib/leadSchema.ts`, mirrors the embed's RULES).
+  Honeypot `website` or `fill_ms` < 3 s → the same `201 {ok:true}`, nothing stored. Then
+  `findOrCreateLeadCustomer` (`lib/leadCustomer.ts`): case-insensitive email match among non-deleted customers,
+  newest-updated wins, ILIKE wildcards escaped; on a match only BLANK fields are filled (phone; name only if both
+  blank; the shipping address as one block only if line 1 is blank); otherwise a new customer. Then the lead row,
+  the alert row, and the shop email (`lib/leadAlerts.ts`, Reply-To the visitor, stamps `email_sent_at`).
+  Persist-then-alert; the response never reveals whether the email matched.
+- **Staff API** `routes/leads.ts`: `GET /api/leads/summary` (new count), `GET /api/leads?status=&page=` (20/page,
+  pager envelope + `new_count`, joined customer), `PUT /api/leads/:id {status}`.
+- **Web:** `/leads` (`pages/leads/LeadsPage.tsx`, `LeadCard.tsx`, `leadText.ts`): New/Contacted/Archived/All chips in
+  `?status=` (default New, with count), expandable cards with tel/mailto, address, message, source page, customer
+  link + created/matched note, "shop email did not go out" warning, status actions. Sidebar Leads item (after
+  Customers) with dot + count; Notifications row "New website lead" → `/leads`. Hooks `hooks/useLeads.ts` poll 60 s.
+- **Embed:** optional message box on step 2 (shown in the review), `fill_ms`, production fallback for the stylesheet
+  URL when an optimiser hides `document.currentScript`, server error text shown on 400 (see bug_fixes 2026-11-04).
+- **Verified:** api 990 tests / web 656 tests, tsc clean, oxlint 0 warnings. Harness (deleted): Leads page in the
+  real `Layout` at 1280 / 768 / 375 px with a 79-char name, 90-char email, 90-char unbroken message, all coverings,
+  matched + created + deleted + null customer, unsent email; cards = container width, `scrollWidth == clientWidth`,
+  no overflow, no `/api` request left the page. Notifications rows and phone menu badge at 375 px. The real embed
+  driven end to end at 1280 and 375 px against a stubbed `fetch`: the captured POST body passes `leadInputSchema`,
+  the 400 path shows the server reason. **NOT exercised against the live database** (migration 52 not applied).
+
 ## 2026-11-03 — "Dual Shades" blind type (front + back fabric, two controls, two bottom rails)
 New blind type **Dual Shades**: one headrail carrying two independent rolls. Spec
 `knowledge/specs/2026-11-02-dual-shades-design.md`, plan `knowledge/plans/2026-11-02-dual-shades.md`. Branch

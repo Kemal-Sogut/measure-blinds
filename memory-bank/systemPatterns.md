@@ -419,6 +419,15 @@ section as the reference implementation for future collapsible UI.
 - Money surfaces never show a partial total for an open draft: lists show `IncompleteBadge`, Present shows
   "Total available once every item is complete."
 
+## Website lead intake (2026-11-04)
+- `/intake/*` is a third public surface beside `/public/*` (token-gated, maintenance-gated) and `/webhooks/*`
+  (bearer secret): unauthenticated, rate-limited, any-origin CORS, and deliberately NOT behind the maintenance
+  gate, so a new customer's request is never turned away.
+- Persist-then-alert (the reverse of the estimate's email-then-persist): customer → lead row → alert → email.
+  Bots get the same 201 as people. The response never reveals whether an email matched a customer.
+- A lead is linked to a customer at birth. On an email match only BLANK customer fields are filled; the lead
+  row keeps exactly what the visitor typed.
+
 ## Critical Implementation Paths
 1. **Order creation:** Customer select → Add line items → Live pricing → Save → Server recalculates
 2. **Send flow:** (estimate page: incomplete-draft pre-check, then Send saves first) → Send estimates dialog (the customer's valid estimates, all ticked; an incomplete draft listed but not tickable) → Worker refuses the whole send if a selected draft is incomplete → ONE customer-link email via Resend, no PDF → per selected draft: status=sent, then freeze prices, then `stampSent`

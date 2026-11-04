@@ -33,6 +33,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth, useCompanySettings } from '../hooks';
 import { useSidebar } from '../hooks/useSidebar';
 import { useInboxUnread } from '../hooks/useInbox';
+import { useNewLeadCount } from '../hooks/useLeads';
 
 /** One nav destination; `end` forces exact matching for Orders at "/". */
 interface NavItem {
@@ -65,6 +66,12 @@ const ITEMS: NavItem[] = [
     to: '/customers',
     label: 'Customers',
     d: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2 M9 11a4 4 0 100-8 4 4 0 000 8z M23 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75',
+  },
+  {
+    // Inbox tray: website "Free Estimate" form submissions.
+    to: '/leads',
+    label: 'Leads',
+    d: 'M22 12h-6l-2 3h-4l-2-3H2 M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z',
   },
   {
     to: '/calendar',
@@ -120,9 +127,10 @@ function NavIcon({ d, size = 20 }: { d: string; size?: number }) {
 }
 
 /**
- * An item's icon with an optional blue dot on its top-right corner — used
- * for the Inbox item while any conversation has an unopened email. The
- * dot is decorative; the item's label carries "(unread)" for screen readers.
+ * An item's icon with an optional blue dot on its top-right corner, used
+ * for the Inbox item while any conversation has an unopened email and for
+ * the Leads item while any lead is still New. The dot is decorative; the
+ * item's label carries "(unread)" / "(N new)" for screen readers.
  */
 function ItemIcon({ d, size, dot, active }: { d: string; size: number; dot: boolean; active: boolean }) {
   return (
@@ -208,10 +216,27 @@ export default function Sidebar() {
   const mobileOpen = useSidebar((s) => s.mobileOpen);
   const closeMobile = useSidebar((s) => s.closeMobile);
   const toggleCollapsed = useSidebar((s) => s.toggleCollapsed);
-  // Polls every minute; the dot shows while any conversation is unread.
+  // Both poll every minute. Inbox: a dot while any conversation is unread.
+  // Leads: a dot plus a count (labelled forms only) while any lead is New.
   const inboxUnread = (useInboxUnread().data?.total ?? 0) > 0;
-  const dotFor = (item: NavItem) => item.to === '/inbox' && inboxUnread;
-  const labelFor = (item: NavItem) => (dotFor(item) ? `${item.label} (unread)` : item.label);
+  const newLeads = useNewLeadCount().data ?? 0;
+  const dotFor = (item: NavItem) => (item.to === '/inbox' && inboxUnread) || (item.to === '/leads' && newLeads > 0);
+  /** Screen-reader suffix for an item's badge: " (unread)", " (3 new)", or ''. */
+  const badgeText = (item: NavItem) =>
+    !dotFor(item) ? '' : item.to === '/leads' ? ` (${newLeads} new)` : ' (unread)';
+  const labelFor = (item: NavItem) => `${item.label}${badgeText(item)}`;
+  /** Visible count beside the label for Leads: a single short number, so it never squeezes the label. */
+  const countFor = (item: NavItem, active: boolean) =>
+    item.to === '/leads' && newLeads > 0 ? (
+      <span
+        aria-hidden="true"
+        className={`ml-auto rounded-pill px-1.5 text-[11px] font-bold tabular-nums leading-5 ${
+          active ? 'bg-white/20 text-white' : 'bg-brand-100 text-brand-700'
+        }`}
+      >
+        {newLeads > 99 ? '99+' : newLeads}
+      </span>
+    ) : null;
   const { pathname } = useLocation();
 
   // Navigating is the whole point of the overlay, so a route change
@@ -287,10 +312,13 @@ export default function Sidebar() {
                 <>
                   <ItemIcon d={item.d} size={collapsed ? 20 : 18} dot={dotFor(item)} active={isActive} />
                   {!collapsed && (
-                    <span className="truncate">
-                      {item.label}
-                      {dotFor(item) && <span className="sr-only"> (unread)</span>}
-                    </span>
+                    <>
+                      <span className="min-w-0 truncate">
+                        {item.label}
+                        {dotFor(item) && <span className="sr-only">{badgeText(item)}</span>}
+                      </span>
+                      {countFor(item, isActive)}
+                    </>
                   )}
                 </>
               )}
@@ -351,8 +379,11 @@ export default function Sidebar() {
                 {({ isActive }) => (
                   <>
                     <ItemIcon d={item.d} size={22} dot={dotFor(item)} active={isActive} />
-                    {item.label}
-                    {dotFor(item) && <span className="sr-only"> (unread)</span>}
+                    <span className="min-w-0 truncate">
+                      {item.label}
+                      {dotFor(item) && <span className="sr-only">{badgeText(item)}</span>}
+                    </span>
+                    {countFor(item, isActive)}
                   </>
                 )}
               </NavLink>
