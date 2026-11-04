@@ -21,6 +21,7 @@ import {
   blindDraftPrice,
   bulkEditSelection,
   canOverridePrice,
+  draftDisplayAttributes,
   draftMissingFields,
   firstIncompleteDraftMessage,
   flatDraftPrice,
@@ -1196,5 +1197,54 @@ describe('Dual Shades drafts', () => {
     const d = dualDraft({ attributes: {} });
     expect(draftMissingFields(d, dualCatalogs())).toEqual(['back fabric']);
     expect(blindDraftPrice(d, dualCatalogs())).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* draftDisplayAttributes                                              */
+/* ------------------------------------------------------------------ */
+
+describe('draftDisplayAttributes', () => {
+  const BACK_ID = '99999999-9999-4999-8999-999999999991';
+  const PLEAT_ID = '66666666-6666-4666-8666-666666666666';
+  const cats = {
+    blindTypes: [],
+    materials: [
+      { id: BACK_ID, name: 'Linen Grey', price_per_sqm: 45, active: true, sort_order: 0, width_cm: null, blind_type_ids: [] },
+    ],
+    cassettes: [],
+    bottomRails: [],
+    controls: [],
+    pleatTypes: [{ id: PLEAT_ID, name: 'Pinch', multiplier: 2, active: true, sort_order: 0 }],
+    defaults: [],
+    installationOptions: [],
+  } as Catalogs;
+
+  it('names the Dual back fabric, then the back colour', () => {
+    const d = draft({ blinds_type: 'Dual Shades', attributes: { back_material_id: BACK_ID, back_color: 'Grey' } });
+    expect(getBlindType('Dual Shades').describeAttributes(draftDisplayAttributes(d, cats))).toEqual([
+      { label: 'Back fabric', value: 'Linen Grey' },
+      { label: 'Back color', value: 'Grey' },
+    ]);
+  });
+
+  it('names the Curtains pleat', () => {
+    const d = draft({ blinds_type: 'Curtains', attributes: { pleat_type_id: PLEAT_ID } });
+    const lines = getBlindType('Curtains').describeAttributes(draftDisplayAttributes(d, cats));
+    expect(lines.map((l) => l.value).join(' ')).toContain('Pinch');
+  });
+
+  it('does not throw on an id missing from the catalog, and omits the back fabric', () => {
+    const d = draft({
+      blinds_type: 'Dual Shades',
+      attributes: { back_material_id: '99999999-9999-4999-8999-999999999992', back_color: 'Grey' },
+    });
+    const lines = getBlindType('Dual Shades').describeAttributes(draftDisplayAttributes(d, cats));
+    expect(lines).toEqual([{ label: 'Back color', value: 'Grey' }]);
+  });
+
+  it('returns an empty blob when the attributes do not parse', () => {
+    const d = draft({ blinds_type: 'Dual Shades', attributes: { back_material_id: 'not-a-uuid' } });
+    expect(draftDisplayAttributes(d, cats)).toEqual({});
   });
 });
