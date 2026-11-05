@@ -346,12 +346,15 @@ function LineItemRow({
       <span className="min-w-0 flex-1 text-left font-medium text-text-primary">{title}</span>
       <span className="whitespace-nowrap text-text-muted">× {item.quantity}</span>
       {/*
-        Wider than the other columns' 20 because it may carry two figures:
-        the original struck through, then the price actually charged.
+        Sized to its content (never a fixed width) because it may carry two
+        figures — the original struck through, then the price actually
+        charged — and a fixed box let four-digit totals spill past the card.
+        The title column (min-w-0 flex-1) gives up the space instead. The
+        struck figure is a size smaller so the charged price stays dominant.
       */}
-      <span className="w-28 text-right font-mono font-medium text-text-primary">
+      <span className="shrink-0 whitespace-nowrap text-right font-mono font-medium text-text-primary">
         {item.original_line_total != null && (
-          <span className="mr-1.5 font-normal text-text-muted line-through">
+          <span className="mr-1.5 text-xs font-normal text-text-muted line-through">
             ${item.original_line_total.toFixed(2)}
           </span>
         )}
