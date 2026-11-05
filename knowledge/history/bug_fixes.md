@@ -1,5 +1,13 @@
 # Bug Fixes History
 
+## 2026-11-04 — Customer view: discounted line totals spilled past the card
+`apps/web/src/pages/customer-view/CustomerView.tsx` (`LineItemRow`). Branch `feat/website-lead-form`.
+- **Issue:** the price column was a fixed `w-28`. A discounted row carries two figures (original struck
+  through, then the charged total); at full size "$485.24 $380.00" is wider than 7rem, so it overflowed the
+  card's right edge.
+- **Fix:** the column sizes to its content (`shrink-0 whitespace-nowrap`, no fixed width) so the
+  `min-w-0 flex-1` title gives up the space, and the struck figure is `text-xs` so the charged price stays dominant.
+
 ## 2026-11-04 — Lead form showed "couldn't reach our server" for every failed submit
 Embed `apps/web/public/embed/lead-form.js` (never live: it ran in demo mode until the backend landed). Branch
 `feat/website-lead-form`.
