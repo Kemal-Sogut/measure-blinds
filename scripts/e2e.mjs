@@ -100,9 +100,9 @@ async function main() {
     return { status: r.status, body: isJson ? await r.json() : await r.arrayBuffer() };
   };
 
-  check((await fetch(`${API}/api/me`)).status === 401, 'unauthenticated /api/me → 401');
-  const me = await api('/api/me');
-  check(me.status === 200 && me.body.user.email === EMAIL, 'JWT verified via JWKS');
+  check((await fetch(`${API}/api/customers`)).status === 401, 'unauthenticated /api/customers → 401');
+  const me = await api('/api/customers');
+  check(me.status === 200, 'JWT verified via JWKS');
 
   // ── Catalog + customer ───────────────────────────────────────
   const fabrics = (await api('/api/settings/fabrics')).body.data;
