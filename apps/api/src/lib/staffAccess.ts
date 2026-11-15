@@ -23,7 +23,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 /** How long a positive staff lookup is trusted before `profiles` is read again. */
 export const STAFF_CACHE_TTL_MS = 60_000;
 
-/** Answers whether the auth user with this id is a staff member. */
+/**
+ * Answers whether the auth user with this id is a staff member.
+ *
+ * An implementation MUST throw when it cannot answer (database outage,
+ * network failure) and must never return `false` on error: a `false` is
+ * a definitive "not staff" that the middleware reports as a 403 lockout,
+ * whereas a throw is reported as a retryable 503.
+ */
 export type StaffLookup = (userId: string) => Promise<boolean>;
 
 /**
