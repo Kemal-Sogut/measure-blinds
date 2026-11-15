@@ -71,6 +71,14 @@ async function main() {
   created.userId = user.id;
   check(Boolean(user.id), 'create temp auth user');
 
+  // The Worker only serves users on the staff allow-list (migration 54).
+  // The row cascades away with the auth user in cleanup().
+  const profile = await admin('/rest/v1/profiles', {
+    method: 'POST',
+    body: JSON.stringify({ id: user.id, role: 'consultant' }),
+  });
+  check(profile.ok, 'add temp user to the staff allow-list');
+
   const login = await fetch(`${SB}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: ANON, 'Content-Type': 'application/json' },
