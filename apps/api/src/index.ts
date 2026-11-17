@@ -14,6 +14,7 @@
 
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { allowedStaffOrigin, parseOriginList } from './lib/corsOrigin';
 import { requireAuth, type AuthVariables } from './middleware/auth';
 import settingsRoutes from './routes/settings';
 import customersRoutes from './routes/customers';
@@ -59,6 +60,13 @@ export interface Env {
    * embed must carry the widget's `data-sitekey`.
    */
   TURNSTILE_SECRET?: string;
+  /**
+   * Optional extra browser origins for the staff/customer CORS policy,
+   * comma-separated (e.g. a custom domain for the web app). The deployed
+   * workers.dev origin and localhost are always allowed; see
+   * `lib/corsOrigin.ts`.
+   */
+  ALLOWED_ORIGINS?: string;
 }
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -74,22 +82,13 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 app.use('/intake/*', cors({ origin: '*', allowMethods: ['POST', 'OPTIONS'], allowHeaders: ['Content-Type'], maxAge: 86400 }));
 
 /**
- * The staff-app and customer-page CORS policy: only the deployed web
- * Worker and localhost. Applied to every path except `/intake/*` by the
- * middleware below.
+ * The staff-app and customer-page CORS policy: the deployed web Worker,
+ * any origin listed in `ALLOWED_ORIGINS`, and localhost — each matched
+ * exactly (`lib/corsOrigin.ts`). Applied to every path except
+ * `/intake/*` by the middleware below.
  */
 const staffCors = cors({
-  origin: (origin) => {
-    if (!origin) return '';
-    if (
-      origin.includes('localhost') ||
-      origin.includes('127.0.0.1') ||
-      origin === 'https://measure-blinds.blindsnisa.workers.dev'
-    ) {
-      return origin;
-    }
-    return '';
-  },
+  origin: (origin, c) => allowedStaffOrigin(origin, parseOriginList((c.env as Env).ALLOWED_ORIGINS)),
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   maxAge: 86400,
@@ -140,15 +139,6 @@ app.route('/intake', leadIntakeRoutes);
  * intentionally outside this prefix and use rate limiting instead.
  */
 app.use('/api/*', requireAuth);
-
-/**
- * Temporary authenticated echo endpoint — lets Phase 3 verification
- * confirm the full login → Bearer token → Worker flow before real
- * data routes exist. Replaced by real route groups in Phases 4-9.
- */
-app.get('/api/me', (c) => {
-  return c.json({ user: c.get('user') });
-});
 
 /** Settings module — company info, catalogs, logo upload (Phase 4). */
 app.route('/api/settings', settingsRoutes);

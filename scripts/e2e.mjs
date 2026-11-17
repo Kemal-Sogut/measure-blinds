@@ -71,6 +71,14 @@ async function main() {
   created.userId = user.id;
   check(Boolean(user.id), 'create temp auth user');
 
+  // The Worker only serves users on the staff allow-list (migration 54).
+  // The row cascades away with the auth user in cleanup().
+  const profile = await admin('/rest/v1/profiles', {
+    method: 'POST',
+    body: JSON.stringify({ id: user.id, role: 'consultant' }),
+  });
+  check(profile.ok, 'add temp user to the staff allow-list');
+
   const login = await fetch(`${SB}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: { apikey: ANON, 'Content-Type': 'application/json' },
@@ -92,9 +100,9 @@ async function main() {
     return { status: r.status, body: isJson ? await r.json() : await r.arrayBuffer() };
   };
 
-  check((await fetch(`${API}/api/me`)).status === 401, 'unauthenticated /api/me → 401');
-  const me = await api('/api/me');
-  check(me.status === 200 && me.body.user.email === EMAIL, 'JWT verified via JWKS');
+  check((await fetch(`${API}/api/customers`)).status === 401, 'unauthenticated /api/customers → 401');
+  const me = await api('/api/customers');
+  check(me.status === 200, 'JWT verified via JWKS');
 
   // ── Catalog + customer ───────────────────────────────────────
   const fabrics = (await api('/api/settings/fabrics')).body.data;

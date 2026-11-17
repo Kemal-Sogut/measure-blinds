@@ -8,7 +8,9 @@
  * it against the Supabase project's JWKS endpoint using `jose`. On
  * success the decoded payload (user id, email, role) is attached to the
  * Hono context as `user`; on any failure the request is rejected with
- * 401 before reaching a route handler.
+ * 401 before reaching a route handler. A verified token is then checked
+ * against the staff allow-list (`lib/staffAccess.ts`): a login that is
+ * not staff gets 403.
  *
  * The remote JWKS set is created once per Worker isolate and cached by
  * `jose` internally (including key rotation refetches), so verification
@@ -17,6 +19,8 @@
 
 import type { Context, MiddlewareHandler } from 'hono';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { createSupabaseAdmin } from '../lib/supabase';
+import { createStaffGate, profilesLookup, type StaffLookup } from '../lib/staffAccess';
 
 /** Authenticated user identity extracted from a verified Supabase JWT. */
 export interface AuthUser {
@@ -52,15 +56,32 @@ function getJwks(supabaseUrl: string): ReturnType<typeof createRemoteJWKSet> {
 }
 
 /**
- * Verifies the Bearer token on the request and attaches the user to
- * the context. Responds 401 for missing, malformed, expired, or
- * wrongly-signed tokens.
+ * Per-isolate staff gate. Created on first use because it needs the
+ * request's `env`; the bindings are identical for every request an
+ * isolate serves, so the first one is safe to keep.
+ */
+let staffGate: StaffLookup | null = null;
+
+/** Returns the isolate's staff gate, creating it on first use. */
+function getStaffGate(env: { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string }): StaffLookup {
+  staffGate ??= createStaffGate((userId) => profilesLookup(createSupabaseAdmin(env))(userId));
+  return staffGate;
+}
+
+/**
+ * Verifies the Bearer token on the request, checks that its subject is
+ * on the staff allow-list, and attaches the user to the context.
+ *
+ * 401 for a missing, malformed, expired or wrongly-signed token, and for
+ * any token that is not an ordinary signed-in session (wrong audience or
+ * role, or an anonymous sign-in). 403 for a real session whose user is
+ * not staff. 503 when the allow-list could not be read — never 200.
  *
  * Usage: `app.use('/api/*', requireAuth)` — apply to every route group
- * except `/public/*` and `/api/health`.
+ * except `/public/*`, `/intake/*`, `/webhooks/*` and `/api/health`.
  */
 export const requireAuth: MiddlewareHandler<{
-  Bindings: { SUPABASE_URL: string };
+  Bindings: { SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string };
   Variables: AuthVariables;
 }> = async (c, next) => {
   const header = c.req.header('Authorization') ?? '';
@@ -73,6 +94,7 @@ export const requireAuth: MiddlewareHandler<{
   try {
     const result = await jwtVerify(token, getJwks(c.env.SUPABASE_URL), {
       issuer: `${c.env.SUPABASE_URL}/auth/v1`,
+      audience: 'authenticated',
     });
     payload = result.payload;
   } catch {
@@ -81,6 +103,20 @@ export const requireAuth: MiddlewareHandler<{
 
   if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
     return unauthorized(c, 'Token has no subject');
+  }
+  if (payload.role !== 'authenticated' || payload.is_anonymous === true) {
+    return unauthorized(c, 'Invalid or expired token');
+  }
+
+  let isStaff: boolean;
+  try {
+    isStaff = await getStaffGate(c.env)(payload.sub);
+  } catch (e) {
+    console.error('Staff gate:', e);
+    return c.json({ error: 'Could not verify staff access. Please try again.' }, 503);
+  }
+  if (!isStaff) {
+    return c.json({ error: 'This account is not authorised for staff access.' }, 403);
   }
 
   c.set('user', {
