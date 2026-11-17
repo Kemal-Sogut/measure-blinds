@@ -1,5 +1,18 @@
 # Bug Fixes History
 
+## 2026-11-17 — API access limited to staff listed in `profiles`; client-role table access removed
+Worker `apps/api/src/middleware/auth.ts`, `apps/api/src/lib/staffAccess.ts`, `apps/api/src/lib/corsOrigin.ts`;
+migration 54 `20261114000054_staff_allowlist_and_rls_lockdown.sql`. PR #76, merge `ccb6933`; API Worker version
+`fae237da` deployed 2026-11-17.
+- **Fix:** `public.profiles` is now the staff allow-list. `/api/*` requires a verified ordinary session token AND a
+  `profiles` row: 403 for non-staff, 503 if the allow-list cannot be read (fails closed). Only positive lookups are
+  cached, for 60 s per isolate. Migration 54 dropped every client-role policy and revoked table/sequence privileges
+  (and default privileges) from `anon`/`authenticated`; RLS stays enabled on every table, so the Worker's service
+  role is the only data path. CORS origins are matched exactly (optional `ALLOWED_ORIGINS` Worker var) and the
+  `/api/me` debug route was removed. Supabase sign-ups are disabled in the dashboard.
+- **Adding a staff member:** create the auth user in the Supabase dashboard, then insert their id into
+  `public.profiles` (role `admin` or `consultant`). It takes effect on the next request; no redeploy.
+
 ## 2026-11-04 — Customer view: discounted line totals spilled past the card
 `apps/web/src/pages/customer-view/CustomerView.tsx` (`LineItemRow`). Branch `feat/website-lead-form`.
 - **Issue:** the price column was a fixed `w-28`. A discounted row carries two figures (original struck
