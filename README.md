@@ -56,10 +56,11 @@ node scripts/e2e.mjs       # LIVE end-to-end test against your dev servers +
 
 Migrations live in `supabase/migrations/` (already applied to the live
 project); `supabase/seed.sql` holds idempotent dev seed data. All money columns
-are `NUMERIC(10,2)`; every table has RLS enabled with access granted only to
-the `authenticated` role — the Worker (service role) is the sole data path,
-and the public estimate view is served exclusively through
-`/public/estimate/:token`.
+are `NUMERIC(10,2)`; every table has RLS enabled with no client-role policy
+(`anon` and `authenticated` hold no table privileges) — the Worker (service
+role) is the sole data path. `/api/*` also requires the caller to be listed in
+`public.profiles` (the staff allow-list), and the public estimate view is
+served exclusively through `/public/estimate/:token`.
 
 ## Backups (do this — free tier has no point-in-time recovery)
 

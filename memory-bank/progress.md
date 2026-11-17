@@ -6,6 +6,11 @@
 
 ## What Works
 
+**Access lock-down (audit remediation Plan 1), deployed 2026-11-17:** `public.profiles` is the staff allow-list;
+`/api/*` needs a verified session AND a `profiles` row (403 / 503 fail-closed); RLS has no client-role policy and
+`anon`/`authenticated` hold no table privileges; exact-match CORS; sign-ups disabled. Audit remediation continues
+with Plans 2-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+
 **Text size setting (Settings → Display, per device; commit `45c82de` on `feat/website-lead-form`, not
 deployed):** Default / Large / Extra large scale every font via `--font-scale`; see engine_features 2026-11-04.
 

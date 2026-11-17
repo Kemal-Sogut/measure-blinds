@@ -6,6 +6,10 @@
 
 ## Where things stand
 
+**Audit remediation in progress; Plan 1 (access lock-down) is deployed (2026-11-17, API Worker `fae237da`, PR #76,
+migration 54 applied):** `/api/*` requires a `profiles` row, client-role table access is gone, CORS is exact-match,
+Supabase sign-ups are off. Next: Plans 2-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+
 **Also on this branch (commit `45c82de`):** Settings → Display → **Text size** (per device; Default / Large / Extra
 large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns
 "Font sizes scale from one variable".
