@@ -332,11 +332,18 @@ const orderSchema = z
     line_items: z.array(lineItemSchema).max(200).default([]),
     /** PUT only: this save restores that revision (see `lib/orderRestore.ts`). */
     restore_from_revision: z.string().uuid().optional(),
+    /**
+     * PUT only: the `content_version` the editor loaded (migration 55).
+     * When present, the save is refused with 409 if the stored version
+     * has moved. Optional so a browser still running an older web bundle
+     * keeps saving as before.
+     */
+    expected_version: z.number().int().min(0).optional(),
   })
   .strict();
 
-/** Payload for POST /: a new order has no revision, so a restore is a 400 (still strict). */
-const createOrderSchema = orderSchema.omit({ restore_from_revision: true });
+/** Payload for POST /: a new order has no revision and no version, so either is a 400 (still strict). */
+const createOrderSchema = orderSchema.omit({ restore_from_revision: true, expected_version: true });
 
 /** Payload for POST /:id/payments — a single ledger entry. */
 const paymentSchema = z
@@ -1399,6 +1406,9 @@ app.get('/:id/revisions/:revisionId', async (c) => {
   return c.json({ data: res.data });
 });
 
+/** The 409 wording when a save was made from a screen that is out of date. */
+const VERSION_CONFLICT_ERROR = 'This order was changed somewhere else after you opened it.';
+
 /**
  * Updates an order — editable at ANY lifecycle stage, with full server
  * recalc. Extending an `expired` estimate's validity date back to today
@@ -1407,6 +1417,7 @@ app.get('/:id/revisions/:revisionId', async (c) => {
  * other status is preserved. See the revive note at the `update` call.
  * `restore_from_revision` makes the save a revision restore: untouched
  * items keep that revision's locked prices (`lib/orderRestore.ts`).
+ * The write is a single `save_order_with_items` call; a stale `expected_version` is a 409 with `code: 'version_conflict'` and nothing written.
  */
 app.put('/:id', async (c) => {
   const parsed = orderSchema.safeParse(await c.req.json().catch(() => null));
@@ -1528,41 +1539,41 @@ app.put('/:id', async (c) => {
   // that expired it in `applyDefensiveExpiry`; a still-past date leaves
   // the order expired (and its prices frozen), and no non-expired status
   // is ever rewritten here.
-  const { error: upError } = await sb
-    .from('orders')
-    .update({
-      customer_id: input.customer_id,
-      ...titlePatch(input.title),
-      order_date,
-      expiry_date,
-      discount_type: input.discount_type,
-      discount_value: input.discount_value,
-      // Every save drops the order-total notice's dismissal: staff asked
-      // for a dismissed notice to stay quiet only until the next save,
-      // so after one it is measured against the stamp again and speaks
-      // if the total still differs from what the customer was sent.
-      quoted_notice_ack_total: null,
-      // A revived estimate is a fresh quote: the lock columns and
-      // the quoted stamp and its acknowledgement go null through the
-      // line-item replacement
-      // below (no `locks`, no `prior`), and the order's own stamp has to
-      // follow them or a notice would measure against a figure nobody
-      // was sent.
-      ...(reviveToDraft ? { status: 'draft', quoted_total: null } : {}),
-      ...totals,
-    })
-    .eq('id', id);
-  if (upError) return c.json({ error: upError.message }, 500);
+  const fields = {
+    customer_id: input.customer_id,
+    ...titlePatch(input.title),
+    order_date,
+    expiry_date,
+    discount_type: input.discount_type,
+    discount_value: input.discount_value,
+    // Every save drops the order-total notice's dismissal: staff asked
+    // for a dismissed notice to stay quiet only until the next save,
+    // so after one it is measured against the stamp again and speaks
+    // if the total still differs from what the customer was sent.
+    quoted_notice_ack_total: null,
+    // A revived estimate is a fresh quote: the lock columns, the quoted
+    // stamp and its acknowledgement go null through the line-item
+    // replacement (no `locks`, no `prior`), and the order's own stamp has
+    // to follow them or a notice would measure against a figure nobody
+    // was sent.
+    ...(reviveToDraft ? { status: 'draft', quoted_total: null } : {}),
+    ...totals,
+  };
 
-  // Replace line items wholesale — simplest correct model for a
-  // single-editor tool; row counts are tiny at this scale.
-  const { error: delError } = await sb.from('line_items').delete().eq('order_id', id);
-  if (delError) return c.json({ error: delError.message }, 500);
-  if (rows.length) {
-    const { error: insError } = await sb
-      .from('line_items')
-      .insert(rows.map((r) => ({ ...r, order_id: id })));
-    if (insError) return c.json({ error: insError.message }, 500);
+  // ONE transaction (migration 55): the order's fields and the wholesale
+  // line-item replacement succeed or fail together, and a save made from
+  // an out-of-date screen is refused before anything is written.
+  const { error: saveError } = await sb.rpc('save_order_with_items', {
+    p_order_id: id,
+    p_fields: fields,
+    p_items: rows,
+    p_expected_version: input.expected_version ?? null,
+  });
+  if (saveError) {
+    if (saveError.message?.includes('version_conflict')) {
+      return c.json({ error: VERSION_CONFLICT_ERROR, code: 'version_conflict' }, 409);
+    }
+    return c.json({ error: saveError.message }, 500);
   }
 
   await logOrderEvent(sb, id, `Order edited (was ${existing.status}).`);

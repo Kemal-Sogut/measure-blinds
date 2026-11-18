@@ -46,6 +46,8 @@ interface FakeDb {
   opErrors: Record<string, { message: string }>;
   /** Every filter call as [table, method, args] — lets a test prove WHICH row a route asked for. */
   filters: Array<[string, string, unknown[]]>;
+  /** Every `sb.rpc(name, args)` call, in order. */
+  rpcCalls: Array<{ name: string; args: Record<string, unknown> }>;
 }
 
 const db: FakeDb = {
@@ -56,6 +58,7 @@ const db: FakeDb = {
   updatePayloads: {},
   opErrors: {},
   filters: [],
+  rpcCalls: [],
 };
 
 /**
@@ -117,7 +120,26 @@ function makeBuilder(table: string) {
 }
 
 vi.mock('../lib/supabase', () => ({
-  createSupabaseAdmin: () => ({ from: (table: string) => makeBuilder(table) }),
+  createSupabaseAdmin: () => ({
+    from: (table: string) => makeBuilder(table),
+    /**
+     * Scripted `rpc`. A save is ALSO mirrored into the capture slots the
+     * old three-call save filled (`updatePayloads.orders`,
+     * `insertPayloads.line_items`), so every existing assertion about
+     * what a PUT wrote keeps reading the same place. Script a failure
+     * with `db.opErrors['rpc.<name>']`.
+     */
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      db.calls.push(`rpc.${name}`);
+      db.rpcCalls.push({ name, args });
+      if (name === 'save_order_with_items') {
+        (db.updatePayloads.orders ??= []).push(args.p_fields);
+        (db.insertPayloads.line_items ??= []).push(args.p_items);
+      }
+      const failure = db.opErrors[`rpc.${name}`];
+      return failure ? { data: null, error: failure } : { data: 1, error: null };
+    },
+  }),
 }));
 // The auth test loads the real Worker entry (`../index`) to prove the
 // route sits behind `/api/*`'s JWT check. Its inbox sync imports
@@ -214,6 +236,7 @@ beforeEach(() => {
   db.updatePayloads = {};
   db.opErrors = {};
   db.filters = [];
+  db.rpcCalls = [];
   db.responses = {
     'materials.select': [MATERIAL],
     'cassette_options.select': [CASSETTE],
@@ -3606,7 +3629,7 @@ describe('incomplete draft items — saving (spec 2026-11-02)', () => {
     db.responses['orders.select'] = [{ id: 'd1', status: 'draft', expiry_date: future(), line_items: [] }];
     const res = await put('d1', blankPayload());
     expect(res.status).toBe(200);
-    expect(db.calls).toContain('line_items.insert');
+    expect(db.calls).toContain('rpc.save_order_with_items');
   });
 
   it('PUT on a sent order refuses an incomplete item and writes nothing', async () => {
@@ -3780,5 +3803,71 @@ describe('incomplete draft items — reads (spec 2026-11-02)', () => {
     expect(data.id).toBe('d1');
     expect(data.incomplete_items).toBeUndefined();
     expect(data.line_items[0].missing_fields).toBeUndefined();
+  });
+});
+
+describe('PUT /:id — atomic save and version check', () => {
+  const json = { 'Content-Type': 'application/json' };
+  const draft = { id: 'v1', status: 'draft', expiry_date: '2026-07-17', line_items: [] };
+
+  it('writes the order and its items in ONE database call', async () => {
+    db.responses['orders.select'] = [draft];
+    const res = await ordersApp.request('/v1', { method: 'PUT', body: JSON.stringify(payload()), headers: json }, ENV);
+    expect(res.status).toBe(200);
+
+    const saves = db.rpcCalls.filter((c) => c.name === 'save_order_with_items');
+    expect(saves).toHaveLength(1);
+    expect(saves[0].args.p_order_id).toBe('v1');
+    expect(saves[0].args.p_items as unknown[]).toHaveLength(2);
+    expect((saves[0].args.p_fields as Record<string, unknown>).total).toBe(395.61);
+    // The three separate writes are gone.
+    expect(db.calls).not.toContain('line_items.delete');
+    expect(db.calls).not.toContain('line_items.insert');
+  });
+
+  it('sends no expected version when the client sent none', async () => {
+    db.responses['orders.select'] = [draft];
+    await ordersApp.request('/v1', { method: 'PUT', body: JSON.stringify(payload()), headers: json }, ENV);
+    expect(db.rpcCalls.at(-1)?.args.p_expected_version).toBeNull();
+  });
+
+  it('passes the client version through to the database', async () => {
+    db.responses['orders.select'] = [draft];
+    await ordersApp.request(
+      '/v1',
+      { method: 'PUT', body: JSON.stringify({ ...payload(), expected_version: 7 }), headers: json },
+      ENV
+    );
+    expect(db.rpcCalls.at(-1)?.args.p_expected_version).toBe(7);
+  });
+
+  it('answers 409 version_conflict when the stored version has moved', async () => {
+    db.responses['orders.select'] = [draft];
+    db.opErrors['rpc.save_order_with_items'] = { message: 'version_conflict' };
+    const res = await ordersApp.request(
+      '/v1',
+      { method: 'PUT', body: JSON.stringify({ ...payload(), expected_version: 3 }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: 'version_conflict' });
+    // Nothing is logged for a save that did not happen.
+    expect(db.calls).not.toContain('order_logs.insert');
+  });
+
+  it('answers 500 for any other database failure', async () => {
+    db.responses['orders.select'] = [draft];
+    db.opErrors['rpc.save_order_with_items'] = { message: 'connection reset' };
+    const res = await ordersApp.request('/v1', { method: 'PUT', body: JSON.stringify(payload()), headers: json }, ENV);
+    expect(res.status).toBe(500);
+  });
+
+  it('refuses expected_version on create', async () => {
+    const res = await ordersApp.request(
+      '/',
+      { method: 'POST', body: JSON.stringify({ ...payload(), expected_version: 0 }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(400);
   });
 });
