@@ -336,9 +336,10 @@ const orderSchema = z
      * PUT only: the `content_version` the editor loaded (migration 55).
      * When present, the save is refused with 409 if the stored version
      * has moved. Optional so a browser still running an older web bundle
-     * keeps saving as before.
+     * keeps saving as before. Capped at the Postgres `integer` maximum so
+     * an out-of-range figure is a 400, not a database error.
      */
-    expected_version: z.number().int().min(0).optional(),
+    expected_version: z.number().int().min(0).max(2_147_483_647).optional(),
   })
   .strict();
 
@@ -1570,7 +1571,7 @@ app.put('/:id', async (c) => {
     p_expected_version: input.expected_version ?? null,
   });
   if (saveError) {
-    if (saveError.message?.includes('version_conflict')) {
+    if (saveError.message === 'version_conflict') {
       return c.json({ error: VERSION_CONFLICT_ERROR, code: 'version_conflict' }, 409);
     }
     return c.json({ error: saveError.message }, 500);

@@ -3862,6 +3862,16 @@ describe('PUT /:id — atomic save and version check', () => {
     expect(res.status).toBe(500);
   });
 
+  it('refuses an expected_version beyond the Postgres integer range', async () => {
+    db.responses['orders.select'] = [draft];
+    const res = await ordersApp.request(
+      '/v1',
+      { method: 'PUT', body: JSON.stringify({ ...payload(), expected_version: 2_147_483_648 }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(400);
+  });
+
   it('refuses expected_version on create', async () => {
     const res = await ordersApp.request(
       '/',
