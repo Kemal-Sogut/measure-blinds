@@ -25,7 +25,9 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
  * matching the human message.
  */
 export class ApiError extends Error {
+  /** HTTP status code returned by the Worker. */
   readonly status: number;
+  /** Optional machine-readable reason from the response body, e.g. `version_conflict`. */
   readonly code: string | undefined;
   constructor(message: string, status: number, code?: string) {
     super(message);

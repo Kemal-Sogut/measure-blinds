@@ -548,6 +548,12 @@ export default function OrderDetail() {
   const [materialUsagePicks, setMaterialUsagePicks] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
   /**
+   * The `content_version` the editor's on-screen edits are based on. NOT read
+   * from `existing`: that query refetches on window focus without
+   * re-hydrating the editor, so it can move ahead of what is on screen.
+   */
+  const loadedVersion = useRef<number | undefined>(undefined);
+  /**
    * A revision Restore loaded into the editor, not yet saved: the next
    * save sends it as `restore_from_revision` (Design decision 8). Any
    * re-hydration discards it with the edits. `dismissed` only hides the
@@ -719,6 +725,7 @@ export default function OrderDetail() {
       setDiscountType(existing.discount_type);
       setDiscountValue(existing.discount_value ? String(existing.discount_value) : '');
       setRestoreFrom(null);
+      loadedVersion.current = existing.content_version;
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
@@ -1263,13 +1270,14 @@ export default function OrderDetail() {
     try {
       const updateInput = withExpectedVersion(
         restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
-        existing?.content_version,
+        loadedVersion.current,
         options.overwrite === true
       );
       const saved = id
         ? await updateMut.mutateAsync({ id, input: updateInput })
         : await createMut.mutateAsync(payload);
       setSavedSnapshot(snapshotAtSave);
+      loadedVersion.current = saved.content_version;
       setRestoreFrom(null);
       // A save ends any dismissal; the Worker drops its acknowledgement
       // on the same save, so the notice speaks again if the total still
@@ -1280,6 +1288,7 @@ export default function OrderDetail() {
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
+      // Must precede the restore-409 branch below, which would swallow it.
       if (e instanceof ApiError && e.code === 'version_conflict') {
         const overwrite = await askConfirm({
           title: 'This order was changed somewhere else',
