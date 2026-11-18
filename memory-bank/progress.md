@@ -9,7 +9,13 @@
 **Access lock-down (audit remediation Plan 1), deployed 2026-11-17:** `public.profiles` is the staff allow-list;
 `/api/*` needs a verified session AND a `profiles` row (403 / 503 fail-closed); RLS has no client-role policy and
 `anon`/`authenticated` hold no table privileges; exact-match CORS; sign-ups disabled. Audit remediation continues
-with Plans 2-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+with Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+
+**Order save integrity (audit remediation Plan 2), branch `fix/order-save-integrity`, NOT deployed; migration 55
+written, NOT applied:** an order save is one Postgres transaction (`save_order_with_items`) and a save from an
+out-of-date screen is refused with 409 `version_conflict`. Deploy order: migration 55, then the API Worker, then the
+web. API before the migration = every order save 500s; web before the API (or the API rolled back alone after the
+web ships) = every save 400s on the unknown `expected_version`.
 
 **Text size setting (Settings → Display, per device; commit `45c82de` on `feat/website-lead-form`, not
 deployed):** Default / Large / Extra large scale every font via `--font-scale`; see engine_features 2026-11-04.
