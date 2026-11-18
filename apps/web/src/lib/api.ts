@@ -19,17 +19,19 @@ import { supabase } from './supabaseClient';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787';
 
 /**
- * Error thrown for non-2xx API responses; carries the HTTP status so
- * callers can branch (e.g. 401 → force sign-out, 409 → conflict UI).
+ * An API failure. `status` is the HTTP status; `code` is the optional
+ * machine-readable reason the Worker adds to some errors (for example
+ * `version_conflict`), so callers branch on a stable value instead of
+ * matching the human message.
  */
 export class ApiError extends Error {
-  /** HTTP status code returned by the Worker */
   readonly status: number;
-
-  constructor(message: string, status: number) {
+  readonly code: string | undefined;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -68,10 +70,8 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
 
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new ApiError(
-      (body as { error?: string }).error || `API error: ${response.status}`,
-      response.status
-    );
+    const failure = body as { error?: string; code?: string };
+    throw new ApiError(failure.error || `API error: ${response.status}`, response.status, failure.code);
   }
 
   return response.json();
@@ -93,10 +93,8 @@ export async function apiDownload(path: string): Promise<Blob> {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ error: 'Download failed' }));
-    throw new ApiError(
-      (body as { error?: string }).error || `API error: ${response.status}`,
-      response.status
-    );
+    const failure = body as { error?: string; code?: string };
+    throw new ApiError(failure.error || `API error: ${response.status}`, response.status, failure.code);
   }
   return response.blob();
 }

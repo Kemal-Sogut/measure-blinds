@@ -151,6 +151,12 @@ export interface OrderInput {
    * and logs the restore; the client still sends no money.
    */
   restore_from_revision?: string;
+  /**
+   * Update only: the `content_version` this editor loaded. The Worker
+   * answers 409 (`code: 'version_conflict'`) when the stored one has
+   * moved. Omit to overwrite regardless.
+   */
+  expected_version?: number;
 }
 
 /**

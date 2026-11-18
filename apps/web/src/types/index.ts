@@ -154,6 +154,13 @@ export interface Order {
   /** Optional consultant label (migration 47); null renders nothing. */
   title: string | null;
   customer_id: string;
+  /**
+   * Bumped by every editor save (migration 55). Sent back as
+   * `expected_version` so the Worker can refuse a save made from an
+   * out-of-date screen. Optional on the wire: a Worker deployed before
+   * the migration omits it, and the editor then saves without the check.
+   */
+  content_version?: number;
   status: OrderStatus;
   order_date: string;
   expiry_date: string;

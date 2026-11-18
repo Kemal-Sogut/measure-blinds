@@ -222,3 +222,22 @@ export function buildOrderPayload(state: OrderPayloadState): OrderInput | string
     line_items,
   };
 }
+
+/**
+ * Adds the optimistic-concurrency version to an UPDATE payload.
+ *
+ * @param input     The payload `buildOrderPayload` produced.
+ * @param version   `Order.content_version` as loaded; `undefined` when the
+ *                  Worker predates the field.
+ * @param overwrite True when the staff member has already been told the
+ *                  order changed elsewhere and chose to keep their version.
+ * @returns `input` itself when no check should be made (so callers can
+ *          tell by identity), otherwise a copy carrying `expected_version`.
+ */
+export function withExpectedVersion(
+  input: OrderInput,
+  version: number | undefined,
+  overwrite: boolean
+): OrderInput {
+  return overwrite || version === undefined ? input : { ...input, expected_version: version };
+}
