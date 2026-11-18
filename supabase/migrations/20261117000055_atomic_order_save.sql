@@ -21,9 +21,26 @@
 --    six later migrations) named every column, was missed when `uid`,
 --    `hidden` and the price-lock columns arrived, and so could no longer be
 --    used. This one needs no change when a column is added: a key in the
---    JSON that names a real column is written, anything else is ignored.
+--    JSON that names a real column is written.
+--
+--    Unknown keys are REFUSED, not ignored (the PostgREST writes this
+--    replaces failed loudly on a missing column, and a Worker deployed
+--    ahead of its column migration must not silently lose data):
+--      * p_fields: a key that is not a writable orders column raises
+--        `unknown_order_field`. That includes the columns the function
+--        never sets (id, order_number, created_at, updated_at,
+--        content_version) — the Worker never sends them, so an explicit
+--        refusal beats a silent skip.
+--      * p_items: a key that is not a line_items column raises
+--        `unknown_item_field`. Here id, order_id, created_at and
+--        updated_at count as known and are ignored, because a row read
+--        back from the table legitimately carries them.
+--      * p_items that is null or not a JSON array, an element that is not
+--        an object, or a non-empty array whose elements name no writable
+--        column raises `invalid_items`.
 --    Identifiers come from the catalog and are quoted with %I, so no value
---    from the request is ever concatenated into SQL.
+--    from the request is ever concatenated into SQL. The offending key
+--    names are reported in the error's DETAIL.
 --
 -- 3. The stale update_order_with_items() is dropped so nobody calls it.
 
@@ -45,7 +62,52 @@ declare
   v_version integer;
   v_set     text;
   v_cols    text;
+  v_unknown text;
 begin
+  -- Shape checks first: they need no lock and nothing has been written.
+  if p_items is null or jsonb_typeof(p_items) <> 'array' then
+    raise exception 'invalid_items' using detail = 'p_items must be a JSON array';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_items) e where jsonb_typeof(e) <> 'object') then
+    raise exception 'invalid_items' using detail = 'every element of p_items must be a JSON object';
+  end if;
+  if p_fields is null or jsonb_typeof(p_fields) <> 'object' then
+    raise exception 'no_order_fields';
+  end if;
+
+  -- Refuse keys that name no writable orders column (see header).
+  select string_agg(distinct k, ', ')
+    into v_unknown
+    from jsonb_object_keys(p_fields) k
+   where not exists (
+           select 1
+             from pg_catalog.pg_attribute a
+            where a.attrelid = 'public.orders'::regclass
+              and a.attnum > 0
+              and not a.attisdropped
+              and a.attname::text = k
+              and a.attname not in ('id', 'order_number', 'created_at', 'updated_at', 'content_version')
+         );
+  if v_unknown is not null then
+    raise exception 'unknown_order_field' using detail = v_unknown;
+  end if;
+
+  -- Refuse item keys that name no line_items column at all.
+  select string_agg(distinct k, ', ')
+    into v_unknown
+    from jsonb_array_elements(p_items) e, jsonb_object_keys(e) k
+   where not exists (
+           select 1
+             from pg_catalog.pg_attribute a
+            where a.attrelid = 'public.line_items'::regclass
+              and a.attnum > 0
+              and not a.attisdropped
+              and a.attname::text = k
+         );
+  if v_unknown is not null then
+    raise exception 'unknown_item_field' using detail = v_unknown;
+  end if;
+
   -- Lock the order row for the whole save: two saves of one order queue
   -- here, so the second sees the first one's version.
   select o.content_version
@@ -60,7 +122,7 @@ begin
     raise exception 'version_conflict';
   end if;
 
-  -- Order fields: every key of p_fields that is a writable orders column.
+  -- Order fields: every key of p_fields (all verified as writable columns above).
   select string_agg(format('%1$I = r.%1$I', a.attname), ', ')
     into v_set
     from pg_catalog.pg_attribute a
@@ -83,7 +145,7 @@ begin
 
   delete from public.line_items li where li.order_id = p_order_id;
 
-  if jsonb_typeof(p_items) = 'array' and jsonb_array_length(p_items) > 0 then
+  if jsonb_array_length(p_items) > 0 then
     -- Union of the keys across ALL items, so a row that omits a key gets
     -- NULL for it exactly as a PostgREST bulk insert did.
     select string_agg(format('%I', a.attname), ', ' order by a.attnum)
@@ -94,6 +156,10 @@ begin
        and not a.attisdropped
        and a.attname not in ('id', 'order_id', 'created_at', 'updated_at')
        and exists (select 1 from jsonb_array_elements(p_items) e where e ? a.attname::text);
+    if v_cols is null then
+      -- e.g. [{}] or rows carrying only id/order_id: nothing writable.
+      raise exception 'invalid_items' using detail = 'no element of p_items names a writable column';
+    end if;
 
     execute format(
       'insert into public.line_items (order_id, %1$s)

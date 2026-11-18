@@ -6,10 +6,14 @@
 -- Runs entirely inside ONE transaction that is rolled back, so it is safe
 -- to run against the live project: it re-saves an existing order with its
 -- own items, checks the result, and leaves no trace. It proves the three
--- things the function exists for:
+-- things the function exists for, plus its refusals — six checks:
 --   1. a save round-trips every line item (no column is lost);
 --   2. a stale expected version is refused with `version_conflict`;
---   3. a save that fails part-way keeps the items it started with.
+--   3. a save that fails part-way keeps the items it started with;
+--   4. an unknown order is reported as `order_not_found`;
+--   5. an unknown order key is refused with `unknown_order_field` and an
+--      unknown item key with `unknown_item_field`, items untouched;
+--   6. a non-array or column-less `p_items` is refused with `invalid_items`.
 -- Any failed check raises, which aborts the script with the message.
 
 begin;
@@ -33,7 +37,7 @@ begin
   end if;
 
   select count(*) into v_before from public.line_items where order_id = v_order;
-  select jsonb_agg(to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at' order by li.position)
+  select jsonb_agg(to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at' order by li.position, (to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at')::text)
     into v_items
     from public.line_items li
    where li.order_id = v_order;
@@ -44,7 +48,7 @@ begin
   select count(*) into v_after from public.line_items where order_id = v_order;
   assert v_after = v_before, format('item count changed: %s -> %s', v_before, v_after);
   assert v_new = (select content_version from public.orders where id = v_order), 'returned version is not the stored one';
-  select jsonb_agg(to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at' order by li.position)
+  select jsonb_agg(to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at' order by li.position, (to_jsonb(li) - 'id' - 'order_id' - 'created_at' - 'updated_at')::text)
     into v_items
     from public.line_items li
    where li.order_id = v_order;
@@ -80,6 +84,43 @@ begin
   exception when others then
     if sqlerrm <> 'order_not_found' then raise; end if;
   end;
+
+  -- 5. Unknown keys are refused, never silently dropped; items survive.
+  begin
+    perform public.save_order_with_items(v_order, jsonb_build_object('no_such_column', 1), v_items, null);
+    raise exception 'expected unknown_order_field, but the save went through';
+  exception when others then
+    if sqlerrm <> 'unknown_order_field' then raise; end if;
+  end;
+  begin
+    perform public.save_order_with_items(
+      v_order,
+      jsonb_build_object('discount_value', 0),
+      (select jsonb_agg(e || '{"no_such_column":1}'::jsonb) from jsonb_array_elements(v_items) e),
+      null
+    );
+    raise exception 'expected unknown_item_field, but the save went through';
+  exception when others then
+    if sqlerrm <> 'unknown_item_field' then raise; end if;
+  end;
+  select count(*) into v_after from public.line_items where order_id = v_order;
+  assert v_after = v_before, 'items were lost when an unknown key was refused';
+
+  -- 6. Malformed p_items is refused with a clear message.
+  begin
+    perform public.save_order_with_items(v_order, jsonb_build_object('discount_value', 0), '{}'::jsonb, null);
+    raise exception 'expected invalid_items for a non-array';
+  exception when others then
+    if sqlerrm <> 'invalid_items' then raise; end if;
+  end;
+  begin
+    perform public.save_order_with_items(v_order, jsonb_build_object('discount_value', 0), '[{}]'::jsonb, null);
+    raise exception 'expected invalid_items for [{}]';
+  exception when others then
+    if sqlerrm <> 'invalid_items' then raise; end if;
+  end;
+  select count(*) into v_after from public.line_items where order_id = v_order;
+  assert v_after = v_before, 'items were lost when malformed items were refused';
 
   raise notice 'save_order_with_items: all checks passed';
 end
