@@ -11,8 +11,8 @@
 `anon`/`authenticated` hold no table privileges; exact-match CORS; sign-ups disabled. Audit remediation continues
 with Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
 
-**Order save integrity (audit remediation Plan 2), branch `fix/order-save-integrity`, NOT deployed; migration 55
-written, NOT applied:** an order save is one Postgres transaction (`save_order_with_items`) and a save from an
+**Order save integrity (audit remediation Plan 2), branch `fix/order-save-integrity`, API and web NOT deployed; migration 55
+APPLIED 2026-11-21:** an order save is one Postgres transaction (`save_order_with_items`) and a save from an
 out-of-date screen is refused with 409 `version_conflict`. Deploy order: migration 55, then the API Worker, then the
 web. API before the migration = every order save 500s; web before the API (or the API rolled back alone after the
 web ships) = every save 400s on the unknown `expected_version`.

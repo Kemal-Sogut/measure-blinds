@@ -10,8 +10,8 @@
 migration 54 applied):** `/api/*` requires a `profiles` row, client-role table access is gone, CORS is exact-match,
 Supabase sign-ups are off. Next: Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
 
-**Plan 2 (order save integrity) is on branch `fix/order-save-integrity`, NOT deployed; migration 55
-(`20261117000055_atomic_order_save.sql`) is written but NOT applied.** One-transaction order save plus
+**Plan 2 (order save integrity) is on branch `fix/order-save-integrity`, API and web NOT deployed; migration 55
+(`20261117000055_atomic_order_save.sql`) APPLIED to the live project 2026-11-21.** One-transaction order save plus
 `content_version` conflict check. **Deploy order: migration 55, then the API Worker, then the web.** Hazards: the
 API before the migration makes every order save 500 (the function is missing); the web before the API, or the API
 rolled back alone after the web ships, makes every save 400 (the strict schema rejects `expected_version`).
