@@ -4023,15 +4023,70 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
 });
 
 describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
-  it('releases the e-Transfer behind the payment before the payment row goes', async () => {
+  beforeEach(() => {
     db.responses['payments.select'] = [{ id: 'p1', order_id: 'o1', amount: 250 }];
     db.responses['orders.select'] = [{ id: 'o1', status: 'ready', payments: [] }];
-    const res = await ordersApp.request('/o1/payments/p1', { method: 'DELETE' }, ENV);
+  });
+  const del = () => ordersApp.request('/o1/payments/p1', { method: 'DELETE' }, ENV);
+
+  it('releases the e-Transfer behind the payment before the payment row goes', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    const res = await del();
     expect(res.status).toBe(200);
     expect(db.updatePayloads.etransfers?.[0]).toEqual({ status: 'pending', order_id: null, payment_id: null });
     expect(db.filters).toContainEqual(['etransfers', 'eq', ['payment_id', 'p1']]);
+    expect(db.filters).toContainEqual(['etransfers', 'in', ['id', ['et1']]]);
+    expect(db.filters).toContainEqual(['etransfers', 'eq', ['status', 'applied']]);
     // BEFORE the delete: the foreign key nulls payment_id the moment the
     // payment row goes, and the transfer could no longer be found by it.
     expect(db.calls.indexOf('etransfers.update')).toBeLessThan(db.calls.indexOf('payments.delete'));
+  });
+
+  it('answers 500 and keeps the payment when the release fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.opErrors['etransfers.update'] = { message: 'release failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).not.toContain('payments.delete');
+  });
+
+  it('answers 500 and keeps the payment when the lookup fails', async () => {
+    db.opErrors['etransfers.select'] = { message: 'lookup failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).not.toContain('payments.delete');
+  });
+
+  it('re-applies the released e-Transfer when the payment delete fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.opErrors['payments.delete'] = { message: 'delete failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.updatePayloads.etransfers).toEqual([
+      { status: 'pending', order_id: null, payment_id: null },
+      { status: 'applied', order_id: 'o1', payment_id: 'p1' },
+    ]);
+    expect(db.filters.filter(([t, m, a]) => t === 'etransfers' && m === 'in' && (a[0] as string) === 'id')).toHaveLength(2);
+  });
+
+  it('logs when the restore itself fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.opErrors['payments.delete'] = { message: 'delete failed' };
+    let n = 0;
+    Object.defineProperty(db.opErrors, 'etransfers.update', {
+      enumerable: true,
+      get: () => (++n > 1 ? { message: 'restore failed' } : undefined),
+    });
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).toContain('order_logs.insert');
+    expect(JSON.stringify(db.insertPayloads.order_logs)).toContain('could not be restored');
+  });
+
+  it('deletes cleanly when no e-Transfer is linked', async () => {
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('etransfers.update');
+    expect(db.calls).toContain('payments.delete');
   });
 });

@@ -117,6 +117,7 @@ import { formatDateLong } from '../lib/timeText';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
 import { toDuplicateInput } from '../lib/orderDuplicate';
 import { deleteOrderCascade } from '../lib/orderDelete';
+import { deletePaymentReleasingEtransfer } from '../lib/paymentDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
 import { logOrderEvent } from '../lib/orderLog';
@@ -2365,18 +2366,10 @@ app.delete('/:id/payments/:paymentId', async (c) => {
     .maybeSingle();
   if (!payment) return c.json({ error: 'Payment not found on this order.' }, 404);
 
-  // A payment that came from an e-Transfer points back at its inbox row.
-  // Release that row to `pending` BEFORE the delete: the foreign key
-  // nulls `payment_id` as the payment goes, after which the transfer
-  // would sit `applied` against nothing — money in neither list. Same
-  // rule `lib/orderDelete.ts` applies when a whole order is deleted.
-  await sb
-    .from('etransfers')
-    .update({ status: 'pending', order_id: null, payment_id: null })
-    .eq('payment_id', paymentId);
-
-  const { error: delError } = await sb.from('payments').delete().eq('id', paymentId);
-  if (delError) return c.json({ error: delError.message }, 500);
+  // Releases any e-Transfer behind the payment before it goes, and
+  // restores the link if the delete fails. See lib/paymentDelete.ts.
+  const deleted = await deletePaymentReleasingEtransfer(sb, id, paymentId);
+  if (deleted.status === 'failed') return c.json({ error: deleted.message }, 500);
 
   // Auto-revert: if the order is in_progress and no payments remain,
   // roll back to awaiting_payment.
