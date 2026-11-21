@@ -2,8 +2,10 @@
 
 ## 2026-11-17 — Order saves are all-or-nothing; a save from an out-of-date screen is refused
 Worker `PUT /api/orders/:id`, migration 55 (`save_order_with_items`, `orders.content_version`); web
-`apps/web/src/pages/orders/OrderDetail.tsx`, `orderPayload.ts`, `lib/api.ts`. Branch `fix/order-save-integrity`;
-**migration 55 applied 2026-11-21; the API Worker and web are not deployed yet.** Deploy order: migration 55, then the API Worker, then the web.
+`apps/web/src/pages/orders/OrderDetail.tsx`, `orderPayload.ts`, `lib/api.ts`. PR #78;
+**deployed 2026-11-21:** migration 55 applied, then the API Worker (version `44f001bb`), then the web (version
+`7d23f11e`). Never roll the API back on its own while this web is live: the old API's strict schema rejects
+`expected_version`, so every save would fail with 400.
 - **Issue:** a save updated the order and replaced its line items in separate steps, so a failure part-way left
   an order half-written; and two tabs or devices saving the same order silently overwrote each other.
 - **Fix:** the whole save (order update, wholesale line-item replace, `content_version` bump) runs as one

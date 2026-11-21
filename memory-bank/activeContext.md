@@ -10,11 +10,11 @@
 migration 54 applied):** `/api/*` requires a `profiles` row, client-role table access is gone, CORS is exact-match,
 Supabase sign-ups are off. Next: Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
 
-**Plan 2 (order save integrity) is on branch `fix/order-save-integrity`, API and web NOT deployed; migration 55
-(`20261117000055_atomic_order_save.sql`) APPLIED to the live project 2026-11-21.** One-transaction order save plus
-`content_version` conflict check. **Deploy order: migration 55, then the API Worker, then the web.** Hazards: the
-API before the migration makes every order save 500 (the function is missing); the web before the API, or the API
-rolled back alone after the web ships, makes every save 400 (the strict schema rejects `expected_version`).
+**Plan 2 (order save integrity) is DEPLOYED 2026-11-21 (PR #78): migration 55 applied, API Worker `44f001bb`, web
+`7d23f11e`.** One-transaction order save (`save_order_with_items`) plus a `content_version` conflict check; the editor
+asks before overwriting a newer save. Never roll the API back on its own while this web is live (every save would
+400 on `expected_version`). Still to do: a two-tab check on the live app (save in one tab, then the other → the
+conflict dialog). Next: Plans 3-4.
 
 **Also on this branch (commit `45c82de`):** Settings → Display → **Text size** (per device; Default / Large / Extra
 large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns
