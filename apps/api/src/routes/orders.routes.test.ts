@@ -3881,3 +3881,29 @@ describe('PUT /:id — atomic save and version check', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('POST /:id/unconfirm', () => {
+  it('refuses while any payment is recorded, even one below the 50% deposit', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'awaiting_payment' }];
+    db.responses['payments.count'] = [1];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('reverses a confirmation whose ledger is empty', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'awaiting_payment', payments: [] }];
+    db.responses['payments.count'] = [0];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.orders?.[0]).toMatchObject({ status: 'sent', confirmed_at: null });
+    // The status half of the rule is re-applied as a database guard.
+    expect(db.filters).toContainEqual(['orders', 'eq', ['status', 'awaiting_payment']]);
+  });
+
+  it('still refuses an order that is not awaiting payment', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'in_progress' }];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+  });
+});

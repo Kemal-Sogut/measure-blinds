@@ -2213,9 +2213,9 @@ app.post('/:id/duplicate', async (c) => {
 });
 
 /**
- * Reverses a confirmation (user-only): awaiting_payment → sent.
- * A confirmation can be undone ONLY before any payment is recorded —
- * once money is in, the order is in_progress and this is refused.
+ * Reverses a confirmation (user-only): awaiting_payment → sent. Refused
+ * with 409 once ANY payment is recorded — including one below the 50%
+ * deposit, which leaves the order `awaiting_payment` with money on it.
  */
 app.post('/:id/unconfirm', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -2232,10 +2232,34 @@ app.post('/:id/unconfirm', async (c) => {
       409
     );
   }
+  // An order can sit in `awaiting_payment` WITH money on it: a payment
+  // below the 50% deposit is recorded but does not advance the status
+  // (`lib/payments.ts`). Reversing then would put a paid-against order
+  // back among the estimates, so the ledger is checked directly rather
+  // than inferred from the status.
+  const { count: paymentCount, error: countError } = await sb
+    .from('payments')
+    .select('id', { count: 'exact', head: true })
+    .eq('order_id', id);
+  if (countError) return c.json({ error: countError.message }, 500);
+  if ((paymentCount ?? 0) > 0) {
+    return c.json(
+      {
+        error:
+          'A payment is recorded on this order, so the confirmation cannot be reversed. ' +
+          'Delete the payment first if it was entered by mistake.',
+      },
+      409
+    );
+  }
+
+  // Guarded on the status too, so a payment or a stage change landing
+  // between the read above and this write cannot be undone by it.
   const { error } = await sb
     .from('orders')
     .update({ status: 'sent', confirmed_at: null })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('status', 'awaiting_payment');
   if (error) return c.json({ error: error.message }, 500);
 
   // The frozen prices STAY: this lands the order back on `sent`, and the
