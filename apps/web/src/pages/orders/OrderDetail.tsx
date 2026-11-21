@@ -170,7 +170,7 @@ import { holdsPriceLock } from '../../lib/orderStatus';
 import { MaterialUsageDialog, MaterialUsageTrigger } from './MaterialUsageDialog';
 import { summarizeMaterialUsage } from './materialUsage';
 import { applyBulkPatch, type BulkEditState } from './lineItemBulk';
-import { buildOrderPayload, toIso } from './orderPayload';
+import { buildOrderPayload, toIso, withExpectedVersion } from './orderPayload';
 import BulkAddSheet from './BulkAddSheet';
 import EditRequestsCard from './EditRequestsCard';
 import OrderActivityLog from './OrderActivityLog';
@@ -548,6 +548,12 @@ export default function OrderDetail() {
   const [materialUsagePicks, setMaterialUsagePicks] = useState<Set<string>>(new Set());
   const [hydrated, setHydrated] = useState(false);
   /**
+   * The `content_version` the editor's on-screen edits are based on. NOT read
+   * from `existing`: that query refetches on window focus without
+   * re-hydrating the editor, so it can move ahead of what is on screen.
+   */
+  const loadedVersion = useRef<number | undefined>(undefined);
+  /**
    * A revision Restore loaded into the editor, not yet saved: the next
    * save sends it as `restore_from_revision` (Design decision 8). Any
    * re-hydration discards it with the edits. `dismissed` only hides the
@@ -719,6 +725,7 @@ export default function OrderDetail() {
       setDiscountType(existing.discount_type);
       setDiscountValue(existing.discount_value ? String(existing.discount_value) : '');
       setRestoreFrom(null);
+      loadedVersion.current = existing.content_version;
       setHydrated(true);
     }
   }, [id, existing, hydrated]);
@@ -1242,8 +1249,16 @@ export default function OrderDetail() {
     setSheet('none');
   }
 
-  /** Saves (create or update); resolves to the saved order id. */
-  async function save(): Promise<string | null> {
+  /**
+   * Saves (create or update); resolves to the saved order id.
+   *
+   * An update carries the `content_version` this editor loaded. If the
+   * Worker answers `version_conflict`, the order was saved from another
+   * tab or device in the meantime: nothing was written, the edits stay on
+   * screen, and the staff member chooses between overwriting (a second
+   * call with `overwrite`) and cancelling to reload.
+   */
+  async function save(options: { overwrite?: boolean } = {}): Promise<string | null> {
     const snapshotAtSave = editorSnapshot;
     const payload = buildOrderPayload({
       customer, orderDate, expiryDate, title, discountType, discountValue, items, catalogs, status,
@@ -1253,13 +1268,16 @@ export default function OrderDetail() {
       return null;
     }
     try {
+      const updateInput = withExpectedVersion(
+        restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
+        loadedVersion.current,
+        options.overwrite === true
+      );
       const saved = id
-        ? await updateMut.mutateAsync({
-            id,
-            input: restoreFrom ? { ...payload, restore_from_revision: restoreFrom.id } : payload,
-          })
+        ? await updateMut.mutateAsync({ id, input: updateInput })
         : await createMut.mutateAsync(payload);
       setSavedSnapshot(snapshotAtSave);
+      loadedVersion.current = saved.content_version;
       setRestoreFrom(null);
       // A save ends any dismissal; the Worker drops its acknowledgement
       // on the same save, so the notice speaks again if the total still
@@ -1270,10 +1288,23 @@ export default function OrderDetail() {
       if (!id) navigate(`${orderPath(saved)}?${ORDER_SECTION_PARAM}=${section}`, { replace: true });
       return saved.id;
     } catch (e) {
+      // Must precede the restore-409 branch below, which would swallow it.
+      if (e instanceof ApiError && e.code === 'version_conflict') {
+        const overwrite = await askConfirm({
+          title: 'This order was changed somewhere else',
+          message:
+            'It was saved from another tab or device after you opened it, so nothing was saved just now. ' +
+            'Overwrite it with what is on your screen, or cancel and reload the page to see the other version first.',
+          confirmLabel: 'Overwrite with mine',
+          cancelLabel: 'Cancel',
+          tone: 'danger',
+        });
+        return overwrite ? save({ overwrite: true }) : null;
+      }
       // A refused restore (the estimate was confirmed meanwhile) must not
       // linger: a later Save would PUT the revision's content without its
       // locks. Discard it with the edits, re-hydrating from the server.
-      if (restoreFrom && e instanceof ApiError && e.status === 409) {
+      if (restoreFrom && e instanceof ApiError && e.status === 409 && e.code !== 'version_conflict') {
         setRestoreFrom(null);
         setHydrated(false);
         void refetchExisting();

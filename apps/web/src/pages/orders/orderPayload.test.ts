@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildOrderPayload, type OrderPayloadState } from './orderPayload';
-import type { BlindItemInput } from '../../hooks/useOrders';
+import { buildOrderPayload, withExpectedVersion, type OrderPayloadState } from './orderPayload';
+import type { BlindItemInput, OrderInput } from '../../hooks/useOrders';
 import type { BlindDraft, Catalogs } from './lineItemDrafts';
 
 /**
@@ -159,5 +159,30 @@ describe('buildOrderPayload', () => {
   it('still requires a customer and an expiry date', () => {
     expect(buildOrderPayload(state({ customer: null }))).toBe('Select a customer first.');
     expect(buildOrderPayload(state({ expiryDate: null }))).toBe('Pick an expiry date.');
+  });
+});
+
+describe('withExpectedVersion', () => {
+  const input: OrderInput = {
+    customer_id: '44444444-4444-4444-8444-444444444444',
+    discount_type: 'fixed',
+    discount_value: 0,
+    line_items: [],
+  };
+
+  it('adds the version the editor loaded', () => {
+    expect(withExpectedVersion(input, 4, false)).toEqual({ ...input, expected_version: 4 });
+  });
+
+  it('adds version 0 (a never-saved order is still a version)', () => {
+    expect(withExpectedVersion(input, 0, false).expected_version).toBe(0);
+  });
+
+  it('sends none when the staff member chose to overwrite', () => {
+    expect(withExpectedVersion(input, 4, true)).toBe(input);
+  });
+
+  it('sends none when the order came from a Worker that predates the field', () => {
+    expect(withExpectedVersion(input, undefined, false)).toBe(input);
   });
 });

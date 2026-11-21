@@ -1,5 +1,17 @@
 # Bug Fixes History
 
+## 2026-11-17 — Order saves are all-or-nothing; a save from an out-of-date screen is refused
+Worker `PUT /api/orders/:id`, migration 55 (`save_order_with_items`, `orders.content_version`); web
+`apps/web/src/pages/orders/OrderDetail.tsx`, `orderPayload.ts`, `lib/api.ts`. Branch `fix/order-save-integrity`;
+**migration 55 applied 2026-11-21; the API Worker and web are not deployed yet.** Deploy order: migration 55, then the API Worker, then the web.
+- **Issue:** a save updated the order and replaced its line items in separate steps, so a failure part-way left
+  an order half-written; and two tabs or devices saving the same order silently overwrote each other.
+- **Fix:** the whole save (order update, wholesale line-item replace, `content_version` bump) runs as one
+  Postgres transaction: it writes everything or nothing. The editor sends the `content_version` it loaded; if
+  the order moved meanwhile the Worker answers 409 `version_conflict`, nothing is written, and the editor keeps
+  the staff member's edits on screen and asks whether to overwrite with theirs or cancel and reload.
+  `ApiError.code` now carries the Worker's machine-readable error code.
+
 ## 2026-11-17 — API access limited to staff listed in `profiles`; client-role table access removed
 Worker `apps/api/src/middleware/auth.ts`, `apps/api/src/lib/staffAccess.ts`, `apps/api/src/lib/corsOrigin.ts`;
 migration 54 `20261114000054_staff_allowlist_and_rls_lockdown.sql`. PR #76, merge `ccb6933`; API Worker version
