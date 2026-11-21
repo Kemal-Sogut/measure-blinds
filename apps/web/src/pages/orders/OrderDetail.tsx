@@ -641,8 +641,10 @@ export default function OrderDetail() {
   const [payNote, setPayNote] = useState('');
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
-  // One key per Record Payment sheet: the Worker records a key once, so
-  // a double tap or a retried request cannot enter the payment twice.
+  // Idempotency key for the payment being entered. Minted afresh each time
+  // the sheet is opened or an e-Transfer is applied (a new intent) and kept
+  // across retries of the same open sheet, so a double tap or retried
+  // request is recorded once while a different payment never reuses it.
   const [payClientKey, setPayClientKey] = useState(() => crypto.randomUUID());
 
   // Send-invoice sheet — optional note included in the email.
@@ -1582,6 +1584,7 @@ export default function OrderDetail() {
     setPayDate(new Date());
     setPayNote('');
     setPayEtransferId(null);
+    setPayClientKey(crypto.randomUUID());
     setSheet('payment');
   }
 
@@ -1594,6 +1597,7 @@ export default function OrderDetail() {
         }`.slice(0, 200)
     );
     setPayEtransferId(t.id);
+    setPayClientKey(crypto.randomUUID());
   }
 
   async function submitPayment() {

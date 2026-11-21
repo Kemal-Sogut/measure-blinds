@@ -178,7 +178,7 @@ export interface PaymentInput {
   /** When applying a pending e-Transfer, its id (marks it resolved). */
   etransfer_id?: string;
   /**
-   * Idempotency key, one per Record Payment sheet. The Worker records a
+   * Idempotency key, one per payment intent (new each time the sheet is opened). The Worker records a
    * given key once; a double tap or a retried request is a no-op.
    */
   client_key?: string;
