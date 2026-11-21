@@ -641,6 +641,9 @@ export default function OrderDetail() {
   const [payNote, setPayNote] = useState('');
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
+  // One key per Record Payment sheet: the Worker records a key once, so
+  // a double tap or a retried request cannot enter the payment twice.
+  const [payClientKey, setPayClientKey] = useState(() => crypto.randomUUID());
 
   // Send-invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
@@ -1605,6 +1608,7 @@ export default function OrderDetail() {
           paid_on: toIso(payDate),
           note: payNote.trim(),
           etransfer_id: payEtransferId ?? undefined,
+          client_key: payClientKey,
         },
       });
       toast.success('Payment recorded.');
@@ -1613,6 +1617,7 @@ export default function OrderDetail() {
       setPayNote('');
       setPayDate(new Date());
       setPayEtransferId(null);
+      setPayClientKey(crypto.randomUUID());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not record payment.');
     }

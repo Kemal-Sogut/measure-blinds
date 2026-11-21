@@ -177,6 +177,11 @@ export interface PaymentInput {
   note?: string;
   /** When applying a pending e-Transfer, its id (marks it resolved). */
   etransfer_id?: string;
+  /**
+   * Idempotency key, one per Record Payment sheet. The Worker records a
+   * given key once; a double tap or a retried request is a no-op.
+   */
+  client_key?: string;
 }
 
 /** An unmatched e-Transfer awaiting manual assignment to an order. */

@@ -354,6 +354,12 @@ const paymentSchema = z
     note: z.string().max(500).default(''),
     /** When set, links & marks this pending e-Transfer as applied. */
     etransfer_id: z.string().uuid().optional(),
+    /**
+     * Idempotency key minted once per Record Payment sheet. A replay
+     * (double tap, retried request) with the same key records nothing
+     * and answers 200 with the current order.
+     */
+    client_key: z.string().uuid().optional(),
   })
   .strict();
 
@@ -2278,7 +2284,10 @@ app.post('/:id/unconfirm', async (c) => {
  * `lib/payments.ts`); a smaller payment is recorded but leaves the order
  * awaiting_payment. The outstanding balance is derived from the ledger,
  * so it is returned but never stored. Payments are accepted at any
- * post-confirmation stage (awaiting_payment through installed).
+ * post-confirmation stage (awaiting_payment through installed). A
+ * `client_key` makes the request idempotent; an `etransfer_id` is claimed
+ * (`pending → applied`) before the payment is written and released if the
+ * write fails.
  */
 app.post('/:id/payments', async (c) => {
   const parsed = paymentSchema.safeParse(await c.req.json().catch(() => null));
@@ -2301,20 +2310,66 @@ app.post('/:id/payments', async (c) => {
     );
   }
 
+  // Replay of a submit that already landed: answer with the order as it
+  // stands. Checked BEFORE the e-Transfer claim below, or the replay
+  // would be told its transfer "was already applied" — by itself.
+  if (input.client_key) {
+    const { data: already } = await sb
+      .from('payments')
+      .select('id')
+      .eq('client_key', input.client_key)
+      .eq('order_id', id)
+      .maybeSingle();
+    if (already) {
+      const { data: current } = await readDetail(sb, id);
+      if (current) current.amount_paid = sumPayments(current.payments);
+      return c.json({ data: current });
+    }
+  }
+
+  // Claim the pending e-Transfer BEFORE recording money against it. The
+  // guarded update lets exactly one request win, so two people applying
+  // the same transfer cannot both record a payment.
+  if (input.etransfer_id) {
+    const { data: claimed, error: claimError } = await sb
+      .from('etransfers')
+      .update({ status: 'applied', order_id: id })
+      .eq('id', input.etransfer_id)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
+    if (claimError) return c.json({ error: claimError.message }, 500);
+    if (!claimed) {
+      return c.json({ error: 'That e-Transfer has already been applied or dismissed.' }, 409);
+    }
+  }
+
   const paid_on = input.paid_on ?? new Date().toISOString().slice(0, 10);
   const result = await recordOrderPayment(sb, id, existing.status, {
     amount: input.amount,
     paid_on,
     note: input.note,
+    client_key: input.client_key,
   });
-  if ('errorMessage' in result) return c.json({ error: result.errorMessage }, 500);
+  if ('errorMessage' in result) {
+    // Nothing was recorded, so the transfer goes back to the pending inbox.
+    if (input.etransfer_id) {
+      await sb
+        .from('etransfers')
+        .update({ status: 'pending', order_id: null })
+        .eq('id', input.etransfer_id);
+    }
+    return c.json({ error: result.errorMessage }, 500);
+  }
+  if ('duplicate' in result) {
+    // Two identical submits raced; the other one recorded the payment.
+    const { data: current } = await readDetail(sb, id);
+    if (current) current.amount_paid = sumPayments(current.payments);
+    return c.json({ data: current });
+  }
 
-  // When applying an unmatched e-Transfer, mark it resolved + linked.
   if (input.etransfer_id) {
-    await sb
-      .from('etransfers')
-      .update({ status: 'applied', order_id: id, payment_id: result.paymentId })
-      .eq('id', input.etransfer_id);
+    await sb.from('etransfers').update({ payment_id: result.paymentId }).eq('id', input.etransfer_id);
   }
 
   await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);

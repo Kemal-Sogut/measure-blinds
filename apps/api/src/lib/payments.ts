@@ -46,7 +46,18 @@ export interface RecordPaymentInput {
   amount: number;
   paid_on: string;
   note: string;
+  /**
+   * Idempotency key (`payments.client_key`, UNIQUE — migration 18). The
+   * staff app mints one per Record Payment sheet; a second insert with
+   * the same key is reported as `{ duplicate: true }` and writes nothing.
+   * Omitted by the e-Transfer webhook, which dedupes on the Gmail
+   * message id instead.
+   */
+  client_key?: string;
 }
+
+/** Postgres unique-violation SQLSTATE. */
+const UNIQUE_VIOLATION = '23505';
 
 /**
  * Inserts a payment ledger row and, when the order is still
@@ -64,20 +75,32 @@ export interface RecordPaymentInput {
  * @param orderId The order the payment belongs to
  * @param currentStatus The order's status BEFORE this payment
  * @param input The ledger row to insert
- * @returns the new payment id, or an error message on failure
+ * @returns the new payment id; `{ duplicate: true }` when `client_key` was
+ * already recorded (nothing written); or an error message
  */
 export async function recordOrderPayment(
   sb: SupabaseClient,
   orderId: string,
   currentStatus: string,
   input: RecordPaymentInput
-): Promise<{ paymentId: string } | { errorMessage: string }> {
+): Promise<{ paymentId: string } | { duplicate: true } | { errorMessage: string }> {
   const { data, error } = await sb
     .from('payments')
-    .insert({ order_id: orderId, amount: input.amount, paid_on: input.paid_on, note: input.note })
+    .insert({
+      order_id: orderId,
+      amount: input.amount,
+      paid_on: input.paid_on,
+      note: input.note,
+      client_key: input.client_key ?? null,
+    })
     .select('id')
     .single();
-  if (error) return { errorMessage: error.message };
+  if (error) {
+    // The only UNIQUE on `payments` is client_key: this submit was
+    // already recorded, so the replay must not record it again.
+    if (error.code === UNIQUE_VIOLATION && input.client_key) return { duplicate: true };
+    return { errorMessage: error.message };
+  }
 
   if (currentStatus === 'awaiting_payment') {
     // Re-read the order total and the full ledger (now including the row
@@ -92,7 +115,9 @@ export async function recordOrderPayment(
       const paid = sumPayments(order.payments as Array<{ amount: number | string }> | null);
       const deposit = round2(Number(order.total) / 2);
       if (paid + DEPOSIT_EPSILON >= deposit) {
-        await sb.from('orders').update({ status: 'in_progress' }).eq('id', orderId);
+        // Guarded: `currentStatus` was read before the insert, and the
+        // order may have been reversed or advanced by hand since.
+        await sb.from('orders').update({ status: 'in_progress' }).eq('id', orderId).eq('status', 'awaiting_payment');
       }
     }
   }
