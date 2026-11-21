@@ -43,7 +43,7 @@ interface FakeDb {
    * own queue). Lets a test drive the compensation path a route takes
    * when the database rejects a write.
    */
-  opErrors: Record<string, { message: string }>;
+  opErrors: Record<string, { code?: string; message: string }>;
   /** Every filter call as [table, method, args] — lets a test prove WHICH row a route asked for. */
   filters: Array<[string, string, unknown[]]>;
   /** Every `sb.rpc(name, args)` call, in order. */
@@ -3915,7 +3915,7 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
 
   it('answers 200 and records nothing when the same client_key was already recorded', async () => {
     db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [{ amount: 100 }] }];
-    db.responses['payments.select'] = [{ id: 'p-existing' }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 100 }];
     const res = await ordersApp.request(
       '/pay1/payments',
       { method: 'POST', body: JSON.stringify({ amount: 100, client_key: KEY }), headers: json },
@@ -3965,5 +3965,59 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
     );
     expect(res.status).toBe(500);
     expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ status: 'pending', order_id: null });
+  });
+
+  it('409s when the key belongs to a different payment, and records nothing', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 250 }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('answers 200 on a duplicate insert and releases this request\'s own claim', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.opErrors['payments.insert'] = { code: '23505', message: 'duplicate key value' };
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ status: 'pending', order_id: null });
+  });
+
+  it('skips the claim for a replay that carries an etransfer_id', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 100 }];
+    db.responses['etransfers.select'] = [{ id: ET, payment_id: 'p-existing' }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('etransfers.update');
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('scopes the release to this request\'s own claim', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.opErrors['payments.insert'] = { message: 'write failed' };
+    await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET }), headers: json },
+      ENV
+    );
+    const f = db.filters.filter(([t]) => t === 'etransfers');
+    expect(f).toContainEqual(['etransfers', 'eq', ['status', 'applied']]);
+    expect(f).toContainEqual(['etransfers', 'eq', ['order_id', 'pay1']]);
+    expect(f).toContainEqual(['etransfers', 'is', ['payment_id', null]]);
   });
 });
