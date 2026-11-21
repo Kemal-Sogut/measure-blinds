@@ -3979,7 +3979,7 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
     expect(db.calls).not.toContain('payments.insert');
   });
 
-  it('answers 200 on a duplicate insert and releases this request\'s own claim', async () => {
+  it('releases this request\'s own claim on a duplicate insert and never answers 200 blind', async () => {
     db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
     db.responses['etransfers.update'] = [{ id: ET }];
     db.opErrors['payments.insert'] = { code: '23505', message: 'duplicate key value' };
@@ -3988,7 +3988,7 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
       { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET, client_key: KEY }), headers: json },
       ENV
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(500);
     expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ status: 'pending', order_id: null });
   });
 

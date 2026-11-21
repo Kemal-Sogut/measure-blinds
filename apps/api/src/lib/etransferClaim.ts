@@ -53,46 +53,77 @@ interface StoredPayment {
   amount: number | string;
 }
 
+/** Maps a failed lookup to a retryable error; nothing is guessed or released. */
+function lookupError(f: LookupFailure): ClaimedPaymentResult {
+  return { kind: 'error', message: `Could not verify the payment record (${f.failed}). Please try again.` };
+}
+
 const MISMATCH: ClaimedPaymentResult = {
   kind: 'conflict',
   code: 'client_key_mismatch',
   message: 'This payment key was already used for a different payment. Reopen the payment sheet and try again.',
 };
 
+/** A lookup that could not be answered; the caller must not guess. */
+interface LookupFailure {
+  failed: string;
+}
+
 /** Finds the payment recorded under `key`, on any order (the UNIQUE is global). */
-async function findByKey(sb: SupabaseClient, key: string): Promise<StoredPayment | null> {
-  const { data } = await sb
+async function findByKey(sb: SupabaseClient, key: string): Promise<StoredPayment | null | LookupFailure> {
+  const { data, error } = await sb
     .from('payments')
     .select('id, order_id, amount')
     .eq('client_key', key)
     .maybeSingle();
+  if (error) return { failed: error.message };
   return (data as StoredPayment | null) ?? null;
 }
 
+/** Type guard separating a failed lookup from a found-or-absent answer. */
+function failed<T>(v: T | LookupFailure): v is LookupFailure {
+  return typeof v === 'object' && v !== null && 'failed' in v;
+}
+
 /**
- * True when `stored` is exactly what this request asked for: same order,
- * same amount and, when an e-Transfer was named, that transfer is not
- * linked to some other payment.
+ * Decides whether `stored` (found by this request's key) is exactly what
+ * this request asked for: same order, same amount, and the same e-Transfer
+ * outcome.
+ *
+ * With an e-Transfer named, it matches only when that transfer is linked to
+ * `stored`, or is this order's still-unlinked applied claim while no other
+ * transfer is linked to `stored` (an identical submit mid-flight). With none
+ * named, `stored` must have no linked transfer. Any lookup failure is
+ * returned as such, never read as "absent".
  */
 async function matchesRequest(
   sb: SupabaseClient,
   stored: StoredPayment,
   orderId: string,
   input: ClaimedPaymentInput
-): Promise<boolean> {
+): Promise<boolean | LookupFailure> {
   if (stored.order_id !== orderId) return false;
   if (Math.abs(Number(stored.amount) - input.amount) >= AMOUNT_EPSILON) return false;
-  if (input.etransfer_id) {
-    const { data } = await sb
-      .from('etransfers')
-      .select('id, payment_id')
-      .eq('id', input.etransfer_id)
-      .maybeSingle();
-    const row = data as { id: string; payment_id: string | null } | null;
-    if (!row) return false;
-    if (row.payment_id && row.payment_id !== stored.id) return false;
-  }
-  return true;
+
+  const { data: linkedRows, error: linkedError } = await sb
+    .from('etransfers')
+    .select('id')
+    .eq('payment_id', stored.id);
+  if (linkedError) return { failed: linkedError.message };
+  const linked = (linkedRows as Array<{ id: string }> | null) ?? [];
+
+  if (!input.etransfer_id) return linked.length === 0;
+  if (linked.some((r) => r.id === input.etransfer_id)) return true;
+  if (linked.length > 0) return false;
+
+  const { data, error } = await sb
+    .from('etransfers')
+    .select('id, status, order_id, payment_id')
+    .eq('id', input.etransfer_id)
+    .maybeSingle();
+  if (error) return { failed: error.message };
+  const row = data as { status: string; order_id: string | null; payment_id: string | null } | null;
+  return !!row && row.status === 'applied' && row.order_id === orderId && row.payment_id === null;
 }
 
 /**
@@ -157,7 +188,12 @@ export async function recordPaymentWithClaim(
   // would otherwise be told its transfer "was already applied" by itself.
   if (key) {
     const stored = await findByKey(sb, key);
-    if (stored) return (await matchesRequest(sb, stored, orderId, input)) ? { kind: 'replay' } : MISMATCH;
+    if (failed(stored)) return lookupError(stored);
+    if (stored) {
+      const match = await matchesRequest(sb, stored, orderId, input);
+      if (failed(match)) return lookupError(match);
+      return match ? { kind: 'replay' } : MISMATCH;
+    }
   }
 
   if (input.etransfer_id) {
@@ -173,8 +209,12 @@ export async function recordPaymentWithClaim(
       // Lost the claim. A concurrent identical submit may have won and
       // recorded this key's payment: that is a replay, not a conflict.
       const stored = key ? await findByKey(sb, key) : null;
-      if (stored && (await matchesRequest(sb, stored, orderId, input))) return { kind: 'replay' };
-      if (stored) return MISMATCH;
+      if (failed(stored)) return lookupError(stored);
+      if (stored) {
+        const match = await matchesRequest(sb, stored, orderId, input);
+        if (failed(match)) return lookupError(match);
+        return match ? { kind: 'replay' } : MISMATCH;
+      }
       return {
         kind: 'conflict',
         code: 'etransfer_unavailable',
@@ -195,16 +235,54 @@ export async function recordPaymentWithClaim(
     return { kind: 'recorded', paymentId: result.paymentId };
   }
 
-  // Not recorded by this call. If the key's payment exists after all (a
-  // racing identical submit, or an ambiguous write failure that did land),
-  // the money is in the ledger: link rather than release.
   const stored = key ? await findByKey(sb, key) : null;
-  if (stored && (await matchesRequest(sb, stored, orderId, input))) {
-    if (input.etransfer_id) await linkClaim(sb, orderId, input.etransfer_id, stored.id);
-    return { kind: 'replay' };
+
+  if ('duplicate' in result) {
+    // The key's payment exists, and it was not written by this call. Our
+    // claim (if any) was won by us alone, so the winner cannot be applying
+    // the same transfer: never link it, give it back.
+    if (input.etransfer_id) await releaseClaim(sb, orderId, input.etransfer_id);
+    if (failed(stored)) return lookupError(stored);
+    if (!stored) return { kind: 'error', message: 'Payment key already used, but its payment could not be found.' };
+    if (input.etransfer_id) return MISMATCH;
+    const match = await matchesRequest(sb, stored, orderId, input);
+    if (failed(match)) return lookupError(match);
+    return match ? { kind: 'replay' } : MISMATCH;
+  }
+
+  // Ambiguous insert failure. If the key's payment exists after all, the
+  // money is in the ledger: link rather than release, and report it as
+  // recorded so the route runs its post-payment steps.
+  if (failed(stored)) {
+    // Unknown whether the payment landed: leave the claim for staff.
+    if (input.etransfer_id) {
+      await logOrderEvent(
+        sb,
+        orderId,
+        `e-Transfer ${input.etransfer_id} was left claimed: the payment write failed and could not be re-checked (${stored.failed}). Check the payment list before retrying.`
+      );
+    }
+    return lookupError(stored);
+  }
+  if (stored) {
+    const match = await matchesRequest(sb, stored, orderId, input);
+    if (failed(match)) {
+      if (input.etransfer_id) {
+        await logOrderEvent(
+          sb,
+          orderId,
+          `e-Transfer ${input.etransfer_id} was left claimed: the payment could not be re-checked (${match.failed}). Check the payment list before retrying.`
+        );
+      }
+      return lookupError(match);
+    }
+    if (match) {
+      if (input.etransfer_id) await linkClaim(sb, orderId, input.etransfer_id, stored.id);
+      return { kind: 'recorded', paymentId: stored.id };
+    }
+    if (input.etransfer_id) await releaseClaim(sb, orderId, input.etransfer_id);
+    return MISMATCH;
   }
   if (input.etransfer_id) await releaseClaim(sb, orderId, input.etransfer_id);
-  if (stored) return MISMATCH;
-  if ('duplicate' in result) return { kind: 'replay' };
   return { kind: 'error', message: result.errorMessage };
 }

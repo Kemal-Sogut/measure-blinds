@@ -95,12 +95,54 @@ describe('recordPaymentWithClaim', () => {
   it('refuses a replay whose e-Transfer is linked to a different payment', async () => {
     const f = fakeSb({
       'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
-      'etransfers.select': [{ data: { id: ET, payment_id: 'p-other' } }],
+      'etransfers.select': [{ data: [{ id: 'E-other' }] }],
     });
     expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET })).toMatchObject({
       kind: 'conflict',
+      code: 'client_key_mismatch',
     });
     expect(ops(f.calls)).not.toContain('etransfers.update');
+  });
+
+  it('refuses sequential reuse of a key with a different, still-pending transfer', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ data: [] }, { data: { status: 'pending', order_id: null, payment_id: null } }],
+    });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET })).toMatchObject({
+      kind: 'conflict',
+      code: 'client_key_mismatch',
+    });
+  });
+
+  it('accepts the in-flight winner: applied here, unlinked, nothing else linked', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ data: [] }, { data: { status: 'applied', order_id: 'o1', payment_id: null } }],
+    });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET })).toEqual({
+      kind: 'replay',
+    });
+  });
+
+  it('refuses a replay naming no transfer when the stored payment has one linked', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ data: [{ id: ET }] }],
+    });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).toMatchObject({
+      kind: 'conflict',
+      code: 'client_key_mismatch',
+    });
+  });
+
+  it('answers an error, not a mismatch, when the e-Transfer read fails', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ error: { message: 'read failed' } }],
+    });
+    const r = await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT);
+    expect(r.kind).toBe('error');
   });
 
   it('answers 409-class when the claim is lost and no payment exists for the key', async () => {
@@ -116,7 +158,7 @@ describe('recordPaymentWithClaim', () => {
     const f = fakeSb({
       'payments.select': [{ data: null }, { data: { id: 'p0', order_id: 'o1', amount: 100 } }],
       'etransfers.update': [{ data: null }],
-      'etransfers.select': [{ data: { id: ET, payment_id: 'p0' } }],
+      'etransfers.select': [{ data: [{ id: ET }] }],
     });
     expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET })).toEqual({
       kind: 'replay',
@@ -134,19 +176,38 @@ describe('recordPaymentWithClaim', () => {
     expect(updates[1].payload).toEqual({ payment_id: 'p1' });
   });
 
-  it('releases a guarded claim after a duplicate insert', async () => {
+  it('on a duplicate with another transfer linked: no link, claim released, 409', async () => {
     const f = fakeSb({
-      'payments.select': [{ data: null }, { data: null }],
+      'payments.select': [{ data: null }, { data: { id: 'p0', order_id: 'o1', amount: 100 } }],
       'etransfers.update': [{ data: { id: ET } }, {}],
       'payments.insert': [{ error: DUP }],
     });
     const r = await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET });
-    expect(r).toEqual({ kind: 'replay' });
-    const release = f.calls.filter((c) => c.table === 'etransfers' && c.op === 'update')[1];
+    expect(r).toMatchObject({ kind: 'conflict', code: 'client_key_mismatch' });
+    const updates = f.calls.filter((c) => c.table === 'etransfers' && c.op === 'update');
+    expect(updates).toHaveLength(2);
+    const release = updates[1];
     expect(release.payload).toEqual({ status: 'pending', order_id: null });
     expect(release.filters).toContainEqual(['eq', ['status', 'applied']]);
     expect(release.filters).toContainEqual(['eq', ['order_id', 'o1']]);
     expect(release.filters).toContainEqual(['is', ['payment_id', null]]);
+  });
+
+  it('answers an error, not 200, when the lookup after a duplicate fails', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: null }, { error: { message: 'read failed' } }],
+      'payments.insert': [{ error: DUP }],
+    });
+    expect((await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).kind).toBe('error');
+  });
+
+  it('answers a replay on a duplicate with no transfer involved and a matching payment', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: null }, { data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ data: [] }],
+      'payments.insert': [{ error: DUP }],
+    });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).toEqual({ kind: 'replay' });
   });
 
   it('releases the claim and reports the error when the insert fails', async () => {
@@ -164,18 +225,31 @@ describe('recordPaymentWithClaim', () => {
     });
   });
 
-  it('links instead of releasing when the payment landed despite the insert error', async () => {
+  it('links and reports recorded when the payment landed despite the insert error', async () => {
     const f = fakeSb({
       'payments.select': [{ data: null }, { data: { id: 'p9', order_id: 'o1', amount: 100 } }],
       'etransfers.update': [{ data: { id: ET } }, {}],
-      'etransfers.select': [{ data: { id: ET, payment_id: null } }],
+      'etransfers.select': [{ data: [] }, { data: { status: 'applied', order_id: 'o1', payment_id: null } }],
       'payments.insert': [{ error: { message: 'network' } }],
     });
     expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET })).toEqual({
-      kind: 'replay',
+      kind: 'recorded',
+      paymentId: 'p9',
     });
     const updates = f.calls.filter((c) => c.table === 'etransfers' && c.op === 'update');
     expect(updates[1].payload).toEqual({ payment_id: 'p9' });
+  });
+
+  it('keeps the claim, logs, and errors when the re-check after an insert error fails', async () => {
+    const f = fakeSb({
+      'payments.select': [{ data: null }, { error: { message: 'read failed' } }],
+      'etransfers.update': [{ data: { id: ET } }],
+      'payments.insert': [{ error: { message: 'network' } }],
+    });
+    const r = await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET });
+    expect(r.kind).toBe('error');
+    expect(f.calls.filter((c) => c.table === 'etransfers' && c.op === 'update')).toHaveLength(1);
+    expect(f.calls.some((c) => c.table === 'order_logs')).toBe(true);
   });
 
   it('logs on the order when the release fails', async () => {
