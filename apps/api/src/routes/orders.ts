@@ -2348,7 +2348,8 @@ app.post('/:id/payments', async (c) => {
 /**
  * Deletes a single payment from the ledger. If the order is
  * `in_progress` and this was the last payment, the status is
- * automatically reverted to `awaiting_payment`.
+ * automatically reverted to `awaiting_payment`. An e-Transfer behind the
+ * payment returns to the pending inbox.
  */
 app.delete('/:id/payments/:paymentId', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -2363,6 +2364,16 @@ app.delete('/:id/payments/:paymentId', async (c) => {
     .eq('order_id', id)
     .maybeSingle();
   if (!payment) return c.json({ error: 'Payment not found on this order.' }, 404);
+
+  // A payment that came from an e-Transfer points back at its inbox row.
+  // Release that row to `pending` BEFORE the delete: the foreign key
+  // nulls `payment_id` as the payment goes, after which the transfer
+  // would sit `applied` against nothing — money in neither list. Same
+  // rule `lib/orderDelete.ts` applies when a whole order is deleted.
+  await sb
+    .from('etransfers')
+    .update({ status: 'pending', order_id: null, payment_id: null })
+    .eq('payment_id', paymentId);
 
   const { error: delError } = await sb.from('payments').delete().eq('id', paymentId);
   if (delError) return c.json({ error: delError.message }, 500);

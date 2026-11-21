@@ -4021,3 +4021,17 @@ describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
     expect(f).toContainEqual(['etransfers', 'is', ['payment_id', null]]);
   });
 });
+
+describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
+  it('releases the e-Transfer behind the payment before the payment row goes', async () => {
+    db.responses['payments.select'] = [{ id: 'p1', order_id: 'o1', amount: 250 }];
+    db.responses['orders.select'] = [{ id: 'o1', status: 'ready', payments: [] }];
+    const res = await ordersApp.request('/o1/payments/p1', { method: 'DELETE' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.etransfers?.[0]).toEqual({ status: 'pending', order_id: null, payment_id: null });
+    expect(db.filters).toContainEqual(['etransfers', 'eq', ['payment_id', 'p1']]);
+    // BEFORE the delete: the foreign key nulls payment_id the moment the
+    // payment row goes, and the transfer could no longer be found by it.
+    expect(db.calls.indexOf('etransfers.update')).toBeLessThan(db.calls.indexOf('payments.delete'));
+  });
+});
