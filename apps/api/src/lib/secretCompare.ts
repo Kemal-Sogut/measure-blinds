@@ -13,6 +13,12 @@
  */
 
 /**
+ * Compares two shared-secret strings in time that does not depend on
+ * where they first differ; use it wherever a caller-supplied credential
+ * is checked against a configured secret (the e-Transfer webhook's
+ * bearer token). Callers must still refuse an unset or empty secret
+ * before comparing.
+ *
  * @param a One secret (for example the received `Authorization` header).
  * @param b The other (the expected value).
  * @returns True only when the two strings are identical.

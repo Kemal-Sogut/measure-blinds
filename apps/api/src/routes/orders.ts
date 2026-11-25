@@ -2261,8 +2261,11 @@ app.post('/:id/unconfirm', async (c) => {
     );
   }
 
-  // Guarded on the status too, so a payment or a stage change landing
-  // between the read above and this write cannot be undone by it.
+  // Guarded on the status too. That narrows the race but does not close
+  // it: a stage change landing after the read is not undone, but a
+  // payment below the deposit threshold recorded between the count above
+  // and this write leaves the order `awaiting_payment`, so this update
+  // can still revert an order that now has money on it.
   const { error } = await sb
     .from('orders')
     .update({ status: 'sent', confirmed_at: null })
