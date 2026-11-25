@@ -4092,3 +4092,78 @@ describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
     expect(db.calls).toContain('payments.delete');
   });
 });
+
+describe('POST /:id/payments — possible duplicate of an e-Transfer payment', () => {
+  const json = { 'Content-Type': 'application/json' };
+  const ET = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+  // A payment on the order that came from an e-Transfer (an etransfers row links to it).
+  const VIA_ET = { id: 'p-et', order_id: 'pay1', amount: 250, paid_on: '2026-11-20', etransfers: [{ id: ET }] };
+  // No client_key in these bodies: this fake answers every `payments`
+  // select with the same rows, so a key lookup would "find" VIA_ET and
+  // take the replay path. The key-first ordering is pinned in
+  // `lib/etransferClaim.test.ts`. The fake also ignores the SQL date
+  // range, so the date cases below exercise the helper's own re-check.
+  const post = (body: unknown) =>
+    ordersApp.request('/pay1/payments', { method: 'POST', body: JSON.stringify(body), headers: json }, ENV);
+
+  beforeEach(() => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 1000, payments: [] }];
+  });
+
+  it('409s with code possible_duplicate, names the earlier payment, and records nothing (same day)', async () => {
+    db.responses['payments.select'] = [VIA_ET];
+    const res = await post({ amount: 250, paid_on: '2026-11-20' });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('possible_duplicate');
+    expect(body.error).toContain('$250.00 dated November 20, 2026');
+    expect(db.calls).not.toContain('payments.insert');
+    expect(db.filters).toContainEqual(['payments', 'eq', ['order_id', 'pay1']]);
+    expect(db.filters).toContainEqual(['payments', 'eq', ['amount', '250.00']]);
+    expect(db.filters).toContainEqual(['payments', 'gte', ['paid_on', '2026-11-17']]);
+  });
+
+  it('409s when the e-Transfer payment is dated exactly 3 days from the entered date', async () => {
+    db.responses['payments.select'] = [VIA_ET];
+    const res = await post({ amount: 250, paid_on: '2026-11-23' });
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('records a same-amount payment dated 4 or more days away without asking (deposit, then balance)', async () => {
+    db.responses['payments.select'] = [VIA_ET];
+    db.responses['payments.insert'] = [{ id: 'p-new' }];
+    expect((await post({ amount: 250, paid_on: '2026-11-24' })).status).toBe(201);
+    expect((await post({ amount: 250, paid_on: '2026-12-18' })).status).toBe(201);
+  });
+
+  it('records it, and says so on the order, when the request confirms the duplicate', async () => {
+    db.responses['payments.select'] = [VIA_ET];
+    db.responses['payments.insert'] = [{ id: 'p-new' }];
+    const res = await post({ amount: 250, paid_on: '2026-11-20', confirm_duplicate: true });
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('payments.insert');
+    expect(db.filters.some(([t, m]) => t === 'payments' && m === 'gte')).toBe(false);
+    const logs = (db.insertPayloads.order_logs ?? []) as Array<{ message: string }>;
+    expect(logs.some((l) => l.message.includes('confirmed by staff'))).toBe(true);
+  });
+
+  it('records an amount that matches only a hand-entered payment', async () => {
+    db.responses['payments.select'] = [{ ...VIA_ET, etransfers: [] }];
+    db.responses['payments.insert'] = [{ id: 'p-new' }];
+    expect((await post({ amount: 250, paid_on: '2026-11-20' })).status).toBe(201);
+  });
+
+  it('answers 500 and records nothing when the check cannot run', async () => {
+    db.opErrors['payments.select'] = { message: 'read failed' };
+    const res = await post({ amount: 250 });
+    expect(res.status).toBe(500);
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('400s confirm_duplicate on an e-Transfer being applied', async () => {
+    const res = await post({ amount: 250, etransfer_id: ET, confirm_duplicate: true });
+    expect(res.status).toBe(400);
+    expect(db.calls).toHaveLength(0);
+  });
+});

@@ -6,9 +6,23 @@
  * guarded e-Transfer claim, and the guarded, logged release and link.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordPaymentWithClaim } from './etransferClaim';
+import { findLikelyDuplicate } from './paymentDuplicate';
+
+// The same-money lookup has its own unit tests (`paymentDuplicate.test.ts`);
+// here it is scripted so the queues below stay about the claim alone. Its
+// wording function stays real.
+vi.mock('./paymentDuplicate', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./paymentDuplicate')>()),
+  findLikelyDuplicate: vi.fn(),
+}));
+
+beforeEach(() => {
+  vi.mocked(findLikelyDuplicate).mockReset();
+  vi.mocked(findLikelyDuplicate).mockResolvedValue({ kind: 'none' });
+});
 
 type Res = { data?: unknown; error?: { code?: string; message: string } | null };
 
@@ -287,5 +301,57 @@ describe('recordPaymentWithClaim', () => {
     expect(r).toEqual({ kind: 'recorded', paymentId: 'p1' });
     const log = f.calls.find((c) => c.table === 'order_logs');
     expect(String((log?.payload as { message: string }).message)).toContain('link failed');
+  });
+});
+
+describe('recordPaymentWithClaim — possible duplicate of an e-Transfer payment', () => {
+  // INPUT is dated 2026-11-14; this e-Transfer payment is dated a day earlier.
+  const FOUND = { kind: 'found' as const, payment: { id: 'p-et', amount: 100, paid_on: '2026-11-13' } };
+
+  it('refuses a hand-entered payment matching an e-Transfer payment, writing nothing', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(FOUND);
+    const f = fakeSb({});
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).toEqual({
+      kind: 'conflict',
+      code: 'possible_duplicate',
+      message:
+        'An e-Transfer of $100.00 dated November 13, 2026 is already recorded on this order, within 3 days of ' +
+        'this payment. Record this payment as well only if the customer really paid twice.',
+    });
+    // Compared against the date being entered, not today.
+    expect(findLikelyDuplicate).toHaveBeenCalledWith(f.sb, 'o1', 100, '2026-11-14', 'etransfer');
+    expect(ops(f.calls)).not.toContain('payments.insert');
+  });
+
+  it('checks the key FIRST: an exact replay is still a replay', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(FOUND);
+    const f = fakeSb({ 'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }] });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).toEqual({ kind: 'replay' });
+    expect(findLikelyDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('records it when the submit confirms the duplicate', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(FOUND);
+    const f = fakeSb({ 'payments.insert': [{ data: { id: 'p1' } }] });
+    expect(
+      await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, confirm_duplicate: true })
+    ).toEqual({ kind: 'recorded', paymentId: 'p1' });
+    expect(findLikelyDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('does not ask when a pending e-Transfer is being applied', async () => {
+    const f = fakeSb({ 'etransfers.update': [{ data: { id: ET } }, {}], 'payments.insert': [{ data: { id: 'p1' } }] });
+    await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET });
+    expect(findLikelyDuplicate).not.toHaveBeenCalled();
+  });
+
+  it('answers a retryable error, writing nothing, when the check cannot run', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue({ kind: 'unknown', message: 'read failed' });
+    const f = fakeSb({});
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', INPUT)).toEqual({
+      kind: 'error',
+      message: 'Could not check this order for a matching e-Transfer payment (read failed). Please try again.',
+    });
+    expect(ops(f.calls)).not.toContain('payments.insert');
   });
 });
