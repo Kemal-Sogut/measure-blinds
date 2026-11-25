@@ -109,7 +109,7 @@ import {
   restoreLogLine,
 } from '../lib/orderRestore';
 import { describePriceChanges } from '../lib/lineItemAuditLog';
-import { recordOrderPayment } from '../lib/payments';
+import { recordPaymentWithClaim } from '../lib/etransferClaim';
 import { generateOrderNumber, parseDateOnly } from '../lib/orderNumber';
 import { buildDocumentPdf, fetchLogo, toBase64, type PdfDocumentData } from '../lib/pdf';
 import { greetingName } from '../lib/customerName';
@@ -117,6 +117,7 @@ import { formatDateLong } from '../lib/timeText';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
 import { toDuplicateInput } from '../lib/orderDuplicate';
 import { deleteOrderCascade } from '../lib/orderDelete';
+import { deletePaymentReleasingEtransfer } from '../lib/paymentDelete';
 import { buildWarrantyCoverage } from '../lib/warranty';
 import { buildWarrantyPdf } from '../lib/warrantyPdf';
 import { logOrderEvent } from '../lib/orderLog';
@@ -354,6 +355,13 @@ const paymentSchema = z
     note: z.string().max(500).default(''),
     /** When set, links & marks this pending e-Transfer as applied. */
     etransfer_id: z.string().uuid().optional(),
+    /**
+     * Idempotency key minted once per payment intent. A replay (double
+     * tap, retried request) with the same key records nothing and answers
+     * 200 with the current order; the same key on a different amount,
+     * order or e-Transfer is a 409.
+     */
+    client_key: z.string().uuid().optional(),
   })
   .strict();
 
@@ -2213,9 +2221,9 @@ app.post('/:id/duplicate', async (c) => {
 });
 
 /**
- * Reverses a confirmation (user-only): awaiting_payment → sent.
- * A confirmation can be undone ONLY before any payment is recorded —
- * once money is in, the order is in_progress and this is refused.
+ * Reverses a confirmation (user-only): awaiting_payment → sent. Refused
+ * with 409 once ANY payment is recorded — including one below the 50%
+ * deposit, which leaves the order `awaiting_payment` with money on it.
  */
 app.post('/:id/unconfirm', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -2232,10 +2240,37 @@ app.post('/:id/unconfirm', async (c) => {
       409
     );
   }
+  // An order can sit in `awaiting_payment` WITH money on it: a payment
+  // below the 50% deposit is recorded but does not advance the status
+  // (`lib/payments.ts`). Reversing then would put a paid-against order
+  // back among the estimates, so the ledger is checked directly rather
+  // than inferred from the status.
+  const { count: paymentCount, error: countError } = await sb
+    .from('payments')
+    .select('id', { count: 'exact', head: true })
+    .eq('order_id', id);
+  if (countError) return c.json({ error: countError.message }, 500);
+  if ((paymentCount ?? 0) > 0) {
+    return c.json(
+      {
+        error:
+          'A payment is recorded on this order, so the confirmation cannot be reversed. ' +
+          'Delete the payment first if it was entered by mistake.',
+      },
+      409
+    );
+  }
+
+  // Guarded on the status too. That narrows the race but does not close
+  // it: a stage change landing after the read is not undone, but a
+  // payment below the deposit threshold recorded between the count above
+  // and this write leaves the order `awaiting_payment`, so this update
+  // can still revert an order that now has money on it.
   const { error } = await sb
     .from('orders')
     .update({ status: 'sent', confirmed_at: null })
-    .eq('id', id);
+    .eq('id', id)
+    .eq('status', 'awaiting_payment');
   if (error) return c.json({ error: error.message }, 500);
 
   // The frozen prices STAY: this lands the order back on `sent`, and the
@@ -2254,7 +2289,10 @@ app.post('/:id/unconfirm', async (c) => {
  * `lib/payments.ts`); a smaller payment is recorded but leaves the order
  * awaiting_payment. The outstanding balance is derived from the ledger,
  * so it is returned but never stored. Payments are accepted at any
- * post-confirmation stage (awaiting_payment through installed).
+ * post-confirmation stage (awaiting_payment through installed). A
+ * `client_key` makes the request idempotent; an `etransfer_id` is claimed
+ * (`pending → applied`) before the payment is written and released if the
+ * write fails.
  */
 app.post('/:id/payments', async (c) => {
   const parsed = paymentSchema.safeParse(await c.req.json().catch(() => null));
@@ -2278,19 +2316,20 @@ app.post('/:id/payments', async (c) => {
   }
 
   const paid_on = input.paid_on ?? new Date().toISOString().slice(0, 10);
-  const result = await recordOrderPayment(sb, id, existing.status, {
+  const outcome = await recordPaymentWithClaim(sb, id, existing.status, {
     amount: input.amount,
     paid_on,
     note: input.note,
+    client_key: input.client_key,
+    etransfer_id: input.etransfer_id,
   });
-  if ('errorMessage' in result) return c.json({ error: result.errorMessage }, 500);
-
-  // When applying an unmatched e-Transfer, mark it resolved + linked.
-  if (input.etransfer_id) {
-    await sb
-      .from('etransfers')
-      .update({ status: 'applied', order_id: id, payment_id: result.paymentId })
-      .eq('id', input.etransfer_id);
+  if (outcome.kind === 'error') return c.json({ error: outcome.message }, 500);
+  if (outcome.kind === 'conflict') return c.json({ error: outcome.message, code: outcome.code }, 409);
+  if (outcome.kind === 'replay') {
+    // Already recorded by an identical submit: answer with the order as it stands.
+    const { data: current } = await readDetail(sb, id);
+    if (current) current.amount_paid = sumPayments(current.payments);
+    return c.json({ data: current });
   }
 
   await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);
@@ -2313,7 +2352,8 @@ app.post('/:id/payments', async (c) => {
 /**
  * Deletes a single payment from the ledger. If the order is
  * `in_progress` and this was the last payment, the status is
- * automatically reverted to `awaiting_payment`.
+ * automatically reverted to `awaiting_payment`. An e-Transfer behind the
+ * payment returns to the pending inbox.
  */
 app.delete('/:id/payments/:paymentId', async (c) => {
   const sb = createSupabaseAdmin(c.env);
@@ -2329,8 +2369,10 @@ app.delete('/:id/payments/:paymentId', async (c) => {
     .maybeSingle();
   if (!payment) return c.json({ error: 'Payment not found on this order.' }, 404);
 
-  const { error: delError } = await sb.from('payments').delete().eq('id', paymentId);
-  if (delError) return c.json({ error: delError.message }, 500);
+  // Releases any e-Transfer behind the payment before it goes, and
+  // restores the link if the delete fails. See lib/paymentDelete.ts.
+  const deleted = await deletePaymentReleasingEtransfer(sb, id, paymentId);
+  if (deleted.status === 'failed') return c.json({ error: deleted.message }, 500);
 
   // Auto-revert: if the order is in_progress and no payments remain,
   // roll back to awaiting_payment.

@@ -641,6 +641,11 @@ export default function OrderDetail() {
   const [payNote, setPayNote] = useState('');
   // The pending e-Transfer being applied by this payment, if any.
   const [payEtransferId, setPayEtransferId] = useState<string | null>(null);
+  // Idempotency key for the payment being entered. Minted afresh each time
+  // the sheet is opened or an e-Transfer is applied (a new intent) and kept
+  // across retries of the same open sheet, so a double tap or retried
+  // request is recorded once while a different payment never reuses it.
+  const [payClientKey, setPayClientKey] = useState(() => crypto.randomUUID());
 
   // Send-invoice sheet — optional note included in the email.
   const [sendMessage, setSendMessage] = useState('');
@@ -1579,6 +1584,7 @@ export default function OrderDetail() {
     setPayDate(new Date());
     setPayNote('');
     setPayEtransferId(null);
+    setPayClientKey(crypto.randomUUID());
     setSheet('payment');
   }
 
@@ -1591,6 +1597,7 @@ export default function OrderDetail() {
         }`.slice(0, 200)
     );
     setPayEtransferId(t.id);
+    setPayClientKey(crypto.randomUUID());
   }
 
   async function submitPayment() {
@@ -1605,6 +1612,7 @@ export default function OrderDetail() {
           paid_on: toIso(payDate),
           note: payNote.trim(),
           etransfer_id: payEtransferId ?? undefined,
+          client_key: payClientKey,
         },
       });
       toast.success('Payment recorded.');
@@ -1613,6 +1621,7 @@ export default function OrderDetail() {
       setPayNote('');
       setPayDate(new Date());
       setPayEtransferId(null);
+      setPayClientKey(crypto.randomUUID());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not record payment.');
     }

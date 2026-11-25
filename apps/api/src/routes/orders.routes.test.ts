@@ -43,7 +43,7 @@ interface FakeDb {
    * own queue). Lets a test drive the compensation path a route takes
    * when the database rejects a write.
    */
-  opErrors: Record<string, { message: string }>;
+  opErrors: Record<string, { code?: string; message: string }>;
   /** Every filter call as [table, method, args] — lets a test prove WHICH row a route asked for. */
   filters: Array<[string, string, unknown[]]>;
   /** Every `sb.rpc(name, args)` call, in order. */
@@ -3879,5 +3879,216 @@ describe('PUT /:id — atomic save and version check', () => {
       ENV
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /:id/unconfirm', () => {
+  it('refuses while any payment is recorded, even one below the 50% deposit', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'awaiting_payment' }];
+    db.responses['payments.count'] = [1];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('orders.update');
+  });
+
+  it('reverses a confirmation whose ledger is empty', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'awaiting_payment', payments: [] }];
+    db.responses['payments.count'] = [0];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.orders?.[0]).toMatchObject({ status: 'sent', confirmed_at: null });
+    // The status half of the rule is re-applied as a database guard.
+    expect(db.filters).toContainEqual(['orders', 'eq', ['status', 'awaiting_payment']]);
+  });
+
+  it('still refuses an order that is not awaiting payment', async () => {
+    db.responses['orders.select'] = [{ id: 'u1', status: 'in_progress' }];
+    const res = await ordersApp.request('/u1/unconfirm', { method: 'POST' }, ENV);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('POST /:id/payments — duplicates and e-Transfer claims', () => {
+  const json = { 'Content-Type': 'application/json' };
+  const KEY = '99999999-9999-4999-8999-999999999999';
+  const ET = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+
+  it('answers 200 and records nothing when the same client_key was already recorded', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [{ amount: 100 }] }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 100 }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('payments.insert');
+    expect(db.filters).toContainEqual(['payments', 'eq', ['client_key', KEY]]);
+  });
+
+  it('409s when the e-Transfer is no longer pending, and records nothing', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = []; // the guarded claim matched no row
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('payments.insert');
+    expect(db.filters).toContainEqual(['etransfers', 'eq', ['status', 'pending']]);
+  });
+
+  it('claims the e-Transfer BEFORE recording the payment', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.responses['payments.insert'] = [{ id: 'p-new' }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(201);
+    expect(db.calls.indexOf('etransfers.update')).toBeLessThan(db.calls.indexOf('payments.insert'));
+    expect(db.updatePayloads.etransfers?.[0]).toEqual({ status: 'applied', order_id: 'pay1' });
+    expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ payment_id: 'p-new' });
+  });
+
+  it('releases the claim when the payment cannot be recorded', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.opErrors['payments.insert'] = { message: 'write failed' };
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(500);
+    expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ status: 'pending', order_id: null });
+  });
+
+  it('409s when the key belongs to a different payment, and records nothing', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 250 }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(409);
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('releases this request\'s own claim on a duplicate insert and never answers 200 blind', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.opErrors['payments.insert'] = { code: '23505', message: 'duplicate key value' };
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(500);
+    expect(db.updatePayloads.etransfers?.at(-1)).toEqual({ status: 'pending', order_id: null });
+  });
+
+  it('skips the claim for a replay that carries an etransfer_id', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['payments.select'] = [{ id: 'p-existing', order_id: 'pay1', amount: 100 }];
+    db.responses['etransfers.select'] = [{ id: ET, payment_id: 'p-existing' }];
+    const res = await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET, client_key: KEY }), headers: json },
+      ENV
+    );
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('etransfers.update');
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('scopes the release to this request\'s own claim', async () => {
+    db.responses['orders.select'] = [{ id: 'pay1', status: 'in_progress', total: 500, payments: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.opErrors['payments.insert'] = { message: 'write failed' };
+    await ordersApp.request(
+      '/pay1/payments',
+      { method: 'POST', body: JSON.stringify({ amount: 100, etransfer_id: ET }), headers: json },
+      ENV
+    );
+    const f = db.filters.filter(([t]) => t === 'etransfers');
+    expect(f).toContainEqual(['etransfers', 'eq', ['status', 'applied']]);
+    expect(f).toContainEqual(['etransfers', 'eq', ['order_id', 'pay1']]);
+    expect(f).toContainEqual(['etransfers', 'is', ['payment_id', null]]);
+  });
+});
+
+describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
+  beforeEach(() => {
+    db.responses['payments.select'] = [{ id: 'p1', order_id: 'o1', amount: 250 }];
+    db.responses['orders.select'] = [{ id: 'o1', status: 'ready', payments: [] }];
+  });
+  const del = () => ordersApp.request('/o1/payments/p1', { method: 'DELETE' }, ENV);
+
+  it('releases the e-Transfer behind the payment before the payment row goes', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect(db.updatePayloads.etransfers?.[0]).toEqual({ status: 'pending', order_id: null, payment_id: null });
+    expect(db.filters).toContainEqual(['etransfers', 'eq', ['payment_id', 'p1']]);
+    expect(db.filters).toContainEqual(['etransfers', 'in', ['id', ['et1']]]);
+    expect(db.filters).toContainEqual(['etransfers', 'eq', ['status', 'applied']]);
+    // BEFORE the delete: the foreign key nulls payment_id the moment the
+    // payment row goes, and the transfer could no longer be found by it.
+    expect(db.calls.indexOf('etransfers.update')).toBeLessThan(db.calls.indexOf('payments.delete'));
+  });
+
+  it('answers 500 and keeps the payment when the release fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.opErrors['etransfers.update'] = { message: 'release failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).not.toContain('payments.delete');
+  });
+
+  it('answers 500 and keeps the payment when the lookup fails', async () => {
+    db.opErrors['etransfers.select'] = { message: 'lookup failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).not.toContain('payments.delete');
+  });
+
+  it('re-applies the released e-Transfer when the payment delete fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.responses['etransfers.update'] = [{ id: 'et1' }]; // rows the release (and the restore) updated
+    db.opErrors['payments.delete'] = { message: 'delete failed' };
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.updatePayloads.etransfers).toEqual([
+      { status: 'pending', order_id: null, payment_id: null },
+      { status: 'applied', order_id: 'o1', payment_id: 'p1' },
+    ]);
+    expect(db.filters.filter(([t, m, a]) => t === 'etransfers' && m === 'in' && (a[0] as string) === 'id')).toHaveLength(2);
+  });
+
+  it('logs when the restore itself fails', async () => {
+    db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.responses['etransfers.update'] = [{ id: 'et1' }]; // rows the release updated
+    db.opErrors['payments.delete'] = { message: 'delete failed' };
+    let n = 0;
+    Object.defineProperty(db.opErrors, 'etransfers.update', {
+      enumerable: true,
+      get: () => (++n > 1 ? { message: 'restore failed' } : undefined),
+    });
+    const res = await del();
+    expect(res.status).toBe(500);
+    expect(db.calls).toContain('order_logs.insert');
+    expect(JSON.stringify(db.insertPayloads.order_logs)).toContain('could not be restored');
+  });
+
+  it('deletes cleanly when no e-Transfer is linked', async () => {
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect(db.calls).not.toContain('etransfers.update');
+    expect(db.calls).toContain('payments.delete');
   });
 });
