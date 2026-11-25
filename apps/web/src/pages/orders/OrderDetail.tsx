@@ -78,6 +78,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrderRouteId } from './orderRouteId';
+import { POSSIBLE_DUPLICATE_CODE, duplicatePaymentConfirm } from './paymentDuplicate';
 import toast from 'react-hot-toast';
 import { ApiError } from '../../lib/api';
 import { useConfirm } from '../../components/ui';
@@ -1600,7 +1601,15 @@ export default function OrderDetail() {
     setPayClientKey(crypto.randomUUID());
   }
 
-  async function submitPayment() {
+  /**
+   * Records the sheet's payment. When the Worker answers
+   * `possible_duplicate` (the same money is already on the order through
+   * the other door: a hand-entered payment beside an e-Transfer, or the
+   * reverse when applying a pending transfer), asks; on "Record it anyway" it resends the SAME submit — same
+   * `client_key` — with `confirm_duplicate`, so a retry of it is still
+   * recorded once. Cancel leaves the sheet open with nothing recorded.
+   */
+  async function submitPayment(confirmDuplicate = false) {
     if (!id) return;
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return toast.error('Enter a payment amount.');
@@ -1613,6 +1622,7 @@ export default function OrderDetail() {
           note: payNote.trim(),
           etransfer_id: payEtransferId ?? undefined,
           client_key: payClientKey,
+          ...(confirmDuplicate ? { confirm_duplicate: true } : {}),
         },
       });
       toast.success('Payment recorded.');
@@ -1623,6 +1633,10 @@ export default function OrderDetail() {
       setPayEtransferId(null);
       setPayClientKey(crypto.randomUUID());
     } catch (e) {
+      if (!confirmDuplicate && e instanceof ApiError && e.code === POSSIBLE_DUPLICATE_CODE) {
+        if (await askConfirm(duplicatePaymentConfirm(e.message))) await submitPayment(true);
+        return;
+      }
       toast.error(e instanceof Error ? e.message : 'Could not record payment.');
     }
   }
@@ -3209,7 +3223,7 @@ export default function OrderDetail() {
                   Cancel
                 </button>
                 <button
-                  onClick={submitPayment}
+                  onClick={() => void submitPayment()}
                   disabled={paymentMut.isPending}
                   className="h-11 flex-[2] rounded-sm bg-brand-600 text-sm font-semibold text-white hover:bg-brand-700 disabled:opacity-40"
                 >

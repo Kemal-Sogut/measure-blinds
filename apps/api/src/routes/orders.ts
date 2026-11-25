@@ -362,6 +362,14 @@ const paymentSchema = z
      * order or e-Transfer is a 409.
      */
     client_key: z.string().uuid().optional(),
+    /**
+     * Sent only after a 409 `possible_duplicate`, once staff confirm the
+     * customer really paid twice: records the payment even though the
+     * same money is already on the order through the other door — a
+     * hand-entered payment beside an e-Transfer payment, or an applied
+     * e-Transfer beside a hand-entered payment (`lib/paymentDuplicate.ts`).
+     */
+    confirm_duplicate: z.boolean().optional(),
   })
   .strict();
 
@@ -2292,7 +2300,12 @@ app.post('/:id/unconfirm', async (c) => {
  * post-confirmation stage (awaiting_payment through installed). A
  * `client_key` makes the request idempotent; an `etransfer_id` is claimed
  * (`pending → applied`) before the payment is written and released if the
- * write fails.
+ * write fails. A payment typed in by hand that matches an e-Transfer
+ * payment of the same amount dated within 3 days of its `paid_on` — or an
+ * e-Transfer being applied that matches a hand-entered one — is a 409
+ * `possible_duplicate` (nothing written, no claim taken) unless the
+ * request carries `confirm_duplicate: true`; the `client_key` replay check
+ * runs first.
  */
 app.post('/:id/payments', async (c) => {
   const parsed = paymentSchema.safeParse(await c.req.json().catch(() => null));
@@ -2322,6 +2335,7 @@ app.post('/:id/payments', async (c) => {
     note: input.note,
     client_key: input.client_key,
     etransfer_id: input.etransfer_id,
+    confirm_duplicate: input.confirm_duplicate,
   });
   if (outcome.kind === 'error') return c.json({ error: outcome.message }, 500);
   if (outcome.kind === 'conflict') return c.json({ error: outcome.message, code: outcome.code }, 409);
@@ -2332,7 +2346,13 @@ app.post('/:id/payments', async (c) => {
     return c.json({ data: current });
   }
 
-  await logOrderEvent(sb, id, `Payment of $${input.amount.toFixed(2)} recorded.`);
+  await logOrderEvent(
+    sb,
+    id,
+    input.confirm_duplicate
+      ? `Payment of $${input.amount.toFixed(2)} recorded as a separate payment, confirmed by staff after a possible-duplicate warning.`
+      : `Payment of $${input.amount.toFixed(2)} recorded.`
+  );
 
   // If that payment settled the order, the customer's warranty is due.
   // Deliberately BEFORE readDetail so the refreshed order the UI caches

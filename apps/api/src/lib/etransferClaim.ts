@@ -18,6 +18,18 @@
  *    (`status = applied`, same order, no payment linked), and a failed
  *    release or link is written to the order's activity trail so staff can
  *    find a stuck transfer. Nothing here throws once a payment is committed.
+ *  - Same money through the other door is never recorded silently
+ *    (`lib/paymentDuplicate.ts`). A payment typed in by hand (no
+ *    `etransfer_id`) is refused as a `possible_duplicate` conflict, with
+ *    nothing written, when the order already has an e-Transfer payment of
+ *    the same amount dated within 3 days of its `paid_on`. Applying a
+ *    pending e-Transfer is refused the same way when the order already has
+ *    a hand-entered payment of that amount dated within 3 days (the
+ *    webhook holds such a transfer for exactly this question). Either is
+ *    skipped when the submit carries `confirm_duplicate`. The key's replay
+ *    lookup runs BEFORE the check, and the check runs BEFORE the claim, so
+ *    an exact replay is still a replay and a refusal never leaves a claim
+ *    to release. A check that cannot run is an `error`, never a pass.
  *
  * Integration: called by the payments route; the e-Transfer webhook does
  * not use it (it dedupes on the Gmail message id and calls
@@ -26,6 +38,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logOrderEvent } from './orderLog';
+import { appliedTransferDuplicateMessage, findLikelyDuplicate, manualDuplicateMessage } from './paymentDuplicate';
 import { recordOrderPayment, type RecordPaymentInput } from './payments';
 
 /** Half a cent: float-safe equality for two money amounts. */
@@ -35,6 +48,13 @@ const AMOUNT_EPSILON = 0.005;
 export interface ClaimedPaymentInput extends RecordPaymentInput {
   /** Pending e-Transfer this payment applies, claimed before the write. */
   etransfer_id?: string;
+  /**
+   * Staff saw the `possible_duplicate` question and said the customer
+   * really paid twice: skip the same-money check. Meaningful on both
+   * paths: a hand-entered payment and the application of a pending
+   * e-Transfer.
+   */
+  confirm_duplicate?: boolean;
 }
 
 /** Outcome of {@link recordPaymentWithClaim}; the route maps it to HTTP. */
@@ -43,7 +63,11 @@ export type ClaimedPaymentResult =
   /** This exact submit was already recorded; nothing new was written. */
   | { kind: 'replay' }
   /** Refused with nothing written (409). */
-  | { kind: 'conflict'; code: 'client_key_mismatch' | 'etransfer_unavailable'; message: string }
+  | {
+      kind: 'conflict';
+      code: 'client_key_mismatch' | 'etransfer_unavailable' | 'possible_duplicate';
+      message: string;
+    }
   | { kind: 'error'; message: string };
 
 /** A stored payment found by its idempotency key. */
@@ -174,7 +198,10 @@ async function linkClaim(
  * @param currentStatus The order's status before this payment
  * @param input Ledger fields, optional `client_key`, optional `etransfer_id`
  * @returns `recorded` (new payment), `replay` (already recorded, nothing
- *   written), `conflict` (409, nothing written) or `error` (500). On an
+ *   written), `conflict` (409, nothing written — including
+ *   `possible_duplicate` for a hand-entered payment matching an e-Transfer
+ *   payment of the same amount dated within 3 days, or an e-Transfer being
+ *   applied that matches a hand-entered one) or `error` (500). On an
  *   `error` the claim is released when this request is known to hold it and
  *   no payment landed; when that cannot be told (the claim update itself
  *   errored, or the payment could not be re-checked after a failed write)
@@ -197,6 +224,36 @@ export async function recordPaymentWithClaim(
       const match = await matchesRequest(sb, stored, orderId, input);
       if (failed(match)) return lookupError(match);
       return match ? { kind: 'replay' } : MISMATCH;
+    }
+  }
+
+  // Same money already on the order through the OTHER door? A person must
+  // say it was paid twice. After the replay lookup on purpose (an exact
+  // replay of a confirmed submit is still a replay) and before the claim,
+  // so a refusal never leaves a claim to release. A hand-entered payment
+  // is checked against e-Transfer payments; applying a pending transfer
+  // against hand-entered ones.
+  if (!input.confirm_duplicate) {
+    const applying = !!input.etransfer_id;
+    const check = await findLikelyDuplicate(
+      sb,
+      orderId,
+      input.amount,
+      input.paid_on,
+      applying ? 'hand_entered' : 'etransfer'
+    );
+    if (check.kind === 'unknown') {
+      return {
+        kind: 'error',
+        message: `Could not check this order for a matching ${applying ? 'hand-entered' : 'e-Transfer'} payment (${check.message}). Please try again.`,
+      };
+    }
+    if (check.kind === 'found') {
+      return {
+        kind: 'conflict',
+        code: 'possible_duplicate',
+        message: applying ? appliedTransferDuplicateMessage(check.payment) : manualDuplicateMessage(check.payment),
+      };
     }
   }
 

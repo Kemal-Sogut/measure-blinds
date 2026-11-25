@@ -43,7 +43,12 @@ export function notificationDetail(n: AppNotification): string {
       return `${who || 'The customer'} confirmed ${order || 'their estimate'}.`;
     case 'etransfer_received': {
       const from = who ? ` from ${who}` : '';
-      const where = order ? `applied to ${order}` : 'waiting to be assigned to an order';
+      // A transfer the webhook matched but held back (the order may
+      // already have this money, entered by hand) carries its reason in
+      // `subject` and no order number; any other alert leaves `subject`
+      // blank and says where the money went.
+      const held = n.subject.trim();
+      const where = held || (order ? `applied to ${order}` : 'waiting to be assigned to an order');
       return `${money(n.amount)}${from} — ${where}.`;
     }
     case 'email_received':
