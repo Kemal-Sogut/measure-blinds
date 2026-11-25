@@ -154,6 +154,21 @@ describe('recordPaymentWithClaim', () => {
     expect(ops(f.calls)).not.toContain('payments.insert');
   });
 
+  it('keeps a possibly-made claim, logs it on the order, and errors when the claim update errors', async () => {
+    const f = fakeSb({ 'etransfers.update': [{ error: { message: 'claim timed out' } }] });
+    const r = await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET });
+    expect(r).toEqual({ kind: 'error', message: 'claim timed out' });
+    // No release: the update may have landed, or the claim may be another request's.
+    expect(f.calls.filter((c) => c.table === 'etransfers' && c.op === 'update')).toHaveLength(1);
+    expect(ops(f.calls)).not.toContain('payments.insert');
+    const log = f.calls.find((c) => c.table === 'order_logs');
+    expect(log?.payload).toMatchObject({ order_id: 'o1' });
+    const message = String((log?.payload as { message: string }).message);
+    expect(message).toContain(ET);
+    expect(message).toContain('may be left claimed');
+    expect(message).toContain('claim timed out');
+  });
+
   it('treats a lost claim as a replay when this key\'s payment now exists', async () => {
     const f = fakeSb({
       'payments.select': [{ data: null }, { data: { id: 'p0', order_id: 'o1', amount: 100 } }],

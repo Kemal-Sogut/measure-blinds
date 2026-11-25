@@ -174,7 +174,11 @@ async function linkClaim(
  * @param currentStatus The order's status before this payment
  * @param input Ledger fields, optional `client_key`, optional `etransfer_id`
  * @returns `recorded` (new payment), `replay` (already recorded, nothing
- *   written), `conflict` (409, nothing written) or `error` (500, claim released)
+ *   written), `conflict` (409, nothing written) or `error` (500). On an
+ *   `error` the claim is released when this request is known to hold it and
+ *   no payment landed; when that cannot be told (the claim update itself
+ *   errored, or the payment could not be re-checked after a failed write)
+ *   the claim is kept and a line on the order's activity trail says so.
  */
 export async function recordPaymentWithClaim(
   sb: SupabaseClient,
@@ -204,7 +208,17 @@ export async function recordPaymentWithClaim(
       .eq('status', 'pending')
       .select('id')
       .maybeSingle();
-    if (error) return { kind: 'error', message: error.message };
+    if (error) {
+      // Unknown whether the claim landed, so it is NOT released: a release
+      // here could reopen a claim a concurrent request now holds. Leave a
+      // note for staff instead, like the ambiguous paths below.
+      await logOrderEvent(
+        sb,
+        orderId,
+        `e-Transfer ${input.etransfer_id} may be left claimed: claiming it for this payment failed (${error.message}). Check the pending e-Transfers and the payment list before retrying.`
+      );
+      return { kind: 'error', message: error.message };
+    }
     if (!claimed) {
       // Lost the claim. A concurrent identical submit may have won and
       // recorded this key's payment: that is a replay, not a conflict.
