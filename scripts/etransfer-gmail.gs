@@ -17,14 +17,17 @@
  *   - From is a single mailbox that is one of Interac's notification
  *     addresses;
  *   - Gmail's own (topmost mx.google.com) Authentication-Results reports
- *     dkim=pass for INTERAC_DKIM_DOMAIN and dmarc=pass with header.from
- *     equal to that domain;
+ *     dkim=pass for INTERAC_DKIM_DOMAIN and exactly one dmarc clause,
+ *     which is a pass with header.from equal to that domain;
  *   - every Interac DKIM-Signature covers From, To and Subject and does
  *     not limit the signed body length (no l= tag);
  *   - To is a single mailbox equal to the SHOP_ADDRESS Script Property;
- *   - the subject announces money received (not a request, reminder,
- *     cancellation, expiry or a transfer the shop sent);
- *   - the amount is a finite number above zero.
+ *   - the subject mentions nothing that is not a deposit (a request,
+ *     reminder, cancellation, expiry or a transfer the shop sent) and
+ *     ENDS with Interac's deposit wording;
+ *   - every dollar amount in the subject and the body is the same value,
+ *     there is at least one, it is above zero, and the payer name read
+ *     from the email holds no amount.
  * A message that fails any check is NOT posted, and its thread is moved
  * to "NeedsReview-ETransfer" for a person to look at. Messages in that
  * same thread that passed every check ARE still posted; the execution
@@ -46,6 +49,9 @@
  * RUN_BUDGET_MS, well inside Apps Script's 6-minute limit.
  *
  * INSTALL (owner, in the Apps Script editor):
+ *   Interac mail must arrive at this Gmail account directly (not through
+ *   POP/IMAP import or "Check mail from other accounts"): the checks rely
+ *   on the Authentication-Results Gmail itself adds on delivery.
  *   1. Project Settings -> Script Properties:
  *        SECRET_KEY   = the Worker's ETRANSFER_WEBHOOK_SECRET
  *        SHOP_ADDRESS = the email address Interac deposits are sent to
@@ -56,10 +62,15 @@
  *      run logAuthHeadersForReview. Confirm the DKIM-Signature shows
  *      d=payments.interac.ca and an h= list containing from, to and
  *      subject; that Gmail's Authentication-Results shows dkim=pass for
- *      that domain and dmarc=pass header.from=payments.interac.ca; and
- *      that the last line says "passes every check". If Interac signs
- *      with a different domain, change INTERAC_DKIM_DOMAIN to exactly
- *      that value and re-run steps 2-3.
+ *      that domain and dmarc=pass header.from=payments.interac.ca; that
+ *      "Deposit wording" says yes for the Subject shown; that "Amounts
+ *      found" lists only the deposit's amount; and that the last line
+ *      says "passes every check". If Interac signs with a different
+ *      domain, change INTERAC_DKIM_DOMAIN to exactly that value and
+ *      re-run steps 2-3. If a genuine deposit shows "Deposit wording: no"
+ *      or another dollar figure, its Subject or body differs from what
+ *      this script expects: leave it to NeedsReview and have the script
+ *      updated rather than loosening a check by hand.
  *   4. Gmail filter: from:(notify@payments.interac.ca OR
  *      catch@payments.interac.ca) -> apply label "ToProcess-ETransfer".
  *      Do NOT tick "Never send it to Spam".
@@ -211,8 +222,9 @@ function isShopRecipient(to, shopAddress) {
  * Parses one Authentication-Results value (RFC 8601) after removing
  * comments and quoted strings: `{ authservId, clauses: [{ method,
  * result, props }] }`, all lower case, or null when it is unbalanced.
- * A clause with a repeated property or a bare word is dropped, so it can
- * never count as a pass.
+ * A clause without a readable `method=result`, or with a repeated
+ * property or a bare word, is kept with result 'invalid': it still counts
+ * as a clause of its method, but can never count as a pass.
  */
 function parseAuthResults(value) {
   const text = stripCommentsAndQuotes(value);
@@ -225,16 +237,17 @@ function parseAuthResults(value) {
     const tokens = parts[i].replace(/\s*=\s*/g, '=').trim().split(/\s+/).filter(Boolean);
     if (!tokens.length) continue;
     const head = tokens[0].split('=');
-    if (head.length !== 2 || !head[0] || !head[1]) continue;
+    const method = head[0].split('/')[0];
+    if (!method) continue;
     const props = Object.create(null);
-    let valid = true;
+    let valid = head.length === 2 && !!head[1];
     for (let t = 1; t < tokens.length && valid; t++) {
       const eq = tokens[t].indexOf('=');
       const key = eq > 0 ? tokens[t].slice(0, eq) : '';
       if (!key || key in props) valid = false;
       else props[key] = tokens[t].slice(eq + 1);
     }
-    if (valid) clauses.push({ method: head[0].split('/')[0], result: head[1], props: props });
+    clauses.push({ method: method, result: valid ? head[1] : 'invalid', props: props });
   }
   return { authservId: authservId, clauses: clauses };
 }
@@ -252,8 +265,9 @@ function dkimClauseDomain(props) {
  * Authentication-Results headers, top first. Only the TOPMOST one whose
  * authserv-id is mx.google.com counts (Gmail prepends its own; any lower
  * one came with the message). It must hold a dkim=pass clause for
- * exactly INTERAC_DKIM_DOMAIN and a dmarc=pass clause whose header.from
- * is exactly that domain. Anything unreadable on the way fails.
+ * exactly INTERAC_DKIM_DOMAIN and EXACTLY ONE dmarc clause, which must be
+ * a pass whose header.from is exactly that domain (a second dmarc clause
+ * of any result fails the check). Anything unreadable on the way fails.
  */
 function passesGmailVerdict(values) {
   const list = values || [];
@@ -261,14 +275,11 @@ function passesGmailVerdict(values) {
     const parsed = parseAuthResults(list[i]);
     if (!parsed) return false;
     if (parsed.authservId !== GMAIL_AUTHSERV_ID) continue;
-    let dkim = false;
-    let dmarc = false;
-    parsed.clauses.forEach(function (clause) {
-      if (clause.result !== 'pass') return;
-      if (clause.method === 'dkim' && dkimClauseDomain(clause.props) === INTERAC_DKIM_DOMAIN) dkim = true;
-      if (clause.method === 'dmarc' && clause.props['header.from'] === INTERAC_DKIM_DOMAIN) dmarc = true;
+    const dkim = parsed.clauses.some(function (clause) {
+      return clause.method === 'dkim' && clause.result === 'pass' && dkimClauseDomain(clause.props) === INTERAC_DKIM_DOMAIN;
     });
-    return dkim && dmarc;
+    const dmarc = parsed.clauses.filter(function (clause) { return clause.method === 'dmarc'; });
+    return dkim && dmarc.length === 1 && dmarc[0].result === 'pass' && dmarc[0].props['header.from'] === INTERAC_DKIM_DOMAIN;
   }
   return false;
 }
@@ -339,49 +350,107 @@ function authenticationProblem(raw, shopAddress) {
 }
 
 /**
- * True when the subject announces money RECEIVED. Requests, reminders,
- * cancellations, expiries and transfers the shop itself sent are not
- * deposits and must never become payments. Treating "sent you money" as
- * a deposit relies on the shop's Interac Autodeposit being ON.
+ * Wording that marks a notification as NOT a deposit to the shop:
+ * requests, reminders, cancellations, declines, expiries, returns and
+ * anything about a transfer the shop itself sent. Checked anywhere in the
+ * subject and BEFORE the deposit wording, so it always wins.
+ */
+const NOT_A_DEPOSIT = /request|remind|cancel|expire|declin|couldn.t be|could not be|reclaim|returned|you sent|you(?:'|’)ve sent|your (?:money )?transfer/i;
+
+/**
+ * Interac's deposit wording, anchored at the END of the subject. In the
+ * subject formats accepted here the payer's name comes before this
+ * ending, so the name cannot supply it.
+ */
+const DEPOSIT_ENDINGS = [/sent you money\.?$/i, /(?:has been|was) (?:automatically )?deposited\.?$/i];
+
+/**
+ * True when the subject announces money RECEIVED: nothing in it matches
+ * NOT_A_DEPOSIT, and it ends with one of DEPOSIT_ENDINGS. Anything else —
+ * including a deposit worded in a way not listed here — is not treated as
+ * a deposit, so it goes to review instead of being posted. Treating
+ * "sent you money" as a deposit relies on the shop's Interac Autodeposit
+ * being ON.
  */
 function isDepositSubject(subject) {
-  const s = String(subject || '');
-  if (/request|reminder|cancel|expire|declin|couldn.t be|you sent|your transfer/i.test(s)) return false;
-  return /you(?:'|’)ve received|sent you|has been (?:automatically )?deposited/i.test(s);
+  const s = String(subject || '').trim();
+  if (NOT_A_DEPOSIT.test(s)) return false;
+  return DEPOSIT_ENDINGS.some(function (ending) { return ending.test(s); });
 }
 
 /**
- * Parses one notification into the webhook payload, or returns null when
- * no amount can be read. The amount is validated separately
- * (isPostableAmount) before anything is posted.
+ * Every `$amount` in `text`, in order, as integer cents (`$1,250.50` ->
+ * 125050, `$5` -> 500). A figure that is not a plain dollar amount —
+ * cents other than two digits, or grouping commas not every three digits
+ * (`$1250.5`, `$1,25`) — is returned as NaN so the caller fails closed
+ * instead of skipping it.
+ */
+function dollarAmountsInCents(text) {
+  const found = [];
+  const pattern = /\$\s*(\d[\d,]*(?:\.\d+)?)/g;
+  let match;
+  while ((match = pattern.exec(String(text || ''))) !== null) {
+    const figure = match[1].replace(/,+$/, '');
+    if (!/^(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{2})?$/.test(figure)) {
+      found.push(NaN);
+      continue;
+    }
+    const parts = figure.replace(/,/g, '').split('.');
+    found.push(Number(parts[0]) * 100 + (parts[1] ? Number(parts[1]) : 0));
+  }
+  return found;
+}
+
+/** True when a payer name contains a `$` or anything shaped like an amount. */
+function nameHoldsAmount(name) {
+  return /\$|\d[\d,]*\.\d{2}\b|\b(?:cad|usd|dollars?)\b/i.test(String(name || ''));
+}
+
+/**
+ * Reads one notification into the webhook payload. Returns `{ payload }`
+ * when it may be posted, else `{ review: reason }`.
+ *
+ * The amount is read from EVERY `$amount` in the subject and the body:
+ * there must be at least one, all must be the same number of cents, and
+ * it must be above zero. The payer chooses their display name, which
+ * appears in both, so one figure on its own is never trusted. A payer
+ * name that holds an amount also goes to review.
  */
 function parseNotification(subject, body, isoDate, messageId) {
-  // Amount — the subject is the reliable source; fall back to the body.
-  //   "Interac e-Transfer: You've received $5.00 from Kemal and it ..."
-  const amountMatch =
-    subject.match(/\$([0-9,]+(?:\.[0-9]{2})?)/) || body.match(/\$([0-9,]+(?:\.[0-9]{2})?)/);
-  if (!amountMatch) return null;
+  const s = String(subject || '');
+  const b = String(body || '');
+  const amounts = dollarAmountsInCents(s).concat(dollarAmountsInCents(b));
+  if (!amounts.length) return { review: 'no amount found' };
+  for (let i = 0; i < amounts.length; i++) {
+    if (!isFinite(amounts[i])) return { review: 'unreadable amount' };
+    if (amounts[i] !== amounts[0]) return { review: 'the email shows more than one amount' };
+  }
+  const amount = amounts[0] / 100;
+  if (!isPostableAmount(amount)) return { review: 'amount is not a positive number' };
 
   // Sender name — parse the SUBJECT (never the body, which contains
   // "your account" etc. and mis-captures "you"). Fallbacks: the body's
   // "Sent From:" row, then a "NAME sent you" subject variant.
   let sender = 'Unknown';
   const senderMatch =
-    subject.match(/from\s+(.+?)\s+and\b/i) ||
-    body.match(/Sent From:\s*([^\n\r]+)/i) ||
-    subject.match(/:\s*(.+?)\s+sent you\b/i);
+    s.match(/from\s+(.+?)\s+and\b/i) ||
+    b.match(/Sent From:\s*([^\n\r]+)/i) ||
+    s.match(/:\s*(.+?)\s+sent you\b/i);
   if (senderMatch && senderMatch[1].trim()) sender = senderMatch[1].trim();
+  if (nameHoldsAmount(sender)) return { review: 'the payer name contains an amount' };
 
   // Customer message — absent for auto-deposit / most mobile apps.
-  const msgMatch = body.match(/Message:\s*(.*)/i);
+  const msgMatch = b.match(/Message:\s*(.*)/i);
 
   return {
-    amount: parseFloat(amountMatch[1].replace(/,/g, '')),
-    sender: sender.slice(0, 200),
-    reference_message: (msgMatch ? msgMatch[1].trim() : '').slice(0, 2000),
-    timestamp: isoDate,
-    message_id: messageId, // dedupe key
-    raw_snippet: body.slice(0, 1000), // context for manual review
+    payload: {
+      amount: amount,
+      sender: sender.slice(0, 200),
+      reference_message: (msgMatch ? msgMatch[1].trim() : '').slice(0, 2000),
+      timestamp: isoDate,
+      message_id: messageId, // dedupe key
+      raw_snippet: b.slice(0, 1000), // context for manual review
+    },
   };
 }
 
@@ -449,10 +518,7 @@ function examineMessage(message, shopAddress) {
   if (problem) return { review: problem };
   const subject = message.getSubject() || '';
   if (!isDepositSubject(subject)) return { review: 'not a deposit notification' };
-  const payload = parseNotification(subject, message.getPlainBody() || '', message.getDate().toISOString(), message.getId());
-  if (!payload) return { review: 'no amount found' };
-  if (!isPostableAmount(payload.amount)) return { review: 'amount is not a positive number' };
-  return { payload: payload };
+  return parseNotification(subject, message.getPlainBody() || '', message.getDate().toISOString(), message.getId());
 }
 
 /**
@@ -540,8 +606,11 @@ function processETransfers() {
  * Editor-only install aid: logs the authentication headers of the newest
  * message under ToProcess (else NeedsReview, else Processed) — every
  * Authentication-Results (top first), each DKIM-Signature's d= and h=,
- * From, To and Delivered-To — and the script's verdict. Logs only; never
- * posts or relabels.
+ * From, To and Delivered-To — then the Subject, whether it reads as a
+ * deposit, every dollar amount found in the subject and body, the amount
+ * and payer name that would be posted, and the script's overall verdict
+ * (the same examineMessage the trigger runs). Logs only; never posts or
+ * relabels.
  */
 function logAuthHeadersForReview() {
   const names = [LABEL_PENDING, LABEL_REVIEW, LABEL_DONE];
@@ -570,8 +639,22 @@ function logAuthHeadersForReview() {
   ['from', 'to', 'delivered-to'].forEach(function (name) {
     headerValues(raw, name).forEach(function (value) { Logger.log(name + ': ' + value); });
   });
+  const subject = message.getSubject() || '';
+  const body = message.getPlainBody() || '';
+  Logger.log('Subject: ' + subject);
+  Logger.log('Deposit wording: ' + (isDepositSubject(subject) ? 'yes' : 'no'));
+  const toDollars = function (cents) { return isFinite(cents) ? '$' + (cents / 100).toFixed(2) : '(unreadable)'; };
+  Logger.log('Amounts found in subject: [' + dollarAmountsInCents(subject).map(toDollars).join(', ') + ']; in body: [' +
+    dollarAmountsInCents(body).map(toDollars).join(', ') + ']');
+  const reading = parseNotification(subject, body, message.getDate().toISOString(), message.getId());
+  Logger.log(reading.payload
+    ? 'Parsed amount: $' + reading.payload.amount.toFixed(2) + '; payer name: ' + reading.payload.sender
+    : 'Parsed amount: none (' + reading.review + ')');
   const config = readConfig();
-  if (config) Logger.log('Verdict: ' + (authenticationProblem(raw, config.shopAddress) || 'passes every check'));
+  if (config) {
+    const verdict = examineMessage(message, config.shopAddress);
+    Logger.log('Verdict: ' + (verdict.review || 'passes every check'));
+  }
 }
 
 /**
@@ -623,6 +706,9 @@ function selfTest() {
   check('auth: lower Gmail header ignored', passesGmailVerdict(['mx.google.com; dkim=fail header.d=' + D + '; ' + DMARC, good]), false);
   check('auth: DKIM pass, DMARC missing', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D]), false);
   check('auth: DMARC fail', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '; dmarc=fail header.from=' + D]), false);
+  check('auth: DMARC fail then pass', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '; dmarc=fail header.from=' + D + '; ' + DMARC]), false);
+  check('auth: two DMARC passes', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '; ' + DMARC + '; ' + DMARC]), false);
+  check('auth: malformed DMARC beside a pass', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '; dmarc=fail header.from=a header.from=b; ' + DMARC]), false);
   check('auth: DMARC for another domain', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '; dmarc=pass header.from=evil.example']), false);
   check('auth: look-alike domain', passesGmailVerdict(['mx.google.com; dkim=pass header.d=' + D + '.evil.example; dmarc=pass header.from=' + D + '.evil.example']), false);
   check('auth: subdomain is not exact', passesGmailVerdict(['mx.google.com; dkim=pass header.d=x.' + D + '; ' + DMARC]), false);
@@ -663,23 +749,45 @@ function selfTest() {
   check('raw: second To header', authenticationProblem(rawMessage(['To: ' + SHOP].concat(base)), SHOP) !== '', true);
   check('raw: unfolded header value', headerValues(rawMessage(base), 'dkim-signature')[0].indexOf('h=From') !== -1, true);
 
-  // Subject and payload
+  // Subject classification
   check('subject: received', isDepositSubject("Interac e-Transfer: You've received $5.00 from Kemal and it has been automatically deposited."), true);
   check('subject: sent you', isDepositSubject('INTERAC e-Transfer: Ann Lee sent you money.'), true);
+  check('subject: deposited, trailing space', isDepositSubject('INTERAC e-Transfer: A money transfer from Ann Lee was deposited. '), true);
   check('subject: money request', isDepositSubject('INTERAC e-Transfer: Ann Lee is requesting $50.00'), false);
   check('subject: expired', isDepositSubject('INTERAC e-Transfer: The money transfer you sent has expired'), false);
   check('subject: cancelled', isDepositSubject('INTERAC e-Transfer: Your transfer to Ann Lee was cancelled'), false);
-  const parsed = parseNotification(
-    "Interac e-Transfer: You've received $1,250.50 from Ann Lee and it has been automatically deposited.",
-    'Hi,\nMessage: T1114-126\n',
-    '2026-11-14T15:00:00.000Z',
-    'm1'
-  );
-  check('parse: amount', parsed.amount, 1250.5);
-  check('parse: sender', parsed.sender, 'Ann Lee');
-  check('parse: message', parsed.reference_message, 'T1114-126');
-  check('parse: no amount', parseNotification('Interac e-Transfer', 'nothing here', '2026-11-14T15:00:00.000Z', 'm2'), null);
-  check('amount: NaN', isPostableAmount(parseNotification('You\'ve received $, from A and', '', '', 'm3').amount), false);
+  check('subject: deposit wording not at the end', isDepositSubject('INTERAC e-Transfer: Ann sent you money. Pending acceptance'), false);
+  check('subject: received, no deposit ending', isDepositSubject("Interac e-Transfer: You've received $5.00 from Ann Lee"), false);
+  check('subject: outgoing notice, name says sent you money', isDepositSubject('INTERAC e-Transfer: Your money transfer was deposited by Ann sent you money.'), false);
+  check('subject: transfer you sent, name says deposited', isDepositSubject('INTERAC e-Transfer: The transfer you sent to Ann has been deposited.'), false);
+  check('subject: reminder ending in deposit wording', isDepositSubject('INTERAC e-Transfer: Reminder: Ann sent you money.'), false);
+
+  // Amount and payer name
+  const DEPOSIT = "Interac e-Transfer: You've received $1,250.50 from Ann Lee and it has been automatically deposited.";
+  const parsed = parseNotification(DEPOSIT, 'Hi,\nAmount: $1,250.50 (CAD)\nMessage: T1114-126\n', '2026-11-14T15:00:00.000Z', 'm1');
+  check('parse: one amount in subject and body accepted', !!parsed.payload, true);
+  check('parse: amount', parsed.payload && parsed.payload.amount, 1250.5);
+  check('parse: sender', parsed.payload && parsed.payload.sender, 'Ann Lee');
+  check('parse: message', parsed.payload && parsed.payload.reference_message, 'T1114-126');
+  const bodyOnly = parseNotification('INTERAC e-Transfer: Ann Lee sent you money.', 'Sent From: Ann Lee\nAmount: $40.00\n', '', 'm4');
+  check('parse: amount from body when subject has none', bodyOnly.payload && bodyOnly.payload.amount, 40);
+  check('parse: no amount', parseNotification('Interac e-Transfer', 'nothing here', '2026-11-14T15:00:00.000Z', 'm2').review, 'no amount found');
+  check('parse: $ without a figure', parseNotification("You've received $, from A and", '', '', 'm3').review, 'no amount found');
+  check('parse: amounts differ (subject vs body)', parseNotification(DEPOSIT, 'Amount: $12.50\n', '', 'm5').review, 'the email shows more than one amount');
+  check('parse: name holds a larger amount (subject)',
+    parseNotification("Interac e-Transfer: You've received $5.00 from Ann $5,000.00 and it has been automatically deposited.", 'Amount: $5.00', '', 'm6').review,
+    'the email shows more than one amount');
+  check('parse: name holds the same amount (subject)',
+    parseNotification("Interac e-Transfer: You've received $5.00 from Ann $5.00 and it has been automatically deposited.", 'Amount: $5.00', '', 'm7').review,
+    'the payer name contains an amount');
+  check('parse: name holds an amount (body)',
+    parseNotification('INTERAC e-Transfer: Ann $900.00 sent you money.', 'Sent From: Ann $900.00\nAmount: $5.00\n', '', 'm8').review,
+    'the email shows more than one amount');
+  check('parse: name holds an amount without $', parseNotification('INTERAC e-Transfer: Ann 900.00 CAD sent you money.', 'Amount: $5.00\n', '', 'm9').review,
+    'the payer name contains an amount');
+  check('parse: malformed figure', parseNotification(DEPOSIT, 'Amount: $1,25\n', '', 'm10').review, 'unreadable amount');
+  check('parse: zero amount', parseNotification('Ann sent you money.', 'Amount: $0.00', '', 'm11').review, 'amount is not a positive number');
+  check('cents: grouping and whole dollars', dollarAmountsInCents('$1,250.50 and $5 and $ 7.25').join(','), '125050,500,725');
   check('amount: zero', isPostableAmount(0), false);
   check('amount: negative', isPostableAmount(-5), false);
   check('amount: infinite', isPostableAmount(Infinity), false);
