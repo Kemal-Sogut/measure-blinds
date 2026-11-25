@@ -3,8 +3,7 @@
 
 /**
  * Payment deletion — removes one ledger row and hands any e-Transfer
- * behind it back to the pending inbox, without ever leaving the money
- * counted twice or in neither list.
+ * behind it back to the pending inbox.
  *
  * `etransfers.payment_id` is `ON DELETE SET NULL`, so the moment the
  * payment row goes the transfer loses its only link to it. The transfer
@@ -16,11 +15,17 @@
  *   - if the transfers cannot be looked up or released, the payment is
  *     NOT deleted (it would otherwise vanish while its transfer stays
  *     `applied` against nothing);
- *   - if the delete itself fails, the released transfers are re-applied
- *     to the payment, so the payment is never in the ledger while the
- *     same money sits in the pending inbox ready to be recorded again.
- *     Should that restore also fail, an activity-trail line tells staff
- *     which transfer to look at.
+ *   - if the delete itself fails, the transfers this call released are
+ *     re-applied to the payment, so it does not stay in the ledger while
+ *     the same money sits in the pending inbox.
+ *
+ * Limits: the release, the delete and the restore are separate writes,
+ * not one transaction. Between the release and the delete (or the
+ * restore) the transfer is listed as pending while its payment still
+ * exists. The restore is guarded on `status = pending`, so it never takes
+ * back a transfer that was handled in that window; when it cannot put
+ * every released transfer back (an error, or fewer rows updated than were
+ * released) an activity-trail line names the transfers staff must check.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -31,6 +36,11 @@ export type PaymentDeleteResult =
   | { status: 'deleted' }
   | { status: 'failed'; message: string };
 
+/** The ids of the rows a select or `update().select('id')` returned. */
+function rowIds(data: unknown): string[] {
+  return ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+}
+
 /**
  * Deletes one payment, releasing its linked e-Transfer(s) first.
  *
@@ -39,8 +49,9 @@ export type PaymentDeleteResult =
  *        the caller); used to restore the link and to log
  * @param paymentId The payment to delete
  * @returns `failed` with a database message when the lookup, the release
- *          or the delete is rejected (the payment is untouched or the
- *          link restored), `deleted` otherwise
+ *          or the delete is rejected (the payment is untouched, or the
+ *          released transfers are re-applied, or the order's activity
+ *          trail says which could not be), `deleted` otherwise
  */
 export async function deletePaymentReleasingEtransfer(
   sb: SupabaseClient,
@@ -52,31 +63,46 @@ export async function deletePaymentReleasingEtransfer(
     .select('id')
     .eq('payment_id', paymentId);
   if (selError) return { status: 'failed', message: selError.message };
-  const ids = ((data ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const ids = rowIds(data);
 
+  let released: string[] = [];
   if (ids.length > 0) {
-    const { error: relError } = await sb
+    const { data: releasedRows, error: relError } = await sb
       .from('etransfers')
       .update({ status: 'pending', order_id: null, payment_id: null })
       .in('id', ids)
-      .eq('status', 'applied');
+      .eq('status', 'applied')
+      .select('id');
     if (relError) return { status: 'failed', message: relError.message };
+    released = rowIds(releasedRows);
   }
 
   const { error: delError } = await sb.from('payments').delete().eq('id', paymentId);
   if (!delError) return { status: 'deleted' };
 
-  if (ids.length > 0) {
-    const { error: restoreError } = await sb
+  if (released.length > 0) {
+    const { data: restoredRows, error: restoreError } = await sb
       .from('etransfers')
       .update({ status: 'applied', order_id: orderId, payment_id: paymentId })
-      .in('id', ids);
+      .in('id', released)
+      .eq('status', 'pending')
+      .select('id');
     if (restoreError) {
       await logOrderEvent(
         sb,
         orderId,
-        `Payment delete failed and its e-Transfer link could not be restored (e-Transfer ${ids.join(', ')}); check the pending inbox.`
+        `Payment delete failed and its e-Transfer link could not be restored (e-Transfer ${released.join(', ')}): ${restoreError.message}. Check the pending inbox.`
       );
+    } else {
+      const restored = rowIds(restoredRows);
+      const missing = released.filter((id) => !restored.includes(id));
+      if (missing.length > 0) {
+        await logOrderEvent(
+          sb,
+          orderId,
+          `Payment delete failed and e-Transfer ${missing.join(', ')} could not be re-applied to it: it changed while the delete was attempted. Check the pending inbox and this order's payments.`
+        );
+      }
     }
   }
   return { status: 'failed', message: delError.message };

@@ -4059,6 +4059,7 @@ describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
 
   it('re-applies the released e-Transfer when the payment delete fails', async () => {
     db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.responses['etransfers.update'] = [{ id: 'et1' }]; // rows the release (and the restore) updated
     db.opErrors['payments.delete'] = { message: 'delete failed' };
     const res = await del();
     expect(res.status).toBe(500);
@@ -4071,6 +4072,7 @@ describe('DELETE /:id/payments/:paymentId — linked e-Transfer', () => {
 
   it('logs when the restore itself fails', async () => {
     db.responses['etransfers.select'] = [{ id: 'et1' }];
+    db.responses['etransfers.update'] = [{ id: 'et1' }]; // rows the release updated
     db.opErrors['payments.delete'] = { message: 'delete failed' };
     let n = 0;
     Object.defineProperty(db.opErrors, 'etransfers.update', {
