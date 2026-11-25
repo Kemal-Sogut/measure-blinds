@@ -182,6 +182,12 @@ export interface PaymentInput {
    * given key once; a double tap or a retried request is a no-op.
    */
   client_key?: string;
+  /**
+   * Sent only on the resubmit after the Worker answered 409
+   * `possible_duplicate` and staff confirmed the customer really paid
+   * twice. Never sent with `etransfer_id` (the Worker rejects that pair).
+   */
+  confirm_duplicate?: boolean;
 }
 
 /** An unmatched e-Transfer awaiting manual assignment to an order. */
