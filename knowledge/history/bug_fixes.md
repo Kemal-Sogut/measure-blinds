@@ -33,7 +33,7 @@ auto-deployed on merge, version `35159321`).
 Worker `apps/api/src/lib/etransferClaim.ts`, `apps/api/src/lib/paymentDelete.ts`, `routes/webhook.ts`,
 `routes/orders.ts`; web `OrderDetail.tsx` / `useOrders.ts` (payment sheet); Gmail script
 `scripts/etransfer-gmail.gs`. PR #80; **deployed 2026-11-25** (API Worker `ecd97da4`; web auto-deployed on merge).
-The new Gmail script is installed by the owner separately and was **not yet installed** at the time of writing.
+The new Gmail script was installed by the owner on 2026-11-25 (`selfTest` passed; a real deposit passed every check).
 - **Unconfirm:** `POST /orders/:id/unconfirm` is refused while the order has a recorded payment.
 - **One payment per submit and per transfer:** the payment sheet sends a `client_key` minted each time it opens
   (`payments.client_key`); a repeat of the same key answers 200 and records nothing new. Applying an e-Transfer to an
