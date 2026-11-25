@@ -6,7 +6,7 @@ Worker `apps/api/src/lib/etransferClaim.ts`, `apps/api/src/lib/paymentDelete.ts`
 `scripts/etransfer-gmail.gs`. PR #80; **deployed 2026-11-25** (API Worker `ecd97da4`; web auto-deployed on merge).
 The new Gmail script is installed by the owner separately and was **not yet installed** at the time of writing.
 - **Unconfirm:** `POST /orders/:id/unconfirm` is refused while the order has a recorded payment.
-- **One payment per submit and per transfer:** the payment sheet sends a per-submit `client_key`
+- **One payment per submit and per transfer:** the payment sheet sends a `client_key` minted each time it opens
   (`payments.client_key`); a repeat of the same key answers 200 and records nothing new. Applying an e-Transfer to an
   order takes a guarded claim first (`lib/etransferClaim.ts`: a pending transfer is flipped with a guarded update
   before any payment is written), so one transfer yields one payment. Failures are logged and the claim is released
@@ -15,8 +15,8 @@ The new Gmail script is installed by the owner separately and was **not yet inst
   message id is required (UNIQUE), the shared secret is compared in constant time, and the payment's `paid_on`
   is the Toronto calendar date.
 - **Payment delete:** deleting a payment that came from an e-Transfer returns that transfer to pending
-  (`lib/paymentDelete.ts`). It fails closed if the release cannot be made, and restores the payment if the delete
-  itself fails.
+  (`lib/paymentDelete.ts`). It fails closed if the release cannot be made, and puts the transfer's link back if the
+  delete itself fails.
 - **Gmail script:** binds to the shop inbox (`SHOP_ADDRESS` Script Property), reads Gmail's own authentication
   verdict for the Interac sender, requires every amount in the subject and body to agree, and takes its secret from
   Script Properties (`SECRET_KEY`). Messages that fail a check go to a review label instead of being posted.
