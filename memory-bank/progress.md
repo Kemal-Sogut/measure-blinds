@@ -8,13 +8,14 @@
 
 **Access lock-down (audit remediation Plan 1), deployed 2026-11-17:** `public.profiles` is the staff allow-list;
 `/api/*` needs a verified session AND a `profiles` row (403 / 503 fail-closed); RLS has no client-role policy and
-`anon`/`authenticated` hold no table privileges; exact-match CORS; sign-ups disabled. Audit remediation continues
-with Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+`anon`/`authenticated` hold no table privileges; exact-match CORS; sign-ups disabled. See `knowledge/history/bug_fixes.md` 2026-11-17.
 
 **Order save integrity (audit remediation Plan 2), DEPLOYED 2026-11-21 (PR #78; migration 55, API `44f001bb`, web
 `7d23f11e`):** an order save is one Postgres transaction (`save_order_with_items`) and a save from an
 out-of-date screen is refused with 409 `version_conflict`; the editor offers Overwrite or Cancel. Do not roll the API
 back alone while this web is live (every save would 400 on `expected_version`).
+
+**Payments & e-Transfer integrity (audit remediation Plan 3), DEPLOYED 2026-11-25 (PR #80; API `ecd97da4`, web auto-deployed):** unconfirm is refused while a payment exists; one payment per submit (`client_key`) and per e-Transfer (guarded claim, `lib/etransferClaim.ts`); the webhook stores the e-Transfer row first and requires the Gmail message id; deleting a payment returns its e-Transfer to pending (`lib/paymentDelete.ts`). Remaining owner step: install the new Gmail script (Script Properties `SECRET_KEY` + `SHOP_ADDRESS`, run `selfTest`, run `logAuthHeadersForReview` on a real deposit and confirm "Deposit wording: yes", a single amount and "passes every check", then add the trigger). Next: Plan 4. See `knowledge/history/bug_fixes.md` 2026-11-25.
 
 **Text size setting (Settings → Display, per device; commit `45c82de` on `feat/website-lead-form`, not
 deployed):** Default / Large / Extra large scale every font via `--font-scale`; see engine_features 2026-11-04.

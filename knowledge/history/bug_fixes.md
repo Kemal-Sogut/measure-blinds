@@ -1,5 +1,31 @@
 # Bug Fixes History
 
+## 2026-11-25 — Payments and e-Transfers: one payment per submit and per transfer, safer webhook, delete and unconfirm guards
+Worker `apps/api/src/lib/etransferClaim.ts`, `apps/api/src/lib/paymentDelete.ts`, `routes/webhook.ts`,
+`routes/orders.ts`; web `OrderDetail.tsx` / `useOrders.ts` (payment sheet); Gmail script
+`scripts/etransfer-gmail.gs`. PR #80; **deployed 2026-11-25** (API Worker `ecd97da4`; web auto-deployed on merge).
+The new Gmail script is installed by the owner separately and was **not yet installed** at the time of writing.
+- **Unconfirm:** `POST /orders/:id/unconfirm` is refused while the order has a recorded payment.
+- **One payment per submit and per transfer:** the payment sheet sends a per-submit `client_key`
+  (`payments.client_key`); a repeat of the same key answers 200 and records nothing new. Applying an e-Transfer to an
+  order takes a guarded claim first (`lib/etransferClaim.ts`: a pending transfer is flipped with a guarded update
+  before any payment is written), so one transfer yields one payment. Failures are logged and the claim is released
+  or kept deliberately, never silently dropped.
+- **Webhook:** `POST /webhooks/etransfer` stores the `etransfers` row before any money is recorded. The Gmail
+  message id is required (UNIQUE), the shared secret is compared in constant time, and the payment's `paid_on`
+  is the Toronto calendar date.
+- **Payment delete:** deleting a payment that came from an e-Transfer returns that transfer to pending
+  (`lib/paymentDelete.ts`). It fails closed if the release cannot be made, and restores the payment if the delete
+  itself fails.
+- **Gmail script:** binds to the shop inbox (`SHOP_ADDRESS` Script Property), reads Gmail's own authentication
+  verdict for the Interac sender, requires every amount in the subject and body to agree, and takes its secret from
+  Script Properties (`SECRET_KEY`). Messages that fail a check go to a review label instead of being posted.
+  The install steps are in the script's header.
+- **Known limits (current behaviour):**
+  - The webhook's new e-Transfer row is briefly visible as pending before its payment is linked (owner-accepted).
+  - Unconfirm's status guard narrows, but does not close, a race with a small concurrent payment.
+  - Duplicate detection for incoming e-Transfers is by Gmail message id.
+
 ## 2026-11-17 — Order saves are all-or-nothing; a save from an out-of-date screen is refused
 Worker `PUT /api/orders/:id`, migration 55 (`save_order_with_items`, `orders.content_version`); web
 `apps/web/src/pages/orders/OrderDetail.tsx`, `orderPayload.ts`, `lib/api.ts`. PR #78;
