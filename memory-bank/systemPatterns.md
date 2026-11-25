@@ -86,7 +86,7 @@ Both doors take a database-enforced claim BEFORE writing a payment. The webhook 
 row first (UNIQUE Gmail message id, required), the staff route flips a pending transfer with a guarded update
 (`lib/etransferClaim.ts`), and a manual payment carries `payments.client_key` so a repeated submit records
 nothing new. Deleting a payment that came from an e-Transfer returns the transfer to pending through
-`lib/paymentDelete.ts`, which fails closed and restores the payment if the delete fails.
+`lib/paymentDelete.ts`, which fails closed and puts the transfer's link back if the delete fails.
 
 ## Calendar surface (2026-07-06)
 A read-only presentation layer over the existing installation-scheduling domain — no
