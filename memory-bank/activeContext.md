@@ -8,13 +8,15 @@
 
 **Audit remediation in progress; Plan 1 (access lock-down) is deployed (2026-11-17, API Worker `fae237da`, PR #76,
 migration 54 applied):** `/api/*` requires a `profiles` row, client-role table access is gone, CORS is exact-match,
-Supabase sign-ups are off. Next: Plans 3-4. See `knowledge/history/bug_fixes.md` 2026-11-17.
+Supabase sign-ups are off. See `knowledge/history/bug_fixes.md` 2026-11-17.
 
 **Plan 2 (order save integrity) is DEPLOYED 2026-11-21 (PR #78): migration 55 applied, API Worker `44f001bb`, web
 `7d23f11e`.** One-transaction order save (`save_order_with_items`) plus a `content_version` conflict check; the editor
 asks before overwriting a newer save. Never roll the API back on its own while this web is live (every save would
 400 on `expected_version`). Still to do: a two-tab check on the live app (save in one tab, then the other → the
-conflict dialog). Next: Plans 3-4.
+conflict dialog).
+
+**Plan 3 (payments & e-Transfer integrity) is DEPLOYED 2026-11-25 (PR #80): API Worker `ecd97da4`, web auto-deployed on merge.** See `knowledge/history/bug_fixes.md` 2026-11-25 for the behaviour and known limits. The new Gmail script is installed (2026-11-25; Script Properties `SECRET_KEY` + `SHOP_ADDRESS` set, `selfTest` and a real-deposit check passed, 5-minute trigger). **Plan 3b (duplicate guard, PR #81) is also DEPLOYED 2026-11-25: API `fe50a587`, web `35159321`.** Next: Plan 4 (Toronto dates).
 
 **Also on this branch (commit `45c82de`):** Settings → Display → **Text size** (per device; Default / Large / Extra
 large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns

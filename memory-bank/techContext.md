@@ -46,9 +46,12 @@ pnpm dev:api    # → http://localhost:8787
 # Start both simultaneously
 pnpm dev
 
-# Deploy to Cloudflare — prompts for which apps (or: pnpm run deploy:apps web api)
-pnpm run deploy:apps
+# Deploy the API Worker (the web is NOT deployed by hand — see below)
+pnpm run deploy:apps api
 ```
+The web app is deployed automatically by Cloudflare when a change merges to `main`; never deploy it by hand.
+Only the API is deployed manually with `pnpm run deploy:apps api`. When an API change must reach production
+before the web (the web depends on it), deploy the API from the branch BEFORE merging.
 `pnpm run deploy:apps` (`scripts/deploy.mjs`) builds each chosen app if it has a `build` script,
 then runs `npx wrangler deploy` in `apps/<name>`. Use `pnpm run`, not bare `pnpm deploy` —
 that is pnpm's built-in workspace-deploy command.
