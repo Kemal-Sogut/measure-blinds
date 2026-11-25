@@ -16,11 +16,15 @@ interface State {
   calls: string[];
   inserts: Array<Record<string, unknown>>;
   updates: Array<Record<string, unknown>>;
+  /** Rows written to the order activity trail (`order_logs`). */
+  logs: Array<Record<string, unknown>>;
   /** When set, the etransfers INSERT fails with this error. */
   insertError: { code: string; message: string } | null;
+  /** When set, the etransfers UPDATE (the link to the payment) fails with this error. */
+  updateError: { message: string } | null;
 }
 
-const state: State = { calls: [], inserts: [], updates: [], insertError: null };
+const state: State = { calls: [], inserts: [], updates: [], logs: [], insertError: null, updateError: null };
 
 function builder(table: string) {
   let op = 'select';
@@ -45,7 +49,11 @@ function builder(table: string) {
       state.inserts.push(payload);
       return { data: { id: 'et-1' }, error: null };
     }
-    if (table === 'etransfers' && op === 'update') state.updates.push(payload);
+    if (table === 'etransfers' && op === 'update') {
+      state.updates.push(payload);
+      if (state.updateError) return { data: null, error: state.updateError };
+    }
+    if (table === 'order_logs' && op === 'insert') state.logs.push(payload);
     return { data: null, error: null };
   };
   b.single = async () => settle();
@@ -84,11 +92,11 @@ const BODY = {
   raw_snippet: 'You have received $250.00',
 };
 
-function post(body: unknown, auth = 'Bearer test-secret') {
+function post(body: unknown, auth = 'Bearer test-secret', env: Record<string, unknown> = ENV) {
   return webhookApp.request(
     '/etransfer',
     { method: 'POST', headers: { Authorization: auth, 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
-    ENV
+    env
   );
 }
 
@@ -96,7 +104,9 @@ beforeEach(() => {
   state.calls = [];
   state.inserts = [];
   state.updates = [];
+  state.logs = [];
   state.insertError = null;
+  state.updateError = null;
   vi.mocked(resolveOrder).mockReset();
   vi.mocked(recordOrderPayment).mockReset();
 });
@@ -105,6 +115,20 @@ describe('POST /webhooks/etransfer', () => {
   it('401s without the shared secret', async () => {
     expect((await post(BODY, 'Bearer wrong')).status).toBe(401);
     expect((await post(BODY, '')).status).toBe(401);
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it('401s when the secret is not configured, even for a bare "Bearer " header', async () => {
+    const { ETRANSFER_WEBHOOK_SECRET: _unset, ...withoutSecret } = ENV;
+    expect((await post(BODY, 'Bearer ', withoutSecret)).status).toBe(401);
+    expect((await post(BODY, 'Bearer ', { ...ENV, ETRANSFER_WEBHOOK_SECRET: '' })).status).toBe(401);
+    expect(state.calls).toHaveLength(0);
+  });
+
+  it('400s a payload without a Gmail message id, its only dedupe key', async () => {
+    const { message_id: _omitted, ...withoutId } = BODY;
+    expect((await post(withoutId)).status).toBe(400);
+    expect((await post({ ...BODY, message_id: '' })).status).toBe(400);
     expect(state.calls).toHaveLength(0);
   });
 
@@ -133,9 +157,28 @@ describe('POST /webhooks/etransfer', () => {
 
   it('answers 500 when the transfer cannot be stored, so the script retries', async () => {
     state.insertError = { code: '08006', message: 'connection failure' };
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const res = await post(BODY);
+      expect(res.status).toBe(500);
+      expect(recordOrderPayment).not.toHaveBeenCalled();
+      expect(consoleError).toHaveBeenCalledOnce();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('answers applied and logs the database error on the order when the link fails', async () => {
+    vi.mocked(resolveOrder).mockResolvedValue({ id: 'o1', status: 'awaiting_payment', order_number: 'T1114-126' });
+    vi.mocked(recordOrderPayment).mockResolvedValue({ paymentId: 'p1' });
+    state.updateError = { message: 'link write failed' };
     const res = await post(BODY);
-    expect(res.status).toBe(500);
-    expect(recordOrderPayment).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: 'applied', order_id: 'o1' });
+    expect(state.logs).toHaveLength(1);
+    expect(state.logs[0]).toMatchObject({ order_id: 'o1', source: 'staff' });
+    expect(String(state.logs[0].message)).toContain('link write failed');
+    expect(String(state.logs[0].message)).toContain('do not apply it again');
   });
 
   it('leaves an unmatched transfer pending', async () => {

@@ -26,6 +26,7 @@ import { recordOrderPayment } from '../lib/payments';
 import { resolveOrder } from '../lib/etransferMatch';
 import { issueWarrantyIfPaid } from '../lib/warrantyIssue';
 import { recordNotification } from '../lib/notifications';
+import { logOrderEvent } from '../lib/orderLog';
 import { secretsMatch } from '../lib/secretCompare';
 import { torontoDateISO } from '../lib/timeText';
 import type { Env } from '../index';
@@ -39,8 +40,13 @@ const payloadSchema = z
     reference_message: z.string().max(2000).default(''),
     /** ISO string or epoch millis from message.getDate(). */
     timestamp: z.union([z.string(), z.number()]).optional(),
-    /** Gmail message id — dedupe key. */
-    message_id: z.string().max(200).optional(),
+    /**
+     * Gmail message id — REQUIRED: it is the only idempotency key
+     * (`etransfers.gmail_message_id` is UNIQUE). A missing value would be
+     * stored as NULL, which UNIQUE never compares equal, and an empty one
+     * would collide across unrelated emails, so both are refused (400).
+     */
+    message_id: z.string().min(1).max(200),
     raw_snippet: z.string().max(4000).default(''),
   })
   .passthrough();
@@ -70,7 +76,7 @@ app.post('/etransfer', async (c) => {
   const { data: claim, error: claimError } = await sb
     .from('etransfers')
     .insert({
-      gmail_message_id: p.message_id ?? null,
+      gmail_message_id: p.message_id,
       amount: p.amount,
       sender: p.sender,
       reference_message: p.reference_message,
@@ -105,12 +111,12 @@ app.post('/etransfer', async (c) => {
         // The money IS recorded; only the inbox row is out of date. Say
         // so on the order, where staff will see it, rather than failing
         // the request and inviting a retry of an applied transfer.
-        await sb.from('order_logs').insert({
-          order_id: match.id,
-          message:
-            `An e-Transfer of $${p.amount.toFixed(2)} was recorded automatically but is still listed as pending — ` +
-            'dismiss it in the pending e-Transfers list; do not apply it again.',
-        });
+        await logOrderEvent(
+          sb,
+          match.id,
+          `An e-Transfer of $${p.amount.toFixed(2)} was recorded automatically but is still listed as pending ` +
+            `(${linkError.message}) — dismiss it in the pending e-Transfers list; do not apply it again.`
+        );
       }
 
       // Staff alert. No order_id on purpose: payment alerts do not link,
