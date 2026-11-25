@@ -339,12 +339,6 @@ describe('recordPaymentWithClaim — possible duplicate of an e-Transfer payment
     expect(findLikelyDuplicate).not.toHaveBeenCalled();
   });
 
-  it('does not ask when a pending e-Transfer is being applied', async () => {
-    const f = fakeSb({ 'etransfers.update': [{ data: { id: ET } }, {}], 'payments.insert': [{ data: { id: 'p1' } }] });
-    await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...INPUT, etransfer_id: ET });
-    expect(findLikelyDuplicate).not.toHaveBeenCalled();
-  });
-
   it('answers a retryable error, writing nothing, when the check cannot run', async () => {
     vi.mocked(findLikelyDuplicate).mockResolvedValue({ kind: 'unknown', message: 'read failed' });
     const f = fakeSb({});
@@ -353,5 +347,66 @@ describe('recordPaymentWithClaim — possible duplicate of an e-Transfer payment
       message: 'Could not check this order for a matching e-Transfer payment (read failed). Please try again.',
     });
     expect(ops(f.calls)).not.toContain('payments.insert');
+  });
+});
+
+describe('recordPaymentWithClaim — applying an e-Transfer that matches a hand-entered payment', () => {
+  const HAND = { kind: 'found' as const, payment: { id: 'p-hand', amount: 100, paid_on: '2026-11-13' } };
+  const APPLY = { ...INPUT, etransfer_id: ET };
+
+  it('refuses with possible_duplicate before taking the claim, writing nothing', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(HAND);
+    const f = fakeSb({});
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', APPLY)).toEqual({
+      kind: 'conflict',
+      code: 'possible_duplicate',
+      message:
+        'A payment of $100.00 dated November 13, 2026 was entered by hand on this order, within 3 days of ' +
+        'this e-Transfer. Apply this e-Transfer as well only if the customer really paid twice.',
+    });
+    expect(findLikelyDuplicate).toHaveBeenCalledWith(f.sb, 'o1', 100, '2026-11-14', 'hand_entered');
+    expect(ops(f.calls)).not.toContain('etransfers.update');
+    expect(ops(f.calls)).not.toContain('payments.insert');
+  });
+
+  it('claims and records it when the submit confirms the duplicate', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(HAND);
+    const f = fakeSb({ 'etransfers.update': [{ data: { id: ET } }, {}], 'payments.insert': [{ data: { id: 'p1' } }] });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', { ...APPLY, confirm_duplicate: true })).toEqual({
+      kind: 'recorded',
+      paymentId: 'p1',
+    });
+    expect(findLikelyDuplicate).not.toHaveBeenCalled();
+    expect(ops(f.calls)).toContain('etransfers.update');
+  });
+
+  it('answers a retryable error, with no claim taken, when the check cannot run', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue({ kind: 'unknown', message: 'read failed' });
+    const f = fakeSb({});
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', APPLY)).toEqual({
+      kind: 'error',
+      message: 'Could not check this order for a matching hand-entered payment (read failed). Please try again.',
+    });
+    expect(ops(f.calls)).not.toContain('etransfers.update');
+    expect(ops(f.calls)).not.toContain('payments.insert');
+  });
+
+  it('applies as before when nothing matches', async () => {
+    const f = fakeSb({ 'etransfers.update': [{ data: { id: ET } }, {}], 'payments.insert': [{ data: { id: 'p1' } }] });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', APPLY)).toEqual({
+      kind: 'recorded',
+      paymentId: 'p1',
+    });
+    expect(findLikelyDuplicate).toHaveBeenCalledWith(f.sb, 'o1', 100, '2026-11-14', 'hand_entered');
+  });
+
+  it('checks the key FIRST: an exact replay of an applied transfer is still a replay', async () => {
+    vi.mocked(findLikelyDuplicate).mockResolvedValue(HAND);
+    const f = fakeSb({
+      'payments.select': [{ data: { id: 'p0', order_id: 'o1', amount: 100 } }],
+      'etransfers.select': [{ data: [{ id: ET }] }],
+    });
+    expect(await recordPaymentWithClaim(f.sb, 'o1', 'in_progress', APPLY)).toEqual({ kind: 'replay' });
+    expect(findLikelyDuplicate).not.toHaveBeenCalled();
   });
 });

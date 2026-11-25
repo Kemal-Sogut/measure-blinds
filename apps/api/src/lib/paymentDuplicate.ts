@@ -32,6 +32,12 @@
  *    `possible_duplicate` carrying {@link manualDuplicateMessage}; the
  *    staff app asks, and resends with `confirm_duplicate: true` if the
  *    person says it really was paid twice.
+ *  - Applying a pending transfer from the inbox (`lib/etransferClaim.ts`)
+ *    asks about `hand_entered` payments, using the date being recorded.
+ *    A hit is the same 409 `possible_duplicate`, carrying
+ *    {@link appliedTransferDuplicateMessage}, and the same confirmation
+ *    flow follows. This closes the gap left by the webhook's hold: a held
+ *    transfer cannot be applied without that question being asked.
  *
  * A payment "came in by e-Transfer" when an `etransfers` row links to it
  * (`etransfers.payment_id`, migration 16). The check is a heuristic, not a
@@ -218,5 +224,19 @@ export function manualDuplicateMessage(earlier: EarlierPayment): string {
     `An e-Transfer of ${dollars(earlier.amount)} dated ${formatDateLong(earlier.paid_on)} is already ` +
     `recorded on this order, within ${DUPLICATE_DATE_TOLERANCE_DAYS} days of this payment. ` +
     'Record this payment as well only if the customer really paid twice.'
+  );
+}
+
+/**
+ * The sentence the staff route returns with a 409 `possible_duplicate`
+ * when a pending e-Transfer is being applied and the order already has a
+ * hand-entered payment of the same amount; the payment sheet shows it as
+ * the confirmation's message.
+ */
+export function appliedTransferDuplicateMessage(earlier: EarlierPayment): string {
+  return (
+    `A payment of ${dollars(earlier.amount)} dated ${formatDateLong(earlier.paid_on)} was entered by hand ` +
+    `on this order, within ${DUPLICATE_DATE_TOLERANCE_DAYS} days of this e-Transfer. ` +
+    'Apply this e-Transfer as well only if the customer really paid twice.'
   );
 }

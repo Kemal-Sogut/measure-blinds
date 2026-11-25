@@ -1603,8 +1603,9 @@ export default function OrderDetail() {
 
   /**
    * Records the sheet's payment. When the Worker answers
-   * `possible_duplicate` (an e-Transfer of this amount is already on the
-   * order), asks; on "Record it anyway" it resends the SAME submit — same
+   * `possible_duplicate` (the same money is already on the order through
+   * the other door: a hand-entered payment beside an e-Transfer, or the
+   * reverse when applying a pending transfer), asks; on "Record it anyway" it resends the SAME submit — same
    * `client_key` — with `confirm_duplicate`, so a retry of it is still
    * recorded once. Cancel leaves the sheet open with nothing recorded.
    */

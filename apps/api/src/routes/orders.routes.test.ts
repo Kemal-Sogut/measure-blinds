@@ -4145,7 +4145,7 @@ describe('POST /:id/payments — possible duplicate of an e-Transfer payment', (
     expect(db.calls).toContain('payments.insert');
     expect(db.filters.some(([t, m]) => t === 'payments' && m === 'gte')).toBe(false);
     const logs = (db.insertPayloads.order_logs ?? []) as Array<{ message: string }>;
-    expect(logs.some((l) => l.message.includes('confirmed by staff'))).toBe(true);
+    expect(logs.some((l) => l.message === 'Payment of $250.00 recorded as a separate payment, confirmed by staff after a possible-duplicate warning.')).toBe(true);
   });
 
   it('records an amount that matches only a hand-entered payment', async () => {
@@ -4161,9 +4161,24 @@ describe('POST /:id/payments — possible duplicate of an e-Transfer payment', (
     expect(db.calls).not.toContain('payments.insert');
   });
 
-  it('400s confirm_duplicate on an e-Transfer being applied', async () => {
-    const res = await post({ amount: 250, etransfer_id: ET, confirm_duplicate: true });
-    expect(res.status).toBe(400);
-    expect(db.calls).toHaveLength(0);
+  it('409s possible_duplicate when applying an e-Transfer that matches a hand-entered payment, taking no claim', async () => {
+    db.responses['payments.select'] = [{ ...VIA_ET, etransfers: [] }];
+    const res = await post({ amount: 250, paid_on: '2026-11-20', etransfer_id: ET });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { code: string; error: string };
+    expect(body.code).toBe('possible_duplicate');
+    expect(body.error).toContain('A payment of $250.00 dated November 20, 2026 was entered by hand');
+    expect(db.calls).not.toContain('etransfers.update');
+    expect(db.calls).not.toContain('payments.insert');
+  });
+
+  it('accepts confirm_duplicate with etransfer_id: claims, records and logs it', async () => {
+    db.responses['payments.select'] = [{ ...VIA_ET, etransfers: [] }];
+    db.responses['etransfers.update'] = [{ id: ET }];
+    db.responses['payments.insert'] = [{ id: 'p-new' }];
+    const res = await post({ amount: 250, paid_on: '2026-11-20', etransfer_id: ET, confirm_duplicate: true });
+    expect(res.status).toBe(201);
+    expect(db.calls).toContain('etransfers.update');
+    expect(db.calls).toContain('payments.insert');
   });
 });

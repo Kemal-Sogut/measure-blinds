@@ -364,17 +364,14 @@ const paymentSchema = z
     client_key: z.string().uuid().optional(),
     /**
      * Sent only after a 409 `possible_duplicate`, once staff confirm the
-     * customer really paid twice: records the hand-entered payment even
-     * though a same-amount e-Transfer payment is already on the order
-     * (`lib/paymentDuplicate.ts`). Not accepted with `etransfer_id`.
+     * customer really paid twice: records the payment even though the
+     * same money is already on the order through the other door — a
+     * hand-entered payment beside an e-Transfer payment, or an applied
+     * e-Transfer beside a hand-entered payment (`lib/paymentDuplicate.ts`).
      */
     confirm_duplicate: z.boolean().optional(),
   })
-  .strict()
-  .refine((p) => !(p.confirm_duplicate && p.etransfer_id), {
-    message: 'only for a payment entered by hand (not with etransfer_id)',
-    path: ['confirm_duplicate'],
-  });
+  .strict();
 
 /** Optional consultant note accepted when emailing an estimate/invoice/receipt. */
 const sendMessageSchema = z
@@ -2304,9 +2301,11 @@ app.post('/:id/unconfirm', async (c) => {
  * `client_key` makes the request idempotent; an `etransfer_id` is claimed
  * (`pending → applied`) before the payment is written and released if the
  * write fails. A payment typed in by hand that matches an e-Transfer
- * payment of the same amount dated within 3 days of its `paid_on` is a 409
- * `possible_duplicate` (nothing written) unless the request carries
- * `confirm_duplicate: true`; the `client_key` replay check runs first.
+ * payment of the same amount dated within 3 days of its `paid_on` — or an
+ * e-Transfer being applied that matches a hand-entered one — is a 409
+ * `possible_duplicate` (nothing written, no claim taken) unless the
+ * request carries `confirm_duplicate: true`; the `client_key` replay check
+ * runs first.
  */
 app.post('/:id/payments', async (c) => {
   const parsed = paymentSchema.safeParse(await c.req.json().catch(() => null));
@@ -2351,7 +2350,7 @@ app.post('/:id/payments', async (c) => {
     sb,
     id,
     input.confirm_duplicate
-      ? `Payment of $${input.amount.toFixed(2)} recorded (confirmed by staff although an e-Transfer of the same amount is already recorded on this order).`
+      ? `Payment of $${input.amount.toFixed(2)} recorded as a separate payment, confirmed by staff after a possible-duplicate warning.`
       : `Payment of $${input.amount.toFixed(2)} recorded.`
   );
 

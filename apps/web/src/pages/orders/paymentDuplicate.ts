@@ -12,7 +12,10 @@
  * Worker refuses it with 409 `possible_duplicate` and a sentence naming
  * the earlier payment (`apps/api/src/lib/paymentDuplicate.ts`
  * `manualDuplicateMessage`). The sheet shows that sentence in the app's
- * confirmation dialog; "Record it anyway" resends the SAME submit (same
+ * confirmation dialog. The same question is asked when a pending
+ * e-Transfer is applied and the order already has a hand-entered payment
+ * of that amount (the sentence then names that payment). "Record it
+ * anyway" resends the SAME submit (same
  * `client_key`) with `confirm_duplicate: true`, so a retry of the
  * confirmed submit is still recorded once.
  *
