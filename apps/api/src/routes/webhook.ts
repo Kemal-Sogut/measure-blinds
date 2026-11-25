@@ -16,7 +16,12 @@
  *
  * Resolution: order number in the message (fast path) → confident
  * customer-name + amount match → otherwise parked as 'pending' for
- * manual assignment in the Record Payment popup.
+ * manual assignment in the Record Payment popup. A MATCHED transfer is
+ * still parked, not recorded, when the order already has a hand-entered
+ * payment of the same amount dated within 3 days of the transfer, or when
+ * that cannot be checked (`lib/paymentDuplicate.ts`): the same money may
+ * have been typed in by staff before the Interac email arrived, so a
+ * person decides. The order's activity trail and the alert both say why.
  */
 
 import { Hono } from 'hono';
@@ -29,6 +34,7 @@ import { recordNotification } from '../lib/notifications';
 import { logOrderEvent } from '../lib/orderLog';
 import { secretsMatch } from '../lib/secretCompare';
 import { torontoDateISO } from '../lib/timeText';
+import { findLikelyDuplicate, heldTransferAlert, heldTransferLog } from '../lib/paymentDuplicate';
 import type { Env } from '../index';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -96,6 +102,23 @@ app.post('/etransfer', async (c) => {
 
   const match = await resolveOrder(sb, p.amount, p.sender, p.reference_message);
   if (match) {
+    // The same money may already be on the order, typed in by hand. Then
+    // a person decides: the row stays pending with no order (so it shows
+    // in the pending inbox). A check that cannot run holds it too.
+    const prior = await findLikelyDuplicate(sb, match.id, p.amount, paid_on, 'hand_entered');
+    if (prior.kind !== 'none') {
+      await logOrderEvent(sb, match.id, heldTransferLog(p.amount, prior));
+      // No orderNumber: the Alerts feed reads an order number as "applied to".
+      await recordNotification(sb, {
+        kind: 'etransfer_received',
+        customerName: p.sender,
+        amount: p.amount,
+        subject: heldTransferAlert(match.order_number, prior),
+      });
+      // 2xx: the transfer IS stored, so the script must not retry it.
+      return c.json({ status: 'pending', reason: 'possible_duplicate' });
+    }
+
     const note = `e-Transfer${p.sender ? ` from ${p.sender}` : ''}`;
     const result = await recordOrderPayment(sb, match.id, match.status, {
       amount: p.amount,

@@ -8,6 +8,9 @@
  * only by the request that won that insert. The matcher, the payment
  * helper, the warranty issuer and the notification writer are mocked, so
  * every database call seen here belongs to the route itself.
+ * The same-money check (`lib/paymentDuplicate.ts`) is NOT mocked: its
+ * one `payments` read is answered from `state.payments`, so each test
+ * decides which payments the matched order already holds.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -22,9 +25,22 @@ interface State {
   insertError: { code: string; message: string } | null;
   /** When set, the etransfers UPDATE (the link to the payment) fails with this error. */
   updateError: { message: string } | null;
+  /** Rows the `payments` read answers with (the same-money check). */
+  payments: Array<Record<string, unknown>>;
+  /** When set, the `payments` read fails with this error. */
+  paymentsError: { message: string } | null;
 }
 
-const state: State = { calls: [], inserts: [], updates: [], logs: [], insertError: null, updateError: null };
+const state: State = {
+  calls: [],
+  inserts: [],
+  updates: [],
+  logs: [],
+  insertError: null,
+  updateError: null,
+  payments: [],
+  paymentsError: null,
+};
 
 function builder(table: string) {
   let op = 'select';
@@ -32,6 +48,8 @@ function builder(table: string) {
   const b: Record<string, unknown> = {};
   b.select = () => b;
   b.eq = () => b;
+  b.gte = () => b;
+  b.lte = () => b;
   b.insert = (p: Record<string, unknown>) => {
     op = 'insert';
     payload = p;
@@ -44,6 +62,9 @@ function builder(table: string) {
   };
   const settle = () => {
     state.calls.push(`${table}.${op}`);
+    if (table === 'payments' && op === 'select') {
+      return state.paymentsError ? { data: null, error: state.paymentsError } : { data: state.payments, error: null };
+    }
     if (table === 'etransfers' && op === 'insert') {
       if (state.insertError) return { data: null, error: state.insertError };
       state.inserts.push(payload);
@@ -73,6 +94,7 @@ vi.mock('../lib/notifications', () => ({ recordNotification: vi.fn(async () => u
 import webhookApp from './webhook';
 import { resolveOrder } from '../lib/etransferMatch';
 import { recordOrderPayment } from '../lib/payments';
+import { recordNotification } from '../lib/notifications';
 
 const ENV = {
   SUPABASE_URL: 'https://example.supabase.co',
@@ -109,6 +131,11 @@ beforeEach(() => {
   state.updateError = null;
   vi.mocked(resolveOrder).mockReset();
   vi.mocked(recordOrderPayment).mockReset();
+  // Default: the matched order holds no payments, so the existing tests
+  // above exercise the unchanged apply path.
+  state.payments = [];
+  state.paymentsError = null;
+  vi.mocked(recordNotification).mockClear();
 });
 
 describe('POST /webhooks/etransfer', () => {
@@ -201,5 +228,87 @@ describe('POST /webhooks/etransfer', () => {
     vi.mocked(recordOrderPayment).mockResolvedValue({ paymentId: 'p1' });
     await post(BODY);
     expect(vi.mocked(recordOrderPayment).mock.calls[0][3]).toMatchObject({ paid_on: '2026-11-14' });
+  });
+});
+
+describe('POST /webhooks/etransfer — same money already entered by hand', () => {
+  const MATCH = { id: 'o1', status: 'awaiting_payment', order_number: 'T1114-126' };
+  /** A hand-entered $250.00 payment on the matched order, dated `paid_on`. */
+  const hand = (paid_on: string) => ({ id: 'p-hand', amount: '250.00', paid_on, etransfers: [] });
+
+  beforeEach(() => {
+    vi.mocked(resolveOrder).mockResolvedValue(MATCH);
+    vi.mocked(recordOrderPayment).mockResolvedValue({ paymentId: 'p1' });
+  });
+
+  it('holds a matched transfer when a hand-entered payment of the same amount is dated the same day', async () => {
+    state.payments = [hand('2026-11-14')];
+    const res = await post(BODY);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'pending', reason: 'possible_duplicate' });
+    expect(recordOrderPayment).not.toHaveBeenCalled();
+    // The stored row is left exactly as inserted: pending, no order.
+    expect(state.inserts[0]).toMatchObject({ status: 'pending' });
+    expect(state.inserts[0]).not.toHaveProperty('order_id');
+    expect(state.calls).not.toContain('etransfers.update');
+    // One line on the matched order, naming the earlier payment.
+    expect(state.logs).toHaveLength(1);
+    expect(state.logs[0]).toMatchObject({ order_id: 'o1', source: 'staff' });
+    expect(String(state.logs[0].message)).toContain('$250.00 dated November 14, 2026');
+    expect(String(state.logs[0].message)).toContain('Received e-Transfers');
+    // The alert says why, and carries no order number (the feed reads one as "applied to").
+    const alert = vi.mocked(recordNotification).mock.calls[0][1];
+    expect(alert).toMatchObject({
+      kind: 'etransfer_received',
+      customerName: 'Ann Lee',
+      amount: 250,
+      subject: 'held for review: T1114-126 already has a $250.00 payment dated November 14, 2026',
+    });
+    expect(alert).not.toHaveProperty('orderNumber');
+  });
+
+  it('holds it when the hand-entered payment is dated exactly 3 days away', async () => {
+    state.payments = [hand('2026-11-11')];
+    expect(await (await post(BODY)).json()).toEqual({ status: 'pending', reason: 'possible_duplicate' });
+    expect(recordOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('applies a same-amount transfer dated 4 or more days from the hand-entered payment (deposit, then balance)', async () => {
+    state.payments = [hand('2026-11-10'), hand('2026-10-20')];
+    const res = await post(BODY);
+    expect(await res.json()).toMatchObject({ status: 'applied', order_id: 'o1' });
+    expect(recordOrderPayment).toHaveBeenCalledOnce();
+    expect(state.logs).toHaveLength(0);
+  });
+
+  it('applies when the same-day payment of that amount itself came from an e-Transfer', async () => {
+    state.payments = [{ ...hand('2026-11-14'), etransfers: [{ id: 'et-0' }] }];
+    expect(await (await post(BODY)).json()).toMatchObject({ status: 'applied', order_id: 'o1' });
+  });
+
+  it('holds the transfer when the check cannot run — never records blind', async () => {
+    state.paymentsError = { message: 'read failed' };
+    const res = await post(BODY);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: 'pending', reason: 'possible_duplicate' });
+    expect(recordOrderPayment).not.toHaveBeenCalled();
+    expect(state.calls).not.toContain('etransfers.update');
+    expect(String(state.logs[0].message)).toContain('could not be checked');
+    expect(String(state.logs[0].message)).toContain('read failed');
+  });
+
+  it('checks before recording money', async () => {
+    vi.mocked(recordOrderPayment).mockImplementation(async () => {
+      expect(state.calls).toContain('payments.select');
+      return { paymentId: 'p1' };
+    });
+    expect(await (await post(BODY)).json()).toMatchObject({ status: 'applied', order_id: 'o1' });
+    expect(state.updates).toEqual([{ status: 'applied', order_id: 'o1', payment_id: 'p1' }]);
+  });
+
+  it('does not run the check for a transfer that matched no order', async () => {
+    vi.mocked(resolveOrder).mockResolvedValue(null);
+    await post(BODY);
+    expect(state.calls).not.toContain('payments.select');
   });
 });

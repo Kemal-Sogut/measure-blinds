@@ -765,7 +765,8 @@ export interface AppNotification {
   email_thread_id: string | null;
   /**
    * Snapshot text: the email subject for `email_received`, the visitor's
-   * city for `lead_received`; '' for every other kind.
+   * city for `lead_received`, the hold reason for an `etransfer_received`
+   * the webhook matched but did not record; '' otherwise.
    */
   subject: string;
   /** The website lead a `lead_received` alert is about; null for every other kind. */

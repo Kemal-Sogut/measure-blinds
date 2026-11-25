@@ -97,6 +97,19 @@ describe('notificationDetail', () => {
     });
     expect(notificationDetail(n)).toBe('$100.00 — waiting to be assigned to an order.');
   });
+
+  it('says why a matched e-Transfer was held instead of applied', () => {
+    const n = alert({
+      kind: 'etransfer_received',
+      order_id: null,
+      order_number: '',
+      amount: 250,
+      subject: 'held for review: T1114-126 already has a $250.00 payment dated November 20, 2026',
+    });
+    expect(notificationDetail(n)).toBe(
+      '$250.00 from Jane Doe — held for review: T1114-126 already has a $250.00 payment dated November 20, 2026.'
+    );
+  });
 });
 
 describe('lead_received alerts', () => {

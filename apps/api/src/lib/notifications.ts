@@ -54,7 +54,9 @@ export interface NotificationInput {
   emailThreadId?: string | null;
   /**
    * Snapshot text under the heading: the email subject for
-   * `email_received`, the visitor's city for `lead_received`; '' otherwise.
+   * `email_received`, the visitor's city for `lead_received`, and for an
+   * `etransfer_received` the webhook did NOT record, the reason it was
+   * held (`heldTransferAlert` in `lib/paymentDuplicate.ts`); '' otherwise.
    */
   subject?: string | null;
   /**
