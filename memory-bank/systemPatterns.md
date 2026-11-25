@@ -88,6 +88,17 @@ row first (UNIQUE Gmail message id, required), the staff route flips a pending t
 nothing new. Deleting a payment that came from an e-Transfer returns the transfer to pending through
 `lib/paymentDelete.ts`, which fails closed and puts the transfer's link back if the delete fails.
 
+Neither door's claim can see the other door, so `lib/paymentDuplicate.ts` also checks whether the order already
+has a payment of exactly the same amount, dated (`paid_on`) within `DUPLICATE_DATE_TOLERANCE_DAYS` (3) days of the
+new one, that came in the OTHER way (an `etransfers` row linking to a payment marks it as an e-Transfer payment).
+Dates, not creation time, because a deposit and its balance are often the same amount but weeks apart. Three
+places use it: the webhook leaves a matched transfer pending, with a line on the order and a "held for review"
+alert, when it finds a hand-entered match or cannot check; the staff route answers 409 `possible_duplicate` for a
+hand-entered payment that matches an e-Transfer payment, and for applying a pending transfer that matches a
+hand-entered one, until the request carries `confirm_duplicate: true` (the `client_key` replay check runs first).
+A confirmed duplicate is logged as a separate payment confirmed after a warning. The check only hands the decision
+to a person; it never deletes or merges.
+
 ## Calendar surface (2026-07-06)
 A read-only presentation layer over the existing installation-scheduling domain — no
 new lifecycle or schema. `GET /api/orders/calendar?from=&to=` (Zod-validated inclusive

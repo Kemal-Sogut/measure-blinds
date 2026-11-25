@@ -1,5 +1,34 @@
 # Bug Fixes History
 
+## 2026-11-25 — The same money arriving by hand and by e-Transfer is no longer recorded twice automatically
+Worker `apps/api/src/lib/paymentDuplicate.ts` (new), `lib/etransferClaim.ts`, `routes/webhook.ts`,
+`routes/orders.ts`; web `pages/orders/paymentDuplicate.ts` (new), `OrderDetail.tsx` (payment sheet),
+`pages/notifications/notificationText.ts`. PR #81; **deployed 2026-11-25** (API Worker `fe50a587`, 18:54 UTC; web
+auto-deployed on merge, version `35159321`).
+- **Cause:** each way a payment reaches an order had its own exactly-once guard (Gmail message id, the payment
+  sheet's key, the guarded claim on a pending transfer), but nothing compared a payment typed in by hand with an
+  e-Transfer for the same money. A deposit entered by hand could be recorded again when its Interac email arrived.
+- **The rule:** an order already holding a payment of exactly the same amount, with a payment date (`paid_on`)
+  within 3 days (either direction) of the new one, that came in the other way (by hand vs. e-Transfer) is treated
+  as possibly the same money. The tolerance lives in one constant, `DUPLICATE_DATE_TOLERANCE_DAYS`.
+- **Why payment dates:** a deposit and its balance are often exactly the same amount (half and half), but the
+  balance is paid well after the deposit; comparing payment dates (±3 days) lets that case through untouched.
+- **Three places that ask or hold:**
+  - *Incoming e-Transfer (webhook):* after matching a transfer to an order, if a hand-entered payment looks like
+    the same money the transfer is not recorded. It stays in the pending inbox, a line on the order names the
+    earlier payment, and the alert reads "held for review: …". Held transfers stay in the pending inbox.
+  - *Payment typed in by hand:* if the order already has a matching e-Transfer payment, the payment sheet asks
+    "This payment may already be recorded" and records it only on "Record it anyway" (`confirm_duplicate`).
+  - *Applying a pending transfer from the inbox:* if it matches a hand-entered payment, the same question is
+    asked (`confirm_duplicate` is accepted together with `etransfer_id`), so a held transfer cannot be applied
+    without the question being asked.
+  A confirmed duplicate is logged as "recorded as a separate payment, confirmed by staff after a possible-duplicate
+  warning." A repeated submit of the same sheet is still recorded once.
+- **Fail-safe:** if the check cannot run, the webhook holds the transfer for a person and the staff route returns a
+  retryable error; it never treats an unchecked payment as "no duplicate". The check only hands the decision to a
+  person; it never deletes, merges or re-links anything.
+- **Known limits:** the check is a heuristic, not a lock, and compares payment dates as entered.
+
 ## 2026-11-25 — Payments and e-Transfers: one payment per submit and per transfer, safer webhook, delete and unconfirm guards
 Worker `apps/api/src/lib/etransferClaim.ts`, `apps/api/src/lib/paymentDelete.ts`, `routes/webhook.ts`,
 `routes/orders.ts`; web `OrderDetail.tsx` / `useOrders.ts` (payment sheet); Gmail script

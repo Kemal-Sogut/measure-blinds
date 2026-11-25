@@ -16,7 +16,7 @@ asks before overwriting a newer save. Never roll the API back on its own while t
 400 on `expected_version`). Still to do: a two-tab check on the live app (save in one tab, then the other → the
 conflict dialog).
 
-**Plan 3 (payments & e-Transfer integrity) is DEPLOYED 2026-11-25 (PR #80): API Worker `ecd97da4`, web auto-deployed on merge.** See `knowledge/history/bug_fixes.md` 2026-11-25 for the behaviour and known limits. Remaining owner step: install the new Gmail script (Script Properties `SECRET_KEY` + `SHOP_ADDRESS`, run `selfTest`, run `logAuthHeadersForReview` on a real deposit and confirm "Deposit wording: yes", a single amount and "passes every check", then add the trigger). Next: Plan 4.
+**Plan 3 (payments & e-Transfer integrity) is DEPLOYED 2026-11-25 (PR #80): API Worker `ecd97da4`, web auto-deployed on merge.** See `knowledge/history/bug_fixes.md` 2026-11-25 for the behaviour and known limits. Remaining owner step: install the new Gmail script (Script Properties `SECRET_KEY` + `SHOP_ADDRESS`, run `selfTest`, run `logAuthHeadersForReview` on a real deposit and confirm "Deposit wording: yes", a single amount and "passes every check", then add the trigger). **Plan 3b (duplicate guard, PR #81) is also DEPLOYED 2026-11-25: API `fe50a587`, web `35159321`.** Next: Plan 4 (Toronto dates).
 
 **Also on this branch (commit `45c82de`):** Settings → Display → **Text size** (per device; Default / Large / Extra
 large). All `text-[Npx]` classes became scaled `text-Npx` tokens. Never add a new `text-[Npx]`; see systemPatterns
